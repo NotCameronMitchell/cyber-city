@@ -4,12 +4,13 @@
 // balance changes flow through automatically.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { BRIDGE_COST, BUILDINGS, BULLDOZE_COST, ROAD_COST, ZONES, isBuildingTool, isZoneTool } from '../game/config';
+import { BRIDGE_COST, BUILDINGS, BULLDOZE_COST, RIBBON, ROAD_COST, SKYBRIDGE, UNLOCK_FALLBACK_POP, ZONES, isBuildingTool, isZoneTool } from '../game/config';
+import type { FactionId } from '../game/story/types';
 import type { OverlayId, ToolId } from '../game/types';
 import { credits } from './format';
 import type { IconName } from './icons';
 
-export type CategoryId = 'inspect' | 'bulldoze' | 'road' | 'zones' | 'power' | 'services' | 'landmarks' | 'data';
+export type CategoryId = 'inspect' | 'bulldoze' | 'road' | 'zones' | 'power' | 'services' | 'sky' | 'deals' | 'data';
 
 export interface Category {
   id: CategoryId;
@@ -25,6 +26,8 @@ export interface Category {
   /** Multi-item categories open a tray. */
   items?: ToolId[];
   accent: string;
+  /** Story-gated group: only shown once the factions unlock (docs/STORY.md §8.9). */
+  story?: boolean;
 }
 
 export const CATEGORIES: Category[] = [
@@ -38,10 +41,13 @@ export const CATEGORIES: Category[] = [
     label: 'Services',
     short: 'Civic',
     icon: 'services',
-    items: ['plaza', 'precinct', 'clinic', 'datahub', 'maglev'],
+    items: ['plaza', 'precinct', 'clinic', 'datahub', 'maglev', 'memorial'],
     accent: '#3d7bff',
   },
-  { id: 'landmarks', label: 'Landmarks', short: 'Mega', icon: 'landmarks', items: ['spire', 'arcology'], accent: '#ffb02e' },
+  // Sky (§8.9): the megastructures, skybridges and the ribbon share the old Landmarks slot,
+  // so the phone toolbar stays at 8–9 thumb-sized buttons.
+  { id: 'sky', label: 'Sky', short: 'Sky', icon: 'sky', items: ['stack', 'skybridge', 'rail', 'spire', 'arcology'], accent: '#a9b8ff' },
+  { id: 'deals', label: 'Deals', short: 'Deals', icon: 'deals', items: ['commons', 'foundry', 'glarewall', 'tidemarket', 'roost'], accent: '#ffb02e', story: true },
   { id: 'data', label: 'Data', short: 'Data', icon: 'data', key: 'O', accent: '#22e5ff' },
 ];
 
@@ -68,6 +74,8 @@ export interface ToolMeta {
   /** Footprint size for buildings. */
   size?: number;
   unlockPop: number;
+  /** Faction whose sigil badges the card (Deals group). */
+  faction?: FactionId;
 }
 
 const BUILDING_ICON: Record<string, IconName> = {
@@ -80,6 +88,13 @@ const BUILDING_ICON: Record<string, IconName> = {
   maglev: 'maglev',
   spire: 'spire',
   arcology: 'arcology',
+  stack: 'stack',
+  foundry: 'foundry',
+  glarewall: 'glarewall',
+  tidemarket: 'tidemarket',
+  roost: 'roost',
+  commons: 'commons',
+  memorial: 'memorial',
 };
 
 export function toolMeta(tool: ToolId): ToolMeta {
@@ -98,10 +113,33 @@ export function toolMeta(tool: ToolId): ToolMeta {
       cost: b.cost,
       perTile: false,
       size: b.size,
-      unlockPop: b.unlockPop,
+      unlockPop: b.gate?.fallbackPop ?? (b.gate?.unlock ? UNLOCK_FALLBACK_POP[b.gate.unlock] ?? 0 : b.unlockPop),
+      faction: b.gate?.faction,
     };
   }
   switch (tool) {
+    case 'skybridge':
+      return {
+        id: tool,
+        name: 'Skybridge',
+        desc: 'Drag from one tall tower to another. Lit spans lift the blocks below.',
+        icon: 'skybridge',
+        color: '#8fe3ff',
+        cost: SKYBRIDGE.base + SKYBRIDGE.perTile * SKYBRIDGE.minGap,
+        perTile: false,
+        unlockPop: UNLOCK_FALLBACK_POP.skybridge ?? 0,
+      };
+    case 'rail':
+      return {
+        id: tool,
+        name: 'Ribbon Rail',
+        desc: 'Elevated track. Join two powered stations (Maglev or Stratablock).',
+        icon: 'rail',
+        color: '#5ef2c8',
+        cost: RIBBON.perTile,
+        perTile: true,
+        unlockPop: UNLOCK_FALLBACK_POP.rail ?? 0,
+      };
     case 'road':
       return {
         id: tool,
@@ -132,11 +170,11 @@ export function toolMeta(tool: ToolId): ToolMeta {
 /** "15 CR/tile", "1,500 CR", "from 5 CR". */
 export function costLabel(meta: ToolMeta): string {
   if (meta.id === 'inspect') return 'Free';
-  if (meta.id === 'bulldoze') return `from ${credits(meta.cost)}`;
+  if (meta.id === 'bulldoze' || meta.id === 'skybridge') return `from ${credits(meta.cost)}`;
   return meta.perTile ? `${credits(meta.cost)}/tile` : credits(meta.cost);
 }
 
-export type LegendKind = 'heat' | 'power' | 'services';
+export type LegendKind = 'heat' | 'power' | 'services' | 'turf';
 
 export interface OverlayMeta {
   id: OverlayId;
@@ -156,6 +194,7 @@ export const OVERLAYS: OverlayMeta[] = [
   { id: 'pollution', name: 'Pollution', icon: 'smog', desc: 'Smog from fabs and plants.', legend: 'heat', low: 'Clean', high: 'Toxic' },
   { id: 'traffic', name: 'Traffic', icon: 'car', desc: 'Congestion on the streets.', legend: 'heat', low: 'Clear', high: 'Jammed' },
   { id: 'services', name: 'Services', icon: 'rings', desc: 'Coverage of civic buildings.', legend: 'services' },
+  { id: 'turf', name: 'Turf', icon: 'turf', desc: 'Whose streets are whose.', legend: 'turf' },
 ];
 
 export function overlayMeta(id: OverlayId): OverlayMeta {

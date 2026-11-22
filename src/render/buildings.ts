@@ -24,6 +24,8 @@ import { ZoneType } from '../game/types';
 import { drawFx, drawAbandonedLight, type Fx, type FxState } from './art/fx';
 import { Painter, type ArtPal } from './art/painter';
 import { SERVICE_PALS, SERVICE_RECIPES } from './art/services';
+import { STORY_PALS, STORY_RECIPES } from './art/story';
+import { STACK_PAL, STACK_VARIANTS, stackRecipe, stackVariant } from './art/vertical';
 import { NIGHT_STEPS, SpriteCache, nightBucket, nightOfBucket, scaleBucket, scaleOfBucket, type Sprite } from './art/sprites';
 import { FORMS, LOT_RECIPES, ZONE_PALS, ZONE_RECIPES, type Recipe } from './art/zones';
 import { css, glowSprite } from './palette';
@@ -119,9 +121,21 @@ function zoneModel(zone: number, level: number, variant: number): Model {
 }
 
 const SERVICE_INDEX = new Map<BuildingType, number>(BUILDING_ORDER.map((t, i) => [t, i]));
-function serviceModel(type: BuildingType): Model {
-  const id = SERVICE_BASE + (SERVICE_INDEX.get(type) ?? 0);
-  return models.get(id) ?? buildModel(id, SERVICE_RECIPES[type], SERVICE_PALS[type], 31337 + id, BUILDINGS[type].size);
+/** Model variant of a building: Stratablocks get one per complete stage × scaffold × crown (art/vertical.ts). */
+function variantOf(b: Pick<Building, 'type' | 'stage' | 'buildDays' | 'crown'>): number {
+  if (b.type !== 'stack') return 0;
+  const stage = b.stage ?? 1;
+  const building = (b.buildDays ?? 0) > 0;
+  return stackVariant(building ? stage - 1 : stage, building, b.crown);
+}
+function serviceModel(type: BuildingType, variant = 0): Model {
+  const id = SERVICE_BASE + (SERVICE_INDEX.get(type) ?? 0) * STACK_VARIANTS + variant;
+  const hit = models.get(id);
+  if (hit) return hit;
+  const story = (STORY_RECIPES as Partial<Record<BuildingType, Recipe>>)[type];
+  const recipe = type === 'stack' ? stackRecipe(variant) : story ?? SERVICE_RECIPES[type];
+  const pal = type === 'stack' ? STACK_PAL : (STORY_PALS as Partial<Record<BuildingType, ArtPal>>)[type] ?? SERVICE_PALS[type];
+  return buildModel(id, recipe, pal, 31337 + SERVICE_BASE + (SERVICE_INDEX.get(type) ?? 0), BUILDINGS[type].size);
 }
 
 // ── Sprite painting ────────────────────────────────────────────────────────
@@ -160,6 +174,11 @@ function paintSprite(m: Model, state: number, nb: number, scale: number, lod: bo
   p.lights = state === ST_ON || state >= ST_GHOST_OK;
   p.abandoned = state === ST_ABANDONED;
   p.lod = lod;
+  // Low and mid-rise zone blocks light more windows and glow brighter at night, so an
+  // ordinary mid-size city reads as vibrant as the dense L3 core.
+  const level = m.id < LOT_BASE ? (Math.floor(m.id / 16) % 3) + 1 : 0;
+  p.litBoost = level === 1 ? 1.7 : level === 2 ? 1.45 : 1;
+  p.glowBoost = level === 1 ? 1.55 : level === 2 ? 1.35 : 1;
   p.begin(m.seed, m.pal);
   m.recipe(p);
   p.g = null;
@@ -445,7 +464,7 @@ export function drawServiceBuilding(ctx: CanvasRenderingContext2D, wx: number, w
   const def = BUILDINGS[b.type];
   if (!def) return;
   sync(ctx, env);
-  const m = serviceModel(b.type);
+  const m = serviceModel(b.type, variantOf(b));
   const on = b.offline <= 0 && (b.powered || def.powerSupply > 0);
   const lod = env.zoom < LOD_ZOOM;
   const s = sprite(m, on ? ST_ON : ST_DARK, lod);
@@ -465,7 +484,7 @@ export function drawServiceBuilding(ctx: CanvasRenderingContext2D, wx: number, w
 export function drawBuildingGhost(ctx: CanvasRenderingContext2D, wx: number, wy: number, type: BuildingType, ok: boolean, env: ArtEnv): void {
   if (!BUILDINGS[type]) return;
   sync(ctx, env);
-  const m = serviceModel(type);
+  const m = serviceModel(type, type === 'stack' ? stackVariant(1, false, undefined) : 0);
   const s = sprite(m, ok ? ST_GHOST_OK : ST_GHOST_BAD, env.zoom < LOD_ZOOM);
   if (!s) return;
   const a0 = ctx.globalAlpha;
@@ -494,12 +513,20 @@ export function zoneBuildingHeight(tile: Tile): number {
   return h;
 }
 
-const serviceHeights = new Map<BuildingType, number>();
-export function serviceBuildingHeight(type: BuildingType): number {
-  let h = serviceHeights.get(type);
+const serviceHeights = new Map<number, number>();
+/**
+ * Approx pixel height of a service building above the ground (culling, selection box,
+ * status icons, skybridge height). Pass the building for stage-aware Stratablocks
+ * (60 / 150 / 210 px by complete stage).
+ */
+export function serviceBuildingHeight(type: BuildingType, b?: Pick<Building, 'type' | 'stage' | 'buildDays' | 'crown'>): number {
+  if (!BUILDINGS[type]) return 40;
+  const variant = b && type === 'stack' ? variantOf(b) : type === 'stack' ? stackVariant(1, false, undefined) : 0;
+  const key = (SERVICE_INDEX.get(type) ?? 0) * STACK_VARIANTS + variant;
+  let h = serviceHeights.get(key);
   if (h === undefined) {
-    h = BUILDINGS[type] ? serviceModel(type).top : 40;
-    serviceHeights.set(type, h);
+    h = serviceModel(type, variant).top;
+    serviceHeights.set(key, h);
   }
   return h;
 }

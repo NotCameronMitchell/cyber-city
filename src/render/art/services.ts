@@ -44,7 +44,8 @@ export const SERVICE_PALS: Record<BuildingType, ArtPal> = {
   maglev: pal(NEON.yellow, NEON.cyan, [220, 200, 60], 0.5, 0.3),
   spire: pal(NEON.magenta, NEON.cyan, [220, 40, 190], 0.3, 0.45),
   arcology: pal(NEON.amber, NEON.magenta, [230, 150, 50], 0.6, 0.2),
-  // Step 0 placeholders for the story buildings; WP-D replaces them (art/story.ts, art/vertical.ts).
+  // Story buildings: buildings.ts uses art/story.ts and art/vertical.ts for these types;
+  // the entries stay so this table remains a complete Record<BuildingType, …>.
   stack: pal([170, 184, 255], NEON.cyan, [140, 150, 255], 0.5, 0.4),
   foundry: pal([255, 123, 46], NEON.amber, [255, 110, 40], 0.6, 0.2),
   glarewall: pal([255, 198, 241], NEON.magenta, [255, 170, 230], 0.2, 0.6),
@@ -512,7 +513,7 @@ export const SERVICE_RECIPES: Record<BuildingType, Recipe> = {
   maglev,
   spire,
   arcology,
-  // Step 0 placeholders (same footprint family); WP-D replaces them.
+  // Story buildings are drawn from art/story.ts / art/vertical.ts (see buildings.ts); fallbacks only.
   stack: arcology,
   foundry: reactor,
   glarewall: datahub,

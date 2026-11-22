@@ -16,7 +16,7 @@ characters, slang, logos or UI likenesses from existing games or franchises
 src/
   main.ts              boot + frame loop (integration)
   game/
-    types.ts           shared data model            (FROZEN — do not change shapes)
+    types.ts           shared data model            (additive changes only; see STORY-CONTRACT.md)
     config.ts          all balance numbers + content  (tune values freely, keep exports)
     rng.ts             Rng, hash2, valueNoise, fbm
     events.ts          Emitter + GameEventMap
@@ -24,6 +24,10 @@ src/
     actions.ts         planAction / applyAction: player-facing rules + costs
     game.ts            Game controller: tool, speed, overlay, preview, settings, save
     sim.ts             Simulation (power, fields, demand, growth, budget, events)
+    buildingStats.ts   stage-aware building numbers (Stratablocks)
+    story/             story layer: director, conditions, effects, pacing, factions,
+                       resolve, mods, turf, vertical, encode, state, types; content/
+                       holds the cards and copy (see docs/STORY-CONTRACT.md)
   render/
     camera.ts          iso projection + Camera   (FROZEN API)
     palette.ts         colours, day/night blend, glow sprites
@@ -31,7 +35,7 @@ src/
     buildings.ts       procedural art for zone buildings + service buildings
     effects.ts         Effects: street traffic, flying cars, rain, screen FX
   input/input.ts       InputController: touch / mouse / keyboard gestures
-  ui/                  DOM HUD, toolbar, panels, dialogs (+ ui.css)
+  ui/                  DOM HUD, toolbar, panels, dialogs (+ ui.css); ui/story/ story surfaces
   audio/audio.ts       AudioEngine: synthesized SFX + optional ambient music
 tests/                 vitest unit tests (sim + actions + save)
 ```
@@ -39,6 +43,25 @@ tests/                 vitest unit tests (sim + actions + save)
 Read `src/game/types.ts`, `src/game/config.ts`, `src/game/world.ts`,
 `src/game/actions.ts`, `src/game/game.ts`, `src/render/camera.ts` and
 `src/render/palette.ts` before writing code: they are the contract.
+
+## Story layer
+
+The campaign ("Who Holds the Charter", `docs/STORY.md`) sits on top of the
+sandbox. `docs/STORY-CONTRACT.md` is its module contract: world fields, mutators,
+events, the director API and who writes what. In short:
+
+* `game.story` (`StoryDirector`) is rebuilt with every world; never cache it.
+  `Game.update` calls `story.update(dt, paused)` each frame and `story.onDay()`
+  after each sim step, and pauses while `story.blocking` (a card or Charter
+  Night is open). It registers `story/content` when its module loads.
+* The sim reads only `world.mods`, `world.layers` and `world.ledger` (plus
+  `world.turf` for gang surges) and reports back through `world.pushSignal()`.
+  The director owns `world.story`; `story/turf.ts` and `story/vertical.ts` own
+  turf, rail, skybridges and Stratablock stages.
+* UI and render read `game.story.view()` (cached, rebuilt on change), the
+  `story` event, `game.story.visual`, `game.inspectActions(x, y)` and world data.
+* Saves are version 2 with an optional `story` block (`story/encode.ts`);
+  version 1 saves load with a fresh story at Chapter I (`flags.migrated`).
 
 ## Coordinates
 

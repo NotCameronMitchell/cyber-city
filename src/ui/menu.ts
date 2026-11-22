@@ -39,6 +39,8 @@ export class Menu {
   private readonly back: HTMLButtonElement;
   private readonly views: Record<View, HTMLElement>;
   private readonly loadBtn: HTMLButtonElement;
+  private readonly restoreBtn: HTMLButtonElement;
+  private readonly restoreDesc: HTMLElement;
   private readonly toggles = new Map<keyof Settings, HTMLButtonElement>();
   private readonly quality: HTMLButtonElement[] = [];
   private view: View = 'main';
@@ -63,6 +65,8 @@ export class Menu {
         h('span', { class: 'cc-menu-chev', html: icon('chevron') }),
       );
     this.loadBtn = item('load', 'load', 'Load saved city', 'Return to your last save');
+    this.restoreBtn = item('restore', 'back', 'Restore previous city', 'The city New City replaced');
+    this.restoreDesc = this.restoreBtn.querySelector('.cc-menu-text span') as HTMLElement;
     const resume = item('resume', 'play', 'Resume', 'Back to the streets', 'is-primary');
     resume.setAttribute('data-autofocus', '');
     const main = h(
@@ -72,6 +76,7 @@ export class Menu {
       item('save', 'save', 'Save city', 'Stored on this device'),
       this.loadBtn,
       item('new', 'newCity', 'New city', 'Fresh map, fresh charter'),
+      this.restoreBtn,
       h('div', { class: 'cc-menu-sep' }),
       item('view:settings', 'gear', 'Settings', 'Sound, music, weather, quality'),
       item('view:help', 'help', 'How to play', 'Roads, zones, power and more'),
@@ -207,6 +212,14 @@ export class Menu {
       setText(this.sub, w.cityName);
     }
     setHidden(this.loadBtn, !game.hasSave());
+    // WP-C's backup slot: guarded so an older Game without it simply hides the row.
+    const g = game as typeof game & { hasPreviousSave?: () => boolean; previousSaveInfo?: () => { cityName: string; maxPopulation: number } | null };
+    const canRestore = !!g.hasPreviousSave?.();
+    setHidden(this.restoreBtn, !canRestore);
+    if (canRestore) {
+      const info = g.previousSaveInfo?.();
+      setText(this.restoreDesc, info?.cityName ? `${info.cityName} · peak ${groupInt(info.maxPopulation)} residents` : 'The city New City replaced');
+    }
     const s = game.settings;
     for (const [key, el] of this.toggles) {
       const on = !!s[key];
@@ -259,10 +272,26 @@ export class Menu {
           if (ok) modals.closeAll();
         },
       });
+    } else if (act === 'restore') {
+      const g = game as typeof game & { loadPrevious?: () => boolean; previousSaveInfo?: () => { cityName: string } | null };
+      const name = g.previousSaveInfo?.()?.cityName || 'the previous city';
+      actions.confirm({
+        title: 'Restore previous city?',
+        body: `Swap back to ${name}. This city moves into the backup slot, so you can swap again.`,
+        confirmLabel: 'Restore',
+        onConfirm: () => {
+          const ok = !!g.loadPrevious?.();
+          game.toast(ok ? `Welcome back to ${game.world.cityName}` : 'The previous city could not be read', ok ? 'good' : 'error');
+          if (ok) {
+            this.resumeSpeed = 0;
+            modals.closeAll();
+          }
+        },
+      });
     } else if (act === 'new') {
       actions.confirm({
         title: 'Found a new city',
-        body: 'Your current city will be replaced. Save first if you want to come back to it.',
+        body: 'Your current city moves to the backup slot: "Restore previous city" in this menu brings it back.',
         confirmLabel: 'Found city',
         danger: true,
         input: { label: 'City name', value: randomCityName(randomSeed()), maxLength: 24, reroll: () => randomCityName(randomSeed()) },

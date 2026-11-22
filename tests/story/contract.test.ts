@@ -218,7 +218,12 @@ describe('game story stubs', () => {
     const g = new Game();
     expect(g.story.blocking).toBe(false);
     const v = g.story.view();
-    expect(v).toEqual(emptyStoryView(g.world.story));
+    // WP-A: the real view replaces the Step 0 empty one; with no roads nothing has started yet.
+    const empty = emptyStoryView(g.world.story);
+    expect(v.chapter.phase).toBe(empty.chapter.phase);
+    expect(v.card).toBeNull();
+    expect(v.pending).toBeNull();
+    expect(v.goals).toEqual([]);
     expect(v.chapter.numeral).toBe('I');
     expect(v.coherence).toBe(4);
     expect(g.inspectActions(10, 10)).toEqual([]);

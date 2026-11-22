@@ -85,6 +85,32 @@ const PATHS = {
   chart: '<path d="M3.5 20.5h17"/><path d="M5 16l4.5-5 3.5 3 6-7.5"/><path class="d" d="M15.5 6.5H19V10"/>',
   bolt: '<path class="f" d="M13.2 2.5L5 13.6h6.2L10.3 21.5 19 10.2h-6.3z"/>',
   approval: '<circle cx="12" cy="12" r="9"/><path d="M8 14.2c1 1.4 2.4 2.1 4 2.1s3-.7 4-2.1"/><path d="M9 9.5h.1M15 9.5h.1"/>',
+
+  // ── Story layer ──────────────────────────────────────────────────────────
+  /** Sky group: two towers joined by a span. */
+  sky: '<path d="M3 21V6.5h5V21M16 21V4h5v17"/><path d="M8 10h8M8 12.6h8"/><path class="d" d="M2 21h20M5.5 9v1M18.5 7v1M5.5 13v1M18.5 11v1"/>',
+  /** Deals group: two hands meeting over a seal. */
+  deals: '<path d="M2.5 12.5l4-4 3 1.5 2.5-1.5 2.5 1.5 3-1.5 4 4"/><path d="M6.5 8.5l5.5 6 5.5-6"/><path d="M9 12.2l2 2M12 15l1.6-1.6"/><circle class="d" cx="12" cy="19.5" r="1.6"/>',
+  stack: '<path d="M3.5 21V15h17v6"/><path d="M6 15V8.5h12V15"/><path d="M8.5 8.5V3.5h7v5"/><path class="d" d="M2 21h20M8 18h2M14 18h2M9 11.5h1.5M13.5 11.5H15M11 6h2"/>',
+  skybridge: '<path d="M3 21V5h4v16M17 21V5h4v16"/><path d="M7 9.5h10v3H7z"/><path class="d" d="M9.5 11h1M13.5 11h1M2 21h20"/>',
+  rail: '<path d="M2.5 9.5h19v2.5h-19z"/><path d="M6 12v9M18 12v9"/><path class="d" d="M4.5 21h3M16.5 21h3"/><path d="M7 6.5h6l1.5 3h-9z"/>',
+  foundry: '<path d="M9 21V6.5l3-3 3 3V21"/><path d="M5 21v-7h4M15 14h4v7"/><path class="d" d="M10.5 9.5h3M10.5 13h3M10.5 16.5h3"/><path d="M3 21h18"/>',
+  glarewall: '<path d="M10 21V3h4v18"/><path d="M14 5l6-1.5v9L14 11"/><path class="d" d="M15.5 6.4l3-.6M15.5 9l3 .2"/><path d="M7 21h10"/>',
+  tidemarket: '<path d="M3 11l3-5h12l3 5"/><path d="M3 11h18"/><path d="M5 11v9h14v-9"/><path class="d" d="M2 18c2 0 2-1.4 4-1.4s2 1.4 4 1.4 2-1.4 4-1.4 2 1.4 4 1.4 2-1.4 4-1.4"/><path d="M10 20v-5h4v5"/>',
+  roost: '<path d="M12 21V9"/><path d="M12 2.5l4 4-4 4-4-4z"/><path class="d" d="M12 10.5c-1 2.5 1.5 4 0 6.5"/><path d="M8 21h8M9.5 14l2.5-1.5 2.5 1.5"/>',
+  commons: '<path d="M3 9.5L12 4l9 5.5"/><path d="M4.5 9.5h15"/><path d="M6 10v8M10 10v8M14 10v8M18 10v8"/><path d="M3 20.5h18"/>',
+  memorial: '<path d="M9.5 20V5l2.5-2 2.5 2v15"/><path class="d" d="M11 8h2M11 10.5h2M11 13h2M11 15.5h2"/><path d="M4 20.5h16"/><path class="d" d="M6.5 18.5c0-1 .6-1.6 1.2-1.6M16.3 16.9c.6 0 1.2.6 1.2 1.6"/>',
+  turf: '<path d="M3 3h8v8H3z"/><path class="d" d="M3 7l4-4M3 11l8-8M7 11l4-4"/><path d="M13 13h8v8h-8z"/><circle class="f" cx="15.5" cy="15.5" r=".9"/><circle class="f" cx="18.5" cy="15.5" r=".9"/><circle class="f" cx="15.5" cy="18.5" r=".9"/><circle class="f" cx="18.5" cy="18.5" r=".9"/><path class="d" d="M13 3h8v8M3 13v8h8"/>',
+  comms: '<path d="M3 6h18v12H3z"/><path d="M3 6.5l9 6.5 9-6.5"/><path class="d" d="M3 18l6.5-6M21 18l-6.5-6"/>',
+  eye: '<path d="M2.5 12c1.8-3.6 5.3-6 9.5-6s7.7 2.4 9.5 6c-1.8 3.6-5.3 6-9.5 6s-7.7-2.4-9.5-6z"/><circle cx="12" cy="12" r="2.8"/><circle class="f" cx="12" cy="12" r="1"/>',
+  key: '<circle cx="7.5" cy="12" r="3.8"/><path d="M11.3 12H21M17.5 12v3.5M20.5 12v2.5"/>',
+  clock: '<circle cx="12" cy="12" r="8.5"/><path d="M12 7v5.2l3.4 2.1"/>',
+  flag: '<path d="M5 21V3.5"/><path d="M5 4h12l-2.5 4L17 12H5"/>',
+  goal: '<circle cx="12" cy="12" r="8.5"/><circle class="d" cx="12" cy="12" r="5"/><circle class="f" cx="12" cy="12" r="1.6"/>',
+  shield: '<path d="M12 3l7.5 3v5.6c0 4.6-3.2 8.1-7.5 9.4-4.3-1.3-7.5-4.8-7.5-9.4V6z"/>',
+  layers: '<path d="M12 3l9 5-9 5-9-5z"/><path d="M3 12.5l9 5 9-5"/>',
+  hand: '<path d="M7 13V6.5a1.5 1.5 0 0 1 3 0V12M10 11V4.5a1.5 1.5 0 0 1 3 0V11M13 11V5.5a1.5 1.5 0 0 1 3 0V12M16 12V8.5a1.5 1.5 0 0 1 3 0V14c0 4-2.6 7-6.5 7-2.6 0-4.2-1.2-5.6-3.3L4.3 13.6a1.5 1.5 0 0 1 2.5-1.6L7 12.4"/>',
+  salt: '<path d="M8.5 9h7l1.5 11.5h-10z"/><path d="M9.5 9V6.5a2.5 2.5 0 0 1 5 0V9"/><path class="d" d="M11 4h.1M13.4 3.6h.1M12.2 2.6h.1"/>',
 } as const;
 
 export type IconName = keyof typeof PATHS;

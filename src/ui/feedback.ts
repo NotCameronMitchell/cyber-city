@@ -110,7 +110,7 @@ export class ActionPill {
     const meta = toolMeta(plan.tool);
     const count = changedTiles(game, plan);
     const name = plan.tool === 'bulldoze' ? 'Demolish' : meta.name;
-    const label = isBuildingTool(plan.tool) || count <= 1 ? name : `${name} ×${count}`;
+    const label = isBuildingTool(plan.tool) || plan.tool === 'skybridge' || count <= 1 ? name : `${name} ×${count}`;
     const costText = plan.valid ? (plan.cost > 0 ? `${MINUS}${credits(plan.cost)}` : 'Free') : '';
     const note = plan.reason && plan.reason !== 'Nothing to change' ? plan.reason : '';
     const key = `${plan.tool}|${label}|${costText}|${note}|${plan.valid}`;
@@ -135,6 +135,8 @@ function changedTiles(game: Game, plan: ActionPlan): number {
   let n = 0;
   if (plan.tool === 'road') {
     for (const p of plan.tiles) if (p.ok && !w.tileAt(p.x, p.y)?.road) n++;
+  } else if (plan.tool === 'rail') {
+    for (const p of plan.tiles) if (p.ok && !w.rail[w.idx(p.x, p.y)]) n++;
   } else if (isZoneTool(plan.tool)) {
     const zone = ZONES[plan.tool].zone;
     for (const p of plan.tiles) if (p.ok && w.tileAt(p.x, p.y)?.zone !== zone) n++;

@@ -494,6 +494,11 @@ export interface StoryState {
   /** Hold-condition key → consecutive days held. */
   holds: Record<string, number>;
   favor: Record<FactionId, number>;
+  /**
+   * Monthly mood per faction (§2.1), saved so standing is continuous across a
+   * load (stats are not known until the first sim pass). WP-A addition; missing = 0.
+   */
+  mood?: Partial<Record<FactionId, number>>;
   floors: Partial<Record<FactionId, number>>;
   ceils: Partial<Record<FactionId, number>>;
   trace: number;

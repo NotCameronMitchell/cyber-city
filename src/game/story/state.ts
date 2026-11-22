@@ -30,6 +30,7 @@ export function newStoryState(seed: number): StoryState {
     goalsWaived: [],
     holds: {},
     favor: { ...START_FAVOR },
+    mood: {},
     floors: {},
     ceils: {},
     trace: 0,

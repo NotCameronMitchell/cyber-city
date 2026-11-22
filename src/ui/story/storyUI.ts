@@ -1,0 +1,368 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// Story UI root (docs/STORY.md §8): builds every story surface, keeps them in
+// step with game.story.view() and the story events, and makes sure only one
+// modal surface shows at a time.
+//
+//   rail          always visible above the toolbar (dock slot)
+//   card          beats, faction / ⚑ / system cards, logs, ending cards
+//   banner        incoming faction card (one at a time, never over a card)
+//   title         chapter title card (over everything, 2.2 s)
+//   sheets        goal drawer · faction sheet · COMMS (one at a time)
+//   charter       Charter Night (and its read-only preview)
+//   ending        ending screen, after the final card and its log close
+//
+// Sync model: the view is cached by the director and rebuilt on change, so a
+// per-frame identity check is enough to notice every update; events only
+// trigger the one-shot surfaces (title card, banner, Charter Night, ending).
+// Reading budget (§8.11): nothing here queues extra modals; a banner that
+// arrives under a card waits until the card closes, then shows once.
+// ─────────────────────────────────────────────────────────────────────────────
+
+import type { StoryView } from '../../game/story/types';
+import type { UIContext } from '../context';
+import { h, setClass } from '../dom';
+import { CharterNight } from './charterNight';
+import { ChapterTitle } from './chapterTitle';
+import { Comms } from './comms';
+import { EndingScreen } from './endingScreen';
+import { FactionSheet } from './factionSheet';
+import { GoalDrawer } from './goalDrawer';
+import { IncomingBanner } from './incoming';
+import { StoryCard } from './storyCard';
+import { StoryRail } from './storyRail';
+
+type Sheet = 'goals' | 'factions' | 'comms';
+
+export class StoryUI {
+  readonly el: HTMLElement;
+  readonly rail: StoryRail;
+  private readonly scrim: HTMLElement;
+  private readonly card: StoryCard;
+  private readonly banner: IncomingBanner;
+  private readonly title: ChapterTitle;
+  private readonly goals = new GoalDrawer();
+  private readonly factions: FactionSheet;
+  private readonly comms: Comms;
+  private readonly charter: CharterNight;
+  private readonly ending: EndingScreen;
+  private sheet: Sheet | null = null;
+  private lastView: StoryView | null = null;
+  private lastStory: unknown = null;
+  private bannerWaiting: string | null = null;
+  private charterWaiting = false;
+  private endingWaiting = false;
+  private endingDelay = 0;
+  private seenTick = -1;
+  private resumeTimer = 0;
+  private offs: (() => void)[] = [];
+  /** Called when a surface opens or closes (the root collapses the coach / tray). */
+  onChange: (() => void) | null = null;
+  /** Called whenever the StoryView changes (the root re-checks story-gated tool groups). */
+  onView: (() => void) | null = null;
+
+  constructor(private readonly ctx: UIContext) {
+    this.rail = new StoryRail(ctx, {
+      goals: () => this.toggleSheet('goals'),
+      factions: () => this.toggleSheet('factions'),
+      comms: () => this.toggleSheet('comms'),
+    });
+    this.scrim = h('div', { class: 'cc-st-scrim', hidden: true });
+    this.card = new StoryCard(ctx);
+    this.banner = new IncomingBanner(ctx, () => this.rail.topEdge());
+    this.title = new ChapterTitle();
+    this.factions = new FactionSheet(ctx);
+    this.comms = new Comms(ctx);
+    this.charter = new CharterNight(ctx);
+    this.ending = new EndingScreen(ctx);
+    this.el = h(
+      'div',
+      { class: 'cc-story' },
+      this.scrim,
+      this.goals.sheet.el,
+      this.factions.sheet.el,
+      this.comms.el,
+      this.card.el,
+      this.banner.el,
+      this.charter.el,
+      this.ending.el,
+      this.title.el,
+    );
+
+    this.scrim.addEventListener('click', () => {
+      if (this.sheet) this.closeSheets();
+    });
+    this.card.onPeek = (on) => setClass(this.scrim, 'is-peek', on);
+    const closed = () => {
+      this.sheet = null;
+      this.layout();
+    };
+    this.goals.sheet.onClosed = closed;
+    const prevFac = this.factions.sheet.onClosed;
+    this.factions.sheet.onClosed = () => {
+      prevFac?.();
+      closed();
+    };
+    this.comms.onClosed = () => {
+      this.markSeen();
+      closed();
+    };
+    this.goals.onPreview = () => {
+      const v = this.view();
+      this.closeSheets();
+      if (v.claims.length) this.charter.open(v, true);
+      this.layout();
+    };
+    this.charter.onClosed = () => this.layout();
+    this.ending.onClosed = () => this.layout();
+    this.title.onClose = () => this.layout();
+
+    this.wire();
+    this.onWorld();
+  }
+
+  private view(): StoryView {
+    return this.ctx.game.story.view();
+  }
+
+  // ── Events ───────────────────────────────────────────────────────────────
+
+  private wire(): void {
+    const ev = this.ctx.game.events;
+    const on: typeof ev.on = (t, fn) => {
+      const off = ev.on(t, fn);
+      this.offs.push(off);
+      return off;
+    };
+    on('chapter', (c) => {
+      const v = this.view();
+      const t = v.titleCard;
+      this.closeSheets();
+      this.title.show({
+        numeral: t?.numeral || v.chapter.numeral,
+        title: t?.title || c.title || v.chapter.title,
+        epigraph: t?.epigraph ?? '',
+        question: t?.question || v.chapter.question,
+        coherence: t?.coherence ?? v.coherence,
+      });
+      this.layout();
+    });
+    on('incoming', (e) => this.queueBanner(e.id));
+    on('charterNight', () => {
+      this.charterWaiting = true;
+    });
+    on('ending', () => {
+      this.endingWaiting = true;
+      this.endingDelay = 0.6;
+    });
+    on('world', () => this.onWorld());
+  }
+
+  private onWorld(): void {
+    this.card.hide();
+    this.banner.hide(true);
+    this.closeSheets();
+    this.charter.close();
+    this.ending.close();
+    this.bannerWaiting = null;
+    this.charterWaiting = false;
+    this.endingWaiting = false;
+    this.lastView = null;
+    this.lastStory = null;
+    const v = this.view();
+    this.seenTick = v.comms.reduce((m, r) => Math.max(m, r.tick), -1);
+    window.clearTimeout(this.resumeTimer);
+    this.resumeTimer = window.setTimeout(() => this.resumeToast(), 1600);
+  }
+
+  /** On load: pulse the goal chip and toast where the chapter stands (§8.10). */
+  private resumeToast(): void {
+    const v = this.view();
+    // Never over a card, sheet, title, Charter Night or the ending screen (they carry their own context).
+    if (!StoryRail.hasStory(v) || this.busy) return;
+    this.rail.pulse();
+    if (v.countdownDays !== null) {
+      this.ctx.game.toast(`Charter Night in ${Math.ceil(v.countdownDays)} days`, 'info');
+      return;
+    }
+    if (!v.goals.length) return;
+    const done = v.goals.filter((g) => g.done).length;
+    const next = v.goals.find((g) => !g.done);
+    const tail = next ? ` · ${next.label}${next.now && next.need ? ` · now ${next.now}` : ''}` : '';
+    this.ctx.game.toast(`Chapter ${v.chapter.numeral} · ${done}/${v.goals.length}${tail}`, 'info');
+  }
+
+  private queueBanner(id: string): void {
+    if (this.card.isOpen || this.title.isOpen || this.sheet === 'comms' || this.charter.isOpen || this.ending.isOpen) {
+      this.bannerWaiting = id;
+      return;
+    }
+    this.showBanner(id);
+  }
+
+  private showBanner(id: string): void {
+    const v = this.view();
+    const b = v.banner && v.banner.id === id ? v.banner : v.pending && v.pending.id === id ? { id, title: v.pending.title, faction: v.pending.faction } : null;
+    if (!b) return;
+    this.banner.show(b.id, b.title, b.faction);
+  }
+
+  // ── Sheets ───────────────────────────────────────────────────────────────
+
+  private toggleSheet(s: Sheet): void {
+    if (this.sheet === s) {
+      this.closeSheets();
+      return;
+    }
+    this.closeSheets();
+    this.banner.hide(true);
+    const v = this.view();
+    this.sheet = s;
+    if (s === 'goals') {
+      this.goals.sync(v);
+      this.goals.sheet.open();
+    } else if (s === 'factions') {
+      this.factions.sync(v, true);
+      this.factions.open();
+    } else {
+      this.comms.sync(v, true);
+      this.comms.open('log');
+    }
+    this.layout();
+  }
+
+  /** Open COMMS on the Silt Logs tab (e.g. from a log notice). */
+  openLogs(): void {
+    this.closeSheets();
+    this.sheet = 'comms';
+    this.comms.sync(this.view(), true);
+    this.comms.open('silt');
+    this.layout();
+  }
+
+  private closeSheets(): void {
+    const s = this.sheet;
+    this.sheet = null;
+    if (s === 'goals') this.goals.sheet.close();
+    else if (s === 'factions') this.factions.sheet.close();
+    else if (s === 'comms') this.comms.close();
+  }
+
+  private markSeen(): void {
+    const v = this.view();
+    this.seenTick = v.comms.reduce((m, r) => Math.max(m, r.tick), this.seenTick);
+  }
+
+  private unread(v: StoryView): number {
+    let n = 0;
+    for (const r of v.comms) if (r.tick > this.seenTick) n++;
+    return n;
+  }
+
+  // ── Frame ────────────────────────────────────────────────────────────────
+
+  /** True while any story surface covers the map. */
+  get busy(): boolean {
+    return this.card.isOpen || this.sheet !== null || this.title.isOpen || this.charter.isOpen || this.ending.isOpen;
+  }
+
+  update(dt: number): void {
+    const story = this.ctx.game.story;
+    const v = story.view();
+    if (v !== this.lastView || story !== this.lastStory) {
+      this.lastView = v;
+      this.lastStory = story;
+      this.sync(v);
+    }
+    this.card.update();
+    // Deferred one-shots, once the card queue has drained.
+    if (!this.card.isOpen && !this.title.isOpen) {
+      if (this.charterWaiting && !this.ending.isOpen) {
+        this.charterWaiting = false;
+        if (v.claims.length) {
+          this.closeSheets();
+          this.charter.open(v, false);
+          this.layout();
+        }
+      } else if (this.endingWaiting && !this.charter.isOpen) {
+        this.endingDelay -= dt;
+        if (this.endingDelay <= 0) {
+          this.endingWaiting = false;
+          if (v.ending) {
+            this.closeSheets();
+            this.ending.open(v, this.card.lastEndingBody);
+            this.layout();
+          }
+        }
+      } else if (this.bannerWaiting && !this.sheet && !this.charter.isOpen && !this.ending.isOpen) {
+        const id = this.bannerWaiting;
+        this.bannerWaiting = null;
+        if (v.pending?.id === id) this.showBanner(id);
+      }
+    }
+  }
+
+  private sync(v: StoryView): void {
+    // Card.
+    if (v.card) {
+      if (this.sheet) this.closeSheets();
+      if (this.charter.isOpen && this.charter.isPreview) this.charter.close();
+      this.banner.hide(true);
+      this.card.show(v.card);
+    } else if (this.card.isOpen) this.card.hide();
+    // Banner whose card was answered or opened elsewhere.
+    if (this.banner.isOpen && v.pending?.id !== this.banner.id) this.banner.hide(false);
+    this.rail.sync(v, this.unread(v));
+    if (this.sheet === 'goals') this.goals.sync(v);
+    else if (this.sheet === 'factions') this.factions.sync(v);
+    else if (this.sheet === 'comms') {
+      this.comms.sync(v);
+      this.markSeen();
+    }
+    if (this.charter.isOpen) this.charter.sync(v);
+    this.layout();
+    this.onView?.();
+  }
+
+  /** Scrim, rail visibility and body classes for the current surfaces. */
+  private layout(): void {
+    const card = this.card.isOpen;
+    const sheet = this.sheet !== null;
+    const full = this.charter.isOpen || this.ending.isOpen;
+    this.scrim.hidden = !(card || sheet);
+    setClass(this.scrim, 'is-card', card);
+    const v = this.lastView ?? this.view();
+    this.rail.setVisible(StoryRail.hasStory(v) && !card && !sheet && !full && !this.title.isOpen);
+    setClass(this.ctx.root, 'has-story-modal', card || sheet || full || this.title.isOpen);
+    this.onChange?.();
+  }
+
+  /** Esc: title → charter confirm/preview → sheet → Later on a faction card. Returns whether something closed. */
+  closeTop(): boolean {
+    if (this.title.isOpen) {
+      this.title.hide();
+      return true;
+    }
+    if (this.ending.isOpen) {
+      this.ending.close();
+      return true;
+    }
+    if (this.charter.isOpen && this.charter.isPreview) {
+      this.charter.close();
+      return true;
+    }
+    if (this.sheet) {
+      this.closeSheets();
+      return true;
+    }
+    if (this.card.isOpen && this.card.card?.canLater) {
+      this.ctx.game.later();
+      return true;
+    }
+    return false;
+  }
+
+  destroy(): void {
+    for (const off of this.offs) off();
+    this.offs = [];
+  }
+}

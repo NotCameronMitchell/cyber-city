@@ -13,6 +13,7 @@ import type { UIContext } from './context';
 import { h, prefersReducedMotion, replayClass, setClass, setHidden, setHtml, setStyle, setText } from './dom';
 import { credits } from './format';
 import { icon } from './icons';
+import { InspectStory } from './story/inspectStory';
 
 /** Rows whose percentage is better when high (others: lower is better). */
 const HIGH_IS_GOOD = new Set(['Land value']);
@@ -37,6 +38,7 @@ export class InspectSheet {
   private readonly rowsEl: HTMLElement;
   private readonly rows: RowRefs[] = [];
   private readonly actionsEl: HTMLElement;
+  private readonly story: InspectStory;
   private readonly demolishBtn: HTMLButtonElement;
   private readonly confirmBtn: HTMLButtonElement;
   private readonly cancelBtn: HTMLButtonElement;
@@ -58,6 +60,7 @@ export class InspectSheet {
     this.confirmBtn = h('button', { class: 'cc-btn is-danger', type: 'button', 'data-act': 'demolish-yes', hidden: true });
     this.cancelBtn = h('button', { class: 'cc-btn is-ghost', type: 'button', 'data-act': 'demolish-no', hidden: true, text: 'Keep' });
     this.actionsEl = h('div', { class: 'cc-insp-actions', hidden: true }, this.demolishBtn, this.cancelBtn, this.confirmBtn);
+    this.story = new InspectStory(ctx);
 
     this.el = h(
       'section',
@@ -70,9 +73,9 @@ export class InspectSheet {
         h('button', { class: 'cc-iconbtn cc-insp-close', type: 'button', 'data-act': 'close', 'aria-label': 'Close inspector', html: icon('close') }),
       ),
       this.title,
-      this.sub,
-      this.rowsEl,
-      this.actionsEl,
+      // Only the body scrolls, so the chamfered frame, stripe and header stay put
+      // (a scrolling panel dragged its ::before frame along and hid the last row).
+      h('div', { class: 'cc-insp-scroll' }, this.sub, this.rowsEl, this.story.el, this.actionsEl),
     );
     this.el.addEventListener('click', this.onClick);
   }
@@ -86,6 +89,7 @@ export class InspectSheet {
     const was = this.sel;
     this.sel = sel ? { x: sel.x, y: sel.y } : null;
     this.resetConfirm();
+    this.story.select(this.sel);
     if (!sel) {
       this.el.hidden = true;
       this.nudgeX = this.nudgeY = 0;
@@ -116,12 +120,17 @@ export class InspectSheet {
     setText(this.title, info.title);
     setText(this.sub, info.subtitle);
     setText(this.coords, `X${String(sel.x).padStart(2, '0')} · Y${String(sel.y).padStart(2, '0')}`);
+    const cat = building ? BUILDINGS[building.type].category : null;
     const kind = building
-      ? BUILDINGS[building.type].category === 'power'
+      ? cat === 'power'
         ? 'Utility'
-        : BUILDINGS[building.type].category === 'landmarks'
+        : cat === 'landmarks'
           ? 'Landmark'
-          : 'Service'
+          : cat === 'vertical'
+            ? 'Megastructure'
+            : cat === 'faction'
+              ? 'Faction'
+              : 'Service'
       : tile.road
         ? 'Transport'
         : tile.zone
@@ -159,6 +168,8 @@ export class InspectSheet {
       }
       r.el.dataset.tone = tone;
     }
+
+    this.story.refresh();
 
     // Demolish (service buildings only).
     const canDemolish = !!building;

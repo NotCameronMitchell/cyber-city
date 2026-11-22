@@ -4,7 +4,7 @@
 // one-time gesture hint, and the data-overlay legend.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { lockedReason } from '../game/actions';
+import { isUnlocked, lockedReason } from '../game/actions';
 import { BUILDINGS, isBuildingTool } from '../game/config';
 import { storageGet, storageSet } from '../game/game';
 import type { OverlayId, ToolId } from '../game/types';
@@ -12,9 +12,16 @@ import type { UIContext } from './context';
 import { buzz, closestData, h, setAttr, setClass, setHidden, setHtml, setStyle, setText } from './dom';
 import { abbr } from './format';
 import { icon } from './icons';
+import { factionSigil } from './story/sigils';
 import { CATEGORIES, OVERLAYS, SERVICE_SWATCHES, categoryOf, costLabel, overlayMeta, toolMeta, type CategoryId } from './tools';
 
 const HINT_KEY = 'cybercity.ui.hint.v1';
+
+function replayShake(el: HTMLElement): void {
+  el.classList.remove('is-shake');
+  void el.offsetWidth;
+  el.classList.add('is-shake');
+}
 const HINT_MS = 9000;
 
 interface CardRefs {
@@ -22,6 +29,8 @@ interface CardRefs {
   tool?: ToolId;
   overlay?: OverlayId;
   cost: HTMLElement;
+  /** Last price shown (live, with story modifiers). */
+  price?: number;
   lock: HTMLElement;
   lockText: HTMLElement;
   lockFill: HTMLElement;
@@ -33,6 +42,8 @@ export class Dock {
   readonly stack: HTMLElement;
   /** In-flow slot for the inspect sheet on portrait phones. */
   readonly sheetSlot: HTMLElement;
+  /** Slot for the story rail, directly above the toolbar (docs/STORY.md §8.1). */
+  readonly railSlot: HTMLElement;
   private readonly bar: HTMLElement;
   private readonly catBtns = new Map<CategoryId, HTMLButtonElement>();
   private readonly tray: HTMLElement;
@@ -72,6 +83,7 @@ export class Dock {
           title: c.key ? `${c.label} (${c.key})` : c.label,
           'aria-pressed': c.tool ? 'false' : undefined,
           'aria-expanded': c.tool ? undefined : 'false',
+          hidden: c.story ? true : undefined,
         },
         h('span', { class: 'cc-tb-ico', html: icon(c.icon) }),
         h('span', { class: 'cc-tb-label' }, h('span', { class: 'is-long', text: c.label }), h('span', { class: 'is-short', text: c.short })),
@@ -135,7 +147,8 @@ export class Dock {
 
     this.stack = h('div', { class: 'cc-dock-stack' }, this.legend, this.chipRow);
     this.sheetSlot = h('div', { class: 'cc-sheet-slot' });
-    this.el = h('div', { class: 'cc-dock' }, this.stack, this.sheetSlot, this.tray, this.bar);
+    this.railSlot = h('div', { class: 'cc-rail-slot' });
+    this.el = h('div', { class: 'cc-dock' }, this.stack, this.sheetSlot, this.tray, this.railSlot, this.bar);
 
     this.syncTool();
     this.syncOverlay();
@@ -196,6 +209,7 @@ export class Dock {
     this.cards = [];
     if (id === 'data') {
       for (const o of OVERLAYS) {
+        if (o.id === 'turf' && !this.turfUnlocked()) continue;
         const el = h(
           'button',
           { class: 'cc-card is-overlay', type: 'button', role: 'option', 'data-overlay': o.id, 'aria-label': `${o.name} view` },
@@ -237,7 +251,10 @@ export class Dock {
       const el = h(
         'button',
         { class: 'cc-card', type: 'button', role: 'option', 'data-tool': tool, 'aria-label': `${m.name}, ${costLabel(m)}` },
-        h('span', { class: 'cc-card-ico', html: icon(m.icon) + (m.badge ? `<b class="cc-card-badge">${m.badge}</b>` : '') }),
+        h('span', {
+          class: 'cc-card-ico',
+          html: icon(m.icon) + (m.badge ? `<b class="cc-card-badge">${m.badge}</b>` : '') + (m.faction ? factionSigil(m.faction, 18, 'cc-card-sig') : ''),
+        }),
         h('span', { class: 'cc-card-name', text: m.name }),
         cost,
         h('span', { class: 'cc-card-desc', text: m.desc }),
@@ -269,8 +286,9 @@ export class Dock {
     const locked = lockedReason(game.world, tool);
     if (locked) {
       const m = toolMeta(tool);
-      game.toast(`${m.name} unlocks at ${m.unlockPop.toLocaleString('en-US')} residents`, 'info');
+      game.toast(`${m.name}: ${locked.replace(/^Locked:\s*/, '')}`, 'info');
       this.ctx.sfx('error');
+      replayShake(card);
       return;
     }
     buzz(8);
@@ -292,18 +310,52 @@ export class Dock {
       }
       const tool = c.tool!;
       const m = toolMeta(tool);
-      const locked = !!lockedReason(w, tool);
+      const reason = lockedReason(w, tool);
+      const locked = !!reason;
       setClass(c.el, 'is-locked', locked);
       setAttr(c.el, 'aria-disabled', locked ? 'true' : 'false');
       if (locked) {
-        setText(c.lockText, `Reach ${abbr(m.unlockPop)} pop`);
-        const p = Math.max(0, Math.min(1, w.maxPopulation / Math.max(1, m.unlockPop)));
-        setStyle(c.lockFill, 'transform', `scaleX(${p.toFixed(3)})`);
+        const text = reason!.replace(/^Locked:\s*/, '');
+        const popGate = /residents/.test(text) && m.unlockPop > 0;
+        setText(c.lockText, popGate ? `Reach ${abbr(m.unlockPop)} pop` : text);
+        setHidden(c.lockFill.parentElement as HTMLElement, !popGate);
+        if (popGate) {
+          const p = Math.max(0, Math.min(1, w.maxPopulation / Math.max(1, m.unlockPop)));
+          setStyle(c.lockFill, 'transform', `scaleX(${p.toFixed(3)})`);
+        }
       }
-      setClass(c.el, 'is-poor', !locked && w.funds < m.cost);
+      const price = game.toolCost(tool);
+      if (price !== c.price) {
+        c.price = price;
+        setText(c.cost, costLabel({ ...m, cost: price }));
+      }
+      setClass(c.el, 'is-poor', !locked && w.funds < price);
       const on = game.tool === tool;
       setClass(c.el, 'is-on', on);
       setAttr(c.el, 'aria-selected', on ? 'true' : 'false');
+    }
+  }
+
+  // ── Story-gated groups ───────────────────────────────────────────────────
+
+  private turfUnlocked(): boolean {
+    const g = this.ctx.game;
+    return g.story.view().unlocked.turfOverlay || isUnlocked(g.world, 'turfOverlay');
+  }
+
+  /** Show the Deals group once the factions unlock (diffed; cheap enough for the panel tick). */
+  syncCategories(): void {
+    const g = this.ctx.game;
+    const v = g.story.view();
+    const deals = v.unlocked.factions || isUnlocked(g.world, 'factions');
+    for (const c of CATEGORIES) {
+      if (!c.story) continue;
+      const btn = this.catBtns.get(c.id)!;
+      const show = c.id === 'deals' ? deals : true;
+      if (btn.hidden === show) {
+        btn.hidden = !show;
+        if (!show && this.openCat === c.id) this.closeTray();
+      }
     }
   }
 
@@ -331,10 +383,18 @@ export class Dock {
       setStyle(this.chip, '--accent', m.color);
       setHtml(this.chipIco, icon(m.icon));
       setText(this.chipName, m.name);
-      setText(this.chipCost, costLabel(m));
+      // Live price (build-cost mods, faction perks, Stratablock scaling), same as the tray cards.
+      setText(this.chipCost, costLabel({ ...m, cost: game.toolCost(tool) }));
       if (!this.hintDone && !this.trayOpen) this.showHint(tool);
     } else this.hideHint(false);
     if (this.trayOpen) this.hint.hidden = true;
+  }
+
+  /** Re-price the active tool chip (prices move with mods, faction perks and Stratablock scaling). */
+  refreshChipCost(): void {
+    const { game } = this.ctx;
+    if (game.tool === 'inspect') return;
+    setText(this.chipCost, costLabel({ ...toolMeta(game.tool), cost: game.toolCost(game.tool) }));
   }
 
   syncOverlay(): void {
@@ -354,6 +414,9 @@ export class Dock {
           '<span class="cc-lg-sw" style="--sw:#4dff9a">Plant</span><span class="cc-lg-sw" style="--sw:#22e5ff">Powered</span><span class="cc-lg-sw" style="--sw:#ff3b5c">No power</span>';
       } else if (o.legend === 'services') {
         scale = SERVICE_SWATCHES.map((s) => `<span class="cc-lg-sw" style="--sw:${s.color}">${s.label}</span>`).join('');
+      } else if (o.legend === 'turf') {
+        scale =
+          '<span class="cc-lg-turf is-undertow">Undertow</span><span class="cc-lg-turf is-kites">Kites</span><span class="cc-lg-turf is-contested">Contested</span>';
       }
       setHtml(this.legendScale, scale);
       setClass(this.legend, 'is-swatches', o.legend !== 'heat');
@@ -364,7 +427,16 @@ export class Dock {
   // ── Gesture hint ─────────────────────────────────────────────────────────
 
   private showHint(tool: ToolId): void {
-    const verb = tool === 'bulldoze' ? 'Drag to demolish' : isBuildingTool(tool) ? 'Drag to place' : 'Drag to build';
+    const verb =
+      tool === 'bulldoze'
+        ? 'Drag to demolish'
+        : tool === 'skybridge'
+          ? 'Drag from tower to tower'
+          : tool === 'rail'
+            ? 'Drag to lay track between stations'
+            : isBuildingTool(tool)
+              ? 'Drag to place'
+              : 'Drag to build';
     const mouse = typeof matchMedia === 'function' && matchMedia('(hover: hover) and (pointer: fine)').matches;
     setText(this.hint, `${verb} · ${mouse ? 'right-drag or WASD to move the map' : 'two fingers to move the map'}`);
     if (this.hint.hidden) {

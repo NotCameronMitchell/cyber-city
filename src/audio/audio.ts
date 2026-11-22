@@ -3,6 +3,11 @@
 //
 //   • SFX for the game's 'sfx' events (build / zone / road / bulldoze / error /
 //     click / money / milestone / alert), rate-limited and voice-capped.
+//   • Story cues (docs/STORY.md §8): a two-note chime for an incoming faction
+//     card, a low "transmission" swell when a card opens, a deep sub drop and
+//     rising tone for a chapter title, a glassy arpeggio for a Silt Log and a
+//     slow chord for an ending. They listen to the story events directly (no
+//     new 'sfx' kinds) and share the SFX bus, volume and voice cap.
 //   • Optional ambient score (settings.music): a slow generative synthwave pad
 //     — detuned saws + sub triangle through a breathing low-pass, chord changes
 //     every ~8 s, a soft sine bass and a sparse delayed arpeggio.
@@ -16,6 +21,8 @@ import type { GameEventMap } from '../game/events';
 import type { Game } from '../game/game';
 
 type SfxKind = GameEventMap['sfx'];
+type StoryCue = 'incoming' | 'card' | 'chapter' | 'log' | 'ending';
+const STORY_GAP: Record<StoryCue, number> = { incoming: 1.5, card: 0.6, chapter: 2, log: 1.5, ending: 3 };
 
 const MASTER_GAIN = 0.42;
 const SFX_GAIN = 0.9;
@@ -47,11 +54,19 @@ export class AudioEngine {
   private noise: AudioBuffer | null = null;
   private music: AmbientScore | null = null;
   private readonly last = new Map<SfxKind, number>();
+  private readonly lastCue = new Map<StoryCue, number>();
   private voices = 0;
   private failed = false;
 
   constructor(private readonly game: Game) {
     game.events.on('sfx', (kind) => this.play(kind));
+    game.events.on('incoming', () => this.cue('incoming'));
+    game.events.on('card', (c) => {
+      if (c) this.cue('card');
+    });
+    game.events.on('chapter', () => this.cue('chapter'));
+    game.events.on('log', () => this.cue('log'));
+    game.events.on('ending', () => this.cue('ending'));
     game.events.on('settings', () => this.syncSettings());
     const unlock = () => this.unlock();
     for (const type of ['pointerdown', 'touchend', 'mousedown', 'keydown']) {
@@ -184,6 +199,47 @@ export class AudioEngine {
         return this.milestone(t);
       case 'alert':
         return this.alert(t);
+    }
+  }
+
+  // ── Story cues ────────────────────────────────────────────────────────────
+
+  private cue(kind: StoryCue): void {
+    const ctx = this.ctx;
+    if (!ctx || ctx.state !== 'running' || !this.game.settings.sound || !this.sfxBus) return;
+    const now = ctx.currentTime;
+    if (now - (this.lastCue.get(kind) ?? -10) < STORY_GAP[kind]) return;
+    if (this.voices > MAX_VOICES) return;
+    this.lastCue.set(kind, now);
+    const t = now + 0.01;
+    switch (kind) {
+      case 'incoming':
+        // Two soft bell notes, a fifth apart, with a faint radio hiss.
+        this.tone('sine', mtof(81), t, 0.5, 0.05, { attack: 0.006 });
+        this.tone('sine', mtof(88), t + 0.14, 0.7, 0.045, { attack: 0.006 });
+        this.tone('triangle', mtof(93), t + 0.14, 0.25, 0.012);
+        this.hiss(t, 0.35, 0.01, 'bandpass', 2400, { q: 2 });
+        return;
+      case 'card':
+        // Low transmission swell: a filtered noise breath under a soft sine.
+        this.hiss(t, 0.6, 0.02, 'lowpass', 300, { f1: 1600, attack: 0.18 });
+        this.tone('sine', mtof(45), t, 0.9, 0.05, { attack: 0.2 });
+        this.tone('sine', mtof(64), t + 0.1, 0.6, 0.014, { attack: 0.15 });
+        return;
+      case 'chapter':
+        // Deep sub drop, then a rising neon tone.
+        this.tone('sine', 90, t, 1.6, 0.11, { f1: 38, glide: 1.2, attack: 0.01 });
+        this.hiss(t, 1.2, 0.03, 'lowpass', 900, { f1: 200 });
+        this.tone('sawtooth', mtof(57), t + 0.25, 1.4, 0.016, { f1: mtof(69), glide: 1.1, attack: 0.3 });
+        this.tone('sine', mtof(81), t + 0.9, 1.1, 0.03, { attack: 0.08 });
+        return;
+      case 'log':
+        [76, 79, 83, 88, 91].forEach((m, i) => this.tone('sine', mtof(m), t + i * 0.09, 0.9, 0.028, { attack: 0.01 }));
+        this.tone('triangle', mtof(52), t, 1.2, 0.03, { attack: 0.05 });
+        return;
+      case 'ending':
+        this.milestone(t);
+        return;
     }
   }
 

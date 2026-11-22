@@ -3,6 +3,9 @@
 An isometric city builder set in a rain-soaked, neon-lit future, made for
 phones first. Lay streets, zone hab blocks, market strips and fab districts,
 keep the power grid alive, and grow a settlement into a glowing megacity.
+You are MOTH, the hidden city AI nobody meant to wake: a six-chapter story,
+"Who Holds the Charter", plays out over your city, with factions to court,
+street crews to manage and five endings. You can never lose.
 It plays in portrait or landscape, works offline once installed, and also runs
 on desktop with mouse and keyboard.
 
@@ -22,6 +25,10 @@ audio files: every building, car, sign and sound is generated in code.
    the landmarks unlock as the population grows.
 5. Keep the treasury positive: tap the credits readout for the budget and tax
    slider.
+6. **Follow the story.** Your first road wakes MOTH. The strip above the
+   toolbar shows the chapter goals (tap it for the goal drawer), the faction
+   sheet and COMMS, where faction messages wait for an answer (or answer
+   themselves after a while).
 
 ### Touch (phone / tablet)
 
@@ -55,6 +62,19 @@ audio files: every building, car, sign and sound is generated in code.
 
 ## Features
 
+- **Story campaign:** six chapters with measurable goals and key choices,
+  Silt Logs to recover, five endings decided on Charter Night, and an
+  epilogue where the sandbox carries on (an endings gallery is kept per
+  device). Old saves load and start the story at Chapter I.
+- **Factions:** the Charter Board, Basalt, Nacre, two street crews (the
+  Undertow and the Glass Kites) and a hidden sixth; standing, moods, deals,
+  pacts, salt, exclusive buildings, a balance-of-power bar and Trace (how
+  close anyone is to proving MOTH exists).
+- **Turf and crackdowns:** crews claim streets as the city grows (Turf data
+  view); precincts can launch crackdowns, or you can sign a pact.
+- **Vertical city:** Stratablocks raised in three stages with a choice of
+  crown, skybridges between tall towers, and the elevated Ribbon Rail with
+  stations (all under *Sky*).
 - **Simulation:** power grid with brownouts, pollution, land value, crime,
   traffic, RCI demand, building growth, decline and abandonment, a monthly
   budget with taxes and upkeep, population milestones with grants, random
@@ -62,8 +82,8 @@ audio files: every building, car, sign and sound is generated in code.
 - **Art:** procedural buildings in 16 looks per zone and density, construction
   and abandoned states, a day/night cycle where the city switches to neon,
   street traffic, flying cars, searchlights, ad blimps, drizzle and storms.
-- **Data views:** power, land value, crime, pollution, traffic and service
-  coverage.
+- **Data views:** power, land value, crime, pollution, traffic, service
+  coverage and turf.
 - **Mobile-first UI:** notch-safe layout for portrait phones, landscape phones
   (side rail), tablets and desktop; touch targets of 44 px or more; haptics.
 - **Audio:** synthesized sound effects and an optional generative synth score.
@@ -77,7 +97,7 @@ audio files: every building, car, sign and sound is generated in code.
 ```bash
 npm install            # once
 npm run dev            # dev server (also on your LAN: open it on your phone)
-npm test               # vitest unit tests (sim, actions, saves, gestures)
+npm test               # vitest suites (sim, actions, saves, gestures, story)
 npm run typecheck      # tsc --noEmit
 npm run build          # typecheck + production build into dist/
 npm run preview        # serve dist/ locally
@@ -112,23 +132,28 @@ src/
   main.ts                boot, frame loop, resize, autosave, hot reload, SW
   game/                  data model, world, actions, game controller,
                          simulation (sim.ts + sim/), balance config, news copy
+  game/story/            story director, factions, turf, megastructures,
+                         save encoding; content/ holds every card and line
   render/                camera, renderer, ground cache, overlays, sky,
                          building art (buildings.ts + art/), effects
   input/                 touch / mouse / keyboard gestures, haptics
   ui/                    DOM HUD, toolbar, panels, dialogs, ui.css
+                         (ui/story/: story card, rail, sheets, Charter Night)
   audio/                 synthesized SFX and music
 tests/                   vitest suites
-docs/                    CONTRACTS.md (module APIs), DESIGN.md, STORY.md
+docs/                    CONTRACTS.md (module APIs), STORY-CONTRACT.md
+                         (story interfaces), DESIGN.md, STORY.md (story spec)
 ```
 
-`docs/CONTRACTS.md` describes how the modules talk to each other. The story
-campaign in `docs/STORY.md` is the planned next step and is not in the game yet.
+`docs/CONTRACTS.md` describes how the modules talk to each other;
+`docs/STORY-CONTRACT.md` covers the story layer, specified in `docs/STORY.md`.
 
 ## Debugging
 
 In the browser console, `window.cc` exposes `{ game, camera, renderer }` (plus
 `input`, `ui` and `audio`). For example, `cc.game.setSpeed(3)` or
-`cc.game.setOverlay('crime')`. Settings → *Show FPS* turns on a frame-time
+`cc.game.setOverlay('crime')`. `cc.game.story.view()` shows the story state;
+`cc.game.story.charterNight()` opens Charter Night early. Settings → *Show FPS* turns on a frame-time
 readout.
 
 ## IP note

@@ -329,6 +329,8 @@ interface GroundPal {
   zoneLine: string[];
   zoneRim: string[];
   zoneFar: string[];
+  /** Gang turf colour wash, [owner][strength level 0..3] (docs/STORY.md §3.7). */
+  turfWash: string[][];
   rubble: string;
   /** Shallow-water gradient bands: [fades towards +v, +u, -v, -u] (N, W, S, E shores). */
   shallow: HTMLCanvasElement[];
@@ -422,9 +424,15 @@ function buildPal(n: number): GroundPal {
     pillarB: css(shade(wall, 0.5)),
     lamp: css(mix([210, 210, 200], [255, 244, 214], n)),
     zoneTint: zoneList.map((z) => css(ZONE_RGB[z], 0.14 * day + 0.07 * n)),
-    zoneLine: zoneList.map((z) => css(mix(shade(ZONE_RGB[z], 0.8), ZONE_RGB[z], n), 0.8 + 0.15 * n)),
+    // Empty-lot dashes stay legible but quiet over large zoned areas.
+    zoneLine: zoneList.map((z) => css(mix(shade(ZONE_RGB[z], 0.8), ZONE_RGB[z], n), 0.42 + 0.12 * n)),
     zoneRim: zoneList.map((z) => css(ZONE_RGB[z], 0.22 + 0.1 * n)),
     zoneFar: zoneList.map((z) => css(ZONE_RGB[z], 0.2 + 0.12 * n)),
+    turfWash: [
+      [],
+      [0, 1, 2, 3].map((l) => css(mix([150, 220, 40], [182, 255, 46], n), (0.05 + l * 0.04) * (0.8 + 0.5 * n))),
+      [0, 1, 2, 3].map((l) => css(mix([170, 130, 230], [201, 162, 255], n), (0.05 + l * 0.04) * (0.8 + 0.5 * n))),
+    ],
     stripes: new Map(),
     gGlintC: css(NEON.cyan, 0.8 * n),
     gGlintM: css(NEON.magenta, 0.8 * n),
@@ -438,8 +446,8 @@ function buildPal(n: number): GroundPal {
     gShore: css(NEON.cyan, 0.2 * n),
     gRailA: css(NEON.cyan, 0.3 * n),
     gRailB: css(NEON.magenta, 0.3 * n),
-    gZone: zoneList.map((z) => css(ZONE_RGB[z], 0.14 * n)),
-    gZoneCore: zoneList.map((z) => css(ZONE_RGB[z], 0.4 * n)),
+    gZone: zoneList.map((z) => css(ZONE_RGB[z], 0.06 * n)),
+    gZoneCore: zoneList.map((z) => css(ZONE_RGB[z], 0.2 * n)),
   };
 }
 
@@ -532,6 +540,8 @@ export class GroundPainter {
   lines = true;
   /** Extra-fine details for close zoom: edge lines, sidewalk seams. */
   fine = true;
+  /** Empty-lot dashed outlines (fade out when zoomed far out). */
+  lotLines = true;
 
   private palCache = new Map<number, GroundPal>();
   /** Layers: base fills → surface details → structures → markings; then glow. */
@@ -556,6 +566,7 @@ export class GroundPainter {
     this.detail = scale >= 0.6;
     this.lines = scale >= 0.25;
     this.fine = scale >= 1.1;
+    this.lotLines = scale >= 0.42;
     this.bridges.length = 0;
     const P = pal;
     this.b2.prime([...P.asphalt, P.patch, P.wallFace, P.wallDark]);
@@ -607,6 +618,13 @@ export class GroundPainter {
     else if (t.zone !== ZoneType.None) this.lot(x, y, t);
     else this.land(x, y);
     if (this.lines) this.quay(x, y);
+    // Gang turf: a colour wash over the street, by strength (§3.7).
+    const i = y * N + x;
+    const owner = this.world.turf.owner[i];
+    if (owner === 1 || owner === 2) {
+      const st = this.world.turf.str[i];
+      this.b1.f(this.pal.turfWash[owner][st >= 75 ? 3 : st >= 50 ? 2 : st >= 25 ? 1 : 0]).rect(x, y, 1, 1);
+    }
   }
 
   /** Draw all queued base geometry, then bridges (which need strict per-tile order). */
@@ -732,7 +750,7 @@ export class GroundPainter {
     if (t.level === 0) {
       this.tileRect(this.b0.f(P.lot), x, y);
       this.b1.f(this.lines ? P.zoneTint[z] : P.zoneFar[z]).rect(x, y, 1, 1);
-      if (this.lines) this.dashedOutline(this.b3.f(P.zoneLine[z]), x, y, this.lw(1.3));
+      if (this.lotLines) this.dashedOutline(this.b3.f(P.zoneLine[z]), x, y, this.lw(0.9));
       return;
     }
     this.tileRect(this.b0.f(t.abandoned ? P.padAbandoned : P.pad), x, y);
@@ -1085,10 +1103,10 @@ export class GroundPainter {
   private lotGlow(x: number, y: number, t: Tile) {
     const P = this.pal;
     if (t.level === 0) {
-      if (!this.lines) return;
-      const o = this.lw(1.2);
-      this.dashedOutline(this.gl.f(P.gZone[t.zone]), x - o, y - o, this.lw(3.6));
-      this.dashedOutline(this.gl.f(P.gZoneCore[t.zone]), x, y, this.lw(1.3));
+      if (!this.lotLines) return;
+      const o = this.lw(0.8);
+      this.dashedOutline(this.gl.f(P.gZone[t.zone]), x - o, y - o, this.lw(2.6));
+      this.dashedOutline(this.gl.f(P.gZoneCore[t.zone]), x, y, this.lw(0.9));
       return;
     }
     if (t.abandoned) return;
@@ -1638,14 +1656,16 @@ export class GroundCache {
    * Water sparkles and the slow "breathing" glow of the street grid at night.
    * World-space transform expected. Cheap: one sprite per tile at most.
    */
-  drawAnimated(ctx: CanvasRenderingContext2D, world: World, b: Rect, env: ArtEnv, view: Rect) {
+  /** `presence` (0..1, VisualState): while a MOTH card is open the street glow breathes on a slow 4 s cycle. */
+  drawAnimated(ctx: CanvasRenderingContext2D, world: World, b: Rect, env: ArtEnv, view: Rect, presence = 0) {
     if (env.zoom < 0.3) return;
+    const breath = presence > 0.01 ? 1 + presence * (1.2 + 1.6 * (0.5 + 0.5 * Math.sin((env.time * Math.PI * 2) / 4))) : 1;
     const info = this.terrain(world);
     const n = env.night;
     const time = env.time;
     const low = env.quality === 'low';
     const sparkle = this.sparkleSprite();
-    const pulseOn = n > 0.15 && !low && env.zoom >= 0.6;
+    const pulseOn = n > 0.15 && (!low || presence > 0.01) && (env.zoom >= 0.6 || presence > 0.01);
     // Fewer sparkles when zoomed out (they are tiny there anyway) or on low quality.
     const density = (low ? 0.5 : 1) * (env.zoom < 0.6 ? 0.45 : 1);
     const halo = env.zoom >= 0.6;
@@ -1678,7 +1698,7 @@ export class GroundCache {
             ctx.drawImage(sparkTint, cx - w * 0.6, cy - 4, w * 1.2, 8);
           }
         } else if (pulseOn && t.road) {
-          const a = n * 0.11 * (0.5 + 0.5 * Math.sin(time * 1.4 - (x + y) * 0.42));
+          const a = n * 0.11 * breath * (0.5 + 0.5 * Math.sin(time * 1.4 - (x + y) * 0.42));
           if (a < 0.01) continue;
           ctx.globalAlpha = a;
           ctx.drawImage(pulse, wx - 30, wy + 1, 60, 30);

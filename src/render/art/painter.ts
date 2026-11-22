@@ -168,6 +168,10 @@ export class Painter {
   abandoned = false;
   /** Simplified far-zoom rendering. */
   lod = false;
+  /** Multiplier on the lit-window fraction at night (low-rise zone blocks light up more). */
+  litBoost = 1;
+  /** Multiplier on emissive glow strength at night. */
+  glowBoost = 1;
   rng = new Rng(1);
   seed = 1;
   pal: ArtPal;
@@ -273,7 +277,7 @@ export class Painter {
   }
   /** Glow strength for emissive elements (0 by day / unlit). */
   glowA(): number {
-    return this.lights && !this.abandoned ? this.n : 0;
+    return this.lights && !this.abandoned ? this.n * this.glowBoost : 0;
   }
 
   // ── Solids ───────────────────────────────────────────────────────────────
@@ -390,7 +394,7 @@ export class Painter {
     const n = this.n;
     const on = this.lights && !this.abandoned;
     // Night lighting comes on progressively; curtain walls stay calmer.
-    const litFrac = on ? Math.min(0.9, (0.03 + n * 0.5) * (w.lit ?? 1) * (w.style === 'curtain' ? 0.6 : 1)) : 0;
+    const litFrac = on ? Math.min(0.92, (0.03 + n * 0.5) * (w.lit ?? 1) * this.litBoost * (w.style === 'curtain' ? 0.6 : 1)) : 0;
     const style = w.style;
     const P = this.pal;
     const curtain = style === 'curtain';

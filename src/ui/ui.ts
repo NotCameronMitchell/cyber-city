@@ -28,6 +28,8 @@ import { InspectSheet } from './inspect';
 import { Menu } from './menu';
 import { NewsLog } from './newslog';
 import { CityReport } from './report';
+import { StoryUI } from './story/storyUI';
+import './story/story.css';
 import { Ticker } from './ticker';
 import type { CategoryId } from './tools';
 
@@ -54,6 +56,7 @@ export class UI {
   private readonly news: NewsLog;
   private readonly menu: Menu;
   private readonly confirm: ConfirmDialog;
+  private readonly story: StoryUI;
 
   private hudAcc = 0;
   private panelAcc = 0;
@@ -115,12 +118,17 @@ export class UI {
     this.news = new NewsLog(this.ctx);
     this.menu = new Menu(this.ctx);
     this.confirm = new ConfirmDialog(this.ctx);
+    this.story = new StoryUI(this.ctx);
 
     this.dock.stack.prepend(this.coach.el);
     this.dock.sheetSlot.append(this.inspect.el);
     const topStack = h('div', { class: 'cc-topstack' }, this.pill.el, this.toasts.el);
     root.prepend(this.dock.el, this.ticker.el, this.hud.el, this.fps.el, this.banner.el, topStack);
     for (const dlg of [this.budget.el, this.report.el, this.news.el, this.menu.el, this.confirm.el]) this.modals.layer.append(dlg);
+    this.dock.railSlot.append(this.story.rail.el);
+    root.insertBefore(this.story.el, this.modals.layer);
+    this.story.onChange = () => this.syncCoach();
+    this.story.onView = () => this.dock.syncCategories();
 
     this.dock.onTrayChange = () => this.syncCoach();
     this.modals.onChange = (open) => setClass(root, 'has-modal', open);
@@ -143,6 +151,7 @@ export class UI {
     on('stats', () => {
       this.statsDirty = true;
       this.panelsDirty = true;
+      this.dock.refreshChipCost();
     });
     on('month', () => {
       this.statsDirty = true;
@@ -173,6 +182,15 @@ export class UI {
       if (kind === 'build' || kind === 'zone' || kind === 'road' || kind === 'bulldoze') this.dock.noteBuilt();
     });
     on('world', () => this.onWorld());
+    const storyChanged = () => {
+      this.panelsDirty = true;
+      this.dock.syncCategories();
+    };
+    on('unlock', storyChanged);
+    on('standing', () => (this.panelsDirty = true));
+    on('story', () => (this.panelsDirty = true));
+    on('vertical', () => (this.panelsDirty = true));
+    on('turf', () => (this.panelsDirty = true));
   }
 
   /** game.world was replaced (new city / load): drop every per-world view state. */
@@ -239,6 +257,7 @@ export class UI {
   /** Esc handling: dialog → inspect sheet → tray. Returns whether something closed. */
   private closeTopPanel(): boolean {
     if (this.modals.closeTop()) return true;
+    if (this.story.closeTop()) return true;
     if (this.inspect.isOpen) {
       this.game.select(null);
       return true;
@@ -256,7 +275,7 @@ export class UI {
   }
 
   private syncCoach(): void {
-    this.coach.setCollapsed(this.game.tool !== 'inspect' || this.dock.trayOpen || this.inspect.isOpen);
+    this.coach.setCollapsed(this.game.tool !== 'inspect' || this.dock.trayOpen || this.inspect.isOpen || !!this.story?.busy);
   }
 
   private refreshHud(): void {
@@ -273,6 +292,7 @@ export class UI {
     this.fps.update(dt, this.game.settings.showFps);
     this.ticker.update(performance.now());
     this.inspect.update(dt);
+    this.story.update(dt);
 
     this.hudAcc += dt;
     if (this.hudAcc >= HUD_INTERVAL) {
@@ -291,6 +311,7 @@ export class UI {
       this.panelsDirty = false;
       this.inspect.refresh();
       this.dock.refreshTray();
+      this.dock.syncCategories();
       this.coach.check();
       this.budget.refresh();
       this.report.refresh();

@@ -36,6 +36,7 @@ import {
   drawUnpowered,
 } from './overlay';
 import { Backdrop } from './sky';
+import { StoryRender } from './story';
 
 const N = MAP_SIZE;
 /** Tiles of margin so tall buildings whose base is off-screen still draw. */
@@ -74,6 +75,9 @@ export class Renderer {
   private fadeCtx: CanvasRenderingContext2D | null = null;
   private frameNo = 0;
   private unsubs: (() => void)[] = [];
+  private readonly story: StoryRender;
+  /** Coarse pointer (phones, tablets): the UI action pill already shows the cost, so the world tag is hidden. */
+  private readonly touch: boolean;
 
   constructor(
     public readonly canvas: HTMLCanvasElement,
@@ -84,6 +88,8 @@ export class Renderer {
     if (!ctx) throw new Error('Canvas 2D not available');
     this.ctx = ctx;
     this.effects = new Effects(game);
+    this.story = new StoryRender(game);
+    this.touch = typeof matchMedia === 'function' && matchMedia('(hover: none), (pointer: coarse)').matches;
     this.quality = game.settings.quality;
     this.worldToken = worldId(game.world);
     this.backdrop = new Backdrop(game.world.seed % 997);
@@ -97,6 +103,12 @@ export class Renderer {
       ev.on('world', () => this.onWorldChanged()),
       ev.on('stats', () => this.overlay.invalidate()),
       ev.on('overlay', () => this.overlay.invalidate()),
+      // Turf changed (monthly / crackdown): the colour wash is baked into the ground chunks.
+      ev.on('turf', () => {
+        this.ground.invalidate({ x0: 0, y0: 0, x1: N - 1, y1: N - 1 });
+        this.overlay.invalidate();
+      }),
+      ev.on('vertical', () => this.overlay.invalidate()),
       ev.on('settings', () => {
         if (this.game.settings.quality !== this.quality) {
           this.quality = this.game.settings.quality;
@@ -112,6 +124,7 @@ export class Renderer {
   destroy() {
     for (const u of this.unsubs) u();
     this.unsubs = [];
+    this.story.destroy();
     this.ground.reset();
   }
 
@@ -223,6 +236,8 @@ export class Renderer {
     const env: ArtEnv = { time, night, zoom, quality };
 
     this.effects.update(dt);
+    this.story.prepare(world, env);
+    const visual = this.story.visual;
 
     const hw = this.cssW / 2 / zoom;
     const hh = this.cssH / 2 / zoom;
@@ -256,8 +271,9 @@ export class Renderer {
     setWorld(ctx);
     ctx.globalAlpha = 1;
 
-    // 4. Animated ground bits.
-    this.ground.drawAnimated(ctx, world, tilesVis, env, view);
+    // 4. Animated ground bits (+ MOTH's breathing street glow) and story ground mood.
+    this.ground.drawAnimated(ctx, world, tilesVis, env, view, visual?.presence ?? 0);
+    this.story.drawGroundFx(ctx, world, tilesVis, env, view);
 
     // 5. Data overlay.
     if (game.overlay !== 'none') this.overlay.draw(ctx, world, game.overlay, time, tilesVis, zoom);
@@ -297,11 +313,16 @@ export class Renderer {
     }
 
     // 9. Status glyphs + sky effects.
+    if (game.tool === 'skybridge') this.story.drawAnchors(ctx, world, tilesObj, env);
     drawNoRoad(ctx, world, this.access.get(world), tilesObj, time, zoom, view);
     drawUnpowered(ctx, world, tilesObj, time, zoom, view);
     ctx.globalAlpha = 1;
     ctx.save();
     this.effects.drawSky(ctx, tilesVis, env);
+    ctx.restore();
+    setWorld(ctx);
+    ctx.save();
+    this.story.drawSkyFx(ctx, world, tilesObj, env, view);
     ctx.restore();
     setWorld(ctx);
     ctx.globalAlpha = 1;
@@ -315,9 +336,10 @@ export class Renderer {
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.globalAlpha = 1;
     ctx.globalCompositeOperation = 'source-over';
-    drawCostTag(ctx, game, cam, dpr);
+    if (!this.touch) drawCostTag(ctx, game, cam, dpr);
     ctx.save();
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    this.story.drawGrade(ctx, this.cssW, this.cssH, night);
     this.effects.drawScreen(ctx, this.cssW, this.cssH, env);
     ctx.restore();
 
@@ -342,9 +364,14 @@ export class Renderer {
   /**
    * Zone and service buildings back-to-front: ascending x+y, then x. A
    * multi-tile building draws once, when the sweep reaches its front corner.
+   * Ribbon Rail and skybridge segments, turf tags and window candles join the
+   * same sweep at their tile's key, after that tile's own building (rail goes
+   * first under a tall zone tower, so the tower hides it).
    */
   private drawObjects(ctx: CanvasRenderingContext2D, world: World, b: Rect, view: Rect, env: ArtEnv) {
     const tiles = world.tiles;
+    const rail = world.rail;
+    const story = this.story;
     const vx0 = view.x0 - HALF_W;
     const vx1 = view.x1 + HALF_W;
     for (let s = b.x0 + b.y0; s <= b.x1 + b.y1; s++) {
@@ -352,24 +379,33 @@ export class Renderer {
       const xb = Math.min(b.x1, s - b.y0);
       for (let x = xa; x <= xb; x++) {
         const y = s - x;
-        const t = tiles[y * N + x];
+        const i = y * N + x;
+        const t = tiles[i];
+        const wx0 = (x - y) * HALF_W;
+        const onScreenX = wx0 + HALF_W >= vx0 && wx0 - HALF_W <= vx1;
+        const mask = rail[i];
+        const railFirst = mask !== 0 && onScreenX && story.railBefore(t);
+        if (railFirst) story.drawRail(ctx, world, x, y, mask);
         if (t.buildingId >= 0) {
           const bd = world.buildings.get(t.buildingId);
-          if (!bd || bd.x + bd.size - 1 !== x || bd.y + bd.size - 1 !== y) continue;
-          const wx = (bd.x - bd.y) * HALF_W;
-          const wy = (bd.x + bd.y) * HALF_H;
-          const z = bd.size;
-          if (wx + z * HALF_W < vx0 || wx - z * HALF_W > vx1) continue;
-          if (wy + z * 2 * HALF_H < view.y0 || wy + z * HALF_H - serviceBuildingHeight(bd.type) - 24 > view.y1) continue;
-          drawServiceBuilding(ctx, wx, wy, bd, env);
-        } else if (t.zone !== ZoneType.None) {
-          const wx = (x - y) * HALF_W;
+          if (bd && bd.x + bd.size - 1 === x && bd.y + bd.size - 1 === y) {
+            const wx = (bd.x - bd.y) * HALF_W;
+            const wy = (bd.x + bd.y) * HALF_H;
+            const z = bd.size;
+            const visible =
+              !(wx + z * HALF_W < vx0 || wx - z * HALF_W > vx1) &&
+              !(wy + z * 2 * HALF_H < view.y0 || wy + z * HALF_H - serviceBuildingHeight(bd.type, bd) - 24 > view.y1);
+            if (visible) drawServiceBuilding(ctx, wx, wy, bd, env);
+          }
+        } else if (t.zone !== ZoneType.None && onScreenX) {
           const wy = (x + y) * HALF_H;
-          if (wx + HALF_W < vx0 || wx - HALF_W > vx1) continue;
-          if (wy + 2 * HALF_H < view.y0 || wy + HALF_H - zoneBuildingHeight(t) - 24 > view.y1) continue;
-          drawZoneBuilding(ctx, wx, wy, t, x, y, env);
+          if (!(wy + 2 * HALF_H < view.y0 || wy + HALF_H - zoneBuildingHeight(t) - 24 > view.y1)) drawZoneBuilding(ctx, wx0, wy, t, x, y, env);
         }
+        if (!onScreenX) continue;
+        if (mask !== 0 && !railFirst) story.drawRail(ctx, world, x, y, mask);
+        story.drawAfter(ctx, world, x, y, t, env);
       }
+      story.drawSkybridges(ctx, s);
     }
   }
 }

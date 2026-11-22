@@ -13,9 +13,12 @@ import { BUILDINGS, CURRENCY, ROAD_ACCESS_RANGE, isBuildingTool } from '../game/
 import type { Game } from '../game/game';
 import { MAP_SIZE, ZoneType, type ActionPlan, type OverlayId, type ServiceEffect, type Tile } from '../game/types';
 import type { World } from '../game/world';
-import { drawBuildingGhost, serviceBuildingHeight, zoneBuildingHeight, type ArtEnv } from './buildings';
+import { drawRailTile, drawSkybridgeTile, type RailEnv } from './art/vertical';
+import { drawBuildingGhost, serviceBuildingHeight, zoneBuildingHeight, LOD_ZOOM, type ArtEnv } from './buildings';
 import { HALF_H, HALF_W, type Camera } from './camera';
 import { ROAD_HALF, roadOutlinePath, roadShapePath, type Rect } from './ground';
+import { highlight } from './highlight';
+import { anchorHeight } from './story';
 import { NEON, css, glowSprite, heat, hexToRgb, type RGB } from './palette';
 
 const N = MAP_SIZE;
@@ -119,6 +122,20 @@ export class OverlayLayer {
           }
           break;
         }
+        case 'turf': {
+          const owner = world.turf.owner[i];
+          if (owner === 1 || owner === 2) {
+            const c = owner === 1 ? TURF_LIME : TURF_LILAC;
+            const st = world.turf.str[i];
+            r = c[0];
+            g = c[1];
+            b = c[2];
+            a = 50 + st * 1.6;
+          } else if (t.terrain !== 1) {
+            a = 0;
+          }
+          break;
+        }
         case 'services': {
           let best = 0;
           let which: ServiceEffect = 'park';
@@ -164,9 +181,10 @@ export class OverlayLayer {
     // Darken the map so the data reads, then lay the data image over it.
     ctx.fillStyle = 'rgba(4,3,14,0.55)';
     ctx.fillRect(0, 0, N, N);
-    ctx.imageSmoothingEnabled = overlay !== 'power';
+    ctx.imageSmoothingEnabled = overlay !== 'power' && overlay !== 'turf';
     ctx.drawImage(this.canvas!, 0, 0, N, N);
     ctx.imageSmoothingEnabled = true;
+    if (overlay === 'turf') this.turfPatterns(ctx, world, time, bounds, zoom);
     // Thin tile grid on top keeps tiles countable on the smooth heatmaps.
     if (overlay !== 'power' && zoom > 0.45) {
       ctx.fillStyle = 'rgba(0,0,0,0.22)';
@@ -175,6 +193,53 @@ export class OverlayLayer {
       for (let x = bounds.x0; x <= bounds.x1 + 1; x++) ctx.fillRect(x, bounds.y0, th, bounds.y1 - bounds.y0 + 1);
     }
     if (overlay === 'power') this.conduits(ctx, world, time, bounds, zoom);
+    ctx.restore();
+  }
+
+  /**
+   * Turf patterns (§3.7) so the overlay works without colour: Undertow lime
+   * diagonal hatching, Kites lilac dots; contested tiles flicker red. Tile space.
+   */
+  private turfPatterns(ctx: CanvasRenderingContext2D, world: World, time: number, b: Rect, zoom: number) {
+    const own = world.turf.owner;
+    const con = world.turf.contested;
+    const px = 1 / (zoom * PERP);
+    const lw = Math.max(0.03, 1.3 * px);
+    const hatch = new Path2D();
+    const dots = new Path2D();
+    const contested = new Path2D();
+    let any = false;
+    const ds = Math.max(0.05, 2.2 * px);
+    for (let y = b.y0; y <= b.y1; y++)
+      for (let x = b.x0; x <= b.x1; x++) {
+        const i = y * N + x;
+        const o = own[i];
+        if (!o) continue;
+        any = true;
+        if (o === 1) {
+          // Lines along the tile u axis read as screen diagonals on the iso map.
+          for (let k = 0; k < 3; k++) {
+            const d = (k + 0.5) / 3;
+            hatch.moveTo(x, y + d);
+            hatch.lineTo(x + 1, y + d);
+          }
+        } else {
+          for (let a = 0; a < 3; a++) for (let c = 0; c < 3; c++) dots.rect(x + (a + 0.5) / 3 - ds / 2, y + (c + 0.5) / 3 - ds / 2, ds, ds);
+        }
+        if (con[i] > 0) contested.rect(x, y, 1, 1);
+      }
+    if (!any) return;
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.strokeStyle = css(TURF_LIME, 0.75);
+    ctx.lineWidth = lw;
+    ctx.stroke(hatch);
+    ctx.fillStyle = css(TURF_LILAC, 0.9);
+    ctx.fill(dots);
+    ctx.globalCompositeOperation = 'source-over';
+    const f = 0.5 + 0.5 * Math.sin(time * 9);
+    ctx.fillStyle = css(NEON.red, 0.12 + 0.32 * f);
+    ctx.fill(contested);
     ctx.restore();
   }
 
@@ -297,6 +362,14 @@ function radiusRing(ctx: CanvasRenderingContext2D, cx: number, cy: number, r: nu
 const OK: RGB = NEON.green;
 const BAD: RGB = NEON.red;
 const DEMOLISH: RGB = [255, 120, 50];
+const TURF_LIME: RGB = [182, 255, 46];
+const TURF_LILAC: RGB = [201, 162, 255];
+const previewEnv: RailEnv = { time: 0, night: 0, zoom: 1, lod: false, quality: 'high' };
+
+/** Height of a tile's roof, for skybridge previews (same rule as the drawn bridges). */
+function tileTop(world: World, x: number, y: number): number {
+  return world.inBounds(x, y) ? anchorHeight(world, x, y) : 40;
+}
 
 /** Ground-level part of the tool preview (before buildings). World transform expected. */
 export function drawPreviewGround(ctx: CanvasRenderingContext2D, game: Game, time: number, zoom: number) {
@@ -391,10 +464,15 @@ function roadGhost(ctx: CanvasRenderingContext2D, world: World, plan: ActionPlan
   }
 }
 
-/** Raised part of the preview (after buildings): the building ghost. World transform expected. */
+/** Raised part of the preview (after buildings): building ghost, skybridge span, ribbon. World transform expected. */
 export function drawPreviewTop(ctx: CanvasRenderingContext2D, game: Game, env: ArtEnv) {
   const plan = game.preview;
-  if (!plan || !plan.footprint || !isBuildingTool(plan.tool)) return;
+  if (!plan) return;
+  if (plan.tool === 'skybridge' || plan.tool === 'rail') {
+    drawStoryPreview(ctx, game, plan, env);
+    return;
+  }
+  if (!plan.footprint || !isBuildingTool(plan.tool)) return;
   const fp = plan.footprint;
   const wx = (fp.x - fp.y) * HALF_W;
   const wy = (fp.x + fp.y) * HALF_H;
@@ -408,6 +486,57 @@ export function drawPreviewTop(ctx: CanvasRenderingContext2D, game: Game, env: A
   ctx.beginPath();
   ctx.rect(fp.x, fp.y, fp.size, fp.size);
   glowStroke(ctx, ok ? OK : BAD, env.zoom, 0.5);
+  ctx.restore();
+}
+
+/** Skybridge span tube / Ribbon Rail ghost along the planned tiles (§8.9). */
+function drawStoryPreview(ctx: CanvasRenderingContext2D, game: Game, plan: ActionPlan, env: ArtEnv) {
+  const world = game.world;
+  const e = previewEnv;
+  e.time = env.time;
+  e.night = env.night;
+  e.zoom = env.zoom;
+  e.lod = env.zoom < LOD_ZOOM;
+  e.quality = env.quality;
+  ctx.save();
+  const a0 = ctx.globalAlpha;
+  ctx.globalAlpha = a0 * (0.75 + 0.2 * Math.sin(env.time * 5));
+  if (plan.tool === 'skybridge' && plan.span) {
+    const sp = plan.span;
+    const ok = plan.valid && plan.tiles.every((t) => t.ok);
+    const axisX = sp.ay === sp.by;
+    const z = Math.max(30, Math.min(tileTop(world, sp.ax, sp.ay), tileTop(world, sp.bx, sp.by)) - 10);
+    const dx = Math.sign(sp.bx - sp.ax);
+    const dy = Math.sign(sp.by - sp.ay);
+    const n = Math.abs(sp.bx - sp.ax) + Math.abs(sp.by - sp.ay);
+    const order: number[] = [];
+    for (let k = 1; k < n; k++) order.push(k);
+    if (dx + dy < 0) order.reverse();
+    for (const k of order) {
+      const x = sp.ax + dx * k;
+      const y = sp.ay + dy * k;
+      drawSkybridgeTile(ctx, (x - y) * HALF_W, (x + y) * HALF_H, axisX, z, true, false, k / n, e, ok ? 1 : 2);
+    }
+    // Anchor beacons.
+    const g = glowSprite(ok ? OK : BAD, 64);
+    ctx.globalCompositeOperation = 'lighter';
+    for (const [x, y] of [
+      [sp.ax, sp.ay],
+      [sp.bx, sp.by],
+    ]) {
+      const wx = (x - y) * HALF_W;
+      const wy = (x + y) * HALF_H + HALF_H;
+      ctx.drawImage(g, wx - 18, wy - z - 18, 36, 36);
+    }
+  } else if (plan.tool === 'rail' && plan.railMasks) {
+    const idx = plan.tiles.map((_, k) => k).sort((a, b) => plan.tiles[a].x + plan.tiles[a].y - (plan.tiles[b].x + plan.tiles[b].y));
+    for (const k of idx) {
+      const t = plan.tiles[k];
+      if (!world.inBounds(t.x, t.y)) continue;
+      const land = world.tiles[t.y * N + t.x].terrain === 0;
+      drawRailTile(ctx, (t.x - t.y) * HALF_W, (t.x + t.y) * HALF_H, plan.railMasks[k] ?? 0, plan.valid && t.ok, land, t.x + t.y, e, true);
+    }
+  }
   ctx.restore();
 }
 
@@ -518,7 +647,7 @@ function selectionShape(game: Game): SelectionShape | null {
     const b = world.buildings.get(t.buildingId);
     if (b) {
       const def = BUILDINGS[b.type];
-      return { x: b.x, y: b.y, size: b.size, height: serviceBuildingHeight(b.type), color: hexToRgb(def.color), radius: def.effect ? def.radius : 0 };
+      return { x: b.x, y: b.y, size: b.size, height: serviceBuildingHeight(b.type, b), color: hexToRgb(def.color), radius: def.effect ? def.radius : 0 };
     }
   }
   const h = t.zone !== ZoneType.None && t.level > 0 ? zoneBuildingHeight(t) : 0;
@@ -527,6 +656,14 @@ function selectionShape(game: Game): SelectionShape | null {
 
 /** Ground outline + coverage radius of the selection (before buildings). World transform. */
 export function drawSelectionGround(ctx: CanvasRenderingContext2D, game: Game, time: number, zoom: number) {
+  const hz = highlight.zone;
+  if (hz) {
+    // Crackdown confirm (§8.8): the zone the wasps will sweep.
+    ctx.save();
+    radiusRing(ctx, hz.x, hz.y, hz.r, hz.color, zoom, time);
+    radiusRing(ctx, hz.x, hz.y, hz.r * (0.25 + 0.75 * ((time * 0.6) % 1)), hz.color, zoom, time);
+    ctx.restore();
+  }
   const s = selectionShape(game);
   if (!s) return;
   const pulse = 0.7 + 0.3 * Math.sin(time * 4);
@@ -637,42 +774,116 @@ function getBolt(): HTMLCanvasElement {
   return c;
 }
 
+/** Days a block must sit dark before it earns a badge (fresh growth waits for the grid). */
+const UNPOWERED_DAYS = 6;
+
+interface DarkState {
+  world: World | null;
+  tick: number;
+  /** Tick each developed tile was first seen unpowered, −1 = powered / not developed. */
+  since: Int32Array;
+  buildings: Map<number, number>;
+}
+const dark: DarkState = { world: null, tick: -1, since: new Int32Array(N * N).fill(-1), buildings: new Map() };
+
+/** Track how long each developed tile / service building has been dark (once per sim tick). */
+function darkState(world: World): DarkState {
+  if (dark.world !== world) {
+    dark.world = world;
+    dark.tick = -1;
+    dark.since.fill(-1);
+    dark.buildings.clear();
+  }
+  if (dark.tick === world.tick) return dark;
+  dark.tick = world.tick;
+  const since = dark.since;
+  const tiles = world.tiles;
+  for (let i = 0; i < N * N; i++) {
+    const t = tiles[i];
+    const off = t.zone !== ZoneType.None && t.level > 0 && !t.abandoned && !t.powered && t.buildingId < 0;
+    if (!off) since[i] = -1;
+    else if (since[i] < 0) since[i] = world.tick;
+  }
+  for (const bd of world.buildings.values()) {
+    const def = BUILDINGS[bd.type];
+    const off = def.powerSupply <= 0 && def.powerUse > 0 && !bd.powered;
+    if (!off) dark.buildings.delete(bd.id);
+    else if (!dark.buildings.has(bd.id)) dark.buildings.set(bd.id, world.tick);
+  }
+  for (const id of dark.buildings.keys()) if (!world.buildings.has(id)) dark.buildings.delete(id);
+  return dark;
+}
+
 /**
- * Blinking "no power" badges above developed unpowered tiles and unpowered
- * service buildings. World transform expected.
+ * Gentle "no power" badges over blocks that have been dark for a few days.
+ * Close up: one per tile. Zoomed out (< 0.6): one per 4 × 4 cluster (6 × 6 below
+ * 0.35), so a browned-out district reads as a few markers, not a carpet.
+ * World transform expected.
  */
 export function drawUnpowered(ctx: CanvasRenderingContext2D, world: World, b: Rect, time: number, zoom: number, view: Rect) {
-  const blink = 0.55 + 0.45 * Math.sin(time * 5);
-  const sizeCss = 24 * Math.max(0.35, Math.min(1, zoom / 0.8));
+  const st = darkState(world);
+  const tick = world.tick;
+  const blink = 0.62 + 0.22 * Math.sin(time * 2.2);
+  const sizeCss = 19 * Math.max(0.55, Math.min(1, zoom / 0.8));
   const size = sizeCss / zoom;
-  const bob = Math.sin(time * 3) * 2;
+  const bob = Math.sin(time * 1.6) * 1.2;
   const bolt = getBolt();
   const halo = glowSprite(NEON.red, 64);
   const draw = (x: number, y: number) => {
     if (x < view.x0 - size || x > view.x1 + size || y < view.y0 - size || y > view.y1 + size) return;
     ctx.globalCompositeOperation = 'lighter';
-    ctx.globalAlpha = 0.45 * blink;
-    ctx.drawImage(halo, x - size, y - size, size * 2, size * 2);
+    ctx.globalAlpha = 0.28 * blink;
+    ctx.drawImage(halo, x - size * 0.8, y - size * 0.8, size * 1.6, size * 1.6);
     ctx.globalCompositeOperation = 'source-over';
-    ctx.globalAlpha = 0.35 + 0.65 * blink;
+    ctx.globalAlpha = blink;
     ctx.drawImage(bolt, x - size / 2, y - size / 2, size, size);
   };
+  const longDark = (i: number) => st.since[i] >= 0 && tick - st.since[i] >= UNPOWERED_DAYS;
   ctx.save();
-  for (let y = b.y0; y <= b.y1; y++)
-    for (let x = b.x0; x <= b.x1; x++) {
-      const t = world.tiles[y * N + x];
-      if (t.zone === ZoneType.None || t.level === 0 || t.abandoned || t.powered) continue;
-      const wx = (x - y) * HALF_W;
-      const wy = (x + y) * HALF_H + HALF_H;
-      draw(wx, wy - zoneBuildingHeight(t) - size * 0.6 + bob);
-    }
+  const cell = zoom < 0.35 ? 6 : zoom < 0.6 ? 4 : 1;
+  if (cell === 1) {
+    for (let y = b.y0; y <= b.y1; y++)
+      for (let x = b.x0; x <= b.x1; x++) {
+        const i = y * N + x;
+        if (!longDark(i)) continue;
+        const t = world.tiles[i];
+        const wx = (x - y) * HALF_W;
+        const wy = (x + y) * HALF_H + HALF_H;
+        draw(wx, wy - zoneBuildingHeight(t) - size * 0.6 + bob);
+      }
+  } else {
+    const cx0 = Math.floor(b.x0 / cell) * cell;
+    const cy0 = Math.floor(b.y0 / cell) * cell;
+    for (let cy = cy0; cy <= b.y1; cy += cell)
+      for (let cx = cx0; cx <= b.x1; cx += cell) {
+        // One badge per cluster, on its darkest-for-longest tile.
+        let best = -1;
+        let bestSince = Infinity;
+        let count = 0;
+        for (let y = cy; y < cy + cell && y < N; y++)
+          for (let x = cx; x < cx + cell && x < N; x++) {
+            const i = y * N + x;
+            if (!longDark(i)) continue;
+            count++;
+            if (st.since[i] < bestSince) {
+              bestSince = st.since[i];
+              best = i;
+            }
+          }
+        if (best < 0 || count < (cell >= 6 ? 2 : 1)) continue;
+        const x = best % N;
+        const y = (best / N) | 0;
+        const t = world.tiles[best];
+        draw((x - y) * HALF_W, (x + y) * HALF_H + HALF_H - zoneBuildingHeight(t) - size * 0.6 + bob);
+      }
+  }
   for (const bd of world.buildings.values()) {
-    const def = BUILDINGS[bd.type];
-    if (def.powerSupply > 0 || def.powerUse <= 0 || bd.powered) continue;
+    const s0 = st.buildings.get(bd.id);
+    if (s0 === undefined || tick - s0 < UNPOWERED_DAYS) continue;
     if (bd.x + bd.size - 1 < b.x0 || bd.x > b.x1 || bd.y + bd.size - 1 < b.y0 || bd.y > b.y1) continue;
     const cx = bd.x + bd.size / 2;
     const cy = bd.y + bd.size / 2;
-    draw((cx - cy) * HALF_W, (cx + cy) * HALF_H - serviceBuildingHeight(bd.type) - size * 0.6 + bob);
+    draw((cx - cy) * HALF_W, (cx + cy) * HALF_H - serviceBuildingHeight(bd.type, bd) - size * 0.6 + bob);
   }
   ctx.restore();
 }
