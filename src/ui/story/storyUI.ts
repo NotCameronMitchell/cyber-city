@@ -21,6 +21,7 @@
 import type { StoryView } from '../../game/story/types';
 import type { UIContext } from '../context';
 import { h, setClass } from '../dom';
+import { clock } from '../format';
 import { CharterNight } from './charterNight';
 import { ChapterTitle } from './chapterTitle';
 import { Comms } from './comms';
@@ -203,9 +204,10 @@ export class StoryUI {
       return;
     }
     if (!v.goals.length) return;
-    const done = v.goals.filter((g) => g.done).length;
-    const next = v.goals.find((g) => !g.done);
-    const tail = next ? ` · ${next.label}${next.now && next.need ? ` · now ${next.now}` : ''}` : '';
+    const done = v.goals.filter((g) => g.done || g.waived).length;
+    const next = v.goals.find((g) => !g.done && !g.waived);
+    const closes = v.chapter.closesInSec;
+    const tail = next ? ` · ${next.label}${next.now && next.need ? ` · now ${next.now}` : ''}` : closes !== undefined ? ` · closes in ${clock(closes)}` : '';
     this.ctx.game.toast(`Chapter ${v.chapter.numeral} · ${done}/${v.goals.length}${tail}`, 'info');
   }
 

@@ -2,7 +2,8 @@
 // eligibility, weights and the five draw steps; the no-answer default in sim
 // days AND unpaused seconds; boot timing; beats (chained, delayed,
 // conditional, the 360-day time-out, gestures); trigger fallbacks; goal
-// waivers; optional beats; the one-chapter-per-60-seconds rule; ⚑ cards.
+// waivers; optional beats; the one-chapter-per-600-seconds floor and its
+// settle countdown; ⚑ cards.
 
 import { beforeEach, describe, expect, it } from 'vitest';
 import { STORY_PACING } from '../../src/game/config';
@@ -404,6 +405,34 @@ describe('beats (§5.0)', () => {
     h.story.update(50, false);
     days(h, 1);
     expect(h.world.story.chapter).toBe(4);
+  });
+
+  it('the settle countdown ticks in real seconds between sim days, and waits for a queued optional beat', () => {
+    const g = inChapter(2, ['ch2.sallow', 'ch2.oduya', 'ch2.vote']);
+    const st = g.world.story;
+    st.chapterSec = 0;
+    days(g, 1);
+    expect(g.story.view().chapter.closesInSec).toBeUndefined(); // goals not met: nothing to count
+    st.goalsDone = ['c2.pop', 'c2.jobs', 'c2.power'];
+    days(g, 1);
+    const v0 = g.story.view();
+    expect(v0.chapter.closesInSec).toBe(P.chapterMinSec);
+    g.story.update(0.4, false); // same whole second: the cached view stays
+    expect(g.story.view()).toBe(v0);
+    g.story.update(0.7, false); // no sim day passes, the countdown still moves
+    expect(g.story.view().chapter.closesInSec).toBe(P.chapterMinSec - 1);
+    g.story.update(30, true); // paused seconds don't count
+    expect(g.story.view().chapter.closesInSec).toBe(P.chapterMinSec - 1);
+    g.story.update(65, false);
+    expect(g.story.view().chapter.closesInSec).toBe(P.chapterMinSec - 66);
+    // A queued optional beat is still owed: the chapter waits on it, not on the floor.
+    st.queue.push({ card: 'ch2.tiebreak', tick: g.world.tick + 90 });
+    days(g, 1);
+    expect(g.story.view().chapter.closesInSec).toBeUndefined();
+    st.queue = st.queue.filter((q) => q.card !== 'ch2.tiebreak');
+    days(g, 1);
+    expect(g.story.view().chapter.closesInSec).toBe(P.chapterMinSec - 66);
+    expect(st.chapter).toBe(2);
   });
 
   it('the boot counts as a completion: Ch1 closes no sooner than 600 s after it opens', () => {

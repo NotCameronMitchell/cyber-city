@@ -2,7 +2,8 @@
 // Story rail (docs/STORY.md §8.1): a 48 px row directly above the toolbar.
 //
 //   goal chip   flexible width, 36 px tall in a 44 px hit area:
-//               "III ▸ ◉◉○", or "Charter Night · 214d" in Chapter VI
+//               "III ▸ ◉◉○", "III ▸ ◉◉◉ closes in 9:35" while only the
+//               chapter floor holds it open, or "Charter Night · 214d" in Ch VI
 //   faction     44 px: the leading faction's sigil with a tiny tier ring
 //               (hidden until the factions unlock)
 //   COMMS       44 px: envelope, unread badge, countdown ring while a faction
@@ -15,6 +16,7 @@
 import type { StoryView } from '../../game/story/types';
 import type { UIContext } from '../context';
 import { h, replayClass, setAttr, setClass, setHidden, setHtml, setStyle, setText } from '../dom';
+import { clock } from '../format';
 import { icon } from '../icons';
 import { pendingFrac } from './comms';
 import { TIER_COLOR, factionSigil } from './sigils';
@@ -111,13 +113,18 @@ export class StoryRail {
       setText(this.goalDots, dots);
       setText(this.goalText, v.goals.length ? '' : ch.n >= 7 ? 'Epilogue' : ch.title || 'Story');
       const next = v.goals.find((g) => !g.done && !g.waived);
-      setText(this.goalNext, next ? (next.now && next.need && !next.now.includes('/') && next.now !== '✗' ? `${next.label} · ${next.now}` : next.label) : '');
+      // Every goal and beat done, only the chapter floor (§5.0) holds it open: say so,
+      // or the chapter looks stuck for up to chapterMinSec.
+      const closes = ch.closesInSec !== undefined ? `closes in ${clock(ch.closesInSec)}` : '';
+      setText(this.goalNext, next ? (next.now && next.need && !next.now.includes('/') && next.now !== '✗' ? `${next.label} · ${next.now}` : next.label) : closes);
       if (this.chapterN === ch.n && done > this.doneCount && this.doneCount >= 0) this.pulse();
       this.doneCount = done;
     }
     this.chapterN = ch.n;
     setClass(this.goal, 'is-done', v.goals.length > 0 && v.goals.every((g) => g.done || g.waived));
-    const label = v.goals.length ? `Chapter ${ch.numeral} goals: ${v.goals.filter((g) => g.done || g.waived).length} of ${v.goals.length} done` : 'Chapter';
+    setClass(this.goal, 'is-settling', ch.closesInSec !== undefined);
+    let label = v.goals.length ? `Chapter ${ch.numeral} goals: ${v.goals.filter((g) => g.done || g.waived).length} of ${v.goals.length} done` : 'Chapter';
+    if (ch.closesInSec !== undefined) label += `, chapter closes in ${clock(ch.closesInSec)}`;
     setAttr(this.goal, 'aria-label', label);
 
     // Faction button: the highest-standing visible faction.

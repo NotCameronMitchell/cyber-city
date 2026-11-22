@@ -2,12 +2,15 @@
 // Goal drawer (docs/STORY.md §8.5): the goal chip opens a 50 % sheet with the
 // chapter numeral, title and question, then one 64 px row per goal (label,
 // live "now · need" value, progress bar; hold goals "12/20 days", waived goals
-// "waived"). In Chapter VI it lists the Charter Claims for all five endings
-// instead; a tap opens the Charter Night preview.
+// "waived"). Once every goal is met and only the chapter floor holds the
+// chapter open (§5.0), a line on top counts it down: "closes in 9:35". In
+// Chapter VI it lists the Charter Claims for all five endings instead; a tap
+// opens the Charter Night preview.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import type { StoryView } from '../../game/story/types';
-import { esc } from '../dom';
+import { esc, h, setHtml } from '../dom';
+import { clock } from '../format';
 import { icon } from '../icons';
 import { pressGuard } from './gesture';
 import { StorySheet } from './sheet';
@@ -16,10 +19,14 @@ export class GoalDrawer {
   readonly sheet = new StorySheet('cc-goals', 'Goals', 'half');
   private html = '';
   private last: StoryView | null = null;
+  /** The settle countdown: its own node, so the per-second tick never rebuilds the rows. */
+  private readonly closes = h('div', { class: 'cc-goal-lead cc-goal-closes', hidden: true });
+  private readonly list = h('div', { class: 'cc-goal-body' });
   private readonly press: { readonly down: boolean };
   onPreview: (() => void) | null = null;
 
   constructor() {
+    this.sheet.body.append(this.closes, this.list);
     this.sheet.body.addEventListener('click', (e) => {
       if ((e.target as HTMLElement).closest('[data-act="preview"]')) this.onPreview?.();
     });
@@ -31,6 +38,9 @@ export class GoalDrawer {
     const ch = v.chapter;
     const claimsMode = (v.countdownDays !== null || ch.n === 6) && v.claims.length > 0;
     this.sheet.setTitle(ch.n >= 7 ? 'Epilogue' : `Chapter ${ch.numeral}${ch.title ? ` · ${ch.title}` : ''}`, ch.question ? (ch.question.startsWith('>') ? ch.question : `> query: ${ch.question}`) : '');
+    const settle = !claimsMode && ch.closesInSec !== undefined;
+    this.closes.hidden = !settle;
+    if (settle) setHtml(this.closes, `<b>All goals done.</b> The chapter closes in ${clock(ch.closesInSec ?? 0)} of unpaused play.`);
     let html = '';
     if (claimsMode) {
       const d = v.countdownDays;
@@ -61,7 +71,7 @@ export class GoalDrawer {
     }
     if (html !== this.html && !this.press.down) {
       this.html = html;
-      this.sheet.body.innerHTML = html;
+      this.list.innerHTML = html;
     }
   }
 }

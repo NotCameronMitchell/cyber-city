@@ -527,3 +527,21 @@ export function formatMetric(v: number, fmt: MetricFmt): string {
       return Math.round(v).toLocaleString('en-US');
   }
 }
+
+/**
+ * Format `v` for display next to `target`, so that rounding never makes an
+ * unmet comparison look met (e.g. 24.7% shown as "25% / 25%" with a ✗).
+ * When the comparison fails but the rounded value equals the rounded target,
+ * the value is rounded away from the target instead (down for ≥, up for ≤).
+ */
+export function formatMetricVs(v: number, target: number, fmt: MetricFmt, atMost = false): string {
+  const shown = formatMetric(v, fmt);
+  const met = atMost ? v <= target : v >= target;
+  if (met || !Number.isFinite(v) || shown !== formatMetric(target, fmt)) return shown;
+  const scale = fmt === 'pct' ? 100 : fmt === 'x' ? 100 : 1;
+  const r = atMost ? Math.ceil(v * scale - 1e-9) : Math.floor(v * scale + 1e-9);
+  // If that still equals the target (v just below an integer target), step one unit away.
+  const t = Math.round(target * scale);
+  const adj = r === t ? (atMost ? t + 1 : t - 1) : r;
+  return formatMetric(adj / scale, fmt);
+}

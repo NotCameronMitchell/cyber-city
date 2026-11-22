@@ -1408,7 +1408,7 @@ Short lines for events that have no card. Ticker lines are ≤ 90 characters aft
 
 A 48 px row directly above the existing bottom toolbar:
 
-- **Goal chip:** flexible width, drawn 36 px tall inside a 44 px hit area, e.g. `III ▸ ◉◉○`, or `Charter Night · 214d` in Ch6. It pulses on progress.
+- **Goal chip:** flexible width, drawn 36 px tall inside a 44 px hit area, e.g. `III ▸ ◉◉○`, `III ▸ ◉◉◉ closes in 9:35` while only the chapter floor holds the chapter open (§5.0; it counts down in unpaused real seconds), or `Charter Night · 214d` in Ch6. It pulses on progress.
 - **Faction button:** 44 px, the patron's sigil (or the highest-standing faction's, before a patron is set) with a tiny tier ring. Hidden until `unlock factions`.
 - **COMMS button:** 44 px, an envelope with an unread badge, and a countdown ring when a faction card is pending. Hidden until `unlock comms`.
 
@@ -1466,7 +1466,7 @@ The goal chip opens a bottom sheet at 50% height:
 - the chapter numeral, title and question;
 - three 64 px goal rows, each with a label, a live value ("now 34% · need ≤ 30%") and a progress bar;
 - hold goals show "12/20 days" and waived goals show "waived";
-- once every goal is met and only the chapter floor holds (§5.0), the chip and drawer say so: "closes in m:ss" (`view.chapter.closesInSec`).
+- once every goal is met and only the chapter floor holds (§5.0), the chip and drawer say so: "closes in m:ss" (`view.chapter.closesInSec`). The drawer puts it on a line above the rows ("All goals done. The chapter closes in 9:35 of unpaused play."); the view is rebuilt when the whole second changes, so it ticks even between sim days.
 
 In Ch6 the drawer shows the **Charter Claims** for all five endings instead: compact ✓/✗ rows, with a tap to see the Charter Night preview.
 
@@ -1534,7 +1534,7 @@ A full-height sheet. Its two 44 px tabs sit at the **bottom**, above the safe ar
   - A 2×2 stats grid: years, peak population, Silt Logs x/12, and 6 key-choice icons.
   - The gallery strip: 5 slots of 56 px, with silhouettes for unseen endings.
   - **Keep building** (56 px, primary, pinned to the bottom) and **New city** (a text button).
-- **On resume:** on load, the goal chip pulses and a toast shows "Chapter III · 2/3 · Crime 34% → ≤ 30%".
+- **On resume:** on load, the goal chip pulses and a toast shows "Chapter III · 2/3 · Crime 34% → ≤ 30%", or "Chapter I · 3/3 · closes in 7:30" when only the chapter floor holds it.
 
 ### 8.11 Reading budget (5–20 minute sessions)
 
@@ -2257,6 +2257,7 @@ After this, nobody changes a shared interface without a note to all packages.
   - A second run that never builds past 800 residents still reaches Ch6 (the 1,440-day fallbacks and beat time-outs).
   - A run that picks *Run Clean Glass* completes Ch3.
   - No faction card is drawn before `unlock comms`, and no ‡ default fires before 60 unpaused seconds.
+- **Chapter floor** (`pacing.test.ts`): at most one chapter per `chapterMinSec`; the floor survives a reload; `view.chapter.closesInSec` is set only while every goal, required beat and queued optional beat is done, and it counts down in real seconds with no sim day passing.
 - **Performance:** turf update plus vertical refresh at most 2 ms on a full map (inside the existing `perf.test.ts` budget).
 
 ---

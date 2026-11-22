@@ -125,6 +125,13 @@
   color: var(--cc-green);
 }
 
+/* Settling: every goal met, only the chapter floor holds it ("closes in 9:35"). */
+.cc-rail-goal.is-settling .cc-goal-next {
+  flex: none;
+  color: var(--cc-green);
+  font-variant-numeric: tabular-nums;
+}
+
 .cc-rail-goal.is-pulse .cc-goal-chip {
   animation: cc-goal-pulse 1.2s ease-out 2;
 }
@@ -1281,6 +1288,21 @@
   font-size: 13px;
   line-height: 1.4;
   color: var(--cc-ink-2);
+}
+
+.cc-goal-closes {
+  padding: 8px 12px;
+  border-left: 2px solid var(--cc-green);
+  background: rgba(77, 255, 154, 0.06);
+  font-variant-numeric: tabular-nums;
+}
+
+.cc-goal-closes b {
+  color: var(--cc-green);
+}
+
+.cc-goal-closes[hidden] {
+  display: none;
 }
 
 .cc-claim {

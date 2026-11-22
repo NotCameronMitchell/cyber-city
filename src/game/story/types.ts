@@ -776,9 +776,12 @@ export interface StoryView {
     question: string;
     phase: StoryState['phase'];
     /**
-     * Every goal and required beat is done but the chapter is still settling
-     * (STORY_PACING.chapterMinSec of unpaused play since the last chapter closed):
-     * unpaused seconds left before it closes. Absent otherwise. WP-A addition.
+     * Every goal, required beat and queued optional beat is done but the chapter
+     * is still settling (STORY_PACING.chapterMinSec of unpaused play since the
+     * last chapter closed): whole unpaused seconds left before it closes (≥ 1).
+     * Absent otherwise. The director rebuilds the view when this whole second
+     * changes, so it ticks between sim days. The goal chip and drawer show it
+     * as "closes in m:ss". WP-A addition.
      */
     closesInSec?: number;
   };

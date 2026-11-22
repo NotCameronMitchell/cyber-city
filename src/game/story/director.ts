@@ -45,6 +45,7 @@ import {
   findHold,
   firstMetric,
   formatMetric,
+  formatMetricVs,
   logNumber,
   metric,
   metricFmt,
@@ -297,6 +298,10 @@ export class StoryDirector implements EffectHost {
       this.activeSec += dt;
       if (st.chapter <= 6) st.chapterSec = (st.chapterSec ?? 0) + dt;
       if (st.pending && st.open?.card !== st.pending.card) this.pendingSec += dt;
+      // The settle countdown (view.chapter.closesInSec) runs in real seconds, not sim days:
+      // rebuild the view when its whole second changes (at most once a second).
+      const c = this.cached?.chapter.closesInSec;
+      if (c !== undefined && this.closesIn() !== c) this.cached = null;
     }
     if (this.firstUpdate) {
       this.firstUpdate = false;
@@ -1470,13 +1475,19 @@ export class StoryDirector implements EffectHost {
       question: ch?.question ?? '',
       phase: st.phase,
     };
-    // Settling: every goal and required beat done, only the chapter floor holds it open.
+    // Settling: every goal, required beat and queued optional beat done, only the
+    // chapter floor holds it open (the same gates as checkComplete, in that order).
     if (ch && st.phase === 'active' && st.chapter < 6 && !this.chapterSettled() && this.beatsDone(ch)) {
-      if (ch.goals.every((g) => st.goalsDone.includes(g.id) || st.goalsWaived.includes(g.id))) {
-        out.closesInSec = Math.max(1, Math.ceil(P.chapterMinSec - (st.chapterSec ?? 0)));
-      }
+      const goalsDone = ch.goals.every((g) => st.goalsDone.includes(g.id) || st.goalsWaived.includes(g.id));
+      const owed = st.queue.some((q) => this.idx.beatChapter.get(q.card) === ch.n);
+      if (goalsDone && !owed) out.closesInSec = this.closesIn();
     }
     return out;
+  }
+
+  /** Whole unpaused seconds until the chapter floor lets the chapter close (≥ 1). */
+  private closesIn(): number {
+    return Math.max(1, Math.ceil(P.chapterMinSec - (this.world.story.chapterSec ?? 0)));
   }
 
   /** Memo key for rows that only change with the log (and the patron, which titles may name). */
@@ -1521,7 +1532,7 @@ export class StoryDirector implements EffectHost {
         const op = simple && simple.m === m ? simple.op : '>=';
         const v = metric(w, m);
         const atMost = op === '<=' || op === '<';
-        out.now = formatMetric(v, fmt);
+        out.now = formatMetricVs(v, target, fmt, atMost);
         out.need = `${atMost ? '≤' : '≥'} ${formatMetric(target, fmt)}`;
         out.progress = atMost ? (v <= target ? 1 : target > 0 ? Math.max(0, Math.min(1, target / v)) : 0) : target > 0 ? Math.max(0, Math.min(1, v / target)) : 1;
       } else {
@@ -1541,7 +1552,7 @@ export class StoryDirector implements EffectHost {
         const row: { label: string; ok: boolean; gap?: string } = { label: fillTokens(w, c.label), ok };
         if (c.show) {
           const fmt = metricFmt(c.show.m);
-          row.gap = `${formatMetric(metric(w, c.show.m), fmt)} / ${formatMetric(c.show.target, fmt)}`;
+          row.gap = `${formatMetricVs(metric(w, c.show.m), c.show.target, fmt)} / ${formatMetric(c.show.target, fmt)}`;
         }
         return row;
       });
@@ -1589,7 +1600,7 @@ export class StoryDirector implements EffectHost {
       if (e) {
         const miss = e.id === 'quiet' ? undefined : e.claims.find((c) => !evalCond(w, c.cond));
         let gap = '';
-        if (miss?.show) gap = ` ${formatMetric(metric(w, miss.show.m), metricFmt(miss.show.m))} / ${formatMetric(miss.show.target, metricFmt(miss.show.m))}`;
+        if (miss?.show) gap = ` ${formatMetricVs(metric(w, miss.show.m), miss.show.target, metricFmt(miss.show.m))} / ${formatMetric(miss.show.target, metricFmt(miss.show.m))}`;
         row.claim = miss ? `${e.title}: ${fillTokens(w, miss.label)}${gap}` : `${e.title}: every claim holds`;
       }
     }

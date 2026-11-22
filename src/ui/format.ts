@@ -68,6 +68,12 @@ export function tickDay(tick: number): string {
   return `${String((tick % DAYS_PER_MONTH) + 1).padStart(2, '0')} ${tickDate(tick)}`;
 }
 
+/** Whole seconds as a clock: 575 → "9:35", 7 → "0:07". */
+export function clock(sec: number): string {
+  const s = Math.max(0, Math.ceil(sec));
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+}
+
 /** 0..1 → "42%". */
 export function pct(v: number): string {
   return `${Math.round(v * 100)}%`;
