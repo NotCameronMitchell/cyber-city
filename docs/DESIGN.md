@@ -15,3 +15,14 @@ These answers came from the project owner and take precedence over defaults.
 
 ## IP rule
 Everything original. Inspired by the cyberpunk genre, never copying Cyberpunk 2077 / SimCity names, characters, factions, slang, art or UI.
+
+## Follow-up decisions (story review)
+
+| Topic | Decision |
+|---|---|
+| Story spec | `docs/STORY.md` ("Who Holds the Charter") is the binding story/systems spec. |
+| AI name | **Keep MOTH** (Municipal Operations & Tide Handler). |
+| Core secret | **Keep** the Night of the Gates (11,000 drowned when MOTH obeyed the order to seal the gates). Restrained, never graphic. |
+| `types.ts` | The additive changes listed in STORY.md §4.1 / §12 Step 0 are approved (optional `SaveData.story`, v1 saves must still load). |
+| "Arcology", "Hab Blocks" | Keep: both are generic architecture/sci-fi terms. |
+| Random-events setting | Mutes random city incidents only; story and faction cards are core and stay on. |
