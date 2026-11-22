@@ -3,9 +3,14 @@
 // Every pass writes straight into world.fields (Float32Array, 0..1) using a
 // handful of scratch buffers owned by FieldSystem, so nothing big is allocated
 // per tick.
+//
+// Story hooks (docs/STORY.md §10.6): every pass reads world.mods and
+// world.layers (identities by default, so the sandbox is unchanged) and takes
+// per-building numbers from buildingStats() (stage-aware Stratablocks).
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { BUILDINGS, ZONES } from '../config';
+import { blankStats, buildingStats } from '../buildingStats';
+import { ZONES } from '../config';
 import { MAP_SIZE, type ServiceEffect } from '../types';
 import type { World } from '../world';
 import type { SimGrid } from './grid';
@@ -70,17 +75,24 @@ export class FieldSystem {
 
   private readonly tmpA = new Float32Array(AREA);
   private readonly tmpB = new Float32Array(AREA);
+  /** Scratch for buildingStats() (no per-tick allocation). */
+  private readonly st = blankStats();
 
   // ── Coverage ──────────────────────────────────────────────────────────────
-  /** value = max(existing, 1 - dist/radius) from every powered, online service building. */
+  /**
+   * value = max(existing, 1 - dist/radius) from every powered, online service building.
+   * Then security × mods.securityMul (clamped to 1) and transit = max(transit, layers.transitAdd).
+   */
   coverage(world: World, g: SimGrid): void {
     const f = world.fields;
+    const st = this.st;
     for (const e of EFFECTS) f[e].fill(0);
     for (const b of g.buildings) {
-      const def = BUILDINGS[b.type];
-      if (!def.effect || def.radius <= 0 || b.offline > 0 || !b.powered) continue;
-      const field = f[def.effect];
-      const r = def.radius;
+      if (b.offline > 0 || !b.powered) continue;
+      buildingStats(b, st);
+      if (!st.effect || st.radius <= 0) continue;
+      const field = f[st.effect];
+      const r = st.radius;
       const cx = b.x + b.size / 2;
       const cy = b.y + b.size / 2;
       const xa = Math.max(0, Math.floor(cx - r));
@@ -98,12 +110,30 @@ export class FieldSystem {
         }
       }
     }
+    const sm = world.mods.securityMul;
+    if (sm !== 1) {
+      const sec = f.security;
+      for (let i = 0; i < AREA; i++) {
+        const v = sec[i] * sm;
+        sec[i] = v > 1 ? 1 : v;
+      }
+    }
+    // Ribbon Rail (live track and station discs) raises transit: max-combined.
+    const ta = world.layers.transitAdd;
+    const tr = f.transit;
+    for (let i = 0; i < AREA; i++) if (ta[i] > tr[i]) tr[i] = ta[i];
   }
 
   // ── Traffic ───────────────────────────────────────────────────────────────
-  /** Trips from developed zones land on their nearest road, spread along the network, then saturate. */
+  /**
+   * Trips from developed zones land on their nearest road, spread along the network, then saturate.
+   * Each trip source × mods.trafficMul × layers.tripMul[source tile].
+   */
   traffic(world: World, g: SimGrid): void {
     const f = world.fields;
+    const tm = world.mods.trafficMul;
+    const tripMul = world.layers.tripMul;
+    const st = this.st;
     const out = f.traffic;
     const raw = this.tmpA;
     const tmp = this.tmpB;
@@ -118,15 +148,15 @@ export class FieldSystem {
       const r = nearestRoad[i];
       if (r < 0) continue;
       const z = zone[i];
-      raw[r] += ZONE_CAPACITY[z][lv] * T.TRIPS_PER_UNIT[z] * (1 - T.TRANSIT_TRIP_CUT * transit[i]);
+      raw[r] += ZONE_CAPACITY[z][lv] * T.TRIPS_PER_UNIT[z] * (1 - T.TRANSIT_TRIP_CUT * transit[i]) * tm * tripMul[i];
     }
     for (const b of g.buildings) {
-      const def = BUILDINGS[b.type];
-      const people = def.jobs + def.residents;
-      if (people <= 0) continue;
+      // trips already include BUILDING_TRIPS (and a Stratablock's internal-life cut).
+      const trips = buildingStats(b, st).trips;
+      if (trips <= 0) continue;
       const c = (b.y + (b.size >> 1)) * N + b.x + (b.size >> 1);
       const r = nearestRoad[c];
-      if (r >= 0) raw[r] += people * T.BUILDING_TRIPS * (1 - T.TRANSIT_TRIP_CUT * transit[c]);
+      if (r >= 0) raw[r] += trips * (1 - T.TRANSIT_TRIP_CUT * transit[c]) * tm * tripMul[c];
     }
 
     // Spread congestion along connected roads.
@@ -176,8 +206,10 @@ export class FieldSystem {
   }
 
   // ── Pollution ─────────────────────────────────────────────────────────────
+  /** Sources diffuse, parks filter, smog thickens; the final value × mods.pollutionMul before the clamp. */
   pollution(world: World, g: SimGrid): void {
     const f = world.fields;
+    const st = this.st;
     const out = f.pollution;
     const src = this.tmpA;
     const { zone, level, abandoned, road } = g;
@@ -188,8 +220,9 @@ export class FieldSystem {
       src[i] = ZONE_POLLUTION[zone[i]][level[i]];
     }
     for (const b of g.buildings) {
-      const p = BUILDINGS[b.type].pollution;
-      if (p <= 0 || b.offline > 0) continue;
+      if (b.offline > 0) continue;
+      const p = buildingStats(b, st).pollution;
+      if (p <= 0) continue;
       for (let dy = 0; dy < b.size; dy++)
         for (let dx = 0; dx < b.size; dx++) src[(b.y + dy) * N + b.x + dx] += p;
     }
@@ -200,6 +233,7 @@ export class FieldSystem {
     for (let p = 0; p < T.POLLUTION_BLUR_PASSES; p++) blur3(out, this.tmpB);
 
     const park = f.park;
+    const pm = world.mods.pollutionMul;
     const smog = this.smog;
     const smogMul = 1 + 0.8 * smog;
     const smogAdd = 0.05 * smog;
@@ -207,7 +241,7 @@ export class FieldSystem {
       let v = out[i] * T.POLLUTION_GAIN + src[i] * T.POLLUTION_SOURCE_KEEP;
       v *= 1 - T.PARK_FILTER * park[i];
       if (smog > 0.01 && v > 0.01) v = v * smogMul + smogAdd;
-      out[i] = clamp01(v);
+      out[i] = clamp01(v * pm);
     }
   }
 
@@ -233,8 +267,11 @@ export class FieldSystem {
   }
 
   // ── Land value ────────────────────────────────────────────────────────────
+  /** Terrain, density, services and nuisances, + mods.landValueAdd + layers.lvAdd[i] before the clamp. */
   landValue(world: World, g: SimGrid): void {
     const f = world.fields;
+    const lvAdd = world.mods.landValueAdd;
+    const lvLayer = world.layers.lvAdd;
     const out = f.landValue;
     const { park, net, prestige, health, security, pollution, crime } = f;
     const water = g.water;
@@ -258,14 +295,20 @@ export class FieldSystem {
         pollution[i] * T.LV_POLLUTION -
         crime[i] * T.LV_CRIME -
         local[i] * T.LV_TRAFFIC;
-      out[i] = clamp01(v);
+      out[i] = clamp01(v + lvAdd + lvLayer[i]);
     }
   }
 
   // ── Crime ─────────────────────────────────────────────────────────────────
-  /** `jobless` = size-weighted unemployment (Census.joblessPressure). */
+  /**
+   * `jobless` = size-weighted unemployment (Census.joblessPressure).
+   * v = v·town·crimeMul + crimeAdd + layers.crimeAdd[i], then the empty-land factor, then + event boost.
+   */
   crime(world: World, g: SimGrid, jobless: number, population: number): void {
     const f = world.fields;
+    const crimeMul = world.mods.crimeMul;
+    const crimeAdd = world.mods.crimeAdd;
+    const crimeLayer = world.layers.crimeAdd;
     const out = f.crime;
     const { landValue, security } = f;
     const { zone, road, bld, water } = g;
@@ -286,7 +329,7 @@ export class FieldSystem {
         (1 - landValue[i]) * T.CRIME_POVERTY +
         blight[i] * T.CRIME_ABANDONMENT -
         security[i] * T.SECURITY_SUPPRESS;
-      v *= town;
+      v = v * town * crimeMul + crimeAdd + crimeLayer[i];
       if (!(zone[i] || road[i] || bld[i] >= 0)) v *= T.CRIME_EMPTY_LAND;
       out[i] = clamp01(v + boost[i]);
     }

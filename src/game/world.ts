@@ -1,6 +1,7 @@
 import { BUILDINGS, DEFAULT_TAX, ROAD_ACCESS_RANGE, SAVE_VERSION, SAVE_VERSIONS_SUPPORTED, START_FUNDS } from './config';
 import { Emitter, type GameEventMap } from './events';
 import { Rng, fbm, hash2 } from './rng';
+import { decodeStory, encodeStory, isCrownId, type DecodeOptions } from './story/encode';
 import { cloneMods, makeLayerParts, makeLayers } from './story/mods';
 import { emptyLedger, emptyTurf, emptyVertical, newStoryState } from './story/state';
 import type {
@@ -490,10 +491,18 @@ export class World {
       history: this.budget.history.slice(-12),
       milestones: [...this.milestones],
       savedAt: Date.now(),
+      story: encodeStory(this),
     };
   }
 
-  static deserialize(data: SaveData, events?: Emitter<GameEventMap>): World {
+  /**
+   * Load a save (§10.8). Accepts every version in SAVE_VERSIONS_SUPPORTED and
+   * throws for others. A v1 save, or a v2 save whose `story` is missing or
+   * fails to decode, gets a fresh story with flag `migrated` and empty turf,
+   * rail and links. Derived state (mods, layers, ledger, vertical, turf.stats)
+   * is rebuilt by the director on construction.
+   */
+  static deserialize(data: SaveData, events?: Emitter<GameEventMap>, opts?: DecodeOptions): World {
     if (
       !data ||
       !SAVE_VERSIONS_SUPPORTED.includes(data.version) ||
@@ -522,9 +531,16 @@ export class World {
     for (const b of data.buildings ?? []) {
       if (!BUILDINGS[b.type]) continue;
       const nb: Building = { ...b, size: BUILDINGS[b.type].size, offline: b.offline | 0, powered: !!b.powered };
-      // Stage fields are optional; keep them only when well-formed.
-      if (nb.stage !== undefined && !(nb.stage === 1 || nb.stage === 2 || nb.stage === 3)) delete nb.stage;
-      if (nb.buildDays !== undefined) nb.buildDays = Math.max(0, Number(nb.buildDays) | 0);
+      // Stage fields are optional and Stratablock-only; keep them only when well-formed.
+      if (nb.type !== 'stack') {
+        delete nb.stage;
+        delete nb.buildDays;
+        delete nb.crown;
+      } else {
+        if (nb.stage !== undefined && !(nb.stage === 1 || nb.stage === 2 || nb.stage === 3)) delete nb.stage;
+        if (nb.buildDays !== undefined) nb.buildDays = Math.max(0, Number(nb.buildDays) | 0);
+        if (nb.crown !== undefined && !isCrownId(nb.crown)) delete nb.crown;
+      }
       w.buildings.set(nb.id, nb);
       for (let dy = 0; dy < nb.size; dy++)
         for (let dx = 0; dx < nb.size; dx++) {
@@ -536,9 +552,9 @@ export class World {
     w.news = Array.isArray(data.news) ? data.news.slice(-20) : [];
     w.budget.history = Array.isArray(data.history) ? data.history.slice(-12) : [];
     w.milestones = Array.isArray(data.milestones) ? data.milestones.slice() : [];
-    // Story (§10.8): decoding data.story (v2) is WP-B's encode.ts. Until then, and for v1
-    // saves, the world keeps its fresh story; a save without one is marked migrated.
-    if (!data.story) w.story.flags.migrated = true;
+    // Story (§10.8): v2 decodes data.story; v1, or a missing / undecodable block, keeps the
+    // constructor's fresh story (empty turf, rail, links) and is marked migrated.
+    if (!(data.version >= 2 && decodeStory(data.story, w, opts))) w.story.flags.migrated = true;
     w.version++;
     return w;
   }

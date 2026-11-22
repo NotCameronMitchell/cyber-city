@@ -3,6 +3,9 @@
 // zoned tiles is evaluated so the city fills in organically instead of in
 // lock-step waves. All level changes go through world.setLevel() so the
 // renderer hears about them.
+//
+// Story hooks (§10.6): grow and upgrade chances × mods.growthMul; every
+// abandon or decline chance × mods.abandonMul × layers.abandonMul[i].
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { ZONES } from '../config';
@@ -55,6 +58,9 @@ export class GrowthSystem {
     const f = world.fields;
     const { zone, level, abandoned } = g;
     const days = this.unpoweredDays;
+    const growMul = world.mods.growthMul;
+    const abandonMul = world.mods.abandonMul;
+    const abandonLayer = world.layers.abandonMul;
     this.reached.fill(0);
     this.changes = 0;
 
@@ -94,7 +100,7 @@ export class GrowthSystem {
           road &&
           d > 0.02 &&
           power.canFeed(i) &&
-          rng.chance(T.GROW_BASE + T.GROW_SLOPE * d) &&
+          rng.chance((T.GROW_BASE + T.GROW_SLOPE * d) * growMul) &&
           power.tryReserve(i, zoneDraw(z, 1, 0))
         ) {
           this.set(world, g, i, 1, false);
@@ -103,24 +109,25 @@ export class GrowthSystem {
       }
 
       // Developed: decline first, then try to upgrade.
+      const am = abandonMul * abandonLayer[i];
       if (!road) {
-        if (rng.chance(T.ABANDON_NO_ROAD)) this.set(world, g, i, l, true);
+        if (rng.chance(T.ABANDON_NO_ROAD * am)) this.set(world, g, i, l, true);
         continue;
       }
       if (days[i] > T.UNPOWERED_GRACE_DAYS) {
-        if (rng.chance(T.ABANDON_UNPOWERED)) this.set(world, g, i, l, true);
+        if (rng.chance(T.ABANDON_UNPOWERED * am)) this.set(world, g, i, l, true);
         continue;
       }
-      if (crime > T.ABANDON_CRIME && rng.chance((crime - T.ABANDON_CRIME) * 1.5)) {
+      if (crime > T.ABANDON_CRIME && rng.chance((crime - T.ABANDON_CRIME) * 1.5 * am)) {
         this.set(world, g, i, l, true);
         continue;
       }
-      if (isRes && pol > T.ABANDON_RES_POLLUTION && rng.chance((pol - T.ABANDON_RES_POLLUTION) * 1.5)) {
+      if (isRes && pol > T.ABANDON_RES_POLLUTION && rng.chance((pol - T.ABANDON_RES_POLLUTION) * 1.5 * am)) {
         this.set(world, g, i, l, true);
         continue;
       }
       if (d < T.DECLINE_DEMAND && t.age > T.DECLINE_MIN_AGE) {
-        if (rng.chance(0.04 + (T.DECLINE_DEMAND - d) * 0.4)) {
+        if (rng.chance((0.04 + (T.DECLINE_DEMAND - d) * 0.4) * am)) {
           if (l > 1) this.set(world, g, i, l - 1, false);
           else this.set(world, g, i, 1, true);
         }
@@ -137,7 +144,7 @@ export class GrowthSystem {
         power.canFeed(i)
       ) {
         const p = T.UPGRADE_BASE[l] + T.UPGRADE_SLOPE[l] * d + (isRes ? f.health[i] * T.HEALTH_GROWTH_BONUS : 0);
-        if (rng.chance(p) && power.tryReserve(i, zoneDraw(z, l + 1, 0) - zoneDraw(z, l, 0))) this.set(world, g, i, l + 1, false);
+        if (rng.chance(p * growMul) && power.tryReserve(i, zoneDraw(z, l + 1, 0) - zoneDraw(z, l, 0))) this.set(world, g, i, l + 1, false);
       }
     }
   }

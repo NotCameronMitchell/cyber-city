@@ -3,10 +3,17 @@
 // alerts and black-market booms. Roughly one every 2–4 months after a grace
 // period. Temporary effects (crime hotspots, smog, commercial boost) decay
 // every tick; plant outages count down on building.offline.
+//
+// Story hooks (§3.2, §10.6, §11): the interval between incidents ÷
+// mods.eventRateMul; once a gang has seeded, a crew surge is that gang's
+// (picked from plain world.turf data, no story imports) and is reported as a
+// `gangSurge` signal; corp grants report a `corpGrant` signal. Applying the
+// surge's turf strength (TURF.surge) is the signal consumer's job.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { BUILDINGS, CURRENCY } from '../config';
+import { BUILDINGS, CURRENCY, GANG_IDS, GANG_NEWS_NAME, TURF, TURF_GANG } from '../config';
 import { CORPS, CREWS, EVENT_COPY, districtName, pickLine } from '../news';
+import type { GangId } from '../story/types';
 import type { Building } from '../types';
 import type { World } from '../world';
 import type { Census } from './census';
@@ -46,7 +53,9 @@ export class IncidentSystem {
     const rng = world.rng;
     if (this.nextTick < 0) this.nextTick = Math.max(T.EVENT_GRACE_TICKS, world.tick) + rng.int(0, 45);
     if (world.tick < this.nextTick) return;
-    this.nextTick = world.tick + rng.int(T.EVENT_INTERVAL[0], T.EVENT_INTERVAL[1]);
+    const gap = rng.int(T.EVENT_INTERVAL[0], T.EVENT_INTERVAL[1]);
+    const rate = world.mods.eventRateMul;
+    this.nextTick = world.tick + (rate === 1 ? gap : Math.max(1, Math.round(gap / rate)));
     if (!enabled || census.population < T.EVENT_MIN_POP) return;
 
     const plants = g.buildings.filter((b) => BUILDINGS[b.type].powerSupply > 0 && b.offline === 0);
@@ -136,10 +145,10 @@ export class IncidentSystem {
     const y = (best / N) | 0;
     const strength = (0.32 + rng.next() * 0.16) * (1 - 0.6 * sec[best]);
     fields.addCrimeHotspot(x, y, 6, strength);
-    world.addNews(
-      pickLine(rng, EVENT_COPY.gangSurge, { crew: rng.pick(CREWS), district: districtName(x, y, world.seed) }),
-      'bad',
-    );
+    const gang = surgeGang(world, x, y);
+    const crew = gang ? GANG_NEWS_NAME[gang] : rng.pick(CREWS);
+    world.addNews(pickLine(rng, EVENT_COPY.gangSurge, { crew, district: districtName(x, y, world.seed) }), 'bad');
+    if (gang) world.pushSignal({ t: 'gangSurge', x, y, gang });
     world.events.emit('sfx', 'alert');
   }
 
@@ -147,12 +156,46 @@ export class IncidentSystem {
     const rng = world.rng;
     const amount = Math.round(Math.min(12000, Math.max(1500, 1500 + census.population * 0.4)) / 100) * 100;
     world.funds += amount;
+    world.pushSignal({ t: 'corpGrant', amount });
     world.addNews(
       pickLine(rng, EVENT_COPY.corpGrant, { corp: rng.pick(CORPS), city: world.cityName, amount: fmtCr(amount) }),
       'good',
     );
     world.events.emit('sfx', 'money');
   }
+}
+
+/**
+ * The gang behind a surge at (x, y) (§3.2): the owner of the nearest owned turf
+ * tile within TURF.surge.searchRadius (Chebyshev rings), else a random seeded
+ * gang; null while no gang has seeded (the surge stays a flavor crew's).
+ */
+export function surgeGang(world: World, x: number, y: number): GangId | null {
+  const turf = world.turf;
+  let seeded = 0;
+  for (const gid of GANG_IDS) if (turf.seeded[gid]) seeded++;
+  if (seeded === 0) return null;
+  const owner = turf.owner;
+  const R = TURF.surge.searchRadius;
+  for (let r = 0; r <= R; r++) {
+    const y0 = y - r;
+    const y1 = y + r;
+    for (let yy = Math.max(0, y0); yy <= Math.min(N - 1, y1); yy++) {
+      const edgeRow = yy === y0 || yy === y1;
+      const step = edgeRow ? 1 : 2 * r;
+      for (let xx = x - r; xx <= x + r; xx += step || 1) {
+        if (xx < 0 || xx >= N) continue;
+        const gang = TURF_GANG[owner[yy * N + xx]];
+        if (gang) return gang;
+      }
+    }
+  }
+  let pick = Math.floor(world.rng.next() * seeded);
+  for (const gid of GANG_IDS) {
+    if (!turf.seeded[gid]) continue;
+    if (pick-- === 0) return gid;
+  }
+  return null;
 }
 
 /** A random developed tile index (optionally of one zone type), or -1. */

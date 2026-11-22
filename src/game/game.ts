@@ -1,21 +1,39 @@
-import { applyAction, crackdown, planAction, raiseStage, type Point } from './actions';
+import {
+  applyAction,
+  buildingCost,
+  crackdown,
+  crackdownStatus,
+  crownOptions,
+  planAction,
+  raiseStage,
+  stageStatus,
+  type Point,
+} from './actions';
+import { buildingStats } from './buildingStats';
 import {
   BUILDINGS,
   CURRENCY,
   DAY_CYCLE_SECONDS,
+  FACTION_LABELS,
   MAX_TAX,
   MIN_TAX,
+  RIBBON,
   SAVE_KEY,
   SETTINGS_KEY,
+  SKYBRIDGE,
   SPEED_TICKS_PER_SEC,
+  STACK_STAGES,
   ZONES,
   isBuildingTool,
+  isZoneTool,
   zoneDefFor,
 } from './config';
 import { Emitter, type GameEventMap } from './events';
 import { Simulation } from './sim';
 import { StoryDirector } from './story/director';
+import * as turf from './story/turf';
 import type { ActionResult, CrownId, EndingId, FactionId, GangId, InspectAction } from './story/types';
+import * as vertical from './story/vertical';
 import { Terrain, ZoneType, type ActionPlan, type OverlayId, type SaveData, type Selection, type Settings, type ToolId } from './types';
 import { World } from './world';
 
@@ -31,6 +49,9 @@ export const DEFAULT_SETTINGS: Settings = {
 
 /** City names are capped at this many characters (§1.6; lint assumes 24). */
 export const CITY_NAME_MAX = 24;
+
+/** Backup slot: "New City" moves the city it replaces here, so the menu can offer "Restore previous city". */
+export const PREV_SAVE_KEY = `${SAVE_KEY}.prev`;
 
 /** Safe localStorage wrappers: storage may be missing or throw (private mode, sandboxed frames). */
 export function storageGet(key: string): string | null {
@@ -64,6 +85,17 @@ export interface TileInfo {
 }
 
 const pct = (v: number) => `${Math.round(v * 100)}%`;
+const num = (n: number) => Math.round(n).toLocaleString('en-US');
+
+/** Tools whose result changes story sources (vertical caches, turf eligibility, build counts). */
+const storyTool = (tool: ToolId) => tool === 'bulldoze' || tool === 'skybridge' || tool === 'rail' || isBuildingTool(tool);
+
+/** A city with any progress (worth a backup before it is replaced). */
+function worthKeeping(world: World): boolean {
+  if (world.tick > 0 || world.buildings.size > 0) return true;
+  for (const t of world.tiles) if (t.road || t.zone !== ZoneType.None) return true;
+  return false;
+}
 
 /**
  * Top-level controller: owns the world + simulation, the current tool/speed/
@@ -156,6 +188,15 @@ export class Game {
     this.storyResumeSpeed = null;
     this.story = new StoryDirector(this);
     sim.recomputeAll();
+    // Tile power is only known after the first recompute (it is not saved): re-check
+    // zone-anchored skybridges and stations now instead of at the next month.
+    const m = this.world.vertical.metrics;
+    const before = m.skybridges * 4096 + m.railMaxStations;
+    vertical.refresh(this.world, { quiet: true });
+    if (m.skybridges * 4096 + m.railMaxStations !== before) {
+      this.story.markDirty();
+      sim.recomputeAll();
+    }
   }
 
   updateSettings(patch: Partial<Settings>) {
@@ -197,11 +238,24 @@ export class Game {
       this.events.emit('sfx', 'error');
       return plan;
     }
+    const tool = this.tool;
     const kind =
-      this.tool === 'bulldoze' ? 'bulldoze' : this.tool === 'road' ? 'road' : isBuildingTool(this.tool) ? 'build' : 'zone';
+      tool === 'bulldoze'
+        ? 'bulldoze'
+        : tool === 'road'
+          ? 'road'
+          : isBuildingTool(tool) || tool === 'skybridge' || tool === 'rail'
+            ? 'build'
+            : 'zone';
     this.events.emit('sfx', kind);
-    if (isBuildingTool(this.tool)) this.toast(`${BUILDINGS[this.tool].name} built`, 'good');
+    if (isBuildingTool(tool)) this.toast(`${BUILDINGS[tool].name} built`, 'good');
+    else if (tool === 'skybridge') this.toast('Skybridge built', 'good');
     this.sim.recomputeAll();
+    if (storyTool(tool)) {
+      // Power was just recomputed: re-evaluate links and stations now, not next month.
+      vertical.refresh(this.world);
+      this.story.markDirty();
+    }
     this.events.emit('stats');
     return plan;
   }
@@ -247,9 +301,10 @@ export class Game {
   }
 
   // ── Story (docs/STORY.md §11): thin forwards to the director and actions ──
-  /** Answer the open story card. */
+  /** Answer the open story card. Choices can move pacts and tiers, so turf layers are re-derived. */
   choose(i: number) {
     this.story.choose(i);
+    turf.refreshStats(this.world);
   }
   openPending() {
     this.story.openPending();
@@ -264,11 +319,13 @@ export class Game {
   crackdown(precinctId: number): ActionResult {
     return this.afterStoryAction(crackdown(this.world, precinctId), 'alert');
   }
+  /** Pact hook: a new pact changes the gang's turf crime, tax skim and spread (§3.6), so turf is re-derived. */
   signPact(g: GangId): ActionResult {
-    return this.afterStoryAction(this.story.signPact(g), 'money');
+    return this.afterStoryAction(this.story.signPact(g), 'money', true);
   }
+  /** Gang deals are pacts, so turf is re-derived after any deal. */
   takeDeal(f: FactionId): ActionResult {
-    return this.afterStoryAction(this.story.takeDeal(f), 'money');
+    return this.afterStoryAction(this.story.takeDeal(f), 'money', true);
   }
   sendSalt(f: FactionId): ActionResult {
     return this.afterStoryAction(this.story.sendSalt(f), 'money');
@@ -284,21 +341,53 @@ export class Game {
   }
 
   /**
-   * Story buttons for the inspect panel at (x, y): crackdown on a precinct,
-   * raise / crown on a Stratablock. TODO(WP-C): Step 0 returns none.
+   * Story buttons for the inspect panel at (x, y) (§8.8): Crackdown on a precinct
+   * (radius for the map preview), Raise / Crown on a Stratablock (crown picker
+   * rows on 'crown'). Disabled rows carry their reason. Empty elsewhere.
    */
-  inspectActions(_x: number, _y: number): InspectAction[] {
+  inspectActions(x: number, y: number): InspectAction[] {
+    const w = this.world;
+    const b = w.buildingAt(x, y);
+    if (!b) return [];
+    if (b.type === 'precinct') {
+      const st = crackdownStatus(w, b.id);
+      const label = st.endsTruce ? 'Crackdown · ends the Truce' : `Crackdown · ${num(st.cost)} ${CURRENCY}`;
+      const a: InspectAction = { id: 'crackdown', label, cost: st.cost, enabled: !st.reason, buildingId: b.id, radius: st.r };
+      if (st.reason) a.reason = st.reason;
+      return [a];
+    }
+    if (b.type === 'stack') {
+      const st = stageStatus(w, b);
+      if (st.next === null) {
+        if (st.building <= 0) return [];
+        const name = vertical.stageName(3, b.crown);
+        return [{ id: 'raise', label: `${name} · building ${st.building}d`, cost: 0, enabled: false, reason: st.reason ?? undefined, buildingId: b.id, days: st.building }];
+      }
+      const name = STACK_STAGES[st.next - 1].name;
+      const a: InspectAction = {
+        id: st.next === 3 ? 'crown' : 'raise',
+        label: `Raise to ${name} · ${num(st.cost)} ${CURRENCY} · ${st.days} d`,
+        cost: st.cost,
+        enabled: !st.reason,
+        buildingId: b.id,
+        days: st.days,
+      };
+      if (st.reason) a.reason = st.reason;
+      if (st.next === 3) a.crowns = crownOptions(w);
+      return [a];
+    }
     return [];
   }
 
   /** Common follow-up for story actions: feedback, and a refresh when something changed. */
-  private afterStoryAction(r: ActionResult, sfx: GameEventMap['sfx']): ActionResult {
+  private afterStoryAction(r: ActionResult, sfx: GameEventMap['sfx'], refreshTurf = false): ActionResult {
     if (!r.ok) {
       if (r.reason) this.toast(r.reason, 'error');
       this.events.emit('sfx', 'error');
       return r;
     }
     this.events.emit('sfx', sfx);
+    if (refreshTurf) turf.refreshStats(this.world);
     this.story.markDirty();
     this.sim.recomputeAll();
     this.events.emit('stats');
@@ -326,7 +415,9 @@ export class Game {
   }
 
   // ── Lifecycle ─────────────────────────────────────────────────────────────
+  /** Start a fresh city. The city it replaces is kept in the backup slot (see loadPrevious). */
   newCity(name?: string, seed = randomSeed()) {
+    this.backupCurrent();
     const clean = name?.trim().slice(0, CITY_NAME_MAX);
     this.world = World.generate(seed, clean || randomCityName(seed), this.events);
     this.attachSystems();
@@ -369,6 +460,50 @@ export class Game {
     return storageGet(SAVE_KEY) !== null;
   }
 
+  /** True when "New City" left a previous city in the backup slot. */
+  hasPreviousSave(): boolean {
+    return storageGet(PREV_SAVE_KEY) !== null;
+  }
+
+  /** Name, peak population and save time of the backup city (for the menu row), or null. */
+  previousSaveInfo(): { cityName: string; maxPopulation: number; savedAt: number } | null {
+    const data = this.readSave(PREV_SAVE_KEY);
+    if (!data) return null;
+    return { cityName: String(data.cityName ?? ''), maxPopulation: data.maxPopulation | 0, savedAt: Number(data.savedAt) || 0 };
+  }
+
+  /**
+   * Restore the city "New City" replaced. The current city (if it has any
+   * progress) takes its place in the backup slot, so the swap can be undone.
+   * Returns false when there is no readable backup.
+   */
+  loadPrevious(): boolean {
+    const data = this.readSave(PREV_SAVE_KEY);
+    if (!data) return false;
+    let world: World;
+    try {
+      world = World.deserialize(data, this.events);
+    } catch {
+      return false;
+    }
+    const current = worthKeeping(this.world) ? JSON.stringify(this.world.serialize()) : null;
+    this.world = world;
+    this.attachSystems();
+    this.selected = null;
+    this.preview = null;
+    if (current === null || !storageSet(PREV_SAVE_KEY, current)) storageRemove(PREV_SAVE_KEY);
+    this.events.emit('world');
+    this.events.emit('stats');
+    this.save();
+    return true;
+  }
+
+  /** Copy the current city into the backup slot (skipped for an untouched city). */
+  private backupCurrent(): void {
+    if (!worthKeeping(this.world)) return;
+    storageSet(PREV_SAVE_KEY, JSON.stringify(this.world.serialize()));
+  }
+
   /** Serialize current state (also used by the artifact hot-reload snapshot). */
   snapshot(): SaveData {
     return this.world.serialize();
@@ -387,8 +522,8 @@ export class Game {
     return true;
   }
 
-  private readSave(): SaveData | null {
-    const raw = storageGet(SAVE_KEY);
+  private readSave(key = SAVE_KEY): SaveData | null {
+    const raw = storageGet(key);
     if (!raw) return null;
     try {
       return JSON.parse(raw) as SaveData;
@@ -424,29 +559,31 @@ export class Game {
       ['Crime', pct(f.crime[i])],
       ['Pollution', pct(f.pollution[i])],
     ];
+    let info: TileInfo;
     if (t.buildingId >= 0) {
       const b = w.buildings.get(t.buildingId)!;
       const def = BUILDINGS[b.type];
+      const s = buildingStats(b);
       const rows: [string, string][] = [];
-      if (def.powerSupply) rows.push(['Output', b.offline > 0 ? 'OFFLINE' : `${def.powerSupply} MW`]);
+      if (def.powerSupply) rows.push(['Output', b.offline > 0 ? 'OFFLINE' : `${s.powerSupply} MW`]);
       else rows.push(['Power', b.powered ? 'Online' : 'NO POWER']);
-      if (def.effect) rows.push(['Radius', `${def.radius} tiles`]);
-      if (def.jobs) rows.push(['Jobs', `${def.jobs}`]);
-      if (def.residents) rows.push(['Residents', `${def.residents}`]);
-      rows.push(['Upkeep', `${def.upkeep} ${CURRENCY}/mo`]);
+      if (b.type === 'stack') rows.push(['Stage', this.stageLabel(b)]);
+      if (s.effect) rows.push(['Radius', `${s.radius} tiles`]);
+      const jobs = s.jobsCom + s.jobsInd;
+      if (jobs || def.jobs) rows.push(['Jobs', `${jobs}`]);
+      if (s.residents || def.residents) rows.push(['Residents', `${s.residents}`]);
+      rows.push(['Upkeep', `${s.upkeep} ${CURRENCY}/mo`]);
       if (b.offline > 0) rows.push(['Status', `Offline ${b.offline}d`]);
-      return { title: def.name, subtitle: def.desc, color: def.color, rows };
-    }
-    if (t.road) {
-      return {
+      info = { title: def.name, subtitle: def.desc, color: def.color, rows };
+    } else if (t.road) {
+      info = {
         title: t.terrain === Terrain.Water ? 'Bridge' : 'Road',
         subtitle: t.terrain === Terrain.Water ? 'Elevated skyway over the water.' : 'Street grid. Zones within 3 tiles can develop.',
         color: '#9aa4c7',
         rows: [['Traffic', pct(f.traffic[i])], ['Pollution', pct(f.pollution[i])]],
       };
-    }
-    const zd = zoneDefFor(t.zone);
-    if (zd) {
+    } else if (zoneDefFor(t.zone)) {
+      const zd = zoneDefFor(t.zone)!;
       const levelName = ['Empty lot', 'Low density', 'Mid density', 'High density'][t.level];
       const cap = zd.capacity[t.level];
       const rows: [string, string][] = [
@@ -456,30 +593,64 @@ export class Game {
         ['Road access', w.hasRoadAccess(x, y) ? 'Yes' : 'NO ROAD'],
         ...common,
       ];
-      return { title: zd.name, subtitle: zd.desc, color: zd.color, rows };
+      info = { title: zd.name, subtitle: zd.desc, color: zd.color, rows };
+    } else if (t.terrain === Terrain.Water) {
+      info = { title: 'Bay water', subtitle: 'Black water. Roads can bridge it.', color: '#1b6c8a', rows: [['Pollution', pct(f.pollution[i])]] };
+    } else {
+      info = { title: 'Open ground', subtitle: 'Unclaimed lot, ready to build.', color: '#6b6f8f', rows: common };
     }
-    if (t.terrain === Terrain.Water) {
-      return { title: 'Bay water', subtitle: 'Black water. Roads can bridge it.', color: '#1b6c8a', rows: [['Pollution', pct(f.pollution[i])]] };
+    this.storyRows(x, y, info.rows);
+    return info;
+  }
+
+  /** "Plinth · building 34d", "Hab Core", "Glare Crown" (§8.8). */
+  private stageLabel(b: { stage?: 1 | 2 | 3; buildDays?: number; crown?: CrownId }): string {
+    const stage = b.stage ?? 1;
+    const name = vertical.stageName(stage, b.crown);
+    return (b.buildDays ?? 0) > 0 ? `${name} · building ${b.buildDays}d` : name;
+  }
+
+  /** Turf, ribbon and skybridge rows for the inspect panel (§8.8). */
+  private storyRows(x: number, y: number, rows: [string, string][]): void {
+    const w = this.world;
+    const i = w.idx(x, y);
+    const g = turf.ownerAt(w, x, y);
+    if (g) {
+      const contested = w.turf.contested[i] > 0 ? ' · contested' : '';
+      rows.push(['Turf', `${FACTION_LABELS[g].short} ${w.turf.str[i]}%${contested}`]);
     }
-    return { title: 'Open ground', subtitle: 'Unclaimed lot, ready to build.', color: '#6b6f8f', rows: common };
+    if (w.rail[i]) {
+      const net = vertical.railNetworkAt(w, x, y);
+      let v: string;
+      if (w.vertical.railLive[i]) v = `live · ${net?.stations ?? 0} stations`;
+      else if (net?.out) v = 'dead: line cut';
+      else v = `dead: needs ${RIBBON.minStations} powered stations`;
+      rows.push(['Ribbon Rail', v]);
+    }
+    const key = vertical.anchorKey(w, x, y);
+    const links = vertical.linksOnAnchor(w, key);
+    if (links > 0 || vertical.isTallAt(w, x, y)) rows.push(['Skybridges', `${links}/${SKYBRIDGE.maxPerAnchor}`]);
   }
 
   /** Short label + cost for a tool (for UI buttons). Base price, no modifiers. */
   static toolCost(tool: ToolId): number {
     if (isBuildingTool(tool)) return BUILDINGS[tool].cost;
     if (tool === 'res' || tool === 'com' || tool === 'ind') return ZONES[tool].cost;
+    if (tool === 'skybridge') return SKYBRIDGE.base + SKYBRIDGE.perTile * SKYBRIDGE.minGap;
+    if (tool === 'rail') return RIBBON.perTile;
     return 0;
   }
 
   /**
-   * Current price of a tool with modifiers (buildCostMul × costMul[type]).
-   * TODO(WP-C): credits and the Stratablock 1.15ⁿ scaling; skybridge / rail per-tile prices.
+   * Current price of a tool with every modifier: buildings use buildCostMul ×
+   * costMul[type] × the next credit × the Stratablock 1.15ⁿ scaling; zones, the
+   * shortest skybridge and one rail tile use buildCostMul.
    */
   toolCost(tool: ToolId): number {
+    if (isBuildingTool(tool)) return buildingCost(this.world, tool);
     const base = Game.toolCost(tool);
-    if (!isBuildingTool(tool)) return base;
-    const m = this.world.mods;
-    return Math.round(base * m.buildCostMul * (m.costMul[tool] ?? 1));
+    if (isZoneTool(tool) || tool === 'skybridge' || tool === 'rail') return Math.round(base * this.world.mods.buildCostMul);
+    return base;
   }
 }
 

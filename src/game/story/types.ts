@@ -516,7 +516,20 @@ export interface StoryState {
   credits: { what: BuildingType; n: number; mul: number }[];
   pacts: { gang: GangId; until: number }[];
   deals: Record<string, { until: number; cooldownUntil: number }>;
-  crackdowns: { x: number; y: number; r: number; until: number; scatterAt: number; hit: GangId[] }[];
+  /**
+   * Active crackdown zones (§3.6), owned by turf.ts (it expires them). `scatterAt` −1 = scatter
+   * handled. `base` (WP-C addition, optional): each hit gang's total tiles at the crackdown,
+   * for the scatter rule's "lost ≥ 30 tiles".
+   */
+  crackdowns: {
+    x: number;
+    y: number;
+    r: number;
+    until: number;
+    scatterAt: number;
+    hit: GangId[];
+    base?: Partial<Record<GangId, number>>;
+  }[];
   /** Precinct building id → tick its crackdown is ready again. */
   precinctReady: Record<number, number>;
   saltReady: Partial<Record<FactionId, number>>;

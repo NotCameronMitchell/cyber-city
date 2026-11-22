@@ -21,7 +21,8 @@ export function completeStage(b: Pick<Building, 'type' | 'stage' | 'buildDays'>)
   return (s < 0 ? 0 : s > 3 ? 3 : s) as 0 | 1 | 2 | 3;
 }
 
-function blank(): BuildingStats {
+/** A zeroed stats object (scratch for `buildingStats(b, out)` in hot loops). */
+export function blankStats(): BuildingStats {
   return {
     residents: 0,
     jobsCom: 0,
@@ -47,7 +48,7 @@ function blank(): BuildingStats {
  * the grid could never power it); trips drop by STACK_INTERNAL of the matched
  * residents/jobs; the crown adds its jobs, residents and pollution at stage 3.
  */
-export function buildingStats(b: Building, out: BuildingStats = blank()): BuildingStats {
+export function buildingStats(b: Building, out: BuildingStats = blankStats()): BuildingStats {
   const def = BUILDINGS[b.type];
   if (b.type !== 'stack') {
     const jobs = def?.jobs ?? 0;

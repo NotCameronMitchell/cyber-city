@@ -3,9 +3,14 @@
 // Each 4-connected conductor component pools the output of its online plants;
 // when demand exceeds supply, power is handed out in BFS order outward from
 // the plants, so the brownout hits the far end of the grid first.
+//
+// Story hooks (§10.6): plant supply × mods.powerSupplyMul, every draw (zones,
+// buildings and growth reservations) × mods.powerDemandMul; building numbers
+// come from buildingStats() (stage-aware Stratablocks).
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { BUILDINGS, ZONES } from '../config';
+import { blankStats, buildingStats } from '../buildingStats';
+import { ZONES } from '../config';
 import { MAP_SIZE, type Building } from '../types';
 import type { World } from '../world';
 import type { SimGrid } from './grid';
@@ -51,17 +56,24 @@ export class PowerGrid {
   plants = 0;
   /** True if some grid that has plants draws more than they make (a real brownout). */
   overloaded = false;
+  /** mods.powerDemandMul at the last compute(): growth reservations scale by it too. */
+  demandMul = 1;
 
   private readonly queue = new Int32Array(AREA);
   private readonly visited = new Uint8Array(AREA);
   private readonly remain = new Float64Array(AREA);
   private readonly brown = new Uint8Array(AREA);
   private readonly allocated = new Set<number>();
+  /** Scratch for buildingStats() (no per-tick allocation). */
+  private readonly st = blankStats();
 
   /** Recompute the grid, write tile.powered / building.powered. Returns true if any tile flipped. */
   compute(world: World, g: SimGrid): boolean {
-    const { comp, powered, compSupply, compDemand, compDeficit, queue, visited, remain, brown } = this;
+    const { comp, powered, compSupply, compDemand, compDeficit, queue, visited, remain, brown, st } = this;
     const { zone, level, abandoned, road, bld } = g;
+    const supplyMul = world.mods.powerSupplyMul;
+    const demandMul = world.mods.powerDemandMul;
+    this.demandMul = demandMul;
 
     // 1. Label conductor components (4-neighbour flood fill).
     comp.fill(-1);
@@ -92,24 +104,26 @@ export class PowerGrid {
     let plants = 0;
     for (let k = 0; k < g.zonedCount; k++) {
       const z = g.zoned[k];
-      const d = zoneDraw(zone[z], level[z], abandoned[z]);
+      const d = zoneDraw(zone[z], level[z], abandoned[z]) * demandMul;
       if (d > 0) {
         compDemand[comp[z]] += d;
         totalDemand += d;
       }
     }
     for (const b of g.buildings) {
-      const def = BUILDINGS[b.type];
+      buildingStats(b, st);
       const c = comp[b.y * N + b.x];
-      if (def.powerSupply > 0) {
+      if (st.powerSupply > 0) {
         plants++;
         if (b.offline === 0) {
-          compSupply[c] += def.powerSupply;
-          totalSupply += def.powerSupply;
+          const s = st.powerSupply * supplyMul;
+          compSupply[c] += s;
+          totalSupply += s;
         }
-      } else if (def.powerUse > 0) {
-        compDemand[c] += def.powerUse;
-        totalDemand += def.powerUse;
+      } else if (st.powerUse > 0) {
+        const d = st.powerUse * demandMul;
+        compDemand[c] += d;
+        totalDemand += d;
       }
     }
     let overloaded = false;
@@ -128,7 +142,7 @@ export class PowerGrid {
     let head = 0;
     let tail = 0;
     for (const b of g.buildings) {
-      if (BUILDINGS[b.type].powerSupply <= 0 || b.offline > 0) continue;
+      if (b.offline > 0 || buildingStats(b, st).powerSupply <= 0) continue;
       for (let dy = 0; dy < b.size; dy++)
         for (let dx = 0; dx < b.size; dx++) {
           const i = (b.y + dy) * N + b.x + dx;
@@ -150,7 +164,7 @@ export class PowerGrid {
           if (b) this.allocateBuilding(b, c);
         }
       } else {
-        const d = zoneDraw(zone[i], level[i], abandoned[i]);
+        const d = zoneDraw(zone[i], level[i], abandoned[i]) * demandMul;
         if (d > 0) {
           if (remain[c] >= d) {
             remain[c] -= d;
@@ -171,13 +185,14 @@ export class PowerGrid {
     // 4. Buildings: plants are always "powered"; consumers never reached have no power.
     let disconnected = 0;
     for (const b of g.buildings) {
-      const def = BUILDINGS[b.type];
-      if (def.powerSupply > 0) b.powered = true;
+      buildingStats(b, st);
+      const plant = st.powerSupply > 0;
+      if (plant) b.powered = true;
       else if (!this.allocated.has(b.id)) {
         b.powered = false;
-        if (def.powerUse > 0) disconnected++;
+        if (st.powerUse > 0) disconnected++;
       }
-      const on = def.powerSupply > 0 ? b.offline === 0 : b.powered;
+      const on = plant ? b.offline === 0 : b.powered;
       for (let dy = 0; dy < b.size; dy++)
         for (let dx = 0; dx < b.size; dx++) powered[(b.y + dy) * N + b.x + dx] = on ? 1 : 0;
     }
@@ -233,15 +248,16 @@ export class PowerGrid {
   tryReserve(i: number, extra: number): boolean {
     if (!this.canFeed(i)) return false;
     const c = this.comp[i];
-    if (this.remain[c] < extra) return false;
-    this.remain[c] -= extra;
+    const need = extra * this.demandMul;
+    if (this.remain[c] < need) return false;
+    this.remain[c] -= need;
     return true;
   }
 
   private allocateBuilding(b: Building, c: number): void {
-    const def = BUILDINGS[b.type];
-    if (def.powerSupply > 0) return; // plants handled separately
-    const use = def.powerUse;
+    const st = buildingStats(b, this.st);
+    if (st.powerSupply > 0) return; // plants handled separately
+    const use = st.powerUse * this.demandMul;
     if (use <= 0 || this.remain[c] >= use) {
       this.remain[c] -= use;
       b.powered = true;

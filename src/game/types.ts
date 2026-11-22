@@ -205,6 +205,16 @@ export interface ActionPlan {
   valid: boolean;
   /** Human-readable reason when invalid (or when some tiles are skipped). */
   reason?: string;
+  /**
+   * Skybridge preview (tool 'skybridge', story layer): the anchor tiles the bridge
+   * would join (normalised to the facing footprint edges) and the gap tiles between.
+   */
+  span?: { ax: number; ay: number; bx: number; by: number; gap: number };
+  /**
+   * Ribbon Rail preview (tool 'rail', story layer): the resulting connection mask
+   * (N1 E2 S4 W8, joined onto existing track) of each entry in `tiles`, in path order.
+   */
+  railMasks?: number[];
 }
 
 export interface Selection {

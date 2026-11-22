@@ -4,7 +4,8 @@
 // of the grid + fields, so recomputeAll() can rebuild it at any time.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { BUILDINGS, ZONES } from '../config';
+import { blankStats, buildingStats } from '../buildingStats';
+import { ZONES } from '../config';
 import { ZoneType, type CityStats, type Demand } from '../types';
 import type { World } from '../world';
 import type { SimGrid } from './grid';
@@ -27,6 +28,8 @@ const CAPACITY: readonly (readonly number[])[] = [
 ];
 
 const clampDemand = (v: number): number => (v < -1 ? -1 : v > 1 ? 1 : v);
+/** Scratch stats object reused for every building (no per-tick allocation). */
+const STATS = blankStats();
 
 export class Census {
   population = 0;
@@ -94,11 +97,13 @@ export class Census {
       else if (z === COM) jobsCom += cap;
       else jobsInd += cap;
     }
+    // Stage-aware (Stratablocks count complete, powered stages only; §4.2).
+    const st = STATS;
     for (const b of g.buildings) {
-      const def = BUILDINGS[b.type];
-      pop += def.residents;
-      if (def.category === 'power') jobsInd += def.jobs;
-      else jobsCom += def.jobs;
+      buildingStats(b, st);
+      pop += st.residents;
+      jobsCom += st.jobsCom;
+      jobsInd += st.jobsInd;
     }
     this.population = pop;
     this.jobsCom = jobsCom;
@@ -142,7 +147,7 @@ export class Census {
     this.serviceCoverage = sv * inv;
   }
 
-  /** Citizen approval 0..100 from taxes, crime, pollution, jobs, power, traffic and services. */
+  /** Citizen approval 0..100 from taxes, crime, pollution, jobs, power, traffic and services, plus `mods.approvalAdd`. */
   approval(world: World, power: PowerGrid): number {
     const devTiles = this.developed[1] + this.developed[2] + this.developed[3];
     if (devTiles === 0 && this.population === 0) return 60;
@@ -155,7 +160,8 @@ export class Census {
       this.joblessPressure * T.APPROVAL_UNEMPLOYMENT -
       unpoweredShare * T.APPROVAL_POWER -
       this.avgTraffic * T.APPROVAL_TRAFFIC +
-      Math.min(1, this.serviceCoverage * 2.5) * T.APPROVAL_SERVICES;
+      Math.min(1, this.serviceCoverage * 2.5) * T.APPROVAL_SERVICES +
+      world.mods.approvalAdd;
     return Math.max(0, Math.min(100, v));
   }
 
@@ -163,11 +169,13 @@ export class Census {
    * Unsmoothed RCI demand. Residents follow jobs (plus a starter wave of
    * settlers); commerce follows shoppers and industrial output; industry
    * follows the workforce plus an export base. Tax and approval shift all three.
+   * Story mods (§10.6): the tax term × `taxDemandMul`; `demandRes/Com/Ind` add last.
    */
   demandTarget(world: World, approval: number, comBoost: number, out: Demand): Demand {
     const pop = this.population;
     const jobs = this.jobsCom + this.jobsInd;
-    const tax = (T.TAX_NEUTRAL - world.taxRate) * T.TAX_DEMAND;
+    const m = world.mods;
+    const tax = (T.TAX_NEUTRAL - world.taxRate) * T.TAX_DEMAND * m.taxDemandMul;
     const mood = (approval - T.APPROVAL_NEUTRAL) * T.APPROVAL_DEMAND;
 
     const resTarget = (jobs / T.WORKFORCE_SHARE) * T.RES_PER_JOB + T.RES_STARTER;
@@ -179,9 +187,9 @@ export class Census {
     const indTarget = this.workforce * T.IND_PER_WORKER + T.IND_EXPORT_BASE;
     const ind = (indTarget - this.jobsInd) / Math.max(60, indTarget * 0.35);
 
-    out.res = clampDemand(clampDemand(res) + tax + mood);
-    out.com = clampDemand(clampDemand(com) + tax * 0.8 + mood * 0.5 + comBoost);
-    out.ind = clampDemand(clampDemand(ind) + tax);
+    out.res = clampDemand(clampDemand(res) + tax + mood + m.demandRes);
+    out.com = clampDemand(clampDemand(com) + tax * 0.8 + mood * 0.5 + comBoost + m.demandCom);
+    out.ind = clampDemand(clampDemand(ind) + tax + m.demandInd);
     return out;
   }
 

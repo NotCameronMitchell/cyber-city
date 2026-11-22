@@ -2,6 +2,9 @@
 // City advisor: rate-limited warnings and tips, one-off development highlights
 // (first mid-rise, first tower…), building unlock announcements, milestones
 // and the flavor-headline schedule.
+//
+// Story hooks (§11): each milestone also pushes a `milestone` signal; unlock
+// news skips gated (story / faction) buildings, which the director announces.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { BUILDINGS, BUILDING_ORDER, CURRENCY, MILESTONES, ROAD_ACCESS_RANGE, ZONES } from '../config';
@@ -67,12 +70,14 @@ export class Advisor {
         'good',
       );
       world.events.emit('milestone', { pop: m.pop, title: m.title });
+      world.pushSignal({ t: 'milestone', pop: m.pop });
       world.events.emit('sfx', 'milestone');
     }
     if (this.unlockedAt < 0) this.unlockedAt = world.maxPopulation;
     if (world.maxPopulation > this.unlockedAt) {
       for (const type of BUILDING_ORDER) {
         const def = BUILDINGS[type];
+        if (def.gate) continue;
         if (def.unlockPop > this.unlockedAt && def.unlockPop <= world.maxPopulation) {
           world.addNews(`Unlocked: ${def.name}. ${def.desc}`, 'info');
         }

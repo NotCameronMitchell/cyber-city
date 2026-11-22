@@ -13,8 +13,14 @@
 // step() runs the cheap systems every tick and staggers the heavier field
 // passes across FIELD_STAGGER ticks. recomputeAll() runs everything at once
 // without advancing time or touching funds.
+//
+// Story layer (docs/STORY.md §10.6): the systems read world.mods,
+// world.layers and world.ledger (identities by default) and push
+// world.signals; the sim never imports story logic. Monthly, the tax rate is
+// clamped to mods.taxCap before the month settles.
 // ─────────────────────────────────────────────────────────────────────────────
 
+import { MAX_TAX } from './config';
 import { DAYS_PER_MONTH, MAP_SIZE, type Demand } from './types';
 import type { World } from './world';
 import { Advisor } from './sim/advisor';
@@ -104,9 +110,14 @@ export class Simulation {
     this.advisor.highlights(w, this.growth.reached);
 
     this.publish();
+    const monthEnd = w.tick % DAYS_PER_MONTH === 0;
+    if (monthEnd) {
+      const cap = Math.min(MAX_TAX, w.mods.taxCap);
+      if (w.taxRate > cap) w.taxRate = cap;
+    }
     projectBudget(w, g, this.census, w.budget);
 
-    if (w.tick % DAYS_PER_MONTH === 0) {
+    if (monthEnd) {
       settleMonth(w);
       w.events.emit('month');
       w.events.emit('sfx', 'money');
