@@ -225,6 +225,19 @@ export class PowerGrid {
     return this.powered[i] === 1 && c >= 0 && !this.compDeficit[c];
   }
 
+  /**
+   * Reserve `extra` MW of headroom on this tile's grid for new development.
+   * Growth calls this so a level-up never pushes its own grid into a brownout;
+   * reservations accumulate within the tick and reset on the next compute().
+   */
+  tryReserve(i: number, extra: number): boolean {
+    if (!this.canFeed(i)) return false;
+    const c = this.comp[i];
+    if (this.remain[c] < extra) return false;
+    this.remain[c] -= extra;
+    return true;
+  }
+
   private allocateBuilding(b: Building, c: number): void {
     const def = BUILDINGS[b.type];
     if (def.powerSupply > 0) return; // plants handled separately

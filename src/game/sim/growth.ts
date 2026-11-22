@@ -10,7 +10,7 @@ import { MAP_SIZE, ZoneType, type Demand } from '../types';
 import type { World } from '../world';
 import type { SimGrid } from './grid';
 import type { FieldSystem } from './fields';
-import type { PowerGrid } from './power';
+import { zoneDraw, type PowerGrid } from './power';
 import * as Tuning from './tuning';
 
 // Imported bindings are copied into module locals: under Vite's SSR/test
@@ -78,7 +78,8 @@ export class GrowthSystem {
           d > T.RECOVER_MIN_DEMAND &&
           crime < T.RECOVER_MAX_CRIME &&
           (!isRes || pol < T.RECOVER_MAX_RES_POLLUTION) &&
-          rng.chance(T.RECOVER_CHANCE)
+          rng.chance(T.RECOVER_CHANCE) &&
+          power.tryReserve(i, zoneDraw(z, l, 0))
         ) {
           this.set(world, g, i, l, false);
         } else if (t.age > T.COLLAPSE_AGE && rng.chance(T.COLLAPSE_CHANCE)) {
@@ -89,7 +90,13 @@ export class GrowthSystem {
 
       // Empty lots: need road, a healthy grid and demand.
       if (l === 0) {
-        if (road && d > 0.02 && power.canFeed(i) && rng.chance(T.GROW_BASE + T.GROW_SLOPE * d)) {
+        if (
+          road &&
+          d > 0.02 &&
+          power.canFeed(i) &&
+          rng.chance(T.GROW_BASE + T.GROW_SLOPE * d) &&
+          power.tryReserve(i, zoneDraw(z, 1, 0))
+        ) {
           this.set(world, g, i, 1, false);
         }
         continue;
@@ -130,7 +137,7 @@ export class GrowthSystem {
         power.canFeed(i)
       ) {
         const p = T.UPGRADE_BASE[l] + T.UPGRADE_SLOPE[l] * d + (isRes ? f.health[i] * T.HEALTH_GROWTH_BONUS : 0);
-        if (rng.chance(p)) this.set(world, g, i, l + 1, false);
+        if (rng.chance(p) && power.tryReserve(i, zoneDraw(z, l + 1, 0) - zoneDraw(z, l, 0))) this.set(world, g, i, l + 1, false);
       }
     }
   }

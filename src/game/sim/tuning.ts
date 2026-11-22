@@ -114,7 +114,7 @@ export const UPGRADE_MAX_TRAFFIC = 0.86;
 /** Health coverage speeds up residential upgrades. */
 export const HEALTH_GROWTH_BONUS = 0.12;
 /** Decline. */
-export const UNPOWERED_GRACE_DAYS = 18;
+export const UNPOWERED_GRACE_DAYS = 45;
 export const ABANDON_UNPOWERED = 0.22;
 export const ABANDON_NO_ROAD = 0.3;
 export const DECLINE_DEMAND = -0.45;
