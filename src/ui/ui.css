@@ -117,7 +117,7 @@ body {
   display: none !important;
 }
 
-.cc-ui button {
+:where(.cc-ui) button {
   font: inherit;
   color: inherit;
   background: none;
@@ -133,7 +133,7 @@ body {
   appearance: none;
 }
 
-.cc-ui :focus {
+:where(.cc-ui) :focus {
   outline: none;
 }
 
@@ -143,9 +143,7 @@ body {
   outline-offset: -3px;
 }
 
-.cc-ui h2,
-.cc-ui h3,
-.cc-ui p {
+:where(.cc-ui) :where(h2, h3, p) {
   margin: 0;
 }
 
@@ -594,9 +592,11 @@ body {
   font-family: var(--cc-mono);
   font-size: 13px;
   white-space: nowrap;
+  padding: 1px 6px;
+  background: rgba(7, 6, 16, 0.92);
+  border: 1px solid currentColor;
   opacity: 0;
   pointer-events: none;
-  text-shadow: 0 0 8px currentColor;
 }
 
 .cc-delta.is-show {
@@ -1217,6 +1217,17 @@ body {
   color: var(--cc-ink);
 }
 
+.cc-banner-sub span {
+  display: inline-block;
+  white-space: nowrap;
+}
+
+.cc-banner-dot {
+  font-style: normal;
+  margin: 0 0.6em;
+  color: var(--cc-ink-3);
+}
+
 .cc-banner-sub b {
   font-weight: 400;
   color: var(--cc-green);
@@ -1259,6 +1270,15 @@ body {
   to {
     opacity: 0;
     transform: scale(0.94) translateY(-8px);
+  }
+}
+
+@media (max-width: 479px) {
+  .cc-banner-sub span {
+    display: block;
+  }
+  .cc-banner-dot {
+    display: none;
   }
 }
 
@@ -3377,7 +3397,8 @@ body {
     display: none;
   }
   .cc-tray {
-    width: min(800px, 100%);
+    width: auto;
+    max-width: 100%;
     margin: 0 0 10px;
   }
   .cc-card {
@@ -3533,6 +3554,18 @@ body {
   .cc-banner-title {
     font-size: clamp(30px, 7vw, 52px);
   }
+  .cc-menu {
+    width: min(640px, 100%);
+  }
+  .cc-menu-list {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+  }
+  .cc-menu-sep {
+    grid-column: 1 / -1;
+    margin: 0;
+    height: 0;
+  }
 }
 
 /* ── Reduced motion ───────────────────────────────────────────────────────── */
@@ -3552,4 +3585,10 @@ body {
   .cc-tick-track {
     text-overflow: ellipsis;
   }
+}
+
+/* Dialogs receive programmatic focus for screen readers; no ring on the container. */
+.cc-dialog:focus,
+.cc-dialog:focus-visible {
+  outline: none;
 }

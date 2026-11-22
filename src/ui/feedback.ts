@@ -197,7 +197,9 @@ export class MilestoneBanner {
     const title = m.title.toUpperCase();
     setText(this.title, title);
     this.title.dataset.text = title;
-    this.sub.innerHTML = `${groupInt(m.pop)} residents${def ? ` · Charter grant <b>+${credits(def.grant)}</b>` : ''}`;
+    this.sub.innerHTML =
+      `<span>${groupInt(m.pop)} residents</span>` +
+      (def ? `<i class="cc-banner-dot">·</i><span>Charter grant <b>+${credits(def.grant)}</b></span>` : '');
     const unlocked = BUILDING_ORDER.filter((t) => BUILDINGS[t].unlockPop > prevPop && BUILDINGS[t].unlockPop <= m.pop).map(
       (t) => BUILDINGS[t].name,
     );

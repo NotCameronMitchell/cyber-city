@@ -45,6 +45,15 @@ export interface UIContext {
   sfx(kind: GameEventMap['sfx']): void;
 }
 
+/** Input modality tracking (keyboard vs pointer) for focus decisions. */
+let lastInputWasKeyboard = false;
+if (typeof window !== 'undefined') {
+  window.addEventListener('keydown', (e) => {
+    if (e.key === 'Tab' || e.key === 'Enter' || e.key === ' ' || e.key.startsWith('Arrow')) lastInputWasKeyboard = true;
+  }, true);
+  window.addEventListener('pointerdown', () => (lastInputWasKeyboard = false), true);
+}
+
 interface ModalEntry {
   el: HTMLElement;
   onClose?: () => void;
@@ -95,8 +104,9 @@ export class Modals {
     el.hidden = false;
     this.layer.hidden = false;
     replayClass(el, 'is-in');
-    // Move focus into the dialog for keyboard / screen-reader users.
-    const focusTarget = el.querySelector<HTMLElement>('[data-autofocus]') ?? el;
+    // Move focus into the dialog. Keyboard users land on its primary control;
+    // touch / mouse users get the container (no stray focus ring).
+    const focusTarget = (lastInputWasKeyboard ? el.querySelector<HTMLElement>('[data-autofocus]') : null) ?? el;
     try {
       focusTarget.focus({ preventScroll: true });
     } catch {
