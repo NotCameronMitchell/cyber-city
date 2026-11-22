@@ -418,6 +418,124 @@
   display: none;
 }
 
+/* "More below": a chevron and a soft glow on the body's bottom edge while it can scroll on. */
+.cc-scard-more {
+  position: relative;
+  z-index: 5;
+  flex: none;
+  height: 0;
+  display: flex;
+  justify-content: center;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+
+.cc-scard-more::before {
+  content: '';
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  bottom: 0;
+  height: 26px;
+  background: linear-gradient(0deg, rgba(10, 9, 24, 0.96), rgba(10, 9, 24, 0));
+  border-bottom: 1px solid var(--fc);
+  box-shadow: 0 6px 12px -8px var(--fc);
+}
+
+.cc-scard-more .cc-i {
+  position: absolute;
+  bottom: 2px;
+  width: 18px;
+  height: 18px;
+  color: var(--fc);
+  transform: rotate(90deg);
+  animation: cc-more-bob 1.2s ease-in-out infinite;
+}
+
+.cc-scard.has-more .cc-scard-more {
+  opacity: 1;
+}
+
+@keyframes cc-more-bob {
+  50% {
+    transform: rotate(90deg) translateX(3px);
+  }
+}
+
+/* One-time legend for the hint chips (first card that has them). */
+.cc-scard-legend {
+  position: relative;
+  z-index: 4;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 6px 16px 0;
+  padding: 6px 10px;
+  font-size: 12px;
+  line-height: 1.3;
+  color: var(--cc-ink-2);
+  background: rgba(34, 229, 255, 0.07);
+  border-left: 2px solid var(--cc-cyan);
+}
+
+.cc-scard-legend-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.cc-scard-legend-k {
+  flex: none;
+  width: 20px;
+  display: flex;
+  justify-content: center;
+}
+
+.cc-scard-legend b {
+  font-size: 9px;
+  font-weight: 400;
+}
+
+.cc-scard-legend .is-up {
+  color: var(--cc-green);
+}
+
+.cc-scard-legend .is-down {
+  color: var(--cc-red);
+}
+
+.cc-scard-legend-k .cc-i {
+  display: block;
+  width: 14px;
+  height: 14px;
+  color: var(--cc-amber);
+}
+
+.cc-scard-legend-tip {
+  color: var(--cc-ink-3);
+}
+
+/* Short portrait phones (360 × 640): give the body more of the screen, trim the choices. */
+@media (orientation: portrait) and (max-height: 700px) {
+  .cc-scard {
+    max-height: 84vh;
+    max-height: 84dvh;
+  }
+  .cc-scard .cc-choice {
+    min-height: 48px;
+    padding-top: 6px;
+    padding-bottom: 6px;
+  }
+  .cc-scard .cc-choice.is-long {
+    min-height: 60px;
+  }
+  .cc-scard .cc-scard-choices {
+    gap: 6px;
+  }
+}
+
 .cc-scard-sys {
   margin: 2px 0 6px;
   font-family: var(--cc-mono);
@@ -754,6 +872,11 @@
   pointer-events: auto;
   touch-action: none;
   text-align: left;
+}
+
+/* Opaque, so a hint or chip it passes over never bleeds through the glass. */
+.cc-incoming.cc-chipglass {
+  background: rgb(11, 10, 26);
 }
 
 .cc-incoming.is-in {
@@ -1562,6 +1685,7 @@
   display: flex;
   flex-direction: column;
   gap: 8px;
+  margin-bottom: 14px;
 }
 
 .cc-fd-act {
@@ -2094,6 +2218,19 @@
   color: #ff8a9e;
 }
 
+.cc-cn-claim.is-flash,
+.cc-cn-sub.is-flash {
+  animation: cc-cn-flash 1s ease-out;
+}
+
+@keyframes cc-cn-flash {
+  0%,
+  45% {
+    color: #ffd1d9;
+    background: rgba(255, 59, 92, 0.22);
+  }
+}
+
 .cc-cn-claim.is-ok {
   color: var(--cc-green);
 }
@@ -2349,6 +2486,27 @@
   color: var(--cc-ink-3);
 }
 
+/* Landscape phones: one 52 px footer row and a fade where the text runs under it. */
+@media (orientation: landscape) and (max-height: 520px) {
+  .cc-end-scroll {
+    -webkit-mask-image: linear-gradient(180deg, #000 calc(100% - 22px), transparent);
+    mask-image: linear-gradient(180deg, #000 calc(100% - 22px), transparent);
+  }
+  .cc-end-foot {
+    flex-direction: row;
+    justify-content: center;
+    gap: 10px;
+    padding-top: 6px;
+  }
+  .cc-end-keep {
+    width: min(320px, 60%);
+    min-height: 52px;
+  }
+  .cc-end-new {
+    min-height: 52px;
+  }
+}
+
 /* ── Inspect additions ────────────────────────────────────────────────────── */
 
 .cc-insp-story {
@@ -2462,7 +2620,7 @@
 }
 
 .cc-crown {
-  min-height: 72px;
+  min-height: 56px;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -2731,7 +2889,22 @@
   scrollbar-color: rgba(34, 229, 255, 0.35) transparent;
 }
 
+/* Crown picker open: the sheet grows toward the HUD and the stat rows step aside. */
+.cc-sheet.is-picking {
+  max-height: min(74vh, calc(100vh - var(--cc-top) - 128px));
+  max-height: min(74dvh, calc(100dvh - var(--cc-top) - 128px));
+}
+
+.cc-sheet.is-picking .cc-insp-sub,
+.cc-sheet.is-picking .cc-insp-rows,
+.cc-sheet.is-picking .cc-insp-actions {
+  display: none;
+}
+
 @media (orientation: landscape) and (max-height: 520px) {
+  .cc-sheet.is-picking {
+    max-height: calc(100% - var(--cc-top) - var(--cc-sab) - 16px);
+  }
   .cc-sheet {
     padding: 8px 12px 12px 18px;
   }

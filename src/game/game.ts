@@ -12,12 +12,14 @@ import {
 import { buildingStats } from './buildingStats';
 import {
   BUILDINGS,
+  BULLDOZE_COST,
   CURRENCY,
   DAY_CYCLE_SECONDS,
   FACTION_LABELS,
   MAX_TAX,
   MIN_TAX,
   RIBBON,
+  ROAD_COST,
   SAVE_KEY,
   SETTINGS_KEY,
   SKYBRIDGE,
@@ -25,11 +27,11 @@ import {
   STACK_STAGES,
   ZONES,
   isBuildingTool,
-  isZoneTool,
   zoneDefFor,
 } from './config';
 import { Emitter, type GameEventMap } from './events';
 import { Simulation } from './sim';
+import { storageGet, storageRemove, storageSet } from './storage';
 import { StoryDirector } from './story/director';
 import * as turf from './story/turf';
 import type { ActionResult, CrownId, EndingId, FactionId, GangId, InspectAction } from './story/types';
@@ -53,29 +55,8 @@ export const CITY_NAME_MAX = 24;
 /** Backup slot: "New City" moves the city it replaces here, so the menu can offer "Restore previous city". */
 export const PREV_SAVE_KEY = `${SAVE_KEY}.prev`;
 
-/** Safe localStorage wrappers: storage may be missing or throw (private mode, sandboxed frames). */
-export function storageGet(key: string): string | null {
-  try {
-    return globalThis.localStorage?.getItem(key) ?? null;
-  } catch {
-    return null;
-  }
-}
-export function storageSet(key: string, value: string): boolean {
-  try {
-    globalThis.localStorage?.setItem(key, value);
-    return true;
-  } catch {
-    return false;
-  }
-}
-export function storageRemove(key: string) {
-  try {
-    globalThis.localStorage?.removeItem(key);
-  } catch {
-    /* ignore */
-  }
-}
+/** Safe localStorage wrappers (storage may be missing or throw); they live in a leaf module so story code can share them. */
+export { storageGet, storageRemove, storageSet } from './storage';
 
 export interface TileInfo {
   title: string;
@@ -197,6 +178,10 @@ export class Game {
       this.story.markDirty();
       sim.recomputeAll();
     }
+    // Security is only known after the first recompute too: re-derive turf stats
+    // (the secured shares the faction sheet and mood drivers read) from real fields.
+    turf.refreshStats(this.world);
+    this.story.markDirty();
   }
 
   updateSettings(patch: Partial<Settings>) {
@@ -638,18 +623,21 @@ export class Game {
     if (tool === 'res' || tool === 'com' || tool === 'ind') return ZONES[tool].cost;
     if (tool === 'skybridge') return SKYBRIDGE.base + SKYBRIDGE.perTile * SKYBRIDGE.minGap;
     if (tool === 'rail') return RIBBON.perTile;
+    if (tool === 'road') return ROAD_COST;
+    if (tool === 'bulldoze') return BULLDOZE_COST;
     return 0;
   }
 
   /**
    * Current price of a tool with every modifier: buildings use buildCostMul ×
    * costMul[type] × the next credit × the Stratablock 1.15ⁿ scaling; zones, the
-   * shortest skybridge and one rail tile use buildCostMul.
+   * shortest skybridge, one rail or road tile and the cheapest bulldoze use
+   * buildCostMul (as planAction prices them).
    */
   toolCost(tool: ToolId): number {
     if (isBuildingTool(tool)) return buildingCost(this.world, tool);
     const base = Game.toolCost(tool);
-    if (isZoneTool(tool) || tool === 'skybridge' || tool === 'rail') return Math.round(base * this.world.mods.buildCostMul);
+    if (base > 0) return Math.round(base * this.world.mods.buildCostMul);
     return base;
   }
 }

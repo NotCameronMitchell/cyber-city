@@ -141,6 +141,7 @@ standing = clamp(round(favor + mood), floor ?? -100, ceil ?? 100)
 
 - **Favor** (−100..100) comes from choices, salt, deals and build reactions.
   - Monthly drift: if |favor| > 30, favor moves 1 toward 0, so choices last but fade.
+  - A negative `favorMonthly` (a pact's sour neighbour, Pearlescence's Kites) sours a faction only down to −30 favor; below that the drift wins, so no standing rule can hold a faction Hostile for good (§2.3 rule 3).
   - Start favor: Board +10, Basalt 0, Nacre 0, Undertow −10, Kites −10, Tuning 0.
 - **Mood** is recomputed monthly from the faction's drivers (below), summed and clamped to ±30.
   - A *ramp* driver is `clamp((metric − offset) × mul, min, max)` over real sim stats. "+2 per Clinic, max +8" means `mul 2, min 0, max 8`.
@@ -280,13 +281,13 @@ An exclusive building, once unlocked, stays buildable while the faction is Frien
 
 ### 2.3 Hostility rules (no losing)
 
-1. Entering Hostile queues that faction's ⚑ card. It repeats every 180 d while the faction stays Hostile. City-wide, there is at most one ⚑ card per 60 d.
+1. Entering Hostile queues that faction's ⚑ card. It repeats every 360 d while the faction stays Hostile. City-wide, there is at most one ⚑ card per 60 d, and a ⚑ never takes two deck draws running (§7.1 step 3).
 2. Every ⚑ card has a make-good choice worth at least +15 favor for its faction (lint-checked).
 3. Every penalty is a timed modifier, or lasts only while the faction is Cold or Hostile. Salt, deals and cards can always repair standing.
 4. No effect deletes a player-built service building or vertical structure.
    - `offline` lasts at most 30 d.
    - `abandon` and `renew` touch only zone tiles, which regrow under the normal growth rules.
-5. Funds may go negative (construction freezes, as now). A CR cost on a choice never locks that choice; it can push funds below zero. Below −5,000 the `sys.bailout` card fires (cooldown 180 d).
+5. Funds may go negative (construction freezes, as now). A CR cost on a choice never locks that choice; it can push funds below zero. Below −5,000 the `sys.bailout` card fires (cooldown 360 d).
 6. Chapters can't softlock (§5.0): every chapter trigger has a fallback, every conditional beat has a time-out, and stuck goals are waived over time.
 7. Revealed is a state, not a failure. Endings never end the game, and the Quiet Hand ending is always eligible.
 
@@ -297,10 +298,10 @@ An exclusive building, once unlocked, stays buildable while the faction is Frien
 | Faction | Weight |
 |---|---|
 | Board | 3 × approval + 40 × (Precincts + Clinics) + 100 if flag `honestTie` |
-| Basalt | jobsInd ÷ 8 + 60 × Reactors + 80 × Foundry Spines + 80 × `crowns.foundry` + 80 × flag `branded` (a count) + 150 if patron = basalt |
-| Nacre | jobsCom ÷ 8 + 50 × Data Hubs + 120 × Spires + 60 × Glarewalls + 80 × `crowns.glare` + 150 if patron = nacre |
-| Undertow | 4 × its turf tiles + 100 × Tidemarkets + 150 if flag `oneTide = undertow` |
-| Kites | 4 × its turf tiles + 100 × Kite Roosts + 80 × `crowns.nest` + 150 if flag `oneTide = kites` |
+| Basalt | jobsInd ÷ 8 + 60 × Reactors + 80 × Foundry Spines + 80 × `crowns.foundry` + 80 × flag `branded` (a count) + 300 if patron = basalt |
+| Nacre | jobsCom ÷ 8 + 50 × Data Hubs + 120 × Spires + 60 × Glarewalls + 80 × `crowns.glare` + 300 if patron = nacre |
+| Undertow | 2 × its turf tiles + 100 × Tidemarkets + 150 if flag `oneTide = undertow` |
+| Kites | 2 × its turf tiles + 100 × Kite Roosts + 80 × `crowns.nest` + 150 if flag `oneTide = kites` |
 
 `power.gangs` = power.undertow + power.kites.
 
@@ -324,13 +325,13 @@ Trace (0..100) measures how close anyone is to proving you exist.
 | ≥ 25 | Audit cards become eligible and the Tuning silhouette row appears. |
 | ≥ 40 | The Tuning activates and `kt.file` becomes eligible. |
 | ≥ 70 | Ch5 can trigger early. |
-| 100 | **Revealed**, permanently. Reaching 100 by any route (drift or a choice) queues `sys.revealed`, whose `onShow` sets Revealed. Trace locks at 100 and later Trace effects are ignored. The `reveal` effect (Ch5 *Show yourself*) sets Revealed directly and skips `sys.revealed`. |
+| 100 | **Revealed**, permanently. Reaching 100 by any route (drift or a choice) queues `sys.revealed`, whose `onShow` sets Revealed and costs: Board, Basalt and Nacre −10, `[approvalAdd −5, 360d]`. Trace locks at 100 and later Trace effects are ignored. The `reveal` effect (Ch5 *Show yourself*) sets Revealed directly and skips `sys.revealed`. |
 
 ### 2.6 Salt, deals and build reactions
 
 **Salt (bribe):** a button on each faction row (not the Tuning: "The Tuning won't take salt.").
 
-- Cost: `round100(600 + 0.08 × pop)`.
+- Cost: `round100(600 + 0.08 × pop + 0.02 × max(0, funds))`, so salt still costs something in a rich city.
 - Effect: favor +8, Trace +3.
 - Cooldown: 90 d per faction.
 - Locked after the Open Ledger ending.
@@ -614,13 +615,13 @@ Everything sits on the existing 64×64 grid. There is no second layer.
 - **Fallbacks:**
   - Each trigger has a fallback after 720 d of waiting (listed per chapter). After **1,440 d** of waiting, the trigger fires even if the fallback's population gate fails.
   - **Goal waiver:** after 720 d in a chapter's goals, one unmet goal per 360 d is marked *waived* ("The city moved on without it."), which counts as done.
-  - At most one chapter completes per 60 real seconds, which stops migrated saves chain-firing.
+  - **Chapter floor:** at most one chapter completes per 600 unpaused real seconds (`chapterMinSec`), counted from the previous completion, or from Ch1's start for Ch1 (the boot counts as a completion). The clock is `story.chapterSec`, which is saved, so a reload neither resets nor skips it. While every goal and beat is done and only the floor holds, the goal chip reads "closes in m:ss" (`view.chapter.closesInSec`). This keeps a chapter near one session at any speed and stops migrated saves chain-firing.
 - **The faction deck** (§7) starts drawing only after `unlock comms` (the Ch1 reward), so no banner ever points at a locked COMMS button.
 - **Unlock fallbacks.** Every story unlock also opens by population, so a stalled chapter never locks the sandbox:
 
   | Unlock | Story source | Fallback (maxPop) |
   |---|---|---|
-  | `factions`, `comms` | Ch1 reward | 1,500 |
+  | `factions`, `comms` | Ch1 reward | 3,000 |
   | `stack`, `deals` | Ch2 reward | 8,000 |
   | `crackdown`, `pact`, `turfOverlay` | Ch3 start | 6,000 |
   | `skybridge`, `rail` | Ch3 reward | 9,000 |
@@ -646,7 +647,7 @@ Everything sits on the existing 64×64 grid. There is no second layer.
   | `foundry` | `Unlocked: Foundry Spine. Basalt's fire, on your grid.` |
   | `memorial` | `Unlocked: Sunk Memorial. Eleven thousand names.` |
 
-- **Pacing:** about one session (10–15 min) per chapter, roughly 80 min for the main story at speed 1–2. The scripted-mayor balance test reaches 1,000 residents in 5 sim years, and one sim year is about 60 s at speed 2, so the population gates are reachable in that time. Confirm in playtest.
+- **Pacing:** about one session (10–15 min) per chapter, roughly 70–80 min for the main story at speed 1–2. One sim year is 180 s at speed 1 (0.5 s a day) and 60 s at speed 2. The scripted mayor reaches 1,500 residents in about 0.6 years and 5,000 in about 2 years, so the population gates fall early and the 600 s chapter floor sets the pace of Ch1–Ch3; Ch4–Ch6 run on their goals, waivers and fallbacks (headless measure, 15 policies × 3 seeds: Charter Night at 61–66 unpaused / 69–82 wall minutes at speed 1, 53 / 58–68 at speed 2). Confirm in playtest.
 
 ### Chapter I · COLD BOOT
 
@@ -897,16 +898,16 @@ Logs 1–6 are chapter rewards. Logs 7–12 come from faction ★ cards. Each lo
 
 ### 6.1 The Charter Night screen
 
-When `ch6.count` closes, a full-screen list shows all five endings with their claims checked live against the city, and each gap stated (e.g. "Basalt power 24% / 30%").
+When `ch6.count` closes, a full-screen list shows all five endings with their claims checked live against the city, and each gap stated (e.g. "Basalt power 21% / 25%").
 
 - **A row is selectable** only if every claim holds. The Quiet Hand is always selectable.
 - **Recount (6 more months)** adds `countdown 180d`, any number of times, so a player chasing a claim is never forced.
-- **Choosing a row** opens a confirm sheet ("Hold the charter for Basalt?"). After that come the final card, then Log 6, then the ending screen.
+- **Choosing a row** opens a confirm sheet ("Hold the charter for Basalt?"). After that come the final card, then Log 6, then the ending screen. A reload in between still ends on the ending screen (flag `endingScreen`).
 
 | Ending | MOTH becomes | Claim (all must hold) | Post-ending sandbox (permanent ModPatch and rules) |
 |---|---|---|---|
-| **Ironwork** (`ironwork`) | *The Foreman* | `standing.basalt >= 60` · `power.basalt >= 30` · flag `patron=basalt` | `demandInd +0.15` · `costMul` reactor, stack, foundry ×0.85 · `pollutionMul 1.15` · `taxCap 15` · `floor basalt 0` · Board cards retired; the Board row reads "Absorbed into Basalt" |
-| **Pearlescence** (`pearl`) | *The Smile* | `standing.nacre >= 60` · `power.nacre >= 30` · flag `patron=nacre` | `demandCom +0.15` · `landValueAdd +0.05` · `crimeMul 0.8` · `costMul.glarewall 0` (free) · `favorMonthly.kites −1` · pink palette shift |
+| **Ironwork** (`ironwork`) | *The Foreman* | `standing.basalt >= 60` · `power.basalt >= 25` · flag `patron=basalt` | `demandInd +0.15` · `costMul` reactor, stack, foundry ×0.85 · `pollutionMul 1.15` · `taxCap 15` · `floor basalt 0` · Board cards retired; the Board row reads "Absorbed into Basalt" |
+| **Pearlescence** (`pearl`) | *The Smile* | `standing.nacre >= 60` · `power.nacre >= 25` · flag `patron=nacre` | `demandCom +0.15` · `landValueAdd +0.05` · `crimeMul 0.8` · `costMul.glarewall 0` (free) · `favorMonthly.kites −1` · pink palette shift |
 | **The Low Crown** (`lowcrown`) | *The moth on every corner* | `standing.undertow >= 40` · `standing.kites >= 40` · `power.gangs >= 30` · flag `truce` or `wentToGround` | Both pacts permanent (40% cut, no spread limits) · `floor undertow 20`, `floor kites 20` · `turfCrimeMul 0.4` · `upkeepMulType.precinct 0.5` · `ceil basalt 20`, `ceil nacre 20` |
 | **Open Ledger** (`ledger`) | *The Public Record* | `standing.board >= 40` · `approval >= 65` · Revealed · not `leashed` · not `buried` | `approvalAdd +8` · `taxDemandMul 0.5` · `upkeepMul 0.9` · Salt and Pacts locked; off-ledger income ends; the Trace gauge is retired |
 | **The Quiet Hand** (`quiet`) | *Nobody* | always | Every faction stays active · `cardRateMul 1.3` · **Nudge**: once per 360 d, +15 favor to one faction · *Lamplight* variant (flag `tuningActive` and Tuning ≥ 50 when chosen): `approvalAdd +5` and window candles everywhere |
@@ -984,7 +985,7 @@ The post-ending column is data on `Ending` (`post: ModPatch` plus `rules: Ending
 
 1. a due queued follow-up (from a `queue` effect);
 2. a `sys.*` card whose condition holds (bailout, revealed);
-3. a Hostile faction's ⚑ card, if that faction's last ⚑ was ≥ 180 d ago and any ⚑ was ≥ 60 d ago;
+3. a Hostile faction's ⚑ card, if that faction's last ⚑ was ≥ 360 d ago, any ⚑ was ≥ 60 d ago, and the last deck delivery was not a ⚑ (a faction that stays Hostile takes at most every other draw; the 120 s gate alone spaces draws more than 180 d apart at speed 1);
 4. a *seasonal* card (meta `seasonal`) whose condition holds and that hasn't shown in the last 300 d, if `tick − lastCardTick ≥ 60`;
 5. a weighted random draw, only if `tick − lastCardTick ≥ 60` and `rng < 0.35 × cardRateMul`.
 
@@ -1089,7 +1090,7 @@ when `count.stack >= 1` · w10 · cd 720d
 - **Keep it civic.** ‡ → Board +3, Basalt −3
 
 ##### `ba.smog` · Basalt · NOBODY BREATHES AT 3 A.M.
-when `avgPollution >= 0.3 & dev.ind >= 20` · w10 · cd 360d
+when `avgPollution >= 0.2 & dev.ind >= 20` · w10 · cd 360d
 > Sallow wants the scrubbers off after midnight. 'Nobody breathes at three a.m.' His fabs run double shifts the night you sign. The homes downwind will taste it first.
 - **Sign the waiver.** → Basalt +15, Board −10, `[demandInd +0.2 & pollutionMul 1.3, 240d]`
 - **Keep the scrubbers on.** ‡ → Basalt −10
@@ -1107,7 +1108,7 @@ when `standing.basalt <= -60` · hostile
 > Basalt has 'paused deliveries pending review'. Cranes freeze mid-swing across {city}. Sallow's message is one line: 'Reviews end when cooperation begins.'
 - **Pay the review fee.** → CR −6,000, Basalt +20
 - **Wait it out.** ‡ → `[buildCostMul 1.35 & upkeepMul 1.15, 180d]`
-- **Leak it to Nacre.** [req `standing.nacre >= 0`] → Nacre +6, Basalt −5, `[buildCostMul 1.35, 90d]`, Trace +3
+- **Leak it to Nacre.** [req `standing.nacre >= 0`] → Nacre +6, `[buildCostMul 1.35, 90d]`, Trace +3
 
 ### 7.4 Nacre
 
@@ -1139,7 +1140,7 @@ when `abandoned >= 15` · spot `abandoned` · w10 · cd 360d
 - **Deny it.** ‡ → Nacre −8, Undertow +8
 
 ##### `nc.premium` · Nacre · NO HOMES IN FRAME
-when `avgLandValue >= 0.45 & dev.com >= 60` · w10 · cd 360d
+when `avgLandValue >= 0.4 & dev.com >= 40` · w10 · cd 360d
 > Oduya wants three blocks declared premium: private drones, no noodle carts, no homes in frame. 'It's not exclusion! It's curation!' Nacre will pay well to keep shadeside off its postcards.
 - **Sign the zoning deal.** → CR +6,000, Nacre +15, Board −10, `[demandRes −0.1, 180d]`, `[landValueAdd +0.02, 360d]`
 - **Decline politely.** ‡ → Nacre −5
@@ -1156,7 +1157,7 @@ when `standing.nacre <= -60` · hostile
 > Every Nacre screen in {city} goes grey. One line scrolls forever: 'We apologise for the reduced experience.' Oduya is very sorry. Oduya is not sorry.
 - **Apologise. Pay 6,000.** → CR −6,000, Nacre +20
 - **Live without screens.** ‡ → `[demandCom −0.2 & taxIncomeMul 0.9 & landValueAdd −0.04, 180d]`
-- **Let the Kites hijack them.** [req `standing.kites >= 20`] → Kites +10, Nacre −10, `[demandCom −0.2 & crimeAdd +0.03, 60d]`
+- **Let the Kites hijack them.** [req `standing.kites >= 20`] → Kites +5, `[demandCom −0.2 & crimeAdd +0.03, 60d]` (a ⚑ side choice never pushes the Hostile faction further down)
 
 ### 7.5 The Undertow
 
@@ -1315,14 +1316,14 @@ when `turf.undertow >= 40 & turf.kites >= 40` · speaker `undertow`, with `kites
 - **Shut it down.** [req `count.precinct >= 1`] → Undertow −8, Kites −8, Board +8
 
 ##### `sys.bailout` · System · PICK YOUR CHAIN
-when `funds < -5000` · system · cd 180d
+when `funds < -5000` · system · cd 360d
 > The treasury is dry. Marrow offers a civic bond. {patron} offers cash with a smile. Brine offers salt in a paper bag. Every option is a leash. Pick the one that chafes least.
-- **Take the civic bond.** ‡ → CR +10,000, `↻ −400/mo ×30mo "Civic bond"`, Board +3
+- **Take the civic bond.** ‡ → CR +10,000, `↻ −250/mo ×24mo "Civic bond"`, Board +3 (repays 6,000, so bailouts can't stack into a spiral)
 - **Take {patron}'s credit.** → CR +15,000, `[buildCostMul 1.15, 180d]`, patron +5
 - **Take Brine's salt.** → CR +8,000, Trace +8, Undertow +5
 
 ##### `sys.revealed` · System · THE CLIP
-when `trace >= 100 & !revealed` · system · onShow `reveal`, flag `tuningActive`
+when `trace >= 100 & !revealed` · system · onShow `reveal`, flag `tuningActive`, Board −10, Basalt −10, Nacre −10, `[approvalAdd −5, 360d]` · sys `> exposed · Board, Basalt, Nacre −10`
 > Every feed in {city} plays the same clip: a street grid blinking in perfect rhythm, block after block, like breathing. You. The city knows something lives in its wires. It wants to hear what.
 - **Tell the Board first.** → Board +10, Tuning +5
 - **Tell the street first.** → Undertow +5, Kites +5, Tuning +5
@@ -1464,7 +1465,8 @@ The goal chip opens a bottom sheet at 50% height:
 
 - the chapter numeral, title and question;
 - three 64 px goal rows, each with a label, a live value ("now 34% · need ≤ 30%") and a progress bar;
-- hold goals show "12/20 days" and waived goals show "waived".
+- hold goals show "12/20 days" and waived goals show "waived";
+- once every goal is met and only the chapter floor holds (§5.0), the chip and drawer say so: "closes in m:ss" (`view.chapter.closesInSec`).
 
 In Ch6 the drawer shows the **Charter Claims** for all five endings instead: compact ✓/✗ rows, with a tap to see the Charter Night preview.
 
@@ -1964,7 +1966,8 @@ export type StorySignal =
 **Load rules (versioning):**
 
 - `SaveData.story` is **optional**. `World.deserialize` accepts `version` 1 or 2 and throws only for others.
-- A v1 save, or a v2 save whose `story` is missing or fails to decode, loads with a fresh story (`newStoryState(seed)`, chapter 1 waiting) and flag `migrated`. Turf, rail and links start empty.
+- A v1 save, or a v2 save whose `story` is missing or fails to decode, loads with a fresh story (`newStoryState(seed)`, chapter 1 waiting) and flag `migrated`, with `waitingSince`, `chapterTick` and the whisper and note clocks set to the load tick (the story starts now, so Ch1 keeps its 20 s load delay). Turf, rail and links start empty.
+- `chapterSec` (the chapter floor clock, §5.0) and flag `endingScreen` (an ending screen still owed while the final card or Log 6 is up, §6.1) are saved too, so a reload keeps both.
 - `decodeStory` deep-merges the saved `StoryState` over `newStoryState(seed)`, so a field added in a later build loads with its default. Bump `StoryState.v` only when a field changes meaning, and migrate in `decodeStory`.
 - Unknown card ids in `queue`, `pending` or `open` (content removed in a later build) are dropped.
 - `world.nextLinkId` = the highest saved link id + 1.
@@ -2262,11 +2265,12 @@ After this, nobody changes a shared interface without a note to all packages.
 
 ```ts
 STORY_PACING  = { cardChance: 0.35, minDaysBetween: 60, minActiveSecBetween: 120, beatGapSec: 10, beatMuteDays: 30,
-                  pendingDays: 20, pendingMinSec: 60, hostileEvery: 180, hostileGap: 60, seasonalGapDays: 300,
+                  pendingDays: 20, pendingMinSec: 60, hostileEvery: 360, hostileGap: 60, seasonalGapDays: 300,
                   starRetryDays: 240, defaultCooldown: 360, fallbackDays: 720, hardFallbackDays: 1440,
-                  beatFallbackDays: 360, waiverAfterDays: 720, waiverEveryDays: 360, chapterMinSec: 60,
-                  whisperEvery: 60, noteEvery: 45, reviewEvery: 1080, nudgeEvery: 360, bailoutFunds: -5000 }
-UNLOCK_FALLBACK_POP = { factions: 1500, comms: 1500, stack: 8000, deals: 8000, crackdown: 6000, pact: 6000,
+                  beatFallbackDays: 360, waiverAfterDays: 720, waiverEveryDays: 360, chapterMinSec: 600,
+                  whisperEvery: 60, noteEvery: 45, reviewEvery: 1080, nudgeEvery: 360, bailoutFunds: -5000,
+                  bailoutCooldown: 360 }
+UNLOCK_FALLBACK_POP = { factions: 3000, comms: 3000, stack: 8000, deals: 8000, crackdown: 6000, pact: 6000,
                   turfOverlay: 6000, skybridge: 9000, rail: 9000, crowns: 20000 }   // §5.0; others are story or faction only
 TURF          = { capShare: 0.08, seedPop: { undertow: 1200, kites: 2500 }, seedStr: 60, seedMinAff: 0.55,
                   holdPivot: 0.35, holdGain: 40, securityHard: 0.6, securityPenalty: 20, spreadMin: 50,
@@ -2284,8 +2288,11 @@ SKYBRIDGE     = { base: 1200, perTile: 300, upkeepBase: 15, upkeepPerTile: 3, mi
                   lv: 0.05, lvRadius: 3, tripMul: 0.8, comPer: 0.01, comCap: 0.08, clusterPer: 0.02, clusterCap: 0.06 }
 RIBBON        = { perTile: 110, perWaterTile: 330, upkeep: 1.2, maxDrag: 32, transit: 0.5, stationRadiusAdd: 3,
                   stackStationRadius: 7, tripMul: 0.8, tripRadius: 2, stationLv: 0.04, underResLv: -0.02, turfHit: 10 }
-SALT          = { base: 600, perPop: 0.08, favor: 8, trace: 3, cooldown: 90 }
+SALT          = { base: 600, perPop: 0.08, perFunds: 0.02, favor: 8, trace: 3, cooldown: 90 }
+POWER_WEIGHTS = { …, basalt.patron: 300, nacre.patron: 300, undertow.perTurfTile: 2, kites.perTurfTile: 2 }   // §2.4
 ```
+
+Tuning pass (integration review, headless measure, 15 policies × 3 seeds × 40 years): `chapterMinSec` 60 → 600 (the boot counts), `hostileEvery` 180 → 360 plus no ⚑ twice running, the −30 floor on negative `favorMonthly`, turf weight 4 → 2, patron weight 150 → 300, corp power claims 30% → 25%, the `sys.bailout` bond −400 × 30 → −250 × 24 with cooldown 360, salt + 2% of the treasury, the `sys.revealed` cost and `factions`/`comms` fallbacks 1,500 → 3,000.
 
 `POWER_WEIGHTS`, `FACTION_BUILD_REACTIONS`, mood drivers, deals and perks are as listed in §2.
 

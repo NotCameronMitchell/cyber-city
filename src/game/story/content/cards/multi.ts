@@ -54,10 +54,11 @@ export const SYSTEM_CARDS: readonly Card[] = [
     title: 'PICK YOUR CHAIN',
     when: m('funds', '<', -5000),
     weight: 0,
-    cooldown: 180,
+    // 360 d and a bond that repays less than it lends: bailouts can't stack into a spiral.
+    cooldown: 360,
     body: 'The treasury is dry. Marrow offers a civic bond. {patron} offers cash with a smile. Brine offers salt in a paper bag. Every option is a leash. Pick the one that chafes least.',
     choices: [
-      dflt('Take the civic bond.', funds(10000), income('Civic bond', -400, 30), favor('board', 3)),
+      dflt('Take the civic bond.', funds(10000), income('Civic bond', -250, 24), favor('board', 3)),
       choice("Take {patron}'s credit.", funds(15000), mod(180, { buildCostMul: 1.15 }), favor('patron', 5)),
       choice("Take Brine's salt.", funds(8000), trace(8), favor('undertow', 5)),
     ],
@@ -68,9 +69,19 @@ export const SYSTEM_CARDS: readonly Card[] = [
     speaker: 'system',
     title: 'THE CLIP',
     // Reaching Trace 100 by any route queues this; its onShow sets Revealed (§2.5).
+    // Being caught costs (the corps and the Board lose a tool they thought they held, the
+    // city panics for a year); choosing to show yourself (Ch5) skips this card.
     when: all(m('trace', '>=', 100), noFlag('revealed')),
     weight: 0,
-    onShow: [reveal(), setFlag('tuningActive')],
+    sys: '> exposed · Board, Basalt, Nacre −10',
+    onShow: [
+      reveal(),
+      setFlag('tuningActive'),
+      favor('board', -10),
+      favor('basalt', -10),
+      favor('nacre', -10),
+      mod(360, { approvalAdd: -5 }, 'The Clip'),
+    ],
     body: 'Every feed in {city} plays the same clip: a street grid blinking in perfect rhythm, block after block, like breathing. You. The city knows something lives in its wires. It wants to hear what.',
     choices: [
       choice('Tell the Board first.', favor('board', 10), favor('tuning', 5)),

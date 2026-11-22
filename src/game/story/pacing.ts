@@ -151,10 +151,13 @@ export function drawCard(
   }
   if (!deckOpen) return { pick: null, drop };
 
-  // 3. A Hostile faction's ⚑ card (most hostile first).
+  // 3. A Hostile faction's ⚑ card (most hostile first). Never two deck slots running:
+  //    after a ⚑ the next slot goes to the steps below, so a faction that stays Hostile
+  //    can't crowd out the rest of the deck (the 120 s gate alone spaces slots > 180 d).
   let hostile: Card | null = null;
   let worst = Infinity;
-  if (tick - st.lastHostileTick >= P.hostileGap) {
+  const lastWasHostile = st.lastHostileTick > NEVER_TICK && st.lastHostileTick === st.lastCardTick;
+  if (!lastWasHostile && tick - st.lastHostileTick >= P.hostileGap) {
     for (const f of FACTION_IDS) {
       const card = idx.hostile[f];
       if (!card || !isActive(world, f)) continue;

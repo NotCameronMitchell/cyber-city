@@ -375,18 +375,25 @@ describe('deals, pacts and salt', () => {
     expect(g.world.ledger.income).toContainEqual({ label: 'Off-ledger', amount: 16 });
   });
 
-  it('salt: cost by population, favor +8, Trace +3, 90 d cooldown; never the Tuning', () => {
+  it('salt: cost by population and treasury, favor +8, Trace +3, 90 d cooldown; never the Tuning', () => {
     const g = midGame();
     const st = g.world.story;
     const toasts: string[] = [];
     g.world.events.on('toast', (t) => toasts.push(t.text));
-    expect(g.story.sendSalt('nacre')).toEqual({ ok: true, cost: 1000 });
+    g.world.funds = 0;
+    expect(g.story.saltCost()).toBe(1000); // round100(600 + 0.08 × 5,000)
+    g.world.funds = 250000;
+    expect(g.story.saltCost()).toBe(6000); // + 2% of the treasury: it still stings in a rich city
+    g.world.funds = -9000;
+    expect(g.story.saltCost()).toBe(1000); // debt doesn't make it cheaper
+    g.world.funds = 20000;
+    expect(g.story.sendSalt('nacre')).toEqual({ ok: true, cost: 1400 });
     expect(st.favor.nacre).toBe(8);
     expect(st.trace).toBe(3);
     expect(toasts).toContain('Salt sent. Nacre remembers.');
     expect(g.story.sendSalt('nacre').reason).toBe('Cooldown 90d');
     expect(g.story.sendSalt('tuning').reason).toBe("The Tuning won't take salt.");
-    expect(g.story.view().factions.find((f) => f.id === 'basalt')!.salt).toMatchObject({ label: 'Send salt', cost: 1000, enabled: true });
+    expect(g.story.view().factions.find((f) => f.id === 'basalt')!.salt).toMatchObject({ label: 'Send salt', cost: 1400, enabled: true });
     g.world.funds = 500;
     expect(g.story.sendSalt('basalt').reason).toBe('Not enough credits (need 1,000)');
     st.ending = 'ledger';

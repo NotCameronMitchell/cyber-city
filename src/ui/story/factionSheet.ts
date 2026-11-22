@@ -5,10 +5,12 @@
 //   Trace             eye · 0–100 bar with ticks at 25/40/70 · number / REVEALED
 //   rows (64 px)      sigil · name · tier word · meter centred at 0 with ticks
 //                     at ±20 / ±60 · top mood driver
-//   detail (push)     leader and what they call you · every mood driver ·
-//                     Deal (Pact for gangs) · exclusive building + Build ·
-//                     Send salt · Nudge · penalty chips · Charter claim.
+//   detail (push)     leader and what they call you · penalty chips · the
+//                     actions first, so they sit above the fold at 60 %: Deal
+//                     (Pact for gangs) · Send salt · Nudge · exclusive building +
+//                     Build · then Charter claim and every mood driver.
 //                     Back is pinned bottom-left; an edge swipe right also goes back.
+//                     Short phones open the detail expanded to full height.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { BUILDINGS } from '../../game/config';
@@ -51,8 +53,14 @@ export class FactionSheet {
   open(f: FactionId | null = null): void {
     this.detail = f;
     this.sheet.open();
+    if (f) this.expandIfShort();
     if (this.view) this.sync(this.view, true);
     this.sheet.body.scrollTop = 0;
+  }
+
+  /** Portrait phones under ~720 px: 60 % leaves room for one action, so the detail opens full height. */
+  private expandIfShort(): void {
+    if (typeof matchMedia === 'function' && matchMedia('(orientation: portrait) and (max-height: 719px)').matches) this.sheet.setExpanded(true);
   }
 
   back(): void {
@@ -140,6 +148,20 @@ export class FactionSheet {
       `</span></div>`;
     if (f.retiredLabel) s += `<p class="cc-fd-retired">${esc(f.retiredLabel)}</p>`;
     if (f.penalties.length) s += `<div class="cc-fd-pen">${f.penalties.map((p) => `<span class="cc-pen-chip">${icon('warn')}${esc(p)}</span>`).join('')}</div>`;
+    // Actions first: at 60 % height they must not sit below the mood drivers.
+    s += '<div class="cc-fd-actions">';
+    const gang = f.id === 'undertow' || f.id === 'kites';
+    if (f.deal) s += this.actionBtn('deal', f.deal, gang ? 'hand' : 'deals', gang ? 'Pact' : 'Deal');
+    else if (!f.retiredLabel) s += `<div class="cc-fd-note">${icon('lock')}<span>${gang ? 'Pacts' : 'Deals'} open at Friendly.</span></div>`;
+    if (f.salt) s += this.actionBtn('salt', f.salt, 'salt', 'Send salt');
+    if (f.nudge) s += this.actionBtn('nudge', f.nudge, 'hand', 'Nudge');
+    if (f.exclusive) {
+      const def = BUILDINGS[f.exclusive.type];
+      s +=
+        `<div class="cc-fd-excl${f.exclusive.buildable ? ' is-open' : ''}"><span class="cc-fd-excl-text"><b>${esc(def.name)}</b><span>${esc(f.exclusive.buildable ? def.desc : f.exclusive.reason ?? 'Locked')}</span></span>` +
+        `<button class="cc-btn${f.exclusive.buildable ? ' is-primary' : ''}" type="button" data-act="build" data-type="${f.exclusive.type}"${f.exclusive.buildable ? '' : ' aria-disabled="true"'}>${icon(f.exclusive.buildable ? 'chevron' : 'lock')}<span>Build</span></button></div>`;
+    }
+    s += '</div>';
     if (f.claim) s += `<div class="cc-fd-claim">${icon('flag')}<span>${esc(f.claim)}</span></div>`;
     // Mood drivers.
     if (f.drivers.length) {
@@ -150,20 +172,6 @@ export class FactionSheet {
       }
       s += '</ul>';
     }
-    // Actions.
-    s += '<div class="cc-fd-actions">';
-    const gang = f.id === 'undertow' || f.id === 'kites';
-    if (f.deal) s += this.actionBtn('deal', f.deal, gang ? 'hand' : 'deals', gang ? 'Pact' : 'Deal');
-    else if (!f.retiredLabel) s += `<div class="cc-fd-note">${icon('lock')}<span>${gang ? 'Pacts' : 'Deals'} open at Friendly.</span></div>`;
-    if (f.exclusive) {
-      const def = BUILDINGS[f.exclusive.type];
-      s +=
-        `<div class="cc-fd-excl${f.exclusive.buildable ? ' is-open' : ''}"><span class="cc-fd-excl-text"><b>${esc(def.name)}</b><span>${esc(f.exclusive.buildable ? def.desc : f.exclusive.reason ?? 'Locked')}</span></span>` +
-        `<button class="cc-btn${f.exclusive.buildable ? ' is-primary' : ''}" type="button" data-act="build" data-type="${f.exclusive.type}"${f.exclusive.buildable ? '' : ' aria-disabled="true"'}>${icon(f.exclusive.buildable ? 'chevron' : 'lock')}<span>Build</span></button></div>`;
-    }
-    if (f.salt) s += this.actionBtn('salt', f.salt, 'salt', 'Send salt');
-    if (f.nudge) s += this.actionBtn('nudge', f.nudge, 'hand', 'Nudge');
-    s += '</div>';
     void v;
     return s;
   }
@@ -186,6 +194,7 @@ export class FactionSheet {
     const row = t.closest<HTMLElement>('[data-f]');
     if (row && this.sheet.body.contains(row)) {
       this.detail = row.dataset.f as FactionId;
+      this.expandIfShort();
       if (this.view) this.sync(this.view, true);
       this.sheet.body.scrollTop = 0;
       return;

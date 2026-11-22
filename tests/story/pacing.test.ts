@@ -78,7 +78,7 @@ describe('eligibility and weight', () => {
     expect(cardEligible(w, feeds)).toBe(true);
     expect(cooldownOf(feeds)).toBe(P.defaultCooldown);
     expect(cooldownOf(card('bd.archive'))).toBe(P.starRetryDays);
-    expect(cooldownOf(card('sys.bailout'))).toBe(180);
+    expect(cooldownOf(card('sys.bailout'))).toBe(P.bailoutCooldown);
   });
 
   it('★ cards stay eligible until their Log is owned', () => {
@@ -152,22 +152,37 @@ describe('the five draw steps', () => {
     expect(r.drop).toEqual([0]);
   });
 
-  it('2. system cards before ⚑; 3. ⚑ every 180 d per faction and 60 d city-wide', () => {
+  it('2. system cards before ⚑; 3. ⚑ every 360 d per faction and 60 d city-wide', () => {
     w.funds = -6000;
     w.story.favor.kites = -80;
     expect(drawCard(w, rng, true, 1).pick!.card.id).toBe('sys.bailout');
     w.funds = 0;
     expect(drawCard(w, rng, true, 1).pick).toMatchObject({ step: 'hostile' });
     expect(drawCard(w, rng, true, 1).pick!.card.id).toBe('kt.string');
-    w.story.lastHostileBy.kites = 3000 - 179;
+    w.story.lastHostileBy.kites = 3000 - (P.hostileEvery - 1);
     expect(drawCard(w, rng, true, 0).pick).toBeNull();
-    w.story.lastHostileBy.kites = 3000 - 180;
+    w.story.lastHostileBy.kites = 3000 - P.hostileEvery;
     w.story.lastHostileTick = 3000 - 59;
     expect(drawCard(w, rng, true, 0).pick).toBeNull();
     w.story.lastHostileTick = 3000 - 60;
     expect(drawCard(w, rng, true, 0).pick!.card.id).toBe('kt.string');
     // The most hostile faction goes first.
     w.story.favor.basalt = -95;
+    expect(drawCard(w, rng, true, 0).pick!.card.id).toBe('ba.embargo');
+  });
+
+  it('3. a ⚑ never takes two deck slots running: a faction that stays Hostile leaves room for the deck', () => {
+    w.stats.population = 3000; // nc.census eligible for the random draw
+    w.story.favor.kites = -80;
+    w.story.favor.basalt = -95;
+    // The last deck delivery was Basalt's ⚑, long ago: both ⚑ are due again, but the slot goes to the deck.
+    w.story.lastHostileBy.basalt = 3000 - 2 * P.hostileEvery;
+    w.story.lastHostileTick = w.story.lastCardTick = 3000 - 2 * P.hostileEvery;
+    expect(drawCard(w, rng, true, 0).pick).toBeNull(); // the chance roll failed: nothing, not a ⚑
+    expect(drawCard(w, rng, true, 100).pick).toMatchObject({ step: 'random' });
+    // A faction card came in between: the ⚑ wins the next slot again.
+    w.story.lastCardTick = 3000 - P.hostileEvery;
+    expect(drawCard(w, rng, true, 0).pick).toMatchObject({ step: 'hostile' });
     expect(drawCard(w, rng, true, 0).pick!.card.id).toBe('ba.embargo');
   });
 
@@ -324,7 +339,7 @@ describe('beats (§5.0)', () => {
     const st = g.world.story;
     st.goalsDone = ['c2.pop', 'c2.jobs', 'c2.power'];
     st.queue.push({ card: 'ch2.tiebreak', tick: g.world.tick + 90 });
-    g.story.update(120, false);
+    g.story.update(P.chapterMinSec, false);
     days(g, 30);
     expect(st.chapter).toBe(2);
     days(g, 60, 0.5);
@@ -339,27 +354,80 @@ describe('beats (§5.0)', () => {
     expect(st.unlocks).toEqual(expect.arrayContaining(['stack', 'deals']));
   });
 
-  it('at most one chapter completes per 60 unpaused seconds', () => {
+  it('at most one chapter completes per 600 unpaused seconds; the view counts the settle down', () => {
+    expect(P.chapterMinSec).toBe(600);
     const g = inChapter(3, ['ch3.clash', 'ch3.pier']);
     const st = g.world.story;
     st.goalsDone = ['c3.crime', 'c3.pop', 'c3.gang'];
-    g.story.update(100, false);
+    g.story.update(P.chapterMinSec - 1, false);
+    days(g, 1);
+    expect(st.chapter).toBe(3); // every goal and beat done: only the floor holds it
+    expect(g.story.view().chapter.closesInSec).toBe(1);
+    g.story.update(5, true); // paused seconds don't count
+    days(g, 1);
+    expect(st.chapter).toBe(3);
+    g.story.update(1, false);
     days(g, 1);
     expect(st.chapter).toBe(4);
+    expect(st.chapterSec).toBe(0);
+    expect(g.story.view().chapter.closesInSec).toBeUndefined();
     g.story.update(11, false);
     expect(openId(g)).toBe('reward.3');
     g.choose(0);
-    // Ch4 starts and is completed at once on paper; it must still wait 60 s.
+    // Ch4 starts and is completed at once on paper; it must still wait out the floor.
     st.chapter = 4;
     st.phase = 'active';
     st.beatsShown = ['ch4.drain', 'ch4.logs', 'ch4.brine'];
     st.goalsDone = ['c4.pop', 'c4.core', 'c4.link'];
-    g.story.update(30, false);
+    g.story.update(300, false);
     days(g, 1);
     expect(st.chapter).toBe(4);
-    g.story.update(31, false);
+    expect(g.story.view().chapter.closesInSec).toBe(P.chapterMinSec - 311);
+    g.story.update(P.chapterMinSec - 311, false);
     days(g, 1);
     expect(st.chapter).toBe(5);
+  });
+
+  it('the chapter floor is saved: a reload neither resets nor skips it', () => {
+    const g = inChapter(3, ['ch3.clash', 'ch3.pier']);
+    const st = g.world.story;
+    st.goalsDone = ['c3.crime', 'c3.pop', 'c3.gang'];
+    g.story.update(400, false);
+    days(g, 1);
+    expect(st.chapter).toBe(3);
+    const h = headlessGame(1);
+    expect(h.restore(JSON.parse(JSON.stringify(g.world.serialize())))).toBe(true);
+    expect(h.world.story.chapterSec).toBeCloseTo(400, 6);
+    h.story.update(150, false);
+    days(h, 1);
+    expect(h.world.story.chapter).toBe(3);
+    h.story.update(50, false);
+    days(h, 1);
+    expect(h.world.story.chapter).toBe(4);
+  });
+
+  it('the boot counts as a completion: Ch1 closes no sooner than 600 s after it opens', () => {
+    const g = headlessGame(19);
+    const st = g.world.story;
+    st.chapterSec = 5000; // time before the boot doesn't count
+    g.setTool('road');
+    expect(g.apply({ x: 20, y: 20 }, { x: 30, y: 20 }).valid).toBe(true);
+    g.story.update(0.1, false);
+    g.story.update(P.bootDelaySec, false); // the chapter opens (title card)
+    expect(st.chapter).toBe(1);
+    expect(st.phase).toBe('active');
+    g.story.update(3.1, false);
+    expect(openId(g)).toBe('ch1.boot');
+    expect(st.chapterSec).toBeCloseTo(3.1, 6);
+    g.choose(0);
+    st.beatsShown = ['ch1.boot', 'ch1.minutes', 'ch1.lark'];
+    st.goalsDone = ['c1.pop', 'c1.lit', 'c1.plaza'];
+    g.story.update(P.chapterMinSec - 10, false);
+    days(g, 1);
+    expect(st.chapter).toBe(1);
+    g.story.update(10, false);
+    days(g, 1);
+    expect(st.chapter).toBe(2);
   });
 });
 
@@ -396,6 +464,7 @@ describe('triggers, fallbacks and waivers (§5.0)', () => {
   it('after 720 d one unmet goal per 360 d is waived (counts as done)', () => {
     const g = inChapter(2, ['ch2.sallow', 'ch2.oduya', 'ch2.vote']);
     const st = g.world.story;
+    st.chapterSec = P.chapterMinSec; // the real-time floor is met: only the waivers matter here
     const goals: string[] = [];
     g.world.events.on('goal', (e) => goals.push(e.id));
     for (const [tick, n] of [

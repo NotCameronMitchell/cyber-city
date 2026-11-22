@@ -7,8 +7,9 @@
 //   footer      Recount · six more months (48 px)
 //   confirm     "Hold the charter for Basalt?" → Hold the charter (52 px) / Back
 //
-// Locked rows are greyed; a tap names the first failed claim. Preview mode
-// (from the Chapter VI goal drawer) shows the same rows read-only.
+// Locked rows are greyed; a tap flashes the first failed claim on the row
+// itself (no toast: toasts wait while this screen is up). Preview mode (from
+// the Chapter VI goal drawer) shows the same rows read-only and says so.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import type { EndingId, StoryView } from '../../game/story/types';
@@ -41,6 +42,7 @@ const ORDER: EndingId[] = ['ironwork', 'pearl', 'lowcrown', 'ledger', 'quiet'];
 export class CharterNight {
   readonly el: HTMLElement;
   private readonly year: HTMLElement;
+  private readonly sub: HTMLElement;
   private readonly rows: HTMLElement;
   private readonly recount: HTMLButtonElement;
   private readonly confirm: HTMLElement;
@@ -55,6 +57,7 @@ export class CharterNight {
 
   constructor(private readonly ctx: UIContext) {
     this.year = h('div', { class: 'cc-cn-title' });
+    this.sub = h('div', { class: 'cc-cn-sub', text: 'Every ballot passes through you.' });
     this.rows = h('div', { class: 'cc-cn-rows', role: 'list' });
     this.recount = h('button', { class: 'cc-btn cc-cn-recount', type: 'button', 'data-act': 'recount' }, h('span', { html: icon('clock') }), h('span', { text: 'Recount · six more months' }));
     this.confirmQ = h('div', { class: 'cc-cn-q' });
@@ -74,7 +77,7 @@ export class CharterNight {
     this.el = h(
       'section',
       { class: 'cc-charter', hidden: true, role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Charter Night', tabindex: '-1' },
-      h('div', { class: 'cc-cn-head' }, this.year, h('div', { class: 'cc-cn-sub', text: 'Every ballot passes through you.' }), h('button', { class: 'cc-iconbtn cc-cn-close', type: 'button', 'data-act': 'close', 'aria-label': 'Close preview', html: icon('close'), hidden: true })),
+      h('div', { class: 'cc-cn-head' }, this.year, this.sub, h('button', { class: 'cc-iconbtn cc-cn-close', type: 'button', 'data-act': 'close', 'aria-label': 'Close preview', html: icon('close'), hidden: true })),
       h('div', { class: 'cc-cn-scroll' }, this.rows),
       h('div', { class: 'cc-cn-foot' }, this.recount),
       this.confirm,
@@ -98,6 +101,7 @@ export class CharterNight {
     this.el.classList.toggle('is-preview', preview);
     setHidden(this.el.querySelector<HTMLElement>('.cc-cn-close')!, !preview);
     setText(this.recount.lastElementChild as HTMLElement, preview ? 'Close preview' : 'Recount · six more months');
+    setText(this.sub, preview ? 'Preview only · the count opens on Charter Night.' : 'Every ballot passes through you.');
     this.recount.dataset.act = preview ? 'close' : 'recount';
     const tick = this.ctx.game.world.tick;
     setText(this.year, `Charter Night · ${START_YEAR + Math.floor(tick / (DAYS_PER_MONTH * MONTHS_PER_YEAR))}`);
@@ -177,14 +181,14 @@ export class CharterNight {
     const c = this.view.claims.find((x) => x.id === id);
     if (!c) return;
     if (!(c.ok || id === 'quiet')) {
-      const miss = c.rows.find((r) => !r.ok);
       replayClass(row, 'is-shake');
-      game.toast(miss ? `${miss.label}${miss.gap ? ` · ${miss.gap}` : ''}` : 'A claim does not hold', 'info');
+      const miss = row.querySelector<HTMLElement>('.cc-cn-claim:not(.is-ok)');
+      if (miss) replayClass(miss, 'is-flash');
       this.ctx.sfx('error');
       return;
     }
     if (this.preview) {
-      game.toast('Preview only. The count opens on Charter Night.', 'info');
+      replayClass(this.sub, 'is-flash');
       return;
     }
     this.choice = id;

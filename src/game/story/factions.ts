@@ -275,14 +275,20 @@ export function changeFavor(world: World, f: FactionId, v: number, quiet = false
   return after - before;
 }
 
-/** Monthly favor drift (|favor| > 30 moves 1 toward 0) plus `favorMonthly`. No events. */
+/**
+ * Monthly favor drift (|favor| > 30 moves 1 toward 0) plus `favorMonthly`. No events.
+ * A negative `favorMonthly` (a pact's sour neighbour, Pearlescence's Kites) sours a
+ * faction only down to −30: below that the natural drift wins, so nothing holds a
+ * faction Hostile for good (§2.3 rule 3).
+ */
 export function driftFavor(world: World, monthly: Partial<Record<FactionId, number>>): void {
   const fav = world.story.favor;
+  const edge = STANDING.driftAbove;
   for (const f of FACTION_IDS) {
     let v = fav[f] ?? 0;
-    if (Math.abs(v) > STANDING.driftAbove) v -= Math.sign(v) * STANDING.drift;
+    if (Math.abs(v) > edge) v -= Math.sign(v) * STANDING.drift;
     const add = monthly[f];
-    if (typeof add === 'number' && Number.isFinite(add)) v += add;
+    if (typeof add === 'number' && Number.isFinite(add)) v = add < 0 ? Math.max(v + add, Math.min(v, -edge)) : v + add;
     fav[f] = Math.max(STANDING.min, Math.min(STANDING.max, Math.round(v * 100) / 100));
   }
 }

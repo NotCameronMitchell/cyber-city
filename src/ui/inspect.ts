@@ -39,6 +39,7 @@ export class InspectSheet {
   private readonly rows: RowRefs[] = [];
   private readonly actionsEl: HTMLElement;
   private readonly story: InspectStory;
+  private readonly scroll: HTMLElement;
   private readonly demolishBtn: HTMLButtonElement;
   private readonly confirmBtn: HTMLButtonElement;
   private readonly cancelBtn: HTMLButtonElement;
@@ -75,9 +76,14 @@ export class InspectSheet {
       this.title,
       // Only the body scrolls, so the chamfered frame, stripe and header stay put
       // (a scrolling panel dragged its ::before frame along and hid the last row).
-      h('div', { class: 'cc-insp-scroll' }, this.sub, this.rowsEl, this.story.el, this.actionsEl),
+      (this.scroll = h('div', { class: 'cc-insp-scroll' }, this.sub, this.rowsEl, this.story.el, this.actionsEl)),
     );
     this.el.addEventListener('click', this.onClick);
+    // Crown picker: grow the sheet, drop the stat rows, start at the picker head.
+    this.story.onMode = (m) => {
+      setClass(this.el, 'is-picking', m === 'crowns');
+      if (m === 'crowns') this.scroll.scrollTop = 0;
+    };
   }
 
   get isOpen(): boolean {
@@ -149,8 +155,13 @@ export class InspectSheet {
       this.rows.push({ el, label, value, meter, fill });
     }
     while (this.rows.length > info.rows.length) this.rows.pop()!.el.remove();
+    // Empty lots: say whether power reaches them (getTileInfo leaves it as '—' until a lot develops),
+    // so a stranded plant is visible from the first tap.
+    const lot = !!tile.zone && tile.level === 0 && !tile.abandoned;
     for (let i = 0; i < info.rows.length; i++) {
-      const [label, value] = info.rows[i];
+      const label = info.rows[i][0];
+      let value = info.rows[i][1];
+      if (lot && label === 'Power' && value === '—') value = tile.powered ? 'Online' : 'NO POWER';
       const r = this.rows[i];
       setText(r.label, label);
       setText(r.value, value);

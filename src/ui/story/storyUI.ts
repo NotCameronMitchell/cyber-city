@@ -68,7 +68,7 @@ export class StoryUI {
     });
     this.scrim = h('div', { class: 'cc-st-scrim', hidden: true });
     this.card = new StoryCard(ctx);
-    this.banner = new IncomingBanner(ctx, () => this.rail.topEdge());
+    this.banner = new IncomingBanner(ctx, () => this.dockTop());
     this.title = new ChapterTitle();
     this.factions = new FactionSheet(ctx);
     this.comms = new Comms(ctx);
@@ -118,6 +118,24 @@ export class StoryUI {
 
     this.wire();
     this.onWorld();
+  }
+
+  /**
+   * Top edge (viewport px) of whatever the bottom dock shows above the toolbar: the
+   * rail, the tool chip and its hint, the coach, the legend, an in-flow inspect sheet
+   * or the tray. The incoming banner sits above all of it. Null = nothing showing.
+   */
+  private dockTop(): number | null {
+    let top = this.rail.topEdge();
+    const dock = this.ctx.root.querySelector('.cc-dock');
+    if (!dock) return top;
+    for (const el of dock.querySelectorAll<HTMLElement>('.cc-dock-stack > *, .cc-chiprow > *, .cc-sheet-slot > *, .cc-tray')) {
+      if (el.hidden || el.classList.contains('cc-chiprow')) continue;
+      const r = el.getBoundingClientRect();
+      if (r.height <= 0 || getComputedStyle(el).position === 'fixed') continue; // landscape side cards
+      if (top === null || r.top < top) top = r.top;
+    }
+    return top;
   }
 
   private view(): StoryView {
@@ -265,6 +283,11 @@ export class StoryUI {
     return this.card.isOpen || this.sheet !== null || this.title.isOpen || this.charter.isOpen || this.ending.isOpen;
   }
 
+  /** True while a full-screen story surface is up (chapter title, Charter Night, ending). */
+  get fullscreen(): boolean {
+    return this.title.isOpen || this.charter.isOpen || this.ending.isOpen;
+  }
+
   update(dt: number): void {
     const story = this.ctx.game.story;
     const v = story.view();
@@ -274,6 +297,7 @@ export class StoryUI {
       this.sync(v);
     }
     this.card.update();
+    if (this.sheet === 'comms') this.comms.tick();
     // Deferred one-shots, once the card queue has drained.
     if (!this.card.isOpen && !this.title.isOpen) {
       if (this.charterWaiting && !this.ending.isOpen) {
@@ -304,6 +328,9 @@ export class StoryUI {
   private sync(v: StoryView): void {
     // Card.
     if (v.card) {
+      // One modal at a time: a beat that opens over Budget / City Report / News (z 50 over
+      // the story layer) would sit hidden behind it while the sim waits, so close the dialog.
+      if (this.card.card?.id !== v.card.id && this.ctx.modals.depth > 0) this.ctx.modals.closeAll();
       if (this.sheet) this.closeSheets();
       if (this.charter.isOpen && this.charter.isPreview) this.charter.close();
       this.banner.hide(true);

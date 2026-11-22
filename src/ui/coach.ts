@@ -1,7 +1,9 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // First-run coach card: three steps (road → homes + fabs → power) that tick
 // themselves off as the player builds. Shown for fresh cities only, collapses
-// to one line while a tool or tray is active, dismissal persists.
+// to one 44 px line while a tool or tray is active, dismissal persists.
+// The power step only ticks once a plant actually reaches a zone; a plant that
+// touches nothing turns the step amber and says why.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { BUILDINGS, ZONES } from '../game/config';
@@ -9,6 +11,7 @@ import { storageGet, storageSet } from '../game/game';
 import { ZoneType } from '../game/types';
 import type { UIContext } from './context';
 import { h, replayClass, setClass, setText } from './dom';
+import { gridLink } from './grid';
 import { icon, type IconName } from './icons';
 
 const COACH_KEY = 'cybercity.ui.coach.v1';
@@ -16,6 +19,8 @@ const COACH_KEY = 'cybercity.ui.coach.v1';
 interface Step {
   title: string;
   body: string;
+  titleEl?: HTMLElement;
+  bodyEl?: HTMLElement;
   icon: IconName;
   cta: string;
   done: boolean;
@@ -30,6 +35,8 @@ export class Coach {
   private active = false;
   private finished = false;
   private collapsed = false;
+  /** Fired when the coach finishes, hides or re-arms (the dock re-shows the tool chip). */
+  onChange: (() => void) | null = null;
 
   constructor(private readonly ctx: UIContext) {
     this.steps = [
@@ -46,11 +53,13 @@ export class Coach {
     this.count = h('span', { class: 'cc-coach-count' });
     this.list = h('ol', { class: 'cc-coach-steps' });
     this.steps.forEach((s, i) => {
+      s.titleEl = h('strong', { text: s.title });
+      s.bodyEl = h('span', { text: s.body });
       s.el = h(
         'li',
         { class: 'cc-coach-step' },
         h('span', { class: 'cc-coach-mark', html: `<b>${i + 1}</b>${icon('check')}` }),
-        h('span', { class: 'cc-coach-text' }, h('strong', { text: s.title }), h('span', { text: s.body })),
+        h('span', { class: 'cc-coach-text' }, s.titleEl, s.bodyEl),
         h('button', { class: 'cc-coach-go', type: 'button', 'data-step': i, 'aria-label': `Show me: ${s.title}`, html: `${icon(s.icon)}<span>${s.cta}</span>` }),
       );
       this.list.append(s.el);
@@ -86,6 +95,7 @@ export class Coach {
       this.check();
       replayClass(this.el, 'is-in');
     }
+    this.onChange?.();
   }
 
   /** Re-check step completion (throttled by the root, cheap 4k-tile scan). */
@@ -101,9 +111,14 @@ export class Coach {
       else if (t.zone === ZoneType.Industrial) ind = true;
       if (road && res && ind) break;
     }
-    let plant = false;
-    for (const b of w.buildings.values()) if (BUILDINGS[b.type].powerSupply > 0) plant = true;
-    const done = [road, res && ind, plant];
+    // Power: done only when a plant is wired to a zone (roads, zones and buildings conduct).
+    const grid = gridLink(w);
+    const stranded = grid.plants > 0 && !grid.linked;
+    const p = this.steps[2];
+    setClass(p.el!, 'is-warn', stranded && !p.done);
+    setText(p.titleEl!, stranded ? `Connect your ${grid.plantName || BUILDINGS.solar.name}` : p.title);
+    setText(p.bodyEl!, stranded ? (grid.zoned ? 'It touches no road or zone, so nothing gets power. Build one that does.' : 'Zone next to your roads; power flows through touching tiles.') : p.body);
+    const done = [road, res && ind, grid.linked];
     let current = -1;
     for (let i = 0; i < 3; i++) {
       const s = this.steps[i];
@@ -121,6 +136,15 @@ export class Coach {
     if (current < 0) this.finish();
   }
 
+  /** On screen and still teaching (the tool chip folds away while it shows). */
+  get showing(): boolean {
+    return this.active && !this.finished;
+  }
+
+  get isCollapsed(): boolean {
+    return this.collapsed;
+  }
+
   /** Collapse to the current step while a tool / tray / sheet is active. */
   setCollapsed(c: boolean): void {
     if (c === this.collapsed) return;
@@ -133,10 +157,13 @@ export class Coach {
     setClass(this.el, 'is-finished', true);
     storageSet(COACH_KEY, '1');
     window.setTimeout(() => this.hide(), 5200);
+    this.onChange?.();
   }
 
   private hide(): void {
+    if (!this.active) return;
     this.active = false;
+    this.onChange?.();
     this.el.classList.add('is-out');
     window.setTimeout(() => {
       this.el.hidden = true;

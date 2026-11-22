@@ -10,12 +10,21 @@
 //              and open the log, missing ones show their source.
 // ─────────────────────────────────────────────────────────────────────────────
 
+import { STORY_PACING } from '../../game/config';
 import type { FactionId, StoryView } from '../../game/story/types';
 import type { UIContext } from '../context';
 import { esc, h, setClass, setHidden, setText } from '../dom';
 import { icon } from '../icons';
 import { pressGuard, swipeDown } from './gesture';
 import { MOTH_COLOR, factionColor, factionSigil, sigilImg } from './sigils';
+import { autoLabel } from './storyCard';
+
+/** Countdown ring fill for a waiting card: the later of the day and real-second clocks. */
+export function pendingFrac(p: { daysLeft: number; secLeft: number }): number {
+  const d = p.daysLeft / Math.max(1, STORY_PACING.pendingDays);
+  const s = p.secLeft / Math.max(1, STORY_PACING.pendingMinSec);
+  return Math.max(0, Math.min(1, Math.max(d, s)));
+}
 
 type Tab = 'log' | 'silt';
 
@@ -43,6 +52,12 @@ export class Comms {
   private openRow = -1;
   private logHtml = '';
   private siltHtml = '';
+  /** Pending row countdown: patched in place (≤ 1/s) instead of rebuilding every row each sim day. */
+  private waitText = '';
+  private waitFrac = '';
+  private nextText = '';
+  private nextFrac = '';
+  private waitAt = 0;
   private view: StoryView | null = null;
   private readonly press: { readonly down: boolean };
   onClosed: (() => void) | null = null;
@@ -151,21 +166,32 @@ export class Comms {
         `<span class="cc-crow-date">${esc(r.date)}</span></button>`;
     });
     const p = v.pending;
+    const waitText = p ? `Waiting for you · ${autoLabel(p.daysLeft)}` : '';
+    const waitFrac = p ? pendingFrac(p).toFixed(3) : '';
     if (p) {
-      const frac = Math.max(0, Math.min(1, p.daysLeft / 20));
+      // The countdown text and ring are left blank here and patched below, so a new
+      // sim day does not rebuild every row.
       s +=
         `<button class="cc-crow is-pending" type="button" data-act="answer" style="--fc:${factionColor(p.faction)}">` +
-        `<span class="cc-crow-sig cc-crow-ring" style="--p:${frac.toFixed(3)}">${factionSigil(p.faction, 28)}</span>` +
-        `<span class="cc-crow-main"><span class="cc-crow-title">${esc(p.title)}</span><span class="cc-crow-choice is-wait">Waiting for you · auto in ${Math.ceil(p.daysLeft)}d</span></span>` +
+        `<span class="cc-crow-sig cc-crow-ring">${factionSigil(p.faction, 28)}</span>` +
+        `<span class="cc-crow-main"><span class="cc-crow-title">${esc(p.title)}</span><span class="cc-crow-choice is-wait"></span></span>` +
         `<span class="cc-crow-answer">Answer${icon('chevron')}</span></button>`;
     }
-    // Hold off while a finger is down: the pending row's countdown changes daily.
+    // Rows change only on a new entry, an expanded row or a new pending card; hold off while a finger is down.
+    let rebuilt = false;
     if (s !== this.logHtml && (force || !this.press.down)) {
       const body = this.logList.parentElement!;
       const atEnd = body.scrollHeight - body.scrollTop - body.clientHeight < 40;
       this.logHtml = s;
       this.logList.innerHTML = s;
+      rebuilt = true;
       if (atEnd && this.tab === 'log') this.scrollToEnd();
+    }
+    if (p) {
+      this.nextText = waitText;
+      this.nextFrac = waitFrac;
+      if (rebuilt || force) this.patchWait();
+      else this.tick();
     }
     // ── Silt Logs ──
     const owned = v.logs.filter((l) => l.owned).length;
@@ -180,6 +206,24 @@ export class Comms {
       this.siltHtml = g;
       this.siltView.innerHTML = g;
     }
+  }
+
+  /** Per frame while open (cheap): apply a waiting countdown change, at most once a second. */
+  tick(): void {
+    if (!this._open || (this.nextText === this.waitText && this.nextFrac === this.waitFrac)) return;
+    if (performance.now() - this.waitAt >= 1000) this.patchWait();
+  }
+
+  private patchWait(): void {
+    this.waitAt = performance.now();
+    this.waitText = this.nextText;
+    this.waitFrac = this.nextFrac;
+    const row = this.logList.querySelector<HTMLElement>('.cc-crow.is-pending');
+    if (!row) return;
+    const text = row.querySelector<HTMLElement>('.is-wait');
+    const ring = row.querySelector<HTMLElement>('.cc-crow-ring');
+    if (text) setText(text, this.waitText);
+    if (ring) ring.style.setProperty('--p', this.waitFrac);
   }
 
   private readonly onClick = (e: MouseEvent) => {

@@ -23,6 +23,7 @@ import { Modals, type UIActions, type UIContext } from './context';
 import { Dock } from './dock';
 import { h, setClass } from './dom';
 import { ActionPill, FpsMeter, MilestoneBanner, Toasts } from './feedback';
+import { gridLink } from './grid';
 import { Hud } from './hud';
 import { InspectSheet } from './inspect';
 import { Menu } from './menu';
@@ -63,6 +64,9 @@ export class UI {
   private statsDirty = true;
   private panelsDirty = true;
   private slowTicks = 0;
+  /** A plant exists but reaches no zone (first-run trap); last warning time. */
+  private stranded = false;
+  private strandedAt = -Infinity;
   private readonly offs: (() => void)[] = [];
 
   constructor(
@@ -119,6 +123,8 @@ export class UI {
     this.menu = new Menu(this.ctx);
     this.confirm = new ConfirmDialog(this.ctx);
     this.story = new StoryUI(this.ctx);
+    this.banner.held = () => this.story.busy || this.modals.depth > 0;
+    this.toasts.held = () => this.story.fullscreen;
 
     this.dock.stack.prepend(this.coach.el);
     this.dock.sheetSlot.append(this.inspect.el);
@@ -131,6 +137,7 @@ export class UI {
     this.story.onView = () => this.dock.syncCategories();
 
     this.dock.onTrayChange = () => this.syncCoach();
+    this.coach.onChange = () => this.syncCoach();
     this.modals.onChange = (open) => setClass(root, 'has-modal', open);
 
     this.wireEvents();
@@ -276,6 +283,24 @@ export class UI {
 
   private syncCoach(): void {
     this.coach.setCollapsed(this.game.tool !== 'inspect' || this.dock.trayOpen || this.inspect.isOpen || !!this.story?.busy);
+    this.dock?.setCoachShowing(this.coach.showing);
+  }
+
+  /**
+   * Warn when every plant is cut off from the zones (placed a tile off the road):
+   * the sim's advisor only speaks up once lots develop, which they never will.
+   * Once when it happens, then every 45 s of play while it lasts.
+   */
+  private checkGrid(): void {
+    if (this.story.busy) return;
+    const g = gridLink(this.game.world);
+    const stranded = g.plants > 0 && g.zoned && !g.linked;
+    const now = performance.now();
+    if (stranded && (!this.stranded || (this.game.speed > 0 && now - this.strandedAt > 45000))) {
+      this.strandedAt = now;
+      this.game.toast(`Your ${g.plantName} isn't connected: it must touch a road or zone`, 'error');
+    }
+    this.stranded = stranded;
   }
 
   private refreshHud(): void {
@@ -293,6 +318,8 @@ export class UI {
     this.ticker.update(performance.now());
     this.inspect.update(dt);
     this.story.update(dt);
+    this.banner.update();
+    this.toasts.flush();
 
     this.hudAcc += dt;
     if (this.hudAcc >= HUD_INTERVAL) {
@@ -313,6 +340,7 @@ export class UI {
       this.dock.refreshTray();
       this.dock.syncCategories();
       this.coach.check();
+      this.checkGrid();
       this.budget.refresh();
       this.report.refresh();
       if (this.menu.isOpen) this.menu.refresh();

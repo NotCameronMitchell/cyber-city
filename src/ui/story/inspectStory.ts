@@ -4,8 +4,9 @@
 //   Precinct     Crackdown · 2,000 CR (52 px), disabled with its reason. The
 //                first press shows the zone on the map and arms a confirm.
 //   Stratablock  Raise to Hab Core · 16,000 CR · 90 d, disabled with its reason;
-//                the Crown stage opens the crown picker (4 rows of 72 px with
-//                an effect summary and favor chips).
+//                the Crown stage opens the crown picker (4 rows of 56 px with
+//                an effect summary and favor chips); while it is open the
+//                sheet grows and hides its stat rows (onMode).
 //
 // The turf, stage, ribbon and skybridge rows themselves come from
 // game.getTileInfo, so the generic inspect rows already show them.
@@ -31,6 +32,8 @@ export class InspectStory {
   private key = '';
   private timer = 0;
   private readonly press: { readonly down: boolean };
+  /** Mode changes (the inspect sheet makes room for the crown picker). */
+  onMode: ((mode: 'idle' | 'confirm' | 'crowns') => void) | null = null;
 
   constructor(private readonly ctx: UIContext) {
     this.el = h('div', { class: 'cc-insp-story', hidden: true });
@@ -90,7 +93,9 @@ export class InspectStory {
   }
 
   private setMode(m: 'idle' | 'confirm' | 'crowns'): void {
+    const changed = m !== this.mode;
     this.mode = m;
+    if (changed) this.onMode?.(m);
     window.clearTimeout(this.timer);
     if (m !== 'confirm') highlight.zone = null;
     if (m === 'confirm') this.timer = window.setTimeout(() => this.setMode('idle'), CONFIRM_MS);

@@ -568,6 +568,12 @@ export interface StoryState {
   rng: number;
   /** Tile index of the Seam, null before both gangs first seed. */
   seam: number | null;
+  /**
+   * Unpaused real seconds since the last chapter closed (or Ch1 opened): the
+   * STORY_PACING.chapterMinSec floor reads it. Saved so a reload can't reset
+   * the floor. WP-A addition; missing = 0.
+   */
+  chapterSec?: number;
 }
 
 /** Cached turf counts, derived (not saved). Written by story/turf.ts after every update. */
@@ -753,12 +759,29 @@ export interface CardView {
   body: string;
   canLater: boolean;
   autoInDays?: number;
+  /**
+   * Unpaused seconds the ‡ default still waits for (it needs autoInDays = 0 AND
+   * this = 0), so "auto in 0d" can read as seconds instead. WP-A addition.
+   */
+  autoInSec?: number;
   choices: { label: string; hints: Hint[]; effectsText: string; locked?: string; isDefault: boolean }[];
 }
 
 /** Plain data for the UI, every token already filled. Cached; rebuilt on story events. */
 export interface StoryView {
-  chapter: { n: number; numeral: string; title: string; question: string; phase: StoryState['phase'] };
+  chapter: {
+    n: number;
+    numeral: string;
+    title: string;
+    question: string;
+    phase: StoryState['phase'];
+    /**
+     * Every goal and required beat is done but the chapter is still settling
+     * (STORY_PACING.chapterMinSec of unpaused play since the last chapter closed):
+     * unpaused seconds left before it closes. Absent otherwise. WP-A addition.
+     */
+    closesInSec?: number;
+  };
   goals: { id: string; label: string; done: boolean; waived: boolean; now: string; need: string; progress: number }[];
   countdownDays: number | null;
   /** Ch6 drawer and Charter Night. */

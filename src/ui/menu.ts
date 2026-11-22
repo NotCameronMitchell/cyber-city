@@ -79,7 +79,7 @@ export class Menu {
       this.restoreBtn,
       h('div', { class: 'cc-menu-sep' }),
       item('view:settings', 'gear', 'Settings', 'Sound, music, weather, quality'),
-      item('view:help', 'help', 'How to play', 'Roads, zones, power and more'),
+      item('view:help', 'help', 'How to play', 'Roads, zones, power, the story'),
       item('view:about', 'info', 'About', 'Credits'),
     );
 
@@ -150,6 +150,9 @@ export class Menu {
         step('pinch', '6 · Move the map', 'One finger draws with the active tool. Two fingers pan; pinch to zoom. On desktop: drag with right mouse, scroll to zoom, WASD to pan.', '#22e5ff'),
         step('data', '7 · Use data views', 'Open Data for power, land value, crime, pollution, traffic and service coverage overlays.', '#22e5ff'),
         step('star', '8 · Hit milestones', 'Population milestones pay a charter grant and unlock bigger buildings: reactors, data hubs, spires and arcologies.', '#ffb02e'),
+        step('flag', '9 · Follow the chapter', 'Once the story starts, the chip above the toolbar shows the chapter goals. Tap it for the list; meeting them moves the story on.', '#ffb02e'),
+        step('comms', '10 · Answer COMMS', 'Faction messages wait in COMMS with a countdown ring. Answer them, or tap Later; when the ring runs out, the default answer goes through.', '#22e5ff'),
+        step('eye', '11 · Read the chips', 'Under a choice, ▲ and ▼ show how a faction will feel. The eye is Trace: how close anyone is to finding you. Hold a choice to see exactly what it does.', '#ff2bd6'),
       ),
       h('p', { class: 'cc-help-foot', text: 'Watch the treasury: taxes come in monthly, upkeep goes out. Tap your credits to open the budget.' }),
     );

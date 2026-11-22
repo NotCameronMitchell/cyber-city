@@ -554,7 +554,13 @@ export class World {
     w.milestones = Array.isArray(data.milestones) ? data.milestones.slice() : [];
     // Story (§10.8): v2 decodes data.story; v1, or a missing / undecodable block, keeps the
     // constructor's fresh story (empty turf, rail, links) and is marked migrated.
-    if (!(data.version >= 2 && decodeStory(data.story, w, opts))) w.story.flags.migrated = true;
+    if (!(data.version >= 2 && decodeStory(data.story, w, opts))) {
+      // The story starts now, not at tick 0: chapter fallbacks, waivers and the
+      // ambient timers count from the load, so an old city doesn't chain-fire Ch1.
+      const st = w.story;
+      st.flags.migrated = true;
+      st.waitingSince = st.chapterTick = st.lastWhisperTick = st.lastNoteTick = w.tick;
+    }
     w.version++;
     return w;
   }

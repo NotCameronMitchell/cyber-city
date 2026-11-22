@@ -540,10 +540,10 @@ describe('standing and tiers (§2.1)', () => {
     w.story.flags.patron = 'basalt';
     w.story.flags.branded = 2;
     expect(powerWeight(w, 'board')).toBe(3 * 50 + 100);
-    expect(powerWeight(w, 'basalt')).toBe(800 / 8 + 60 + 2 * 80 + 150);
+    expect(powerWeight(w, 'basalt')).toBe(800 / 8 + 60 + 2 * 80 + 300);
     w.turf.stats.tiles = { undertow: 10, kites: 0 };
     w.story.flags.oneTide = 'undertow';
-    expect(powerWeight(w, 'undertow')).toBe(40 + 150);
+    expect(powerWeight(w, 'undertow')).toBe(20 + 150);
     expect(powerWeight(w, 'tuning')).toBe(0);
     const total = (['board', 'basalt', 'nacre', 'undertow', 'kites'] as const).reduce((a, f) => a + powerShare(w, f), 0);
     expect(total).toBeCloseTo(100, 6);

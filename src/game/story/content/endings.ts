@@ -15,7 +15,7 @@ export const ENDINGS: Record<EndingId, Ending> = {
     becomes: 'The Foreman',
     claims: [
       { label: 'Basalt standing 60+', cond: m('standing.basalt', '>=', 60), show: { m: 'standing.basalt', target: 60 } },
-      { label: 'Basalt power 30%+', cond: m('power.basalt', '>=', 30), show: { m: 'power.basalt', target: 30 } },
+      { label: 'Basalt power 25%+', cond: m('power.basalt', '>=', 25), show: { m: 'power.basalt', target: 25 } },
       { label: 'Basalt is your patron', cond: flagIs('patron', 'basalt') },
     ],
     card: 'end.ironwork',
@@ -33,7 +33,7 @@ export const ENDINGS: Record<EndingId, Ending> = {
     becomes: 'The Smile',
     claims: [
       { label: 'Nacre standing 60+', cond: m('standing.nacre', '>=', 60), show: { m: 'standing.nacre', target: 60 } },
-      { label: 'Nacre power 30%+', cond: m('power.nacre', '>=', 30), show: { m: 'power.nacre', target: 30 } },
+      { label: 'Nacre power 25%+', cond: m('power.nacre', '>=', 25), show: { m: 'power.nacre', target: 25 } },
       { label: 'Nacre is your patron', cond: flagIs('patron', 'nacre') },
     ],
     card: 'end.pearl',

@@ -16,6 +16,7 @@ import type { StoryView } from '../../game/story/types';
 import type { UIContext } from '../context';
 import { h, replayClass, setAttr, setClass, setHidden, setHtml, setStyle, setText } from '../dom';
 import { icon } from '../icons';
+import { pendingFrac } from './comms';
 import { TIER_COLOR, factionSigil } from './sigils';
 
 export interface RailActions {
@@ -81,9 +82,14 @@ export class StoryRail {
     this.comms.addEventListener('click', () => actions.comms());
   }
 
-  /** Is there anything to show at all? */
+  /**
+   * Is there anything to show at all? Not before the first beat: a fresh city's
+   * Chapter I waits (title set, no goals) until ch1.boot opens, and the rail
+   * would only add a dead row under the coach.
+   */
   static hasStory(v: StoryView): boolean {
-    return v.goals.length > 0 || !!v.chapter.title || v.unlocked.factions || v.unlocked.comms || v.countdownDays !== null || !!v.ending;
+    const started = v.chapter.n > 1 || v.chapter.phase !== 'waiting';
+    return v.goals.length > 0 || started || v.unlocked.factions || v.unlocked.comms || v.countdownDays !== null || !!v.ending;
   }
 
   sync(v: StoryView, unread: number): void {
@@ -130,13 +136,13 @@ export class StoryRail {
     const p = v.pending;
     setClass(this.comms, 'is-pending', !!p);
     if (p) {
-      const frac = Math.max(0, Math.min(1, p.daysLeft / 20));
-      setAttr(this.ring, 'stroke-dashoffset', `${(RING_C * (1 - frac)).toFixed(1)}`);
+      setAttr(this.ring, 'stroke-dashoffset', `${(RING_C * (1 - pendingFrac(p))).toFixed(1)}`);
     }
     const n = unread + (p ? 1 : 0);
     setHidden(this.badge, n <= 0);
     setText(this.badge, n > 9 ? '9+' : String(n));
-    setAttr(this.comms, 'aria-label', p ? `COMMS: a card is waiting, auto in ${Math.ceil(p.daysLeft)} days` : n > 0 ? `COMMS: ${n} new` : 'COMMS');
+    const when = p ? (p.daysLeft >= 1 ? `auto in ${Math.ceil(p.daysLeft)} days` : 'auto soon') : '';
+    setAttr(this.comms, 'aria-label', p ? `COMMS: a card is waiting, ${when}` : n > 0 ? `COMMS: ${n} new` : 'COMMS');
   }
 
   /** Flash the goal chip (progress, resume). */

@@ -145,7 +145,7 @@ describe('config', () => {
     expect(BUILDINGS.stack.category).toBe('vertical');
     expect(STACK_STAGES.map((s) => s.cost)).toEqual([12000, 16000, 22000]);
     expect(Object.keys(CROWNS).sort()).toEqual(['commons', 'foundry', 'glare', 'nest']);
-    expect(UNLOCK_FALLBACK_POP).toMatchObject({ factions: 1500, stack: 8000, crackdown: 6000, skybridge: 9000, crowns: 20000 });
+    expect(UNLOCK_FALLBACK_POP).toMatchObject({ factions: 3000, comms: 3000, stack: 8000, crackdown: 6000, skybridge: 9000, crowns: 20000 });
   });
 
   it('story buildings stay locked in the sandbox until their gate opens', () => {

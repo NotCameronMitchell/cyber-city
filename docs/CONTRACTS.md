@@ -203,7 +203,8 @@ export class AudioEngine {
 * Must run as a normal site (GitHub Pages, relative base `./`) **and** as a
   single inlined HTML file inside a sandboxed iframe: there, service workers,
   `alert/confirm/prompt`, downloads and popups don't work, and `localStorage`
-  may throw (always go through `storageGet/storageSet` in game.ts).
+  may throw (always go through `storageGet/storageSet`: they live in the leaf module
+  `src/game/storage.ts` and game.ts re-exports them).
 * Phone performance budget: 60 fps target, ≥ 30 fps on a mid-range phone at
   default zoom with a fully built 64×64 map. Avoid `shadowBlur` in loops;
   use `glowSprite()` + `'lighter'`. Cache static layers. LOD by zoom.

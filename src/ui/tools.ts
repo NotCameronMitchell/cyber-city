@@ -5,6 +5,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { BRIDGE_COST, BUILDINGS, BULLDOZE_COST, RIBBON, ROAD_COST, SKYBRIDGE, UNLOCK_FALLBACK_POP, ZONES, isBuildingTool, isZoneTool } from '../game/config';
+import type { Game } from '../game/game';
 import type { FactionId } from '../game/story/types';
 import type { OverlayId, ToolId } from '../game/types';
 import { credits } from './format';
@@ -165,6 +166,18 @@ export function toolMeta(tool: ToolId): ToolMeta {
     default:
       return { id: 'inspect', name: 'Inspect', desc: 'Tap anything to see how it is doing.', icon: 'inspect', color: '#22e5ff', cost: 0, perTile: false, unlockPop: 0 };
   }
+}
+
+/**
+ * Live price of a tool with every modifier. Game.toolCost covers buildings,
+ * zones, skybridges and rail; roads and bulldozing fall back to the catalogue
+ * price × buildCostMul, the way planAction charges them.
+ */
+export function livePrice(game: Game, tool: ToolId): number {
+  if (tool === 'inspect') return 0;
+  const p = game.toolCost(tool);
+  if (p > 0) return p;
+  return Math.round(toolMeta(tool).cost * game.world.mods.buildCostMul);
 }
 
 /** "15 CR/tile", "1,500 CR", "from 5 CR". */

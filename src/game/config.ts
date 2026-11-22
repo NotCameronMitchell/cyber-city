@@ -552,7 +552,8 @@ export const STORY_PACING = {
   beatMuteDays: 30,
   pendingDays: 20,
   pendingMinSec: 60,
-  hostileEvery: 180,
+  /** A Hostile faction's ⚑ repeats at most this often; never in two deck slots running (pacing.ts). */
+  hostileEvery: 360,
   hostileGap: 60,
   seasonalGapDays: 300,
   starRetryDays: 240,
@@ -563,7 +564,8 @@ export const STORY_PACING = {
   beatFallbackDays: 360,
   waiverAfterDays: 720,
   waiverEveryDays: 360,
-  chapterMinSec: 60,
+  /** Unpaused seconds between chapter completions (the boot counts as one): about a session per chapter. */
+  chapterMinSec: 600,
   maxChain: 3,
   bootDelaySec: 8,
   bootLoadDelaySec: 20,
@@ -573,14 +575,15 @@ export const STORY_PACING = {
   nudgeEvery: 360,
   nudgeFavor: 15,
   bailoutFunds: -5000,
-  bailoutCooldown: 180,
+  bailoutCooldown: 360,
   logKeep: 60,
 } as const;
 
 /** Population fallbacks for story unlocks (§5.0); others are story or faction only. */
 export const UNLOCK_FALLBACK_POP: Partial<Record<Unlockable, number>> = {
-  factions: 1500,
-  comms: 1500,
+  // Above the Ch2 trigger (1,500), so the deck stays shut in Ch1 unless it stalls.
+  factions: 3000,
+  comms: 3000,
   stack: 8000,
   deals: 8000,
   crackdown: 6000,
@@ -825,8 +828,8 @@ export const RIBBON = {
   bulldozeCost: 5,
 } as const;
 
-/** Salt (bribe), per faction row (§2.6). Cost = round100(base + perPop × pop). */
-export const SALT = { base: 600, perPop: 0.08, favor: 8, trace: 3, cooldown: 90 } as const;
+/** Salt (bribe), per faction row (§2.6). Cost = round100(base + perPop × pop + perFunds × max(0, funds)). */
+export const SALT = { base: 600, perPop: 0.08, perFunds: 0.02, favor: 8, trace: 3, cooldown: 90 } as const;
 
 /** Patron perk while flag `patron` is set and the patron's standing ≥ 0 (§2.4). */
 export const PATRON_PERK: Record<CorpId, ModPatch> = {
@@ -837,10 +840,10 @@ export const PATRON_PERK: Record<CorpId, ModPatch> = {
 /** Balance-of-power weights (§2.4): power.f = 100 × weight_f / Σ weights. */
 export const POWER_WEIGHTS = {
   board: { approval: 3, perPrecinct: 40, perClinic: 40, honestTie: 100 },
-  basalt: { jobsIndDiv: 8, perReactor: 60, perFoundry: 80, perCrownFoundry: 80, branded: 80, patron: 150 },
-  nacre: { jobsComDiv: 8, perDatahub: 50, perSpire: 120, perGlarewall: 60, perCrownGlare: 80, patron: 150 },
-  undertow: { perTurfTile: 4, perTidemarket: 100, oneTide: 150 },
-  kites: { perTurfTile: 4, perRoost: 100, perCrownNest: 80, oneTide: 150 },
+  basalt: { jobsIndDiv: 8, perReactor: 60, perFoundry: 80, perCrownFoundry: 80, branded: 80, patron: 300 },
+  nacre: { jobsComDiv: 8, perDatahub: 50, perSpire: 120, perGlarewall: 60, perCrownGlare: 80, patron: 300 },
+  undertow: { perTurfTile: 2, perTidemarket: 100, oneTide: 150 },
+  kites: { perTurfTile: 2, perRoost: 100, perCrownNest: 80, oneTide: 150 },
 } as const;
 
 /** One-off favor when the player places a building (§2.6). Only the first BUILD_REACTION_LIMIT of a type count. */

@@ -9,7 +9,8 @@
 // Clocks: sim days (world.tick; onDay after each sim.step, onMonth on the
 // rollover) and real seconds (update(dt)): `activeSec` counts unpaused
 // seconds (deck gap, beat gap, no-answer timer), `realSec` all seconds (boot
-// and title timers). Real-second timers are per session and restart on load.
+// and title timers). Real-second timers are per session and restart on load,
+// except story.chapterSec (the chapter floor), which is saved.
 //
 // Cards:
 //   front cards (beats, Silt Logs, endings, chapter rewards) open blocking,
@@ -36,6 +37,7 @@ import {
   UNLOCK_FALLBACK_POP,
 } from '../config';
 import { Rng } from '../rng';
+import { storageGet, storageSet } from '../storage';
 import { DAYS_PER_MONTH, MONTHS_PER_YEAR, START_YEAR, type BuildingType } from '../types';
 import type { World } from '../world';
 import {
@@ -78,6 +80,7 @@ import {
   isRetired,
   isVisible,
   moodDrivers,
+  patronOf,
   powerShare,
   shownState,
   standing,
@@ -157,7 +160,7 @@ export interface StoryGallery {
 export function readGallery(): StoryGallery {
   const empty: StoryGallery = { v: 1, endings: [], lamplight: false, fullRecall: false };
   try {
-    const raw = globalThis.localStorage?.getItem(GALLERY_KEY);
+    const raw = storageGet(GALLERY_KEY);
     if (!raw) return empty;
     const g = JSON.parse(raw) as Partial<StoryGallery>;
     return {
@@ -171,15 +174,15 @@ export function readGallery(): StoryGallery {
   }
 }
 
+/** Read, patch and write the gallery (storage errors are swallowed by the helpers). */
 function writeGallery(patch: (g: StoryGallery) => void): void {
-  try {
-    const g = readGallery();
-    patch(g);
-    globalThis.localStorage?.setItem(GALLERY_KEY, JSON.stringify(g));
-  } catch {
-    /* storage unavailable */
-  }
+  const g = readGallery();
+  patch(g);
+  storageSet(GALLERY_KEY, JSON.stringify(g));
 }
+
+const ENDING_IDS: readonly EndingId[] = ['ironwork', 'pearl', 'lowcrown', 'ledger', 'quiet'];
+const isEndingId = (v: unknown): v is EndingId => ENDING_IDS.includes(v as EndingId);
 
 /** Story RNG that keeps its state in world.story.rng (turf.ts shares the same stream). */
 class StoryRng extends Rng {
@@ -232,13 +235,18 @@ export class StoryDirector implements EffectHost {
   private pendingSec = 0;
   private bootAt: number | null = null;
   private chapterStartSec = -1e9;
-  private lastChapterDoneSec = -1e9;
   private titleUntil = -1;
   private banner: { id: string; title: string; faction: FactionId; until: number } | null = null;
   private firstUpdate = true;
   private charterDue = false;
+  /** The ending screen waits for the final card and Log 6 (mirrors story.flags.endingScreen, which is saved). */
   private endingDue: EndingId | null = null;
   private applying = 0;
+  /** The Full Recall star was checked against the gallery this session. */
+  private recallChecked = false;
+  /** COMMS and Silt Log rows, rebuilt only when the log changes (stable identity for the UI). */
+  private commsMemo: { key: string; rows: StoryView['comms'] } | null = null;
+  private logsMemo: { key: string; rows: StoryView['logs'] } | null = null;
 
   constructor(game: DirectorHost) {
     this.host = game;
@@ -249,16 +257,23 @@ export class StoryDirector implements EffectHost {
     pruneUnknownCards(w.story, (id) => this.knownCard(id));
     if (this.idx.endings.length) turf.setEndingRulesSource((world) => endingRules(world));
     // Derived on load (§10.8): turf stats, vertical caches, local layers, then mods, layers, ledger.
+    // The turf layers read world.mods (turfCrimeMul) and standings, so they are written
+    // again once the mods are resolved (resolveMods itself reads the turf counts).
     turf.refreshStats(w);
     vertical.refresh(w);
     writeLocals(w);
     this.refreshMods();
+    turf.refreshStats(w);
     this.refreshLedger();
     this.refreshVisual();
     // Ch1 on a city that already has roads (migrated save, or saved before boot): 20 s after load.
     if (w.story.chapter === 1 && w.story.phase === 'waiting' && w.tiles.some((t) => t.road)) {
       this.bootAt = Math.max(0, P.bootLoadDelaySec - TITLE_SEC);
     }
+    // An ending screen still owed when the game was saved (final card or Log 6 still up).
+    const due = w.story.flags.endingScreen;
+    if (isEndingId(due) && w.story.ending) this.endingDue = due;
+    else delete w.story.flags.endingScreen;
   }
 
   /** A card is open (or Charter Night is up) and the sim must pause. */
@@ -280,6 +295,7 @@ export class StoryDirector implements EffectHost {
     this.realSec += dt;
     if (!paused) {
       this.activeSec += dt;
+      if (st.chapter <= 6) st.chapterSec = (st.chapterSec ?? 0) + dt;
       if (st.pending && st.open?.card !== st.pending.card) this.pendingSec += dt;
     }
     if (this.firstUpdate) {
@@ -287,6 +303,7 @@ export class StoryDirector implements EffectHost {
       if (st.open) w.events.emit('card', { id: st.open.card });
       if (st.pending) w.events.emit('pending', { id: st.pending.card });
       if (this.charterOpen) w.events.emit('charterNight');
+      if (this.endingDue && !st.open && !this.endingCardsQueued()) this.emitEnding();
     }
     if (st.chapter === 1 && st.phase === 'waiting') {
       if (this.bootAt === null && this.roadPlaced()) this.bootAt = this.realSec + Math.max(0, P.bootDelaySec - TITLE_SEC);
@@ -325,6 +342,9 @@ export class StoryDirector implements EffectHost {
   onDay(): void {
     const w = this.world;
     if (vertical.onDay(w)) this.markDirty(); // a stage completed: crown mods resolve
+    // Timed mods, incomes, locals, pacts and rail cuts end on their day, not at the
+    // next rollover: an income runs exactly its months, a 60 d mod 60 days.
+    if (this.expireTimed()) this.markDirty();
     this.drainSignals();
     this.fallbackUnlocks();
     this.checkTuning();
@@ -344,14 +364,9 @@ export class StoryDirector implements EffectHost {
   onMonth(): void {
     const w = this.world;
     const st = w.story;
-    const tick = w.tick;
-    // 1. Expire mods, incomes, locals, pacts, deals (records kept for cooldowns) and rail cuts.
-    //    turf.update owns story.crackdowns' lifetime.
-    st.mods = st.mods.filter((m) => m.until < 0 || m.until > tick);
-    st.incomes = st.incomes.filter((m) => m.until > tick);
-    st.locals = st.locals.filter((m) => m.until < 0 || m.until > tick);
-    st.pacts = st.pacts.filter((p) => p.until > tick);
-    st.railOut = st.railOut.filter((r) => r.until > tick);
+    // 1. Expire mods, incomes, locals, pacts and rail cuts (onDay already did; deal records
+    //    are kept for cooldowns). turf.update owns story.crackdowns' lifetime.
+    this.expireTimed(true);
     st.credits = st.credits.filter((c) => c.n > 0);
     // 2–3. Turf, then vertical.
     turf.update(w);
@@ -376,6 +391,35 @@ export class StoryDirector implements EffectHost {
     this.drawDeck();
     this.refreshVisual();
     this.cached = null;
+  }
+
+  /**
+   * Drop timed mods, incomes, locals, pacts and rail cuts whose `until` has come.
+   * Returns true if anything ended. A pact ending re-derives the turf layers and a
+   * rail cut ending the live network, unless `monthly` (onMonth refreshes both).
+   */
+  private expireTimed(monthly = false): boolean {
+    const w = this.world;
+    const st = w.story;
+    const tick = w.tick;
+    const timed = (m: { until: number }) => m.until < 0 || m.until > tick;
+    const live = (m: { until: number }) => m.until > tick;
+    const n = st.mods.length + st.incomes.length + st.locals.length;
+    if (st.mods.some((m) => !timed(m))) st.mods = st.mods.filter(timed);
+    if (st.incomes.some((m) => !live(m))) st.incomes = st.incomes.filter(live);
+    if (st.locals.some((m) => !timed(m))) st.locals = st.locals.filter(timed);
+    let any = st.mods.length + st.incomes.length + st.locals.length !== n;
+    if (st.pacts.some((p) => !live(p))) {
+      st.pacts = st.pacts.filter(live);
+      if (!monthly) turf.refreshStats(w);
+      any = true;
+    }
+    if (st.railOut.some((r) => !live(r))) {
+      st.railOut = st.railOut.filter(live);
+      if (!monthly) vertical.refresh(w);
+      any = true;
+    }
+    return any;
   }
 
   private drainSignals(): void {
@@ -465,7 +509,9 @@ export class StoryDirector implements EffectHost {
       if (!ch || st.open || this.frontDue()) return;
       const waited = tick - st.waitingSince;
       if (st.chapter === 1) {
-        // Ch1 opens from the boot timer (update); the day fallbacks still apply.
+        // Ch1 opens from the boot timer (update); the day fallbacks apply only while it is
+        // unarmed (no road yet), so an old city still gets its load delay.
+        if (this.bootAt !== null) return;
         if (waited >= P.hardFallbackDays || (waited >= P.fallbackDays && evalCond(w, ch.fallback))) this.startChapter(1);
         return;
       }
@@ -520,6 +566,7 @@ export class StoryDirector implements EffectHost {
       if (h) st.holds[h.key] = 0;
     }
     this.bootAt = null;
+    if (n === 1) st.chapterSec = 0; // the boot counts as a completion: Ch1 gets the floor too
     this.chapterStartSec = this.realSec;
     this.titleUntil = this.realSec + TITLE_SEC;
     if (n === 3) turf.forceSeed(w); // §5 Ch3 on start: both gangs seed, the Seam is set
@@ -573,14 +620,19 @@ export class StoryDirector implements EffectHost {
     if (!this.beatsDone(ch)) return;
     // Optional beats count once queued: wait for any still in the queue.
     for (const q of st.queue) if (this.idx.beatChapter.get(q.card) === ch.n) return;
-    if (this.activeSec - this.lastChapterDoneSec < P.chapterMinSec) return;
+    if (!this.chapterSettled()) return;
     this.completeChapter(ch);
+  }
+
+  /** The chapter floor (§5.0): chapterMinSec unpaused seconds since the last chapter closed. */
+  private chapterSettled(): boolean {
+    return (this.world.story.chapterSec ?? 0) >= P.chapterMinSec;
   }
 
   private completeChapter(ch: Chapter): void {
     const w = this.world;
     const st = w.story;
-    this.lastChapterDoneSec = this.activeSec;
+    st.chapterSec = 0;
     applyEffects(
       this,
       ch.reward.filter((e) => !(e.t === 'log' && e.n === ch.log)),
@@ -789,13 +841,17 @@ export class StoryDirector implements EffectHost {
       w.events.emit('charterNight');
     }
     // The ending screen follows the final card and Log 6 (§6.1).
-    if (this.endingDue && !w.story.open && !this.endingCardsQueued()) {
-      const id = this.endingDue;
-      this.endingDue = null;
-      w.events.emit('ending', { id });
-    }
+    if (this.endingDue && !w.story.open && !this.endingCardsQueued()) this.emitEnding();
     this.markChanged();
     w.events.emit('stats');
+  }
+
+  /** Show the ending screen now (once); the saved reminder goes with it. */
+  private emitEnding(): void {
+    const id = this.endingDue;
+    this.endingDue = null;
+    delete this.world.story.flags.endingScreen;
+    if (id) this.world.events.emit('ending', { id });
   }
 
   private endingCardsQueued(): boolean {
@@ -900,9 +956,10 @@ export class StoryDirector implements EffectHost {
     return { ok: true, cost: Math.max(0, Math.round(funds - w.funds)) };
   }
 
-  /** Salt cost now: round100(600 + 0.08 × pop). */
+  /** Salt cost now: round100(600 + 0.08 × pop + 0.02 × treasury), so it still stings in a rich city. */
   saltCost(): number {
-    return round100(SALT.base + SALT.perPop * this.world.stats.population);
+    const w = this.world;
+    return round100(SALT.base + SALT.perPop * w.stats.population + SALT.perFunds * Math.max(0, w.funds));
   }
 
   private saltReason(f: FactionId): string | null {
@@ -1012,15 +1069,14 @@ export class StoryDirector implements EffectHost {
       if (!g.endings.includes(e.id)) g.endings.push(e.id);
       if (st.endingVariant === 'lamplight') g.lamplight = true;
     });
+    // Saved too, so a reload while the final card or Log 6 is up still ends on the screen.
     this.endingDue = e.id;
+    st.flags.endingScreen = e.id;
     this.justClosed = true; // the final card follows the confirm at once
     turf.refreshStats(w);
     this.afterAction();
     this.tryOpenFront();
-    if (!st.open && !this.endingCardsQueued()) {
-      this.endingDue = null;
-      w.events.emit('ending', { id: e.id });
-    }
+    if (!st.open && !this.endingCardsQueued()) this.emitEnding();
   }
 
   /** Charter Night: six more months. */
@@ -1059,7 +1115,11 @@ export class StoryDirector implements EffectHost {
     if (coda && !coda.when && st.logs.length >= 12 && !st.flags.fullRecall && st.seen['coda.recall'] === undefined) {
       if (!st.queue.some((q) => q.card === 'coda.recall')) this.queue('coda.recall', 0);
     }
-    if (st.flags.fullRecall && !readGallery().fullRecall) writeGallery((g) => (g.fullRecall = true));
+    // A save that earned Full Recall elsewhere (or before storage worked): star it once per session.
+    if (st.flags.fullRecall && !this.recallChecked) {
+      this.recallChecked = true;
+      if (!readGallery().fullRecall) writeGallery((g) => (g.fullRecall = true));
+    }
   }
 
   // ── EffectHost ────────────────────────────────────────────────────────────
@@ -1092,7 +1152,10 @@ export class StoryDirector implements EffectHost {
       st.flags.hymnQueued = true;
       this.queue('tu.hymn', 15);
     }
-    if (key === 'fullRecall' && v) writeGallery((g) => (g.fullRecall = true));
+    if (key === 'fullRecall' && v) {
+      this.recallChecked = true;
+      writeGallery((g) => (g.fullRecall = true));
+    }
   }
 
   countdown(days: number): void {
@@ -1356,13 +1419,7 @@ export class StoryDirector implements EffectHost {
     const ch = this.chapterDef();
     const rules = endingRules(w);
     return {
-      chapter: {
-        n: st.chapter,
-        numeral: CHAPTER_NUMERALS[st.chapter] ?? '',
-        title: ch?.title ?? (st.chapter >= 7 ? 'Epilogue' : ''),
-        question: ch?.question ?? '',
-        phase: st.phase,
-      },
+      chapter: this.chapterView(ch),
       goals: this.goalsView(ch),
       countdownDays: st.countdownEnd !== null ? Math.max(0, st.countdownEnd - w.tick) : null,
       claims: st.chapter >= 6 || this.charterOpen ? this.claimsView() : [],
@@ -1376,8 +1433,8 @@ export class StoryDirector implements EffectHost {
       card: st.open ? this.cardView(st.open.card, st.open.spot) : null,
       pending: this.pendingView(),
       banner: this.banner ? { id: this.banner.id, title: this.banner.title, faction: this.banner.faction } : null,
-      comms: st.log.map((e) => this.commsRow(e)),
-      logs: Array.from({ length: 12 }, (_, k) => this.logRow(k + 1)),
+      comms: this.commsView(),
+      logs: this.logsView(),
       coherence: coherenceFor(st.logs.length),
       unlocked: {
         factions: isUnlocked(w, 'factions'),
@@ -1402,6 +1459,44 @@ export class StoryDirector implements EffectHost {
             }
           : null,
     };
+  }
+
+  private chapterView(ch: Chapter | undefined): StoryView['chapter'] {
+    const st = this.world.story;
+    const out: StoryView['chapter'] = {
+      n: st.chapter,
+      numeral: CHAPTER_NUMERALS[st.chapter] ?? '',
+      title: ch?.title ?? (st.chapter >= 7 ? 'Epilogue' : ''),
+      question: ch?.question ?? '',
+      phase: st.phase,
+    };
+    // Settling: every goal and required beat done, only the chapter floor holds it open.
+    if (ch && st.phase === 'active' && st.chapter < 6 && !this.chapterSettled() && this.beatsDone(ch)) {
+      if (ch.goals.every((g) => st.goalsDone.includes(g.id) || st.goalsWaived.includes(g.id))) {
+        out.closesInSec = Math.max(1, Math.ceil(P.chapterMinSec - (st.chapterSec ?? 0)));
+      }
+    }
+    return out;
+  }
+
+  /** Memo key for rows that only change with the log (and the patron, which titles may name). */
+  private memoKey(n: number, head?: { tick: number; card: string }, last?: { tick: number; card: string; choice?: number | null; auto?: boolean }): string {
+    const tail = last ? `${last.tick}|${last.card}|${last.choice ?? ''}|${last.auto ? 1 : 0}` : '';
+    return `${n}|${head ? `${head.tick}|${head.card}` : ''}|${tail}|${patronOf(this.world)}`;
+  }
+
+  private commsView(): StoryView['comms'] {
+    const log = this.world.story.log;
+    const key = this.memoKey(log.length, log[0], log[log.length - 1]);
+    if (this.commsMemo?.key !== key) this.commsMemo = { key, rows: log.map((e) => this.commsRow(e)) };
+    return this.commsMemo.rows;
+  }
+
+  private logsView(): StoryView['logs'] {
+    const logs = this.world.story.logs;
+    const key = `${logs.join(',')}|${patronOf(this.world)}|${this.world.cityName}`;
+    if (this.logsMemo?.key !== key) this.logsMemo = { key, rows: Array.from({ length: 12 }, (_, k) => this.logRow(k + 1)) };
+    return this.logsMemo.rows;
   }
 
   private goalsView(ch: Chapter | undefined): StoryView['goals'] {
@@ -1579,7 +1674,10 @@ export class StoryDirector implements EffectHost {
     };
     if (card.with) view.with = card.with;
     if (card.sys) view.sys = fillTokens(w, card.sys, spot);
-    if (pending) view.autoInDays = Math.max(0, P.pendingDays - (w.tick - pending.tick));
+    if (pending) {
+      view.autoInDays = Math.max(0, P.pendingDays - (w.tick - pending.tick));
+      view.autoInSec = Math.max(0, Math.ceil(P.pendingMinSec - this.pendingSec));
+    }
     return view;
   }
 

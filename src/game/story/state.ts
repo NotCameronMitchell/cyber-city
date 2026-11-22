@@ -76,6 +76,7 @@ export function newStoryState(seed: number): StoryState {
     log: [],
     rng: ((seed >>> 0) ^ 0x5eed5107) >>> 0 || 0x9e3779b9,
     seam: null,
+    chapterSec: 0,
   };
 }
 

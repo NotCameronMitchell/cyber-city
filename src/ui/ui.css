@@ -581,10 +581,10 @@ body {
   min-width: 0;
 }
 
-/* Money delta that drops out of the treasury readout */
+/* Money delta that drops out of the treasury readout (right of the ticker's kind tag, ≤ 72 px wide) */
 .cc-delta {
   position: absolute;
-  left: 30px;
+  left: 80px;
   top: calc(100% - 2px);
   z-index: 5;
   font-family: var(--cc-mono);
@@ -1011,12 +1011,21 @@ body {
   color: #ff8a9e;
 }
 
+.cc-pill.is-warn {
+  --edge: rgba(255, 176, 46, 0.6);
+}
+
 .cc-toasts {
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 6px;
   width: 100%;
+}
+
+/* A chapter title, Charter Night or the ending is up: only errors print over it. */
+.cc-toasts.is-held .cc-toast:not([data-kind='error']) {
+  display: none;
 }
 
 .cc-toast {
@@ -2197,6 +2206,36 @@ body {
 
 .cc-coach.is-collapsed .cc-coach-step.is-current {
   min-height: 44px;
+}
+
+/* Collapsed = one 44 px line (next step + its CTA); the header returns when nothing is active. */
+.cc-coach.is-collapsed {
+  padding: 4px 6px 4px 12px;
+}
+
+.cc-coach.is-collapsed .cc-coach-head {
+  display: none;
+}
+
+.cc-coach.is-collapsed .cc-coach-text strong {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Power step with a plant that reaches no zone: amber, with the reason. */
+.cc-coach-step.is-warn .cc-coach-mark {
+  color: var(--cc-amber);
+  border-color: var(--cc-amber);
+  box-shadow: 0 0 10px rgba(255, 176, 46, 0.35);
+}
+
+.cc-coach-step.is-warn .cc-coach-text strong {
+  color: var(--cc-amber);
+}
+
+.cc-coach-step.is-warn .cc-coach-text span {
+  color: var(--cc-ink-2);
 }
 
 .cc-coach-done {
@@ -3448,7 +3487,9 @@ body {
     bottom: 0;
     width: var(--cc-rail-w);
     flex-direction: column;
-    justify-content: center;
+    /* Centre with auto margins on the end buttons (below): unlike justify-content:
+       center they collapse to 0 when 9 categories overflow, so the first stays reachable. */
+    justify-content: flex-start;
     align-items: stretch;
     gap: 0;
     padding: calc(var(--cc-sat) + 4px) 5px calc(var(--cc-sab) + 4px) calc(var(--cc-sal) + 5px);
@@ -3477,7 +3518,22 @@ body {
     height: 44px;
     gap: 0;
   }
+  .cc-tb:first-child {
+    margin-top: auto;
+  }
+  .cc-tb:last-child {
+    margin-bottom: auto;
+  }
+  /* Nine categories (Deals unlocked) need 396 px: tighten to 40 px rows. */
+  .cc-bar.is-full .cc-tb {
+    flex-basis: 40px;
+    height: 40px;
+  }
   .cc-tb-label {
+    display: none;
+  }
+  /* A build tray fills the column: the coach steps aside instead of riding up over the ticker. */
+  .cc-dock.has-tray .cc-coach {
     display: none;
   }
   .cc-tb-ico .cc-i {

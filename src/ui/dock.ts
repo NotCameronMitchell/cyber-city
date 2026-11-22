@@ -13,7 +13,7 @@ import { buzz, closestData, h, setAttr, setClass, setHidden, setHtml, setStyle, 
 import { abbr } from './format';
 import { icon } from './icons';
 import { factionSigil } from './story/sigils';
-import { CATEGORIES, OVERLAYS, SERVICE_SWATCHES, categoryOf, costLabel, overlayMeta, toolMeta, type CategoryId } from './tools';
+import { CATEGORIES, OVERLAYS, SERVICE_SWATCHES, categoryOf, costLabel, livePrice, overlayMeta, toolMeta, type CategoryId } from './tools';
 
 const HINT_KEY = 'cybercity.ui.hint.v1';
 
@@ -60,6 +60,7 @@ export class Dock {
   private readonly hint: HTMLElement;
   private hintTimer = 0;
   private hintDone: boolean;
+  private coachShowing = false;
 
   private readonly legend: HTMLElement;
   private readonly legendIco: HTMLElement;
@@ -191,6 +192,7 @@ export class Dock {
     void this.tray.offsetWidth;
     this.tray.classList.add('is-in');
     this.trayRow.scrollLeft = 0;
+    setClass(this.el, 'has-tray', true);
     this.syncTool();
     this.refreshTray();
     this.onTrayChange?.();
@@ -200,6 +202,7 @@ export class Dock {
     if (!this.openCat) return;
     this.openCat = null;
     this.tray.hidden = true;
+    setClass(this.el, 'has-tray', false);
     this.syncTool();
     this.onTrayChange?.();
   }
@@ -324,7 +327,7 @@ export class Dock {
           setStyle(c.lockFill, 'transform', `scaleX(${p.toFixed(3)})`);
         }
       }
-      const price = game.toolCost(tool);
+      const price = livePrice(game, tool);
       if (price !== c.price) {
         c.price = price;
         setText(c.cost, costLabel({ ...m, cost: price }));
@@ -357,6 +360,7 @@ export class Dock {
         if (!show && this.openCat === c.id) this.closeTray();
       }
     }
+    setClass(this.bar, 'is-full', deals);
   }
 
   // ── Tool / overlay state ─────────────────────────────────────────────────
@@ -378,13 +382,15 @@ export class Dock {
       if (c.items) setStyle(btn, '--accent', on ? m.color : c.accent);
     }
     const building = tool !== 'inspect';
-    setHidden(this.chip, !building || this.trayOpen);
+    // While the first-run coach shows, its one-line row carries the next step and the
+    // toolbar shows the active tool, so the chip folds away instead of stacking up.
+    setHidden(this.chip, !building || this.trayOpen || this.coachShowing);
     if (building) {
       setStyle(this.chip, '--accent', m.color);
       setHtml(this.chipIco, icon(m.icon));
       setText(this.chipName, m.name);
       // Live price (build-cost mods, faction perks, Stratablock scaling), same as the tray cards.
-      setText(this.chipCost, costLabel({ ...m, cost: game.toolCost(tool) }));
+      setText(this.chipCost, costLabel({ ...m, cost: livePrice(game, tool) }));
       if (!this.hintDone && !this.trayOpen) this.showHint(tool);
     } else this.hideHint(false);
     if (this.trayOpen) this.hint.hidden = true;
@@ -394,7 +400,14 @@ export class Dock {
   refreshChipCost(): void {
     const { game } = this.ctx;
     if (game.tool === 'inspect') return;
-    setText(this.chipCost, costLabel({ ...toolMeta(game.tool), cost: game.toolCost(game.tool) }));
+    setText(this.chipCost, costLabel({ ...toolMeta(game.tool), cost: livePrice(game, game.tool) }));
+  }
+
+  /** The coach card is on screen: hide the tool chip (see syncTool). */
+  setCoachShowing(on: boolean): void {
+    if (on === this.coachShowing) return;
+    this.coachShowing = on;
+    this.syncTool();
   }
 
   syncOverlay(): void {

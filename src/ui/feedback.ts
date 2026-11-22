@@ -8,6 +8,7 @@ import type { Game } from '../game/game';
 import type { ActionPlan } from '../game/types';
 import { h, prefersReducedMotion, replayClass, setClass, setHidden, setHtml, setText } from './dom';
 import { credits, groupInt, MINUS } from './format';
+import { footprintTouchesGrid } from './grid';
 import { icon, type IconName } from './icons';
 import { toolMeta } from './tools';
 
@@ -29,12 +30,26 @@ interface ToastEntry {
 export class Toasts {
   readonly el: HTMLElement;
   private readonly live: ToastEntry[] = [];
+  /** Toasts that arrived while a full-screen story surface was up (shown once it closes). */
+  private readonly waiting: { text: string; kind: ToastKind; count: number }[] = [];
+  /**
+   * True while toasts must not print over the screen (chapter title, Charter
+   * Night, ending screen): non-error toasts wait and show afterwards.
+   */
+  held: () => boolean = () => false;
 
   constructor() {
     this.el = h('div', { class: 'cc-toasts', role: 'status', 'aria-live': 'polite' });
   }
 
   push(text: string, kind: ToastKind = 'info'): void {
+    if (kind !== 'error' && this.held()) {
+      const w = this.waiting.find((t) => t.text === text);
+      if (w) w.count++;
+      else this.waiting.push({ text, kind, count: 1 });
+      while (this.waiting.length > TOAST_MAX) this.waiting.shift();
+      return;
+    }
     const dup = this.live.find((t) => t.text === text);
     if (dup) {
       dup.count++;
@@ -58,9 +73,19 @@ export class Toasts {
     this.arm(entry, kind);
   }
 
+  /** Per frame (cheap): hide live toasts while held, release the waiting ones once nothing full-screen is up. */
+  flush(): void {
+    const held = this.held();
+    setClass(this.el, 'is-held', held);
+    if (!this.waiting.length || held) return;
+    for (const t of this.waiting.splice(0)) for (let i = 0; i < t.count; i++) this.push(t.text, t.kind);
+  }
+
   private arm(t: ToastEntry, kind: ToastKind): void {
     window.clearTimeout(t.timer);
-    t.timer = window.setTimeout(() => this.dismiss(t, false), TOAST_MS[kind]);
+    // Long messages get time to be read (~45 ms a character past the base).
+    const ms = Math.max(TOAST_MS[kind], 1200 + t.text.length * 45);
+    t.timer = window.setTimeout(() => this.dismiss(t, false), ms);
   }
 
   private dismiss(t: ToastEntry, instant: boolean): void {
@@ -112,7 +137,12 @@ export class ActionPill {
     const name = plan.tool === 'bulldoze' ? 'Demolish' : meta.name;
     const label = isBuildingTool(plan.tool) || plan.tool === 'skybridge' || count <= 1 ? name : `${name} ×${count}`;
     const costText = plan.valid ? (plan.cost > 0 ? `${MINUS}${credits(plan.cost)}` : 'Free') : '';
-    const note = plan.reason && plan.reason !== 'Nothing to change' ? plan.reason : '';
+    let note = plan.reason && plan.reason !== 'Nothing to change' ? plan.reason : '';
+    // A power plant only feeds what it touches: flag a spot with no road, zone or building beside it.
+    const fp = plan.footprint;
+    const stranded =
+      plan.valid && !note && !!fp && isBuildingTool(plan.tool) && BUILDINGS[plan.tool].powerSupply > 0 && !footprintTouchesGrid(game.world, fp.x, fp.y, fp.size);
+    if (stranded) note = 'Not connected · touch a road or zone';
     const key = `${plan.tool}|${label}|${costText}|${note}|${plan.valid}`;
     if (key === this.lastKey) return;
     this.lastKey = key;
@@ -125,6 +155,7 @@ export class ActionPill {
     setText(this.note, note);
     setHidden(this.note, !note);
     setClass(this.el, 'is-bad', !plan.valid);
+    setClass(this.el, 'is-warn', stranded);
     setHidden(this.el, false);
   }
 }
@@ -154,9 +185,16 @@ export class MilestoneBanner {
   private readonly sub: HTMLElement;
   private readonly unlocks: HTMLElement;
   private readonly queue: { pop: number; title: string }[] = [];
+  private current: { pop: number; title: string } | null = null;
   private timer = 0;
   private showing = false;
   private shownAt = 0;
+  /**
+   * True while a story card, sheet, chapter title, Charter Night, the ending or a
+   * dialog covers the map: the banner (z 9) would sit unreadable under it, so it
+   * waits and shows once the surface closes.
+   */
+  held: () => boolean = () => false;
 
   constructor() {
     this.title = h('div', { class: 'cc-banner-title' });
@@ -173,9 +211,12 @@ export class MilestoneBanner {
     );
     // The banner floats over the middle of the map, so it lets touches through
     // (pointer-events: none in CSS); any tap anywhere dismisses it instead.
+    // Taps on story surfaces and dialogs belong to them (e.g. a chapter title's tap-to-continue).
     window.addEventListener(
       'pointerdown',
-      () => {
+      (e) => {
+        const t = e.target as Element | null;
+        if (t && typeof t.closest === 'function' && t.closest('.cc-story, .cc-modal-layer')) return;
         if (this.showing && performance.now() - this.shownAt > 350) this.next();
       },
       { capture: true, passive: true },
@@ -184,12 +225,27 @@ export class MilestoneBanner {
 
   show(m: { pop: number; title: string }): void {
     this.queue.push(m);
-    if (!this.showing) this.next();
+    if (!this.showing && !this.held()) this.next();
+  }
+
+  /** Per frame (cheap): park the banner while something covers it, resume after. */
+  update(): void {
+    const held = this.held();
+    if (held && this.showing && this.current) {
+      // A surface opened over it (milestone and chapter title on the same tick): requeue, hide now.
+      window.clearTimeout(this.timer);
+      this.queue.unshift(this.current);
+      this.current = null;
+      this.showing = false;
+      this.el.hidden = true;
+      this.el.classList.remove('is-out', 'is-in');
+    } else if (!held && !this.showing && this.queue.length) this.next();
   }
 
   private next(): void {
     window.clearTimeout(this.timer);
-    const m = this.queue.shift();
+    const m = this.held() ? undefined : this.queue.shift();
+    this.current = m ?? null;
     if (!m) {
       this.showing = false;
       if (!this.el.hidden) {

@@ -5,7 +5,10 @@
 //   3 px faction edge · 56 px header (48 px sigil, speaker, faction)
 //   sys line · title · body (typewriter, scrolls if needed)
 //   up to 4 choices (52 px; 68 px when the label wraps) with hint chips
-//   footer: Later (faction cards) · "auto in 14d"
+//   footer: Later (faction cards) · "auto in 14d" ("auto soon" on the last day)
+//
+// When the body overflows its area a chevron and edge glow say "more below".
+// The first card with hint chips carries a one-time legend line for them.
 //
 // Press-and-hold anywhere that is not a button fades the card to 15% so the
 // player can peek at the map. Swipe down = Later (faction cards only).
@@ -13,7 +16,8 @@
 // it and repeats the reason as a toast. Choices ignore taps for 600 ms.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import type { CardView } from '../../game/story/types';
+import { storageGet, storageSet } from '../../game/game';
+import type { CardView, Hint } from '../../game/story/types';
 import type { UIContext } from '../context';
 import { esc, h, prefersReducedMotion, replayClass, setClass, setHidden, setStyle, setText } from '../dom';
 import { icon } from '../icons';
@@ -24,6 +28,12 @@ import { factionColor, factionName, factionSigil, sigilImg, speakerMark } from '
 const CPS = 60;
 const ARM_MS = 600;
 const PEEK_MS = 300;
+const LEGEND_KEY = 'cybercity.ui.hintlegend.v1';
+
+/** "auto in 14d", or "auto soon" once the days have run out (the real-time floor still holds it). */
+export function autoLabel(days: number): string {
+  return days >= 1 ? `auto in ${Math.ceil(days)}d` : 'auto soon';
+}
 
 const KIND_LABEL: Record<CardView['kind'], string> = {
   beat: 'Transmission',
@@ -49,6 +59,10 @@ export class StoryCard {
   private readonly shown: HTMLElement;
   private readonly rest: HTMLElement;
   private readonly choices: HTMLElement;
+  private readonly more: HTMLElement;
+  private readonly legend: HTMLElement;
+  private legendSeen: boolean;
+  private moreAt = 0;
   private readonly foot: HTMLElement;
   private readonly laterBtn: HTMLButtonElement;
   private readonly auto: HTMLElement;
@@ -81,6 +95,15 @@ export class StoryCard {
     this.body = h('p', { class: 'cc-scard-body' }, this.shown, this.rest);
     this.scroll = h('div', { class: 'cc-scard-scroll' }, this.sys, this.title, this.body);
     this.choices = h('div', { class: 'cc-scard-choices', role: 'group', 'aria-label': 'Choices' });
+    this.more = h('div', { class: 'cc-scard-more', 'aria-hidden': 'true', html: icon('chevron') });
+    this.legendSeen = storageGet(LEGEND_KEY) === '1';
+    this.legend = h(
+      'div',
+      { class: 'cc-scard-legend', hidden: true },
+      h('span', { class: 'cc-scard-legend-row' }, h('span', { class: 'cc-scard-legend-k', html: '<b class="is-up">▲</b><b class="is-down">▼</b>' }), h('span', { text: 'How a faction will feel' })),
+      h('span', { class: 'cc-scard-legend-row' }, h('span', { class: 'cc-scard-legend-k', html: icon('eye') }), h('span', { text: 'Trace: how close anyone is to finding you' })),
+      h('span', { class: 'cc-scard-legend-tip', text: 'Hold a choice to see exactly what it does.' }),
+    );
     this.laterBtn = h('button', { class: 'cc-scard-later', type: 'button', 'data-act': 'later' }, h('span', { html: icon('comms') }), h('span', { text: 'Later' }));
     this.auto = h('span', { class: 'cc-scard-auto' });
     this.foot = h('footer', { class: 'cc-scard-foot' }, this.laterBtn, this.auto);
@@ -91,10 +114,13 @@ export class StoryCard {
       this.edge,
       h('header', { class: 'cc-scard-head' }, this.sig, h('div', { class: 'cc-scard-who' }, this.speaker, this.faction), this.kind),
       this.scroll,
+      this.more,
+      this.legend,
       this.choices,
       this.foot,
       this.pop,
     );
+    this.scroll.addEventListener('scroll', () => this.checkMore(), { passive: true });
 
     this.el.addEventListener('click', this.onClick);
     this.body.addEventListener('click', () => this.finishTyping());
@@ -161,9 +187,12 @@ export class StoryCard {
       this.scroll.scrollTop = 0;
     }
     this.renderChoices(card);
+    // One-time legend for the hint chips, on the first card that has favor or Trace chips.
+    const legend = !this.legendSeen && card.choices.some((c) => c.hints.some((x: Hint) => x.k === 'favor' || x.k === 'trace'));
+    setHidden(this.legend, !legend);
     setHidden(this.laterBtn, !card.canLater);
     const auto = card.autoInDays;
-    setText(this.auto, auto !== undefined && auto !== null ? `auto in ${Math.max(0, Math.ceil(auto))}d` : '');
+    setText(this.auto, auto !== undefined && auto !== null ? autoLabel(auto) : '');
     setHidden(this.foot, !card.canLater && (auto === undefined || auto === null));
     setHidden(this.pop, true);
     if (!same) {
@@ -175,10 +204,12 @@ export class StoryCard {
         /* ignore */
       }
     }
+    this.checkMore();
   }
 
   hide(): void {
     if (!this.card) return;
+    if (!this.legend.hidden) this.markLegendSeen();
     this.card = null;
     this.busy = false;
     this.setPeek(false);
@@ -205,7 +236,27 @@ export class StoryCard {
   private renderTyping(): void {
     setText(this.shown, this.text.slice(0, this.typed));
     setText(this.rest, this.text.slice(this.typed));
-    setClass(this.body, 'is-typing', this.typed < this.text.length);
+    const typing = this.typed < this.text.length;
+    setClass(this.body, 'is-typing', typing);
+    // The untyped rest is laid out (invisible), so overflow is known from the first frame;
+    // re-measure a few times a second while typing, and once at the end.
+    const now = performance.now();
+    if (!typing || now - this.moreAt > 250) {
+      this.moreAt = now;
+      this.checkMore();
+    }
+  }
+
+  /** "More below" cue when the body area scrolls and is not at its end. */
+  private checkMore(): void {
+    const sc = this.scroll;
+    setClass(this.el, 'has-more', !!this.card && sc.scrollHeight - sc.scrollTop - sc.clientHeight > 6);
+  }
+
+  private markLegendSeen(): void {
+    this.legendSeen = true;
+    setHidden(this.legend, true);
+    storageSet(LEGEND_KEY, '1');
   }
 
   private renderChoices(card: CardView): void {
@@ -263,6 +314,7 @@ export class StoryCard {
     }
     if (performance.now() < this.armedAt || this.busy) return;
     if (this.typed < this.text.length) this.finishTyping();
+    if (!this.legend.hidden) this.markLegendSeen();
     this.busy = true;
     this.busyAt = performance.now();
     setClass(btn, 'is-picked', true);
