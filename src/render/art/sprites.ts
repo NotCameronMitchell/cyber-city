@@ -21,6 +21,8 @@ export interface Sprite {
   oy: number;
   w: number;
   h: number;
+  /** Device px per world px the sprite was painted at. */
+  scale: number;
   bytes: number;
   used: number;
   key: number;
@@ -38,9 +40,13 @@ export function nightBucket(n: number): number {
 export function nightOfBucket(b: number): number {
   return b / (NIGHT_STEPS - 1);
 }
-/** Smallest ladder step ≥ scale (with a little tolerance), as a bucket index 0..13. */
+/**
+ * Ladder step at or just below `scale`, as a bucket index 0..13. Used while the
+ * zoom is changing; slight upscaling keeps software rasterizers on their fast
+ * path (downscaled blits can trigger per-draw mipmap rebuilds).
+ */
 export function scaleBucket(scale: number): number {
-  const k = Math.ceil(3 * Math.log2(Math.max(1e-3, scale)) - 0.15);
+  const k = Math.floor(3 * Math.log2(Math.max(1e-3, scale)) + 0.05);
   return Math.max(SCALE_MIN_K, Math.min(SCALE_MAX_K, k)) - SCALE_MIN_K;
 }
 export function scaleOfBucket(b: number): number {

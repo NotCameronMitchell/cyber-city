@@ -1,0 +1,95 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// Original inline SVG icon set (24 × 24 grid, 1.7 px strokes). Drawn for Cyber
+// City; no third-party glyphs. Paths use `currentColor`; elements with class
+// "f" are filled, class "d" are dimmed accents (see .cc-i rules in ui.css).
+// ─────────────────────────────────────────────────────────────────────────────
+
+const HEX = 'M12 2.5l8.2 4.75v9.5L12 21.5l-8.2-4.75v-9.5z';
+
+const PATHS = {
+  // ── Tool categories ──────────────────────────────────────────────────────
+  inspect: '<circle cx="10.5" cy="10.5" r="6"/><path d="M15 15l5.5 5.5"/><path class="d" d="M10.5 7.6v5.8M7.6 10.5h5.8"/>',
+  bulldoze:
+    '<rect x="2.5" y="14.5" width="12" height="5" rx="2.5"/><path d="M4.5 14.5V9.5H9l2.5 5"/><path d="M14.5 16.5H17"/><path d="M17.5 11l3 1.2v7.6l-3-1.2z"/><circle class="f" cx="5.5" cy="17" r=".9"/><circle class="f" cx="11.5" cy="17" r=".9"/>',
+  road: '<path d="M8.5 3L4 21M15.5 3L20 21"/><path class="d" d="M12 4v2.6M12 10v3M12 16.6v3.9"/>',
+  zones: '<path d="M2.5 20.5h19"/><path d="M4 20.5V11h5v9.5"/><path d="M10.5 20.5V4.5h5v16"/><path d="M17 20.5v-7h3.5v7"/><path class="d" d="M12.4 8h1.2M12.4 11.5h1.2M12.4 15h1.2"/>',
+  power: '<path d="M13.2 2.5L5 13.6h6.2L10.3 21.5 19 10.2h-6.3z"/>',
+  services: '<path d="M12 3l7.5 3v5.6c0 4.6-3.2 8.1-7.5 9.4-4.3-1.3-7.5-4.8-7.5-9.4V6z"/><path d="M12 8.5v7M8.5 12h7"/>',
+  landmarks: '<path d="M12 1.8L14.2 6v15h-4.4V6z"/><path d="M7.5 21v-9.5l2.3-1.5M16.5 21v-9.5l-2.3-1.5"/><path d="M4 21h16"/><path class="d" d="M12 9v2.2M12 13.5v2.2"/>',
+  data: '<path d="M12 3l9 5-9 5-9-5z"/><path d="M3 12.5l9 5 9-5"/><path class="d" d="M3 17l9 5 9-5"/>',
+
+  // ── Zones ────────────────────────────────────────────────────────────────
+  res: '<path d="M2.5 21h19"/><path d="M4 21V10.5l5-3.8 5 3.8V21"/><path d="M14 21V7l3.2-2.3L20.5 7v14"/><path class="d" d="M7 13.5h4M7 17h4M16.2 10.5h2M16.2 14h2M16.2 17.5h2"/>',
+  com: '<path d="M4.5 11v9.5h15V11"/><path d="M3 10.2L5 4h14l2 6.2c0 1.3-1.3 2.1-3 2.1s-3-.8-3-2.1c0 1.3-1.3 2.1-3 2.1s-3-.8-3-2.1c0 1.3-1.3 2.1-3 2.1s-3-.8-3-2.1z"/><path d="M10 20.5V16h4v4.5"/>',
+  ind: '<path d="M3 21V11.5l5 3v-3l5 3v-3l5 3V4h3v17z"/><path class="d" d="M6.5 18h2M11 18h2M15.5 18h2"/>',
+
+  // ── Buildings ────────────────────────────────────────────────────────────
+  solar: '<path d="M3.5 14l3-8h14l-3 8z"/><path class="d" d="M10.8 6L8.4 14M15.6 6l-2.4 8M5 10h14.3"/><path d="M11.5 14v6M8 20.5h7"/>',
+  reactor:
+    '<circle class="f" cx="12" cy="12" r="1.9"/><ellipse cx="12" cy="12" rx="9.2" ry="3.5"/><ellipse cx="12" cy="12" rx="9.2" ry="3.5" transform="rotate(60 12 12)"/><ellipse cx="12" cy="12" rx="9.2" ry="3.5" transform="rotate(120 12 12)"/>',
+  plaza: '<path d="M12 21v-7.5"/><path d="M12 15.5l-2.8-2.3M12 17l2.8-2.3"/><path d="M12 2.8c3.3 0 6 2.4 6 5.4 0 2.6-2.2 4.7-4.8 4.7h-2.4C8.2 12.9 6 10.8 6 8.2c0-3 2.7-5.4 6-5.4z"/><path d="M7 21h10"/>',
+  precinct:
+    '<path d="M12 2.5l7 3v5c0 5-3 8.6-7 10.5-4-1.9-7-5.5-7-10.5v-5z"/><path d="M12 7.6l1.25 2.55 2.8.4-2.02 1.97.48 2.78L12 14l-2.5 1.3.48-2.78-2.03-1.97 2.8-.4z"/>',
+  clinic: '<path d="M9.5 3.5h5v6h6v5h-6v6h-5v-6h-6v-5h6z"/>',
+  datahub:
+    '<path d="M12 11v10M8.5 21h7"/><circle cx="12" cy="9" r="1.8"/><path d="M8.4 5.4a5.1 5.1 0 0 0 0 7.2M15.6 5.4a5.1 5.1 0 0 1 0 7.2"/><path class="d" d="M5.5 2.6a9.2 9.2 0 0 0 0 12.8M18.5 2.6a9.2 9.2 0 0 1 0 12.8"/>',
+  maglev: '<rect x="6" y="3" width="12" height="14" rx="3.2"/><path d="M6 11h12"/><path d="M9.5 7h5"/><circle class="f" cx="9" cy="14" r="1"/><circle class="f" cx="15" cy="14" r="1"/><path d="M8 21.5l2-4.5M16 21.5l-2-4.5"/>',
+  spire: '<path d="M12 1.5l2.4 4.5v15h-4.8V6z"/><path d="M7.5 21V10.5l2.1-1.2M16.5 21V10.5l-2.1-1.2"/><path d="M4.5 21h15"/><path class="d" d="M12 9.5v2M12 14v2"/>',
+  arcology: '<path d="M2.5 21L12 3.5 21.5 21z"/><path class="d" d="M7.2 12.4h9.6M4.9 16.7h14.2M12 3.5V21"/>',
+
+  // ── Overlays ─────────────────────────────────────────────────────────────
+  eyeOff:
+    '<path d="M3.5 3.5l17 17"/><path d="M10.6 6.1c.5-.1.9-.1 1.4-.1 5 0 8.5 4.5 9.5 6-.5.8-1.6 2.2-3.1 3.5M6.6 7.6C4.6 9 3.1 10.9 2.5 12c1 1.5 4.5 6 9.5 6 1.6 0 3-.4 4.3-1.1"/><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/>',
+  plug: '<path d="M9 2.5v4.5M15 2.5v4.5"/><path d="M6 7h12v4a6 6 0 0 1-12 0z"/><path d="M12 17v4.5"/>',
+  gem: '<path d="M6 3.5h12l3.5 5.5L12 20.5 2.5 9z"/><path class="d" d="M2.5 9h19M8.5 3.5L12 20.5l3.5-17"/>',
+  siren:
+    '<path d="M7 18.5V12a5 5 0 0 1 10 0v6.5"/><path d="M5 18.5h14v3H5z"/><path class="d" d="M12 2v2.2M4.3 5l1.5 1.5M19.7 5l-1.5 1.5M2 12h2.2M19.8 12H22"/>',
+  smog: '<path d="M4.5 21v-7h4v7M2.5 21h19"/><path d="M6 10.5c-1.7 0-3-1.1-3-2.6s1.3-2.6 3-2.6c.4-1.6 1.9-2.8 3.7-2.8 1.7 0 3.1 1 3.6 2.4.4-.1.8-.2 1.2-.2 1.9 0 3.5 1.5 3.5 3.4s-1.6 2.4-3.5 2.4z"/>',
+  car: '<path d="M5 16v-4.5L7.2 6h9.6l2.2 5.5V16z"/><path d="M5 11.5h14"/><path d="M5.5 16v3h3v-3M15.5 16v3h3v-3"/><circle class="f" cx="8.4" cy="13.8" r=".9"/><circle class="f" cx="15.6" cy="13.8" r=".9"/>',
+  rings: '<circle class="f" cx="12" cy="12" r="2.2"/><circle cx="12" cy="12" r="5.6"/><circle class="d" cx="12" cy="12" r="9.2"/>',
+
+  // ── HUD / chrome ─────────────────────────────────────────────────────────
+  menu: '<path d="M4 7h16M4 12h16M4 17h10"/>',
+  pause: '<rect class="f" x="6.2" y="5" width="3.8" height="14" rx="1"/><rect class="f" x="14" y="5" width="3.8" height="14" rx="1"/>',
+  play: '<path class="f" d="M8 5l11 7-11 7z"/>',
+  fast: '<path class="f" d="M3.5 6l8 6-8 6zM12 6l8 6-8 6z"/>',
+  faster: '<path class="f" d="M1.8 7l6.4 5-6.4 5zM8.8 7l6.4 5-6.4 5zM15.8 7l6.4 5-6.4 5z"/>',
+  coin: `<path d="${HEX}"/><path d="M14.6 9.3a3 3 0 1 0 0 5.4M12 7v1.5M12 15.5V17"/>`,
+  pop: '<circle cx="12" cy="7.5" r="3.6"/><path d="M4.8 21c0-4 3.2-7.1 7.2-7.1s7.2 3.1 7.2 7.1"/>',
+  close: '<path d="M6.5 6.5l11 11M17.5 6.5l-11 11"/>',
+  check: '<path d="M4.5 12.5l5 5 10-11"/>',
+  warn: '<path d="M12 3.2l9.5 17.3h-19z"/><path d="M12 10v4.8M12 17.6v.1"/>',
+  lock: '<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/>',
+  save: '<path d="M5 3.5h11l3 3v14H5z"/><path d="M8 3.5v5h7v-5M8 20.5V14h8v6.5"/>',
+  load: '<path d="M12 3.5v11.5M7.5 10.5L12 15l4.5-4.5"/><path d="M4 16.5v4h16v-4"/>',
+  newCity: `<path d="${HEX}"/><path d="M12 8v8M8 12h8"/>`,
+  gear: '<circle cx="12" cy="12" r="3"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M5.3 18.7l2.1-2.1M16.6 7.4l2.1-2.1"/><circle class="d" cx="12" cy="12" r="6.6"/>',
+  help: '<circle cx="12" cy="12" r="9"/><path d="M9.5 9.5a2.5 2.5 0 1 1 3.5 2.3c-.6.3-1 .8-1 1.5v.7M12 17.4v.1"/>',
+  info: '<circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.6v.1"/>',
+  sound: '<path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"/><path d="M15.5 9a4 4 0 0 1 0 6M18 6.5a7.5 7.5 0 0 1 0 11"/>',
+  music: '<path d="M9 18V5.5l11-2v12.5"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="17.5" cy="16" r="2.5"/>',
+  rain: '<path d="M7 14a4 4 0 0 1-.6-7.96A5.5 5.5 0 0 1 17 5.5a4.25 4.25 0 0 1 .5 8.5z"/><path class="d" d="M8 17l-1 3.5M12 17l-1 3.5M16 17l-1 3.5"/>',
+  moon: '<path d="M19.5 14.5A8 8 0 1 1 9.5 4.5a6.3 6.3 0 0 0 10 10z"/><path class="d" d="M17 3.5v3M15.5 5h3"/>',
+  broadcast: '<circle cx="12" cy="12" r="2"/><path d="M8.5 8.5a5 5 0 0 0 0 7M15.5 8.5a5 5 0 0 1 0 7"/><path class="d" d="M5.6 5.6a9 9 0 0 0 0 12.8M18.4 5.6a9 9 0 0 1 0 12.8"/>',
+  sparkle: '<path d="M12 3l2.2 6.8L21 12l-6.8 2.2L12 21l-2.2-6.8L3 12l6.8-2.2z"/>',
+  gauge: '<path d="M4 18a8 8 0 1 1 16 0"/><path d="M12 18l4-6"/><path class="d" d="M7 13.5h.1M12 9.5h.1M17 13.5h.1"/>',
+  back: '<path d="M15 5l-7 7 7 7"/>',
+  chevron: '<path d="M9 5l7 7-7 7"/>',
+  trash: '<path d="M4 7h16M9 7V4h6v3M6 7l1 14h10l1-14"/><path class="d" d="M10 11v6M14 11v6"/>',
+  news: '<path d="M4 5h13v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"/><path d="M17 9h3v10a2 2 0 0 1-2 2"/><path class="d" d="M7.5 9h6M7.5 12.5h6M7.5 16h4"/>',
+  dice: '<rect x="4" y="4" width="16" height="16" rx="3"/><circle class="f" cx="9" cy="9" r="1.2"/><circle class="f" cx="15" cy="15" r="1.2"/><circle class="f" cx="15" cy="9" r="1.2"/><circle class="f" cx="9" cy="15" r="1.2"/>',
+  star: '<path d="M12 2.5l2.9 6 6.6.9-4.8 4.6 1.2 6.5L12 17.4l-5.9 3.1 1.2-6.5-4.8-4.6 6.6-.9z"/>',
+  logo: `<path d="${HEX}"/><path d="M8 16.5v-5h2v5M11 16.5V7.5h2v9M14 16.5v-3h2v3"/>`,
+  pinch: '<circle cx="8" cy="12" r="2.3"/><circle cx="16" cy="12" r="2.3"/><path d="M8 7.5V3M6.4 4.6L8 3l1.6 1.6M16 16.5V21M14.4 19.4L16 21l1.6-1.6"/>',
+  drag: '<path d="M5 19L18 6"/><circle class="f" cx="5" cy="19" r="2"/><path d="M13 5.5h5.5V11"/>',
+  chart: '<path d="M3.5 20.5h17"/><path d="M5 16l4.5-5 3.5 3 6-7.5"/><path class="d" d="M15.5 6.5H19V10"/>',
+  bolt: '<path class="f" d="M13.2 2.5L5 13.6h6.2L10.3 21.5 19 10.2h-6.3z"/>',
+  approval: '<circle cx="12" cy="12" r="9"/><path d="M8 14.2c1 1.4 2.4 2.1 4 2.1s3-.7 4-2.1"/><path d="M9 9.5h.1M15 9.5h.1"/>',
+} as const;
+
+export type IconName = keyof typeof PATHS;
+
+/** SVG markup for an icon. `cls` adds classes on the <svg>. */
+export function icon(name: IconName, cls = ''): string {
+  return `<svg class="cc-i${cls ? ' ' + cls : ''}" viewBox="0 0 24 24" aria-hidden="true" focusable="false">${PATHS[name]}</svg>`;
+}

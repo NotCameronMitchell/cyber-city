@@ -1,0 +1,171 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// Tool catalogue for the toolbar: categories, per-tool display metadata and
+// the data-overlay list. Names, costs and colours come from game/config so
+// balance changes flow through automatically.
+// ─────────────────────────────────────────────────────────────────────────────
+
+import { BRIDGE_COST, BUILDINGS, BULLDOZE_COST, ROAD_COST, ZONES, isBuildingTool, isZoneTool } from '../game/config';
+import type { OverlayId, ToolId } from '../game/types';
+import { credits } from './format';
+import type { IconName } from './icons';
+
+export type CategoryId = 'inspect' | 'bulldoze' | 'road' | 'zones' | 'power' | 'services' | 'landmarks' | 'data';
+
+export interface Category {
+  id: CategoryId;
+  /** Full label (wide screens). */
+  label: string;
+  /** ≤ 5-char label for narrow phones. */
+  short: string;
+  icon: IconName;
+  /** Single-tool categories select this tool directly. */
+  tool?: ToolId;
+  /** Multi-item categories open a tray. */
+  items?: ToolId[];
+  accent: string;
+}
+
+export const CATEGORIES: Category[] = [
+  { id: 'inspect', label: 'Inspect', short: 'Info', icon: 'inspect', tool: 'inspect', accent: '#22e5ff' },
+  { id: 'bulldoze', label: 'Bulldoze', short: 'Demo', icon: 'bulldoze', tool: 'bulldoze', accent: '#ff3b5c' },
+  { id: 'road', label: 'Road', short: 'Road', icon: 'road', tool: 'road', accent: '#c8d0f0' },
+  { id: 'zones', label: 'Zones', short: 'Zone', icon: 'zones', items: ['res', 'com', 'ind'], accent: '#ff2bd6' },
+  { id: 'power', label: 'Power', short: 'Power', icon: 'power', items: ['solar', 'reactor'], accent: '#4dff9a' },
+  {
+    id: 'services',
+    label: 'Services',
+    short: 'Civic',
+    icon: 'services',
+    items: ['plaza', 'precinct', 'clinic', 'datahub', 'maglev'],
+    accent: '#3d7bff',
+  },
+  { id: 'landmarks', label: 'Landmarks', short: 'Mega', icon: 'landmarks', items: ['spire', 'arcology'], accent: '#ffb02e' },
+  { id: 'data', label: 'Data', short: 'Data', icon: 'data', accent: '#22e5ff' },
+];
+
+export function categoryOf(tool: ToolId): CategoryId {
+  for (const c of CATEGORIES) {
+    if (c.tool === tool) return c.id;
+    if (c.items && c.items.includes(tool)) return c.id;
+  }
+  return 'inspect';
+}
+
+export interface ToolMeta {
+  id: ToolId;
+  name: string;
+  /** One-line description for cards. */
+  desc: string;
+  icon: IconName;
+  color: string;
+  /** Short badge (R / C / I) for zones. */
+  badge?: string;
+  /** Base cost (per tile for road / zones / bulldoze). */
+  cost: number;
+  perTile: boolean;
+  /** Footprint size for buildings. */
+  size?: number;
+  unlockPop: number;
+}
+
+const BUILDING_ICON: Record<string, IconName> = {
+  solar: 'solar',
+  reactor: 'reactor',
+  plaza: 'plaza',
+  precinct: 'precinct',
+  clinic: 'clinic',
+  datahub: 'datahub',
+  maglev: 'maglev',
+  spire: 'spire',
+  arcology: 'arcology',
+};
+
+export function toolMeta(tool: ToolId): ToolMeta {
+  if (isZoneTool(tool)) {
+    const z = ZONES[tool];
+    return { id: tool, name: z.name, desc: z.desc, icon: tool, color: z.color, badge: z.short, cost: z.cost, perTile: true, unlockPop: 0 };
+  }
+  if (isBuildingTool(tool)) {
+    const b = BUILDINGS[tool];
+    return {
+      id: tool,
+      name: b.name,
+      desc: b.desc,
+      icon: BUILDING_ICON[tool] ?? 'services',
+      color: b.color,
+      cost: b.cost,
+      perTile: false,
+      size: b.size,
+      unlockPop: b.unlockPop,
+    };
+  }
+  switch (tool) {
+    case 'road':
+      return {
+        id: tool,
+        name: 'Road',
+        desc: `Streets carry traffic and power. Bridges ${credits(BRIDGE_COST)}.`,
+        icon: 'road',
+        color: '#c8d0f0',
+        cost: ROAD_COST,
+        perTile: true,
+        unlockPop: 0,
+      };
+    case 'bulldoze':
+      return {
+        id: tool,
+        name: 'Bulldoze',
+        desc: 'Clear roads, zones and structures.',
+        icon: 'bulldoze',
+        color: '#ff3b5c',
+        cost: BULLDOZE_COST,
+        perTile: true,
+        unlockPop: 0,
+      };
+    default:
+      return { id: 'inspect', name: 'Inspect', desc: 'Tap anything to see how it is doing.', icon: 'inspect', color: '#22e5ff', cost: 0, perTile: false, unlockPop: 0 };
+  }
+}
+
+/** "15 CR/tile", "1,500 CR", "from 5 CR". */
+export function costLabel(meta: ToolMeta): string {
+  if (meta.id === 'inspect') return 'Free';
+  if (meta.id === 'bulldoze') return `from ${credits(meta.cost)}`;
+  return meta.perTile ? `${credits(meta.cost)}/tile` : credits(meta.cost);
+}
+
+export type LegendKind = 'heat' | 'power' | 'services';
+
+export interface OverlayMeta {
+  id: OverlayId;
+  name: string;
+  icon: IconName;
+  desc: string;
+  legend: LegendKind | null;
+  low?: string;
+  high?: string;
+}
+
+export const OVERLAYS: OverlayMeta[] = [
+  { id: 'none', name: 'Off', icon: 'eyeOff', desc: 'Plain city view.', legend: null },
+  { id: 'power', name: 'Power', icon: 'plug', desc: 'Which blocks are on the grid.', legend: 'power' },
+  { id: 'landValue', name: 'Land Value', icon: 'gem', desc: 'Where towers want to rise.', legend: 'heat', low: 'Cheap', high: 'Prime' },
+  { id: 'crime', name: 'Crime', icon: 'siren', desc: 'Street-crew activity.', legend: 'heat', low: 'Calm', high: 'Rough' },
+  { id: 'pollution', name: 'Pollution', icon: 'smog', desc: 'Smog from fabs and plants.', legend: 'heat', low: 'Clean', high: 'Toxic' },
+  { id: 'traffic', name: 'Traffic', icon: 'car', desc: 'Congestion on the streets.', legend: 'heat', low: 'Clear', high: 'Jammed' },
+  { id: 'services', name: 'Services', icon: 'rings', desc: 'Coverage of civic buildings.', legend: 'services' },
+];
+
+export function overlayMeta(id: OverlayId): OverlayMeta {
+  return OVERLAYS.find((o) => o.id === id) ?? OVERLAYS[0];
+}
+
+/** Service coverage colours (match the renderer's services overlay). */
+export const SERVICE_SWATCHES: { label: string; color: string }[] = [
+  { label: 'Security', color: '#3d7bff' },
+  { label: 'Health', color: '#ff3b5c' },
+  { label: 'Net', color: '#22e5ff' },
+  { label: 'Park', color: '#4dff9a' },
+  { label: 'Transit', color: '#ffe14d' },
+  { label: 'Prestige', color: '#ff2bd6' },
+];

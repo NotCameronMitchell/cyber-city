@@ -51,6 +51,17 @@ export function faceK(nu: number, nv: number): number {
   return K_RIGHT + (K_LEFT - K_RIGHT) * (a / (Math.PI / 2));
 }
 
+/** Shade factor for the visible side of a vertical face along edge (du, dv). */
+export function visK(du: number, dv: number): number {
+  let nu = dv;
+  let nv = -du;
+  if (nu + nv < 0) {
+    nu = -nu;
+    nv = -nv;
+  }
+  return faceK(nu, nv);
+}
+
 export type WinStyle = 'grid' | 'band' | 'curtain' | 'slit' | 'capsule';
 
 export interface WinSpec {
@@ -107,6 +118,7 @@ export const GLASS: Mat = { day: [78, 112, 138], night: [12, 16, 34] };
 const GLASS_SKY: RGB = [150, 178, 196];
 const PANEL_BG: Mat = { day: [34, 32, 48], night: [8, 7, 16] };
 const TUBE_DAY: RGB = [150, 150, 164];
+const GRIME: RGB = [72, 64, 58];
 
 // ── Invented script glyphs (3 × 4 bit cells, top row first) ────────────────
 // Original shapes; they only have to read as "signage" at a glance.
@@ -246,7 +258,9 @@ export class Painter {
 
   // ── Colour helpers ───────────────────────────────────────────────────────
   rgb(m: Mat, k = 1): RGB {
-    return shade(mix(m.day, m.night, this.n), k);
+    const c = mix(m.day, m.night, this.n);
+    // Abandoned: grimy, desaturated, darker.
+    return this.abandoned ? shade(mix(c, GRIME, 0.4), k * 0.78) : shade(c, k);
   }
   col(m: Mat, k = 1, a = 1): string {
     return this.g ? css(this.rgb(m, k), a) : '';
@@ -342,7 +356,7 @@ export class Painter {
       const top = yb - Math.min(z1 - z0, 22 + 18 * this.n) - 16;
       const grad = g.createLinearGradient(0, yb, 0, top);
       const c = mix(BLACK, this.pal.up, this.abandoned ? 0.25 : this.n);
-      grad.addColorStop(0, css(c, 0.28 + 0.12 * this.n));
+      grad.addColorStop(0, css(c, (0.2 + 0.12 * this.n) * (this.lights ? 1 : 0.45)));
       grad.addColorStop(1, css(c, 0));
       this.begin_();
       this.quad(au, av, z0, bu, bv, z0, bu, bv, z1, au, av, z1);
@@ -375,7 +389,8 @@ export class Painter {
     const fid = this.faceId;
     const n = this.n;
     const on = this.lights && !this.abandoned;
-    const litFrac = on ? Math.min(0.95, (0.04 + n * 0.78) * (w.lit ?? 1)) : 0;
+    // Night lighting comes on progressively; curtain walls stay calmer.
+    const litFrac = on ? Math.min(0.9, (0.03 + n * 0.5) * (w.lit ?? 1) * (w.style === 'curtain' ? 0.6 : 1)) : 0;
     const style = w.style;
     const P = this.pal;
     const curtain = style === 'curtain';
@@ -386,7 +401,7 @@ export class Painter {
     const glassHi = css(mix(glassRGB, [255, 255, 255], 0.18 * (1 - n)));
 
     // Lit colours: 3 hues × 2 intensities.
-    const litT = Math.min(1, 0.35 + n * 0.9);
+    const litT = Math.min(1, 0.35 + n * 0.9) * (curtain ? 0.82 : 1);
     const hues: RGB[] = [WARM, COOL, P.neon, WHITE];
     const litCols: string[] = [];
     for (const h of hues) {
@@ -447,6 +462,8 @@ export class Painter {
 
     for (let r = 0; r < rows; r++) {
       if (w.skip && r < w.skip) continue;
+      // Occupancy varies per floor so lights cluster in bands, not confetti.
+      const rowLit = litFrac * (0.25 + 1.5 * hash2(fid * 3 + r, 77, this.seed));
       const za = z0 + mz + r * floorH + (floorH * (1 - w.h)) / 2;
       const zb = za + floorH * w.h;
       if (zb > z1 - 1) break;
@@ -471,9 +488,9 @@ export class Painter {
           add(b < 0.22 ? 10 : b < 0.34 ? 11 : 0, t0, t1, za, zb);
           continue;
         }
-        if (h < litFrac) {
+        if (h < rowLit) {
           const hh = hash2(fid * 7 + c * 3, r, this.seed + 99);
-          const hue = hh < P.warm ? 0 : hh < P.warm + P.cool ? 1 : hh < P.warm + P.cool + 0.12 ? 2 : 3;
+          const hue = hh < P.warm ? 0 : hh < P.warm + P.cool ? 1 : hh < P.warm + P.cool + 0.07 ? 2 : 3;
           const dim = hash2(c, r * 7 + fid, this.seed + 3) < 0.35 ? 1 : 0;
           if (lod) {
             add(2 + hue * 2, t0, t1, za, zb);
@@ -531,8 +548,8 @@ export class Painter {
         if (s === 0) g.moveTo(x, y);
         else g.lineTo(x, y);
       }
-      g.strokeStyle = css(shade(c, 0.85 - this.n * 0.55), 0.85);
-      g.lineWidth = 1.3;
+      g.strokeStyle = css(mix(shade(c, 0.7 - this.n * 0.45), [90, 84, 80], 0.35), 0.7);
+      g.lineWidth = 1.1;
       g.stroke();
     }
   }
@@ -759,7 +776,7 @@ export class Painter {
    */
   wallSign(au: number, av: number, bu: number, bv: number, t0: number, t1: number, z0: number, z1: number, c: RGB, glyph = true, vertical = false) {
     const p = this.plane(au, av, 0, bu - au, bv - av);
-    const k = faceK(bv - av, -(bu - au));
+    const k = visK(bu - au, bv - av);
     this.signBody(p, t0, t1, z0, z1, c, glyph, vertical, k);
   }
 
@@ -1190,7 +1207,7 @@ export class Painter {
   /** Vertical corrugation / panel ribs on the face A→B. */
   ribs(au: number, av: number, bu: number, bv: number, z0: number, z1: number, count: number, m: Mat) {
     if (this.lod || !this.g) return;
-    const k = faceK(bv - av, -(bu - au));
+    const k = visK(bu - au, bv - av);
     this.begin_();
     for (let i = 1; i < count; i++) {
       const t = i / count;
@@ -1204,7 +1221,7 @@ export class Painter {
   door(au: number, av: number, bu: number, bv: number, t0: number, t1: number, z0: number, z1: number, lit: RGB | null = null) {
     const du = bu - au;
     const dv = bv - av;
-    const k = faceK(dv, -du);
+    const k = visK(du, dv);
     const pu0 = au + du * t0;
     const pv0 = av + dv * t0;
     const pu1 = au + du * t1;
@@ -1240,6 +1257,37 @@ export class Painter {
     if (front) g.ellipse(cx, cy, rx, rx / 2, 0, 0, Math.PI);
     else g.ellipse(cx, cy, rx, rx / 2, 0, 0, Math.PI * 2);
     g.strokeStyle = this.col(m, 0.9);
+    g.lineWidth = w;
+    g.stroke();
+  }
+
+  /** Emissive ring (front half by default) that glows at night and dims when unlit. */
+  neonRing(cu: number, cv: number, r: number, z: number, c: RGB, w = 1, full = false) {
+    const cx = this.X(cu, cv);
+    const cy = this.Y(cu, cv, z);
+    const rx = r * HALF_W * Math.SQRT2;
+    this.track(cx - rx, cy - rx / 2, 4);
+    this.track(cx + rx, cy + rx / 2, 4);
+    this.tz(z);
+    const g = this.g;
+    if (!g) return;
+    const a1 = full ? Math.PI * 2 : Math.PI;
+    const ga = this.glowA();
+    if (ga > 0.04 && !this.lod) {
+      g.globalCompositeOperation = 'lighter';
+      g.beginPath();
+      g.ellipse(cx, cy, rx, rx / 2, 0, 0, a1);
+      g.strokeStyle = css(c, 0.12 * ga);
+      g.lineWidth = w * 6;
+      g.stroke();
+      g.strokeStyle = css(c, 0.25 * ga);
+      g.lineWidth = w * 2.6;
+      g.stroke();
+      g.globalCompositeOperation = 'source-over';
+    }
+    g.beginPath();
+    g.ellipse(cx, cy, rx, rx / 2, 0, 0, a1);
+    g.strokeStyle = css(this.emissive(c, 0.45));
     g.lineWidth = w;
     g.stroke();
   }
@@ -1368,7 +1416,7 @@ export class Painter {
       this.fx.push({ k: 'board', ox, oy, ex: x1 - ox, ey: y1 - oy, h: z1 - z0, style, c1, c2, ph });
     }
     // Frame + static content.
-    const k = faceK(dv, -du);
+    const k = visK(du, dv);
     this.begin_();
     this.quad(pu0, pv0, z0 - 1, pu1, pv1, z0 - 1, pu1, pv1, z1 + 1, pu0, pv0, z1 + 1);
     this.fill(this.col(mat([40, 40, 52]), k));
@@ -1389,12 +1437,17 @@ export class Painter {
       const [x1, y1] = this.pt(pu1, pv1, z0);
       this.fx.push({ k: 'ticker', ox, oy, ex: x1 - ox, ey: y1 - oy, h: z1 - z0, c1: c, ph });
     }
-    const k = faceK(dv, -du);
+    const k = visK(du, dv);
     this.begin_();
     this.quad(pu0, pv0, z0, pu1, pv1, z0, pu1, pv1, z1, pu0, pv0, z1);
     this.fill(this.col(PANEL_BG, k));
     this.neon([pu0, pv0, z0, pu1, pv1, z0], c, 0.5);
     this.neon([pu0, pv0, z1, pu1, pv1, z1], c, 0.5);
+  }
+
+  /** Declare that something (e.g. a live hologram) reaches height z. */
+  reach(z: number) {
+    this.tz(z);
   }
 
   /** Register an arbitrary live effect (record mode only). */

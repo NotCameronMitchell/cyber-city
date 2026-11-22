@@ -139,11 +139,9 @@ function beamSprite(): HTMLCanvasElement {
 
 const RED: RGB = [255, 59, 92];
 const BLUE: RGB = [61, 123, 255];
-const WARM: RGB = [255, 200, 130];
 const TV: RGB = [140, 190, 255];
 let redGlow: HTMLCanvasElement | null = null;
 let blueGlow: HTMLCanvasElement | null = null;
-let warmGlow: HTMLCanvasElement | null = null;
 let amberGlow: HTMLCanvasElement | null = null;
 let yellowGlow: HTMLCanvasElement | null = null;
 let cyanGlow: HTMLCanvasElement | null = null;
@@ -151,7 +149,6 @@ function glows() {
   if (!redGlow) {
     redGlow = glowSprite(RED, 64);
     blueGlow = glowSprite(BLUE, 64);
-    warmGlow = glowSprite(WARM, 64);
     amberGlow = glowSprite([255, 150, 40], 64);
     yellowGlow = glowSprite([255, 230, 120], 64);
     cyanGlow = glowSprite([90, 230, 255], 64);
@@ -180,7 +177,6 @@ export function drawFx(ctx: CanvasRenderingContext2D, list: Fx[], ox: number, oy
       case 'blink': {
         if (st.lod && !f.lodOk) break;
         if (!st.lit && !st.offline) break;
-        const c = st.offline ? RED : f.c;
         const ph = ((t / f.period + f.ph + st.phase) % 1 + 1) % 1;
         if (ph > 0.16) break;
         const a = 1 - ph / 0.16;
@@ -192,7 +188,7 @@ export function drawFx(ctx: CanvasRenderingContext2D, list: Fx[], ox: number, oy
         const s = f.size * (0.6 + n * 0.6);
         ctx.drawImage(st.offline ? redGlow! : f.spr, x - s / 2, y - s / 2, s, s);
         ctx.globalAlpha = a;
-        ctx.fillStyle = f.cs ??= css(mix(c, [255, 255, 255], 0.5));
+        ctx.fillStyle = st.offline ? '#ff8aa0' : (f.cs ??= css(mix(f.c, [255, 255, 255], 0.5)));
         ctx.fillRect(x - 0.9, y - 0.9, 1.8, 1.8);
         break;
       }
@@ -445,8 +441,9 @@ function drawBoard(ctx: CanvasRenderingContext2D, f: Extract<Fx, { k: 'board' }>
       ctx.fillStyle = R[hi];
       ctx.fillRect(0, 0, 1, h);
       ctx.fillStyle = '#0a0716';
-      const cell = h / 14;
-      const ct = cell / Math.hypot(f.ex, f.ey);
+      const ew = Math.hypot(f.ex, f.ey);
+      const cell = Math.min(h / 14, ew / 14);
+      const ct = cell / ew;
       const seed = slot * 7 + Math.floor(f.ph * 50);
       for (let gch = 0; gch < 3; gch++) {
         const gm = GLYPHS[(seed + gch * 5) % GLYPHS.length];
@@ -506,8 +503,9 @@ function drawBoard(ctx: CanvasRenderingContext2D, f: Extract<Fx, { k: 'board' }>
       const k = 0.75 + 0.25 * Math.sin(t * 3 + f.ph * 6);
       ctx.fillStyle = R[hi];
       const cz = h * 0.6;
-      const r = h * 0.22 * k;
-      const rt = r / Math.hypot(f.ex, f.ey);
+      const ew = Math.hypot(f.ex, f.ey);
+      const r = Math.min(h * 0.22, ew * 0.4) * k;
+      const rt = r / ew;
       ctx.beginPath();
       ctx.moveTo(0.5, cz + r);
       ctx.lineTo(0.5 + rt, cz);
@@ -520,6 +518,16 @@ function drawBoard(ctx: CanvasRenderingContext2D, f: Extract<Fx, { k: 'board' }>
       break;
     }
   }
+  // Display texture: a few dark scan bands + lit top / bottom edges.
+  ctx.globalAlpha = 0.28;
+  ctx.fillStyle = '#05030c';
+  const bands = Math.min(12, Math.max(3, Math.floor(h / 4)));
+  const off = (t * 6) % (h / bands);
+  for (let i = 0; i < bands; i++) ctx.fillRect(0, i * (h / bands) + off, 1, h / bands / 3);
+  ctx.globalAlpha = 0.7;
+  ctx.fillStyle = '#f4f0ff';
+  ctx.fillRect(0, h - 0.6, 1, 0.6);
+  ctx.fillRect(0, 0, 1, 0.5);
   ctx.restore();
   // Light spill around the panel at night.
   if (n > 0.1) {
@@ -527,7 +535,7 @@ function drawBoard(ctx: CanvasRenderingContext2D, f: Extract<Fx, { k: 'board' }>
     const cy = oy + f.oy + f.ey * 0.5 - h * 0.5;
     const s = Math.max(h, Math.hypot(f.ex, f.ey)) * 2;
     ctx.globalCompositeOperation = 'lighter';
-    ctx.globalAlpha = n * 0.32;
+    ctx.globalAlpha = n * 0.22;
     ctx.drawImage(hueGlow(hi), cx - s / 2, cy - s / 2, s, s);
   }
 }
@@ -565,4 +573,27 @@ function drawHolo(ctx: CanvasRenderingContext2D, f: Extract<Fx, { k: 'holo' }>, 
   }
   ctx.globalAlpha = 0.3 * (0.4 + n);
   ctx.drawImage(hueGlow(base % RAMP_N), x - h * 0.6, y - h * 0.9, h * 1.2, h * 1.1);
+}
+
+/** A single erratic squatter's light in an abandoned building (uses its first flicker anchor). */
+export function drawAbandonedLight(ctx: CanvasRenderingContext2D, list: Fx[], ox: number, oy: number, t: number, n: number, seed: number) {
+  for (let i = 0; i < list.length; i++) {
+    const f = list[i];
+    if (f.k !== 'flicker') continue;
+    const k = flick(t * 0.7, seed + 0.37);
+    if (k < 0.2) return;
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.globalAlpha = k * n * 0.75;
+    ctx.fillStyle = '#ffb060';
+    const q = f.q;
+    ctx.beginPath();
+    ctx.moveTo(ox + q[0], oy + q[1]);
+    ctx.lineTo(ox + q[2], oy + q[3]);
+    ctx.lineTo(ox + q[4], oy + q[5]);
+    ctx.lineTo(ox + q[6], oy + q[7]);
+    ctx.fill();
+    ctx.globalAlpha = 1;
+    ctx.globalCompositeOperation = 'source-over';
+    return;
+  }
 }

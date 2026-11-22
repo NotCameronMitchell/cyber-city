@@ -72,7 +72,7 @@ const W_RES_T: WinSpec = { style: 'grid', floor: 6.5, col: 6, w: 0.55, h: 0.5 };
 const W_BAND: WinSpec = { style: 'band', floor: 7, col: 7, w: 1, h: 0.42 };
 const W_CURT: WinSpec = { style: 'curtain', floor: 6, col: 6, w: 1, h: 0.82, margin: 1 };
 const W_CURT_L: WinSpec = { style: 'curtain', floor: 7, col: 8, w: 1, h: 0.82, margin: 1 };
-const W_SLIT: WinSpec = { style: 'slit', floor: 10, col: 9, w: 0.28, h: 0.55, lit: 0.6 };
+const W_SLIT: WinSpec = { style: 'slit', floor: 10, col: 9, w: 0.28, h: 0.55, lit: 1.1 };
 const W_SHOP: WinSpec = { style: 'grid', floor: 7, col: 8, w: 0.55, h: 0.5, margin: 2, skip: 1 };
 
 // Face edge helpers for a box (u0,v0)-(u1,v1): left face = v1 edge, right face = u1 edge.
@@ -406,7 +406,7 @@ const RES3: Recipe[] = [
     const w = pick(p, RES_WALL);
     const h = R(p, 126, 142);
     p.box(0.2, 0.2, 0.8, 0.8, 0, h, w, { win: W_RES_T, top: ROOF, trim: p.pal.neon2 });
-    for (let z = 26; z < h - 6; z += 26) p.box(0.16, 0.16, 0.84, 0.84, z - 1.6, z, CONC, { uplight: false, trim: z % 52 === 0 ? p.pal.neon : undefined });
+    for (let z = 26; z < h - 6; z += 26) p.box(0.17, 0.17, 0.83, 0.83, z - 1.2, z, ROOF_DARK, { uplight: false, top: ROOF_DARK, trim: z % 52 === 0 ? p.pal.neon : undefined });
     p.tank(0.35, 0.35, h, 0.06, 7);
     p.tank(0.6, 0.4, h, 0.05, 6);
     p.antenna(0.5, 0.65, h, 16);
@@ -429,8 +429,9 @@ const RES3: Recipe[] = [
     p.antenna(0.3, 0.3, p.maxZ, 16);
     p.box(0.5, 0.15, 0.86, 0.5, 0, R(p, 100, 116), ws[1], { win: W_RES_T, top: ROOF });
     p.box(0.15, 0.5, 0.55, 0.86, 0, R(p, 84, 98), ws[2], { win: W_RES_T, top: ROOF });
-    p.box(0.55, 0.55, 0.88, 0.88, 0, R(p, 56, 70), ws[0], { win: W_RES_T, top: ROOF, trim: p.pal.neon2 });
-    p.greens(0.58, 0.58, 0.85, 0.85, p.maxZ > 0 ? 0 : 0, 0);
+    const h4 = R(p, 56, 70);
+    p.box(0.55, 0.55, 0.88, 0.88, 0, h4, ws[0], { win: W_RES_T, top: ROOF, trim: p.pal.neon2 });
+    p.greens(0.6, 0.6, 0.84, 0.84, h4, 4);
   },
   // Neon-spine tower with a tall blade sign.
   (p) => {
@@ -544,7 +545,7 @@ const COM1: Recipe[] = [
     p.cyl(0.5, 0.5, 0.28, 0, 11, shell, ROOF);
     p.cylBands(0.5, 0.5, 0.28, 2, 9, 4);
     p.cyl(0.5, 0.5, 0.2, 11, 15, mat([90, 100, 120]), ROOF_DARK, 0.12);
-    p.ring(0.5, 0.5, 0.285, 10, mat(p.pal.neon), 1, true);
+    p.neonRing(0.5, 0.5, 0.285, 10, p.pal.neon, 1);
     p.glow(0.5, 0.5, 8, p.pal.neon, 40, p.glowA() * 0.45);
     p.blade(0.6, 0.72, 'v', 0.12, 6, 20, p.pal.neon2);
     p.bench(0.2, 0.84, 'u');
@@ -760,7 +761,7 @@ const COM3: Recipe[] = [
     p.box(0.08, 0.08, 0.92, 0.92, 0, 12, COM_WALL[1], { win: W_SHOP, top: ROOF, trim: p.pal.neon2 });
     p.cyl(0.5, 0.5, 0.36, 12, h, COM_WALL[2], ROOF);
     p.cylBands(0.5, 0.5, 0.36, 14, h - 2, 6);
-    for (let z = 40; z < h - 10; z += 36) p.ring(0.5, 0.5, 0.365, z, mat(p.pal.neon), 1.1, true);
+    for (let z = 40; z < h - 10; z += 36) p.neonRing(0.5, 0.5, 0.365, z, p.pal.neon, 1.1);
     p.cyl(0.5, 0.5, 0.2, h, h + 10, ROOF_DARK, ROOF);
     const [x, y] = p.pt(0.5, 0.5, h + 6);
     p.addFx({ k: 'ring', x, y, rx: 20, ry: 10, c: p.pal.neon2, ph: p.rng.next() });
@@ -1029,17 +1030,17 @@ const IND3: Recipe[] = [
     const m = mat([170, 168, 164]);
     const ha = R(p, 66, 74);
     const hb = R(p, 56, 62);
-    p.coolingTower(0.32, 0.3, 0.27, ha, m);
-    p.coolingTower(0.68, 0.66, 0.25, hb, m);
+    p.coolingTower(0.3, 0.62, 0.24, ha, m);
+    p.coolingTower(0.66, 0.3, 0.22, hb, m);
     for (const [u, v, h] of [
-      [0.32, 0.3, ha],
-      [0.68, 0.66, hb],
+      [0.3, 0.62, ha],
+      [0.66, 0.3, hb],
     ]) {
       const [x, y] = p.pt(u, v, h);
       p.addFx({ k: 'smoke', x, y, r: 8, ph: p.rng.next() });
       p.track(x - 30, y - 60);
     }
-    p.blinker(0.32, 0.07, ha - 2, NEON.red, 1.6, 12);
+    p.blinker(0.3, 0.4, ha - 2, NEON.red, 1.6, 12);
   },
   // Fab block with three tall stacks.
   (p) => {
@@ -1104,12 +1105,13 @@ const IND3: Recipe[] = [
   // Silo complex with a conveyor gantry.
   (p) => {
     const m = mat([176, 170, 160]);
-    p.cyl(0.24, 0.24, 0.13, 0, R(p, 80, 92), m, mat([140, 130, 120]), 0.07);
-    p.cyl(0.5, 0.2, 0.13, 0, R(p, 74, 86), m, mat([140, 130, 120]), 0.07);
-    p.cyl(0.24, 0.52, 0.13, 0, R(p, 66, 76), m, mat([140, 130, 120]), 0.07);
+    const h1 = R(p, 80, 92);
+    p.cyl(0.24, 0.24, 0.13, 0, h1, m, mat([140, 130, 120]), 0.07);
+    p.cyl(0.5, 0.2, 0.13, 0, R(p, 70, 78), m, mat([140, 130, 120]), 0.07);
+    p.cyl(0.24, 0.52, 0.13, 0, R(p, 62, 70), m, mat([140, 130, 120]), 0.07);
     p.box(0.5, 0.5, 0.88, 0.88, 0, 22, pick(p, IND_WALL), { win: W_SLIT, top: ROOF, trim: p.pal.neon });
     p.pipe(0.24, 0.24, 78, 0.7, 0.7, 22, 2.4, mat([200, 170, 50]));
-    p.blinker(0.24, 0.24, p.maxZ + 1, NEON.red, 1.5, 14);
+    p.blinker(0.24, 0.24, h1 + 1, NEON.red, 1.5, 14);
     p.lamp(0.88, 0.7, 18, p.pal.neon, 14);
   },
 ];
