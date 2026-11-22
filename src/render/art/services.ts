@@ -44,6 +44,14 @@ export const SERVICE_PALS: Record<BuildingType, ArtPal> = {
   maglev: pal(NEON.yellow, NEON.cyan, [220, 200, 60], 0.5, 0.3),
   spire: pal(NEON.magenta, NEON.cyan, [220, 40, 190], 0.3, 0.45),
   arcology: pal(NEON.amber, NEON.magenta, [230, 150, 50], 0.6, 0.2),
+  // Step 0 placeholders for the story buildings; WP-D replaces them (art/story.ts, art/vertical.ts).
+  stack: pal([170, 184, 255], NEON.cyan, [140, 150, 255], 0.5, 0.4),
+  foundry: pal([255, 123, 46], NEON.amber, [255, 110, 40], 0.6, 0.2),
+  glarewall: pal([255, 198, 241], NEON.magenta, [255, 170, 230], 0.2, 0.6),
+  tidemarket: pal([182, 255, 46], NEON.green, [150, 230, 40], 0.5, 0.3),
+  roost: pal([201, 162, 255], NEON.violet, [180, 140, 255], 0.3, 0.5),
+  commons: pal([207, 227, 255], NEON.green, [180, 210, 255], 0.5, 0.3),
+  memorial: pal([143, 227, 255], [255, 243, 196], [120, 210, 255], 0.6, 0.2),
 };
 
 /** Red warning light that blinks when the building is offline / unpowered. */
@@ -504,5 +512,13 @@ export const SERVICE_RECIPES: Record<BuildingType, Recipe> = {
   maglev,
   spire,
   arcology,
+  // Step 0 placeholders (same footprint family); WP-D replaces them.
+  stack: arcology,
+  foundry: reactor,
+  glarewall: datahub,
+  tidemarket: clinic,
+  roost: datahub,
+  commons: clinic,
+  memorial: plaza,
 };
 

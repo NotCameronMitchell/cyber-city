@@ -1,7 +1,12 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // Shared data model. Every module builds against these types; change them only
 // with care (save format, renderer and UI all depend on them).
+//
+// Story layer (docs/STORY.md §4.1, owner-approved): additive unions and
+// optional fields only, so v1 saves keep loading.
 // ─────────────────────────────────────────────────────────────────────────────
+
+import type { CrownId, StorySave } from './story/types';
 
 /** Map is MAP_SIZE × MAP_SIZE tiles. Index = y * MAP_SIZE + x. */
 export const MAP_SIZE = 64;
@@ -33,13 +38,28 @@ export type BuildingType =
   | 'datahub'
   | 'maglev'
   | 'spire'
-  | 'arcology';
+  | 'arcology'
+  // Story layer (§4.2, §4.5): vertical, faction and story buildings.
+  /** Stratablock, 4×4 megablock raised in stages. */
+  | 'stack'
+  /** Foundry Spine (Basalt). */
+  | 'foundry'
+  /** Glarewall (Nacre). */
+  | 'glarewall'
+  /** Tidemarket (Undertow). */
+  | 'tidemarket'
+  /** Kite Roost (Glass Kites). */
+  | 'roost'
+  /** Commons Hall (Charter Board). */
+  | 'commons'
+  /** Sunk Memorial (story unlock). */
+  | 'memorial';
 
 /** Every selectable tool. Zone tools are 'res' | 'com' | 'ind'. Building tools use the BuildingType id. */
-export type ToolId = 'inspect' | 'bulldoze' | 'road' | 'res' | 'com' | 'ind' | BuildingType;
+export type ToolId = 'inspect' | 'bulldoze' | 'road' | 'res' | 'com' | 'ind' | BuildingType | 'skybridge' | 'rail';
 
 /** Data-view overlays the renderer can draw. */
-export type OverlayId = 'none' | 'power' | 'landValue' | 'crime' | 'pollution' | 'traffic' | 'services';
+export type OverlayId = 'none' | 'power' | 'landValue' | 'crime' | 'pollution' | 'traffic' | 'services' | 'turf';
 
 /** Coverage effect a service building radiates. */
 export type ServiceEffect = 'security' | 'health' | 'net' | 'park' | 'transit' | 'prestige';
@@ -77,6 +97,13 @@ export interface Building {
   offline: number;
   /** Whether the building currently receives power (set by sim). Power plants are always powered. */
   powered: boolean;
+  // ── Stratablock stage fields (optional; survive the save round trip) ──
+  /** Highest stage *started* (1 Plinth, 2 Hab Core, 3 Crown). Complete stage = buildDays > 0 ? stage − 1 : stage. */
+  stage?: 1 | 2 | 3;
+  /** Days of scaffolding left on the current stage; > 0 means still building. */
+  buildDays?: number;
+  /** Crown picked for stage 3. */
+  crown?: CrownId;
 }
 
 /**
@@ -185,8 +212,9 @@ export interface Selection {
   y: number;
 }
 
-/** Serialized save (JSON-safe). */
+/** Serialized save (JSON-safe). Version 1 (sandbox) and 2 (story) both load. */
 export interface SaveData {
+  /** 1 or 2. */
   version: number;
   cityName: string;
   seed: number;
@@ -202,4 +230,6 @@ export interface SaveData {
   history: number[];
   milestones: number[];
   savedAt: number;
+  /** Story layer (v2). Optional: missing or undecodable → fresh story with flag `migrated`. */
+  story?: StorySave;
 }

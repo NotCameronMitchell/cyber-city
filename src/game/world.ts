@@ -1,6 +1,20 @@
-import { BUILDINGS, DEFAULT_TAX, ROAD_ACCESS_RANGE, SAVE_VERSION, START_FUNDS } from './config';
+import { BUILDINGS, DEFAULT_TAX, ROAD_ACCESS_RANGE, SAVE_VERSION, SAVE_VERSIONS_SUPPORTED, START_FUNDS } from './config';
 import { Emitter, type GameEventMap } from './events';
 import { Rng, fbm, hash2 } from './rng';
+import { cloneMods, makeLayerParts, makeLayers } from './story/mods';
+import { emptyLedger, emptyTurf, emptyVertical, newStoryState } from './story/state';
+import type {
+  CrownId,
+  LayerParts,
+  SimLayers,
+  SimMods,
+  SkyLink,
+  StoryLedger,
+  StorySignal,
+  StoryState,
+  TurfMap,
+  VerticalCache,
+} from './story/types';
 import {
   MAP_SIZE,
   Terrain,
@@ -19,6 +33,10 @@ import {
 } from './types';
 
 const N = MAP_SIZE;
+/** world.signals keeps at most this many (oldest dropped) when nothing drains it, e.g. headless sim tests. */
+const MAX_SIGNALS = 256;
+/** Building types whose footprint keeps the turf under it (§3.1). */
+const TURF_KEEPING: ReadonlySet<BuildingType> = new Set<BuildingType>(['tidemarket', 'roost']);
 
 function makeFields(): Fields {
   const f = () => new Float32Array(N * N);
@@ -104,12 +122,36 @@ export class World {
   /** Increments on every tile mutation; renderers can compare to detect change. */
   version = 0;
 
+  // ── Story layer (docs/STORY.md §10–§11). Safe to ignore: all default to inert identities. ──
+  /** Director state (saved in SaveData.story). Written by the director only. */
+  story: StoryState;
+  /** Gang turf (plain data; the sim may read it). Written by story/turf.ts. */
+  turf: TurfMap = emptyTurf();
+  /** Ribbon Rail connection bitmask per tile (N1 E2 S4 W8), Uint8Array(4096). Mutate via setRail/clearRail. */
+  rail = new Uint8Array(N * N);
+  /** Skybridges. Mutate via addLink/removeLinksAt. */
+  links: SkyLink[] = [];
+  nextLinkId = 1;
+  /** Resolved city-wide modifiers the sim reads (resolveMods → world.mods). Identities by default. */
+  mods: SimMods = cloneMods();
+  /** Composed per-tile layers the sim reads (composeLayers). Identities by default. */
+  layers: SimLayers = makeLayers();
+  /** Partial layer sets, one per owner (turf.ts, vertical.ts, director), merged by composeLayers. */
+  layerParts: LayerParts = makeLayerParts();
+  /** Story budget lines the monthly budget appends (amounts positive). Written by the director. */
+  ledger: StoryLedger = emptyLedger();
+  /** Reports from sim and actions to the director; drained by director.onDay(). Push via pushSignal(). */
+  signals: StorySignal[] = [];
+  /** Derived vertical caches (active links, live rail, metrics). Written by story/vertical.ts. */
+  vertical: VerticalCache = emptyVertical();
+
   constructor(seed: number, cityName = 'Lanthorn Bay', events?: Emitter<GameEventMap>) {
     this.seed = seed >>> 0;
     this.cityName = cityName;
     this.events = events ?? new Emitter<GameEventMap>();
     this.rng = new Rng(this.seed ^ 0xa5a5a5a5);
     this.tiles = Array.from({ length: N * N }, blankTile);
+    this.story = newStoryState(this.seed);
   }
 
   /** Create a fresh world with generated terrain. */
@@ -240,6 +282,8 @@ export class World {
     t.level = 0;
     t.abandoned = false;
     t.age = 0;
+    this.clearRail(x, y);
+    this.removeLinksAt(x, y);
     this.touch(x, y, x, y);
   }
 
@@ -261,14 +305,22 @@ export class World {
       powered: BUILDINGS[type].powerSupply > 0,
     };
     this.buildings.set(b.id, b);
+    const keepTurf = TURF_KEEPING.has(type);
+    const turf = this.turf;
     for (let dy = 0; dy < size; dy++)
       for (let dx = 0; dx < size; dx++) {
-        const t = this.tiles[this.idx(x + dx, y + dy)];
+        const i = this.idx(x + dx, y + dy);
+        const t = this.tiles[i];
         t.road = false;
         t.zone = ZoneType.None;
         t.level = 0;
         t.abandoned = false;
         t.buildingId = b.id;
+        if (!keepTurf && turf.owner[i]) {
+          turf.owner[i] = 0;
+          turf.str[i] = 0;
+          turf.contested[i] = 0;
+        }
         this.reroll(t, x + dx, y + dy);
       }
     this.touch(x, y, x + size - 1, y + size - 1);
@@ -287,8 +339,78 @@ export class World {
           t.powered = false;
           t.age = 0;
         }
+        this.clearRail(b.x + dx, b.y + dy);
+        this.removeLinksAt(b.x + dx, b.y + dy);
       }
     this.touch(b.x, b.y, b.x + b.size - 1, b.y + b.size - 1);
+  }
+
+  // ── Story-layer mutators (§11). Structural only: no costs, no rule checks. ──
+
+  /** Set the rail connection mask (N1 E2 S4 W8) of a tile; 0 removes it. Callers keep neighbours consistent. */
+  setRail(x: number, y: number, mask: number) {
+    if (!this.inBounds(x, y)) return;
+    const i = y * N + x;
+    const m = mask & 15;
+    if (this.rail[i] === m) return;
+    this.rail[i] = m;
+    this.touch(x, y, x, y);
+  }
+
+  /** Remove rail from a tile and unhook the neighbours that pointed at it. */
+  clearRail(x: number, y: number) {
+    if (!this.inBounds(x, y)) return;
+    const r = this.rail;
+    const i = y * N + x;
+    if (!r[i]) return;
+    r[i] = 0;
+    if (y > 0) r[i - N] &= ~4; // north neighbour loses its south link
+    if (x < N - 1) r[i + 1] &= ~8; // east neighbour loses its west link
+    if (y < N - 1) r[i + N] &= ~1; // south neighbour loses its north link
+    if (x > 0) r[i - 1] &= ~2; // west neighbour loses its east link
+    this.touch(x, y, x, y);
+  }
+
+  /** Add a skybridge between two anchor tiles. Returns the stored link (with its new id). */
+  addLink(l: Omit<SkyLink, 'id'> & { id?: number }): SkyLink {
+    const link: SkyLink = { id: l.id ?? this.nextLinkId, ax: l.ax, ay: l.ay, bx: l.bx, by: l.by };
+    if (link.id >= this.nextLinkId) this.nextLinkId = link.id + 1;
+    this.links.push(link);
+    this.touchLink(link);
+    return link;
+  }
+
+  /** Drop every skybridge anchored on tile (x, y). Returns how many were removed. */
+  removeLinksAt(x: number, y: number): number {
+    if (this.links.length === 0) return 0;
+    let removed = 0;
+    for (let k = this.links.length - 1; k >= 0; k--) {
+      const l = this.links[k];
+      if ((l.ax === x && l.ay === y) || (l.bx === x && l.by === y)) {
+        this.links.splice(k, 1);
+        this.touchLink(l);
+        removed++;
+      }
+    }
+    return removed;
+  }
+
+  /** Set a Stratablock's stage fields (stage started, scaffolding days left, crown). */
+  setStage(b: Building, stage: 1 | 2 | 3, buildDays: number, crown?: CrownId) {
+    b.stage = stage;
+    b.buildDays = Math.max(0, Math.round(buildDays));
+    if (crown) b.crown = crown;
+    this.touch(b.x, b.y, b.x + b.size - 1, b.y + b.size - 1);
+  }
+
+  /** Queue a report for the director (capped so undrained headless runs stay bounded). */
+  pushSignal(s: StorySignal) {
+    this.signals.push(s);
+    if (this.signals.length > MAX_SIGNALS) this.signals.splice(0, this.signals.length - MAX_SIGNALS);
+  }
+
+  private touchLink(l: SkyLink) {
+    this.touch(Math.min(l.ax, l.bx), Math.min(l.ay, l.by), Math.max(l.ax, l.bx), Math.max(l.ay, l.by));
   }
 
   addNews(text: string, kind: NewsItem['kind'] = 'info') {
@@ -372,7 +494,12 @@ export class World {
   }
 
   static deserialize(data: SaveData, events?: Emitter<GameEventMap>): World {
-    if (!data || data.version !== SAVE_VERSION || !Array.isArray(data.tiles) || data.tiles.length !== N * N) {
+    if (
+      !data ||
+      !SAVE_VERSIONS_SUPPORTED.includes(data.version) ||
+      !Array.isArray(data.tiles) ||
+      data.tiles.length !== N * N
+    ) {
       throw new Error('Incompatible save');
     }
     const w = new World(data.seed, data.cityName, events);
@@ -395,6 +522,9 @@ export class World {
     for (const b of data.buildings ?? []) {
       if (!BUILDINGS[b.type]) continue;
       const nb: Building = { ...b, size: BUILDINGS[b.type].size, offline: b.offline | 0, powered: !!b.powered };
+      // Stage fields are optional; keep them only when well-formed.
+      if (nb.stage !== undefined && !(nb.stage === 1 || nb.stage === 2 || nb.stage === 3)) delete nb.stage;
+      if (nb.buildDays !== undefined) nb.buildDays = Math.max(0, Number(nb.buildDays) | 0);
       w.buildings.set(nb.id, nb);
       for (let dy = 0; dy < nb.size; dy++)
         for (let dx = 0; dx < nb.size; dx++) {
@@ -406,6 +536,9 @@ export class World {
     w.news = Array.isArray(data.news) ? data.news.slice(-20) : [];
     w.budget.history = Array.isArray(data.history) ? data.history.slice(-12) : [];
     w.milestones = Array.isArray(data.milestones) ? data.milestones.slice() : [];
+    // Story (§10.8): decoding data.story (v2) is WP-B's encode.ts. Until then, and for v1
+    // saves, the world keeps its fresh story; a save without one is marked migrated.
+    if (!data.story) w.story.flags.migrated = true;
     w.version++;
     return w;
   }

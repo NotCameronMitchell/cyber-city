@@ -3,11 +3,14 @@ import {
   BUILDINGS,
   BULLDOZE_COST,
   CURRENCY,
+  FACTION_LABELS,
   ROAD_COST,
+  UNLOCK_FALLBACK_POP,
   ZONES,
   isBuildingTool,
   isZoneTool,
 } from './config';
+import type { ActionResult, BuildingGate, CrownId, Unlockable } from './story/types';
 import { Terrain, ZoneType, type ActionPlan, type ToolId } from './types';
 import type { World } from './world';
 
@@ -69,12 +72,53 @@ export function footprintOrigin(at: Point, size: number): Point {
   return { x: at.x - off, y: at.y - off };
 }
 
+/** True if a story unlock is owned, or its population fallback (§5.0) has been reached. */
+export function isUnlocked(world: World, what: Unlockable): boolean {
+  if (world.story.unlocks.includes(what)) return true;
+  const pop = UNLOCK_FALLBACK_POP[what];
+  return pop !== undefined && world.maxPopulation >= pop;
+}
+
+/**
+ * Step 0 gate check (§4.5): open when the unlock is owned or maxPop ≥ fallbackPop.
+ * TODO(WP-C): OR the faction-tier part via factions.ts tier(world, f), and check
+ * the footprint turf rule in planAction ("Must sit on Undertow turf").
+ */
+function gateReason(world: World, gate: BuildingGate): string | null {
+  if (gate.unlock && world.story.unlocks.includes(gate.unlock)) return null;
+  if (gate.fallbackPop !== undefined && world.maxPopulation >= gate.fallbackPop) return null;
+  if (gate.faction) return `Locked: ${FACTION_LABELS[gate.faction].short} ${gate.tier === 'allied' ? 'Allied' : 'Friendly'}`;
+  if (gate.fallbackPop !== undefined) return `Locked: reach ${gate.fallbackPop.toLocaleString('en-US')} residents`;
+  return 'Locked: not yet';
+}
+
 /** Is the tool unlocked for this world? Returns the unlock requirement if locked. */
 export function lockedReason(world: World, tool: ToolId): string | null {
+  if (tool === 'skybridge' || tool === 'rail') {
+    if (isUnlocked(world, tool)) return null;
+    return `Locked: reach ${(UNLOCK_FALLBACK_POP[tool] ?? 0).toLocaleString('en-US')} residents`;
+  }
   if (!isBuildingTool(tool)) return null;
   const def = BUILDINGS[tool];
+  if (def.gate) return gateReason(world, def.gate);
   if (world.maxPopulation >= def.unlockPop) return null;
   return `Locked: reach ${def.unlockPop.toLocaleString('en-US')} residents`;
+}
+
+/**
+ * Raise a Stratablock to its next stage (§4.2), or start its Crown with `crown`.
+ * TODO(WP-C): Step 0 stub, always refuses.
+ */
+export function raiseStage(_world: World, _id: number, _crown?: CrownId): ActionResult {
+  return { ok: false, reason: 'Not available yet', cost: 0 };
+}
+
+/**
+ * Crackdown from a powered precinct (§3.6).
+ * TODO(WP-C): Step 0 stub, always refuses.
+ */
+export function crackdown(_world: World, _precinctId: number): ActionResult {
+  return { ok: false, reason: 'Not available yet', cost: 0 };
 }
 
 /** Bulldoze cost of a single tile (0 when empty). */

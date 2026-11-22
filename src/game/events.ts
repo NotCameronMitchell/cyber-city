@@ -1,4 +1,5 @@
 import type { NewsItem, Selection, ToolId, OverlayId } from './types';
+import type { EndingId, FactionId, Unlockable } from './story/types';
 
 /** Typed event map for the game-wide bus. */
 export interface GameEventMap {
@@ -27,6 +28,36 @@ export interface GameEventMap {
   sfx: 'build' | 'zone' | 'road' | 'bulldoze' | 'error' | 'click' | 'money' | 'milestone' | 'alert';
   /** Population milestone reached. */
   milestone: { pop: number; title: string };
+
+  // ── Story layer (docs/STORY.md §11). Emitted by the director unless noted. ──
+  /** A story card opened (id), or the open card closed (null). Read game.story.view().card. */
+  card: { id: string } | null;
+  /** A faction card arrived and waits in COMMS: show the incoming banner. */
+  incoming: { id: string };
+  /** The pending (COMMS) card changed: a new one (id) or none left (null). Step 0 addition. */
+  pending: { id: string } | null;
+  /** A chapter started: show the title card (view().titleCard). */
+  chapter: { n: number; title: string };
+  /** A goal was met (done) or reset. */
+  goal: { id: string; done: boolean };
+  /** A faction's standing changed (monthly, or after a choice / salt / deal). */
+  standing: { faction: FactionId; delta: number; value: number };
+  /** Trace changed. */
+  trace: { value: number };
+  /** A Silt Log was found. */
+  log: { n: number };
+  /** An ending was chosen (also after a Charter Review swap). */
+  ending: { id: EndingId };
+  /** Something was unlocked (tools, overlay, rail buttons). Step 0 addition. */
+  unlock: { what: Unlockable };
+  /** The Charter Night screen should open (view().claims). Step 0 addition. */
+  charterNight: void;
+  /** Turf changed (story/turf.ts, after updates and crackdowns): overlay and decals refresh. */
+  turf: void;
+  /** Rail, links or stages changed or were re-evaluated (story/vertical.ts). */
+  vertical: void;
+  /** The StoryView changed for any other reason (markDirty): re-read game.story.view(). Step 0 addition. */
+  story: void;
 }
 
 type Handler<T> = (payload: T) => void;

@@ -1,4 +1,4 @@
-import { applyAction, planAction, type Point } from './actions';
+import { applyAction, crackdown, planAction, raiseStage, type Point } from './actions';
 import {
   BUILDINGS,
   CURRENCY,
@@ -14,6 +14,8 @@ import {
 } from './config';
 import { Emitter, type GameEventMap } from './events';
 import { Simulation } from './sim';
+import { StoryDirector } from './story/director';
+import type { ActionResult, CrownId, EndingId, FactionId, GangId, InspectAction } from './story/types';
 import { Terrain, ZoneType, type ActionPlan, type OverlayId, type SaveData, type Selection, type Settings, type ToolId } from './types';
 import { World } from './world';
 
@@ -26,6 +28,9 @@ export const DEFAULT_SETTINGS: Settings = {
   showFps: false,
   events: true,
 };
+
+/** City names are capped at this many characters (§1.6; lint assumes 24). */
+export const CITY_NAME_MAX = 24;
 
 /** Safe localStorage wrappers: storage may be missing or throw (private mode, sandboxed frames). */
 export function storageGet(key: string): string | null {
@@ -68,7 +73,9 @@ const pct = (v: number) => `${Math.round(v * 100)}%`;
 export class Game {
   readonly events = new Emitter<GameEventMap>();
   world: World;
-  sim: Simulation;
+  sim!: Simulation;
+  /** Story director (docs/STORY.md §11). Replaced together with world and sim: never cache it. */
+  story!: StoryDirector;
   tool: ToolId = 'inspect';
   /** 0 = paused, 1..3. */
   speed = 1;
@@ -80,6 +87,8 @@ export class Game {
   /** Visual clock in seconds (advances with sim speed; drives the day/night cycle). */
   clock = DAY_CYCLE_SECONDS * 0.85;
   private tickAcc = 0;
+  /** Speed to restore once a blocking story card closes (null = not paused by the story). */
+  private storyResumeSpeed: number | null = null;
 
   constructor() {
     this.settings = { ...DEFAULT_SETTINGS, ...this.readSettings() };
@@ -93,7 +102,7 @@ export class Game {
       }
     }
     this.world = world ?? World.generate(randomSeed(), undefined, this.events);
-    this.sim = this.makeSim();
+    this.attachSystems();
     if (!world) this.welcome();
   }
 
@@ -128,17 +137,25 @@ export class Game {
   }
 
   setTax(rate: number) {
-    this.world.taxRate = Math.max(MIN_TAX, Math.min(MAX_TAX, Math.round(rate)));
+    const cap = Math.min(MAX_TAX, this.world.mods.taxCap);
+    this.world.taxRate = Math.max(MIN_TAX, Math.min(cap, Math.round(rate)));
     // Refresh demand + budget projection now, so it moves even while paused.
     this.sim.recomputeAll();
     this.events.emit('stats');
   }
 
-  private makeSim(): Simulation {
+  /**
+   * Build the simulation and story director for the current world. The director
+   * derives its caches (mods, layers) before the sim's first recomputeAll, so
+   * that pass already sees them.
+   */
+  private attachSystems(): void {
     const sim = new Simulation(this.world);
     sim.options.events = this.settings.events;
+    this.sim = sim;
+    this.storyResumeSpeed = null;
+    this.story = new StoryDirector(this);
     sim.recomputeAll();
-    return sim;
   }
 
   updateSettings(patch: Partial<Settings>) {
@@ -193,6 +210,8 @@ export class Game {
   /** Advance by real seconds `dt` (clamped). Runs whole sim ticks according to speed. */
   update(dt: number) {
     dt = Math.min(Math.max(dt, 0), 0.25);
+    this.story.update(dt, this.speed === 0);
+    this.syncStoryPause();
     if (this.speed > 0) {
       this.clock += dt * (this.speed === 1 ? 1 : this.speed === 2 ? 1.6 : 2.4);
       this.tickAcc += dt * SPEED_TICKS_PER_SEC[this.speed];
@@ -201,10 +220,89 @@ export class Game {
         this.tickAcc -= 1;
         steps++;
         this.sim.step();
+        this.story.onDay();
+        if (this.story.blocking) {
+          this.tickAcc = 0; // a card opened: stop now and drop the backlog
+          break;
+        }
       }
       if (steps > 0) this.events.emit('stats');
       if (this.tickAcc > 4) this.tickAcc = 0; // drop backlog on slow devices
+      this.syncStoryPause();
     }
+  }
+
+  /** Pause while a blocking story card is open; restore the previous speed after it closes. */
+  private syncStoryPause() {
+    if (this.story.blocking) {
+      if (this.speed > 0) {
+        this.storyResumeSpeed = this.speed;
+        this.setSpeed(0);
+      }
+    } else if (this.storyResumeSpeed !== null) {
+      const s = this.storyResumeSpeed;
+      this.storyResumeSpeed = null;
+      if (this.speed === 0) this.setSpeed(s);
+    }
+  }
+
+  // ── Story (docs/STORY.md §11): thin forwards to the director and actions ──
+  /** Answer the open story card. */
+  choose(i: number) {
+    this.story.choose(i);
+  }
+  openPending() {
+    this.story.openPending();
+  }
+  later() {
+    this.story.later();
+  }
+  /** Raise a Stratablock (crown required when starting stage 3). */
+  raiseStage(id: number, crown?: CrownId): ActionResult {
+    return this.afterStoryAction(raiseStage(this.world, id, crown), 'build');
+  }
+  crackdown(precinctId: number): ActionResult {
+    return this.afterStoryAction(crackdown(this.world, precinctId), 'alert');
+  }
+  signPact(g: GangId): ActionResult {
+    return this.afterStoryAction(this.story.signPact(g), 'money');
+  }
+  takeDeal(f: FactionId): ActionResult {
+    return this.afterStoryAction(this.story.takeDeal(f), 'money');
+  }
+  sendSalt(f: FactionId): ActionResult {
+    return this.afterStoryAction(this.story.sendSalt(f), 'money');
+  }
+  nudge(f: FactionId): ActionResult {
+    return this.afterStoryAction(this.story.nudge(f), 'click');
+  }
+  chooseEnding(id: EndingId): ActionResult {
+    return this.afterStoryAction(this.story.chooseEnding(id), 'milestone');
+  }
+  recount() {
+    this.story.recount();
+  }
+
+  /**
+   * Story buttons for the inspect panel at (x, y): crackdown on a precinct,
+   * raise / crown on a Stratablock. TODO(WP-C): Step 0 returns none.
+   */
+  inspectActions(_x: number, _y: number): InspectAction[] {
+    return [];
+  }
+
+  /** Common follow-up for story actions: feedback, and a refresh when something changed. */
+  private afterStoryAction(r: ActionResult, sfx: GameEventMap['sfx']): ActionResult {
+    if (!r.ok) {
+      if (r.reason) this.toast(r.reason, 'error');
+      this.events.emit('sfx', 'error');
+      return r;
+    }
+    this.events.emit('sfx', sfx);
+    this.story.markDirty();
+    this.sim.recomputeAll();
+    this.events.emit('stats');
+    return r;
   }
 
   /**
@@ -229,8 +327,9 @@ export class Game {
 
   // ── Lifecycle ─────────────────────────────────────────────────────────────
   newCity(name?: string, seed = randomSeed()) {
-    this.world = World.generate(seed, name || randomCityName(seed), this.events);
-    this.sim = this.makeSim();
+    const clean = name?.trim().slice(0, CITY_NAME_MAX);
+    this.world = World.generate(seed, clean || randomCityName(seed), this.events);
+    this.attachSystems();
     this.selected = null;
     this.preview = null;
     this.tool = 'inspect';
@@ -258,7 +357,7 @@ export class Game {
     } catch {
       return false;
     }
-    this.sim = this.makeSim();
+    this.attachSystems();
     this.selected = null;
     this.preview = null;
     this.events.emit('world');
@@ -282,7 +381,7 @@ export class Game {
     } catch {
       return false;
     }
-    this.sim = this.makeSim();
+    this.attachSystems();
     this.events.emit('world');
     this.events.emit('stats');
     return true;
@@ -365,11 +464,22 @@ export class Game {
     return { title: 'Open ground', subtitle: 'Unclaimed lot, ready to build.', color: '#6b6f8f', rows: common };
   }
 
-  /** Short label + cost for a tool (for UI buttons). */
+  /** Short label + cost for a tool (for UI buttons). Base price, no modifiers. */
   static toolCost(tool: ToolId): number {
     if (isBuildingTool(tool)) return BUILDINGS[tool].cost;
     if (tool === 'res' || tool === 'com' || tool === 'ind') return ZONES[tool].cost;
     return 0;
+  }
+
+  /**
+   * Current price of a tool with modifiers (buildCostMul × costMul[type]).
+   * TODO(WP-C): credits and the Stratablock 1.15ⁿ scaling; skybridge / rail per-tile prices.
+   */
+  toolCost(tool: ToolId): number {
+    const base = Game.toolCost(tool);
+    if (!isBuildingTool(tool)) return base;
+    const m = this.world.mods;
+    return Math.round(base * m.buildCostMul * (m.costMul[tool] ?? 1));
   }
 }
 
