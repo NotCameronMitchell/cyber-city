@@ -961,10 +961,10 @@ export class StoryDirector implements EffectHost {
     return { ok: true, cost: Math.max(0, Math.round(funds - w.funds)) };
   }
 
-  /** Salt cost now: round100(600 + 0.08 × pop + 0.02 × treasury), so it still stings in a rich city. */
+  /** Salt cost now: round100(600 + 0.08 × pop). Never scales with the treasury (money is the reward). */
   saltCost(): number {
     const w = this.world;
-    return round100(SALT.base + SALT.perPop * w.stats.population + SALT.perFunds * Math.max(0, w.funds));
+    return round100(SALT.base + SALT.perPop * w.stats.population);
   }
 
   private saltReason(f: FactionId): string | null {

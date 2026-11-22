@@ -26,3 +26,5 @@ Everything original. Inspired by the cyberpunk genre, never copying Cyberpunk 20
 | `types.ts` | The additive changes listed in STORY.md §4.1 / §12 Step 0 are approved (optional `SaveData.story`, v1 saves must still load). |
 | "Arcology", "Hab Blocks" | Keep: both are generic architecture/sci-fi terms. |
 | Random-events setting | Mutes random city incidents only; story and faction cards are core and stay on. |
+| Late-game money | **Money is the reward.** An established, well-built city should earn easily. No levies, wealth taxes or prices that scale with the treasury. Deficit help (bailout) is fine. |
+| Toolbar width on narrow phones, extra faction cards | Undecided: the owner will play through first. |

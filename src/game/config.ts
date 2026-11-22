@@ -828,8 +828,12 @@ export const RIBBON = {
   bulldozeCost: 5,
 } as const;
 
-/** Salt (bribe), per faction row (§2.6). Cost = round100(base + perPop × pop + perFunds × max(0, funds)). */
-export const SALT = { base: 600, perPop: 0.08, perFunds: 0.02, favor: 8, trace: 3, cooldown: 90 } as const;
+/**
+ * Salt (bribe), per faction row (§2.6). Cost = round100(base + perPop × pop).
+ * Owner decision: late-game money is the reward for a well-built city, so the
+ * price never scales with the treasury. Trace and the cooldown are the limits.
+ */
+export const SALT = { base: 600, perPop: 0.08, favor: 8, trace: 3, cooldown: 90 } as const;
 
 /** Patron perk while flag `patron` is set and the patron's standing ≥ 0 (§2.4). */
 export const PATRON_PERK: Record<CorpId, ModPatch> = {

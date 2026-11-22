@@ -331,7 +331,7 @@ Trace (0..100) measures how close anyone is to proving you exist.
 
 **Salt (bribe):** a button on each faction row (not the Tuning: "The Tuning won't take salt.").
 
-- Cost: `round100(600 + 0.08 × pop + 0.02 × max(0, funds))`, so salt still costs something in a rich city.
+- Cost: `round100(600 + 0.08 × pop)`. It never scales with the treasury: late-game money is the player's reward (owner decision, DESIGN.md).
 - Effect: favor +8, Trace +3.
 - Cooldown: 90 d per faction.
 - Locked after the Open Ledger ending.
@@ -2289,11 +2289,11 @@ SKYBRIDGE     = { base: 1200, perTile: 300, upkeepBase: 15, upkeepPerTile: 3, mi
                   lv: 0.05, lvRadius: 3, tripMul: 0.8, comPer: 0.01, comCap: 0.08, clusterPer: 0.02, clusterCap: 0.06 }
 RIBBON        = { perTile: 110, perWaterTile: 330, upkeep: 1.2, maxDrag: 32, transit: 0.5, stationRadiusAdd: 3,
                   stackStationRadius: 7, tripMul: 0.8, tripRadius: 2, stationLv: 0.04, underResLv: -0.02, turfHit: 10 }
-SALT          = { base: 600, perPop: 0.08, perFunds: 0.02, favor: 8, trace: 3, cooldown: 90 }
+SALT          = { base: 600, perPop: 0.08, favor: 8, trace: 3, cooldown: 90 }
 POWER_WEIGHTS = { …, basalt.patron: 300, nacre.patron: 300, undertow.perTurfTile: 2, kites.perTurfTile: 2 }   // §2.4
 ```
 
-Tuning pass (integration review, headless measure, 15 policies × 3 seeds × 40 years): `chapterMinSec` 60 → 600 (the boot counts), `hostileEvery` 180 → 360 plus no ⚑ twice running, the −30 floor on negative `favorMonthly`, turf weight 4 → 2, patron weight 150 → 300, corp power claims 30% → 25%, the `sys.bailout` bond −400 × 30 → −250 × 24 with cooldown 360, salt + 2% of the treasury, the `sys.revealed` cost and `factions`/`comms` fallbacks 1,500 → 3,000.
+Tuning pass (integration review, headless measure, 15 policies × 3 seeds × 40 years): `chapterMinSec` 60 → 600 (the boot counts), `hostileEvery` 180 → 360 plus no ⚑ twice running, the −30 floor on negative `favorMonthly`, turf weight 4 → 2, patron weight 150 → 300, corp power claims 30% → 25%, the `sys.bailout` bond −400 × 30 → −250 × 24 with cooldown 360, the `sys.revealed` cost and `factions`/`comms` fallbacks 1,500 → 3,000.
 
 `POWER_WEIGHTS`, `FACTION_BUILD_REACTIONS`, mood drivers, deals and perks are as listed in §2.
 
