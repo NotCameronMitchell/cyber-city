@@ -44,7 +44,8 @@ export const CORPS = [
 /** Fictional street crews. */
 export const CREWS = [
   'the Static Saints',
-  'the Glass Jackals',
+  'the Undertow',
+  'the Glass Kites',
   'the Low Voltage',
   'the Hollow Choir',
   'the Rust Herons',

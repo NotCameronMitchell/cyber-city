@@ -44,7 +44,7 @@ export class Hud {
     this.delta = h('span', { class: 'cc-delta', 'aria-hidden': 'true' });
     this.fundsBtn = h(
       'button',
-      { class: 'cc-hud-item cc-hud-funds', type: 'button', 'data-act': 'budget', 'aria-label': 'Treasury — open budget' },
+      { class: 'cc-hud-item cc-hud-funds', type: 'button', 'data-act': 'budget', 'aria-label': 'Treasury — open budget', title: 'Budget' },
       h('span', { class: 'cc-hud-ico', html: icon('coin') }),
       h('span', { class: 'cc-hud-stack' }, this.fundsVal, this.fundsNet),
       this.delta,
@@ -53,7 +53,7 @@ export class Hud {
     this.popVal = h('span', { class: 'cc-hud-val' });
     this.popBtn = h(
       'button',
-      { class: 'cc-hud-item cc-hud-pop', type: 'button', 'data-act': 'report', 'aria-label': 'Population — open city report' },
+      { class: 'cc-hud-item cc-hud-pop', type: 'button', 'data-act': 'report', 'aria-label': 'Population — open city report', title: 'City report' },
       h('span', { class: 'cc-hud-ico', html: icon('pop') }),
       h('span', { class: 'cc-hud-stack' }, this.popVal, h('span', { class: 'cc-hud-sub', text: 'Pop' })),
     );
@@ -68,12 +68,14 @@ export class Hud {
 
     const speed = h('div', { class: 'cc-speed', role: 'group', 'aria-label': 'Simulation speed' });
     const labels = ['Pause', 'Normal speed', 'Fast', 'Fastest'];
+    const keys = ['Space', '1', '2', '3'];
     for (let s = 0; s <= 3; s++) {
       const b = h('button', {
         class: `cc-speed-btn${s > 0 ? ' is-wideonly' : ''}`,
         type: 'button',
         'data-speed': s,
         'aria-label': labels[s],
+        title: `${labels[s]} (${keys[s]})`,
         'aria-pressed': 'false',
         html: icon(SPEED_ICONS[s]),
       });
@@ -83,7 +85,7 @@ export class Hud {
     this.cycleBtn = h('button', { class: 'cc-speed-btn cc-speed-cycle is-narrowonly', type: 'button', 'data-act': 'speed-cycle', 'aria-label': 'Change speed' });
     speed.append(this.cycleBtn);
 
-    const menu = h('button', { class: 'cc-hud-menu', type: 'button', 'data-act': 'menu', 'aria-label': 'Menu', html: icon('menu') });
+    const menu = h('button', { class: 'cc-hud-menu', type: 'button', 'data-act': 'menu', 'aria-label': 'Menu', title: 'Menu', html: icon('menu') });
 
     this.el = h(
       'header',

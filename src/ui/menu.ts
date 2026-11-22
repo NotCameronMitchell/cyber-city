@@ -265,7 +265,7 @@ export class Menu {
         body: 'Your current city will be replaced. Save first if you want to come back to it.',
         confirmLabel: 'Found city',
         danger: true,
-        input: { label: 'City name', value: randomCityName(randomSeed()), maxLength: 28, reroll: () => randomCityName(randomSeed()) },
+        input: { label: 'City name', value: randomCityName(randomSeed()), maxLength: 24, reroll: () => randomCityName(randomSeed()) },
         onConfirm: (name) => {
           this.resumeSpeed = 0; // newCity() sets its own speed
           game.newCity(name || undefined);

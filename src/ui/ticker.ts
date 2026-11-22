@@ -40,13 +40,21 @@ export class Ticker {
     this.date = h('span', { class: 'cc-tick-date' });
     this.el = h(
       'button',
-      { class: 'cc-ticker', type: 'button', 'aria-label': 'News feed — open log', 'aria-live': 'polite' },
+      { class: 'cc-ticker', type: 'button', 'aria-label': 'News feed — open log' },
       this.tag,
       this.track,
       this.date,
       h('span', { class: 'cc-tick-more', html: icon('chevron') }),
     );
     this.el.addEventListener('click', () => ctx.actions.openNews());
+    // Rotation / resize changes the strip width: re-measure the marquee (debounced).
+    let t = 0;
+    window.addEventListener('resize', () => {
+      window.clearTimeout(t);
+      t = window.setTimeout(() => {
+        if (this.current) this.measure();
+      }, 250);
+    });
     this.reset();
   }
 
@@ -96,10 +104,14 @@ export class Ticker {
     this.el.dataset.kind = item.kind;
     setText(this.tag, NEWS_TAGS[item.kind]);
     setText(this.text, item.text);
+    if (animate) replayClass(this.el, 'is-new');
+    this.measure();
+  }
+
+  /** One layout read per headline (rare) to decide whether it needs to scroll. */
+  private measure(): void {
     setClass(this.text, 'is-marquee', false);
     this.holdMs = MIN_SHOW_MS;
-    if (animate) replayClass(this.el, 'is-new');
-    // One layout read per headline (rare) to decide whether it needs to scroll.
     const overflow = this.text.scrollWidth - this.track.clientWidth;
     if (overflow > 4 && !prefersReducedMotion()) {
       const travel = overflow + 16;

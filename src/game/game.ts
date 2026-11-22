@@ -129,6 +129,8 @@ export class Game {
 
   setTax(rate: number) {
     this.world.taxRate = Math.max(MIN_TAX, Math.min(MAX_TAX, Math.round(rate)));
+    // Refresh demand + budget projection now, so it moves even while paused.
+    this.sim.recomputeAll();
     this.events.emit('stats');
   }
 
@@ -376,8 +378,8 @@ export function randomSeed(): number {
 }
 
 const NAME_A = ['New', 'Neo', 'Port', 'Lower', 'Upper', 'East', 'West', 'Old'];
-const NAME_B = ['Kowloon', 'Meridian', 'Halcyon', 'Vantablack', 'Cobalt', 'Sable', 'Ionia', 'Helix', 'Obsidian', 'Lumen', 'Kestrel', 'Tessellate'];
-const NAME_C = ['Bay', 'Sprawl', 'Heights', 'Harbor', 'Grid', 'Reach', 'Basin', 'Point', 'Delta', 'Arc'];
+const NAME_B = ['Lanthorn', 'Meridian', 'Halcyon', 'Umbral', 'Cobalt', 'Sable', 'Ionia', 'Helix', 'Obsidian', 'Lumen', 'Kestrel', 'Tessellate'];
+const NAME_C = ['Bay', 'Shoals', 'Heights', 'Harbor', 'Grid', 'Reach', 'Basin', 'Point', 'Verge', 'Arc'];
 
 export function randomCityName(seed: number): string {
   const a = NAME_A[seed % NAME_A.length];

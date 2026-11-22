@@ -6,7 +6,7 @@
 import { BUILDINGS, BUILDING_ORDER, MILESTONES, ZONES, isBuildingTool, isZoneTool } from '../game/config';
 import type { Game } from '../game/game';
 import type { ActionPlan } from '../game/types';
-import { h, prefersReducedMotion, replayClass, setClass, setHidden, setText } from './dom';
+import { h, prefersReducedMotion, replayClass, setClass, setHidden, setHtml, setText } from './dom';
 import { credits, groupInt, MINUS } from './format';
 import { icon, type IconName } from './icons';
 import { toolMeta } from './tools';
@@ -118,7 +118,7 @@ export class ActionPill {
     this.lastKey = key;
     this.el.dataset.tool = plan.tool;
     this.el.style.setProperty('--accent', meta.color);
-    this.ico.innerHTML = icon(meta.icon);
+    setHtml(this.ico, icon(meta.icon));
     setText(this.name, label);
     setText(this.cost, costText);
     setHidden(this.cost, !costText);
@@ -154,6 +154,7 @@ export class MilestoneBanner {
   private readonly queue: { pop: number; title: string }[] = [];
   private timer = 0;
   private showing = false;
+  private shownAt = 0;
 
   constructor() {
     this.title = h('div', { class: 'cc-banner-title' });
@@ -168,7 +169,15 @@ export class MilestoneBanner {
       this.unlocks,
       h('div', { class: 'cc-banner-rays', 'aria-hidden': 'true' }),
     );
-    this.el.addEventListener('click', () => this.next());
+    // The banner floats over the middle of the map, so it lets touches through
+    // (pointer-events: none in CSS); any tap anywhere dismisses it instead.
+    window.addEventListener(
+      'pointerdown',
+      () => {
+        if (this.showing && performance.now() - this.shownAt > 350) this.next();
+      },
+      { capture: true, passive: true },
+    );
   }
 
   show(m: { pop: number; title: string }): void {
@@ -208,6 +217,7 @@ export class MilestoneBanner {
     this.el.classList.remove('is-out');
     this.el.hidden = false;
     replayClass(this.el, 'is-in');
+    this.shownAt = performance.now();
     this.timer = window.setTimeout(() => this.next(), 4600);
   }
 }

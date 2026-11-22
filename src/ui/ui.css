@@ -452,8 +452,6 @@ body {
   align-items: center;
   gap: 2px;
   background: linear-gradient(180deg, rgba(5, 4, 13, 0.97), var(--cc-glass-bar));
-  -webkit-backdrop-filter: var(--cc-blur);
-  backdrop-filter: var(--cc-blur);
   pointer-events: auto;
   touch-action: none;
 }
@@ -810,9 +808,7 @@ body {
   align-items: center;
   gap: 8px;
   padding: 0 calc(var(--cc-sar) + 2px) 0 var(--cc-hud-pl);
-  background: rgba(7, 6, 17, 0.74);
-  -webkit-backdrop-filter: blur(8px);
-  backdrop-filter: blur(8px);
+  background: rgba(7, 6, 17, 0.84);
   border-bottom: 1px solid rgba(255, 255, 255, 0.05);
   text-align: left;
   overflow: hidden;
@@ -1106,7 +1102,8 @@ body {
 
 .cc-banner {
   position: absolute;
-  z-index: 45;
+  /* Under the dock (tray, inspect sheet, coach) so its text never overprints a panel. */
+  z-index: 9;
   left: 0;
   right: 0;
   top: calc(var(--cc-top) + 9%);
@@ -1114,8 +1111,8 @@ body {
   margin: 0 auto;
   padding: 18px 16px 22px;
   text-align: center;
-  pointer-events: auto;
-  cursor: pointer;
+  /* Pass-through: map gestures keep working; any tap dismisses it (feedback.ts). */
+  pointer-events: none;
   isolation: isolate;
 }
 
@@ -1336,8 +1333,6 @@ body {
   justify-content: space-around;
   padding: 0 var(--cc-sar) var(--cc-sab) var(--cc-sal);
   background: linear-gradient(0deg, rgba(5, 4, 13, 0.97), var(--cc-glass-bar));
-  -webkit-backdrop-filter: var(--cc-blur);
-  backdrop-filter: var(--cc-blur);
   pointer-events: auto;
   touch-action: none;
 }
@@ -3354,6 +3349,8 @@ body {
     gap: 2px;
     padding: 5px;
     background: var(--cc-glass);
+    -webkit-backdrop-filter: var(--cc-blur);
+    backdrop-filter: var(--cc-blur);
     clip-path: polygon(0 var(--c), var(--c) 0, 100% 0, 100% calc(100% - var(--c)), calc(100% - var(--c)) 100%, 0 100%);
   }
   .cc-bar::before {
@@ -3460,6 +3457,8 @@ body {
     touch-action: pan-y;
     scrollbar-width: none;
     clip-path: none;
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
     background: linear-gradient(90deg, rgba(5, 4, 13, 0.97), var(--cc-glass-bar));
   }
   .cc-bar::-webkit-scrollbar {
@@ -3581,6 +3580,10 @@ body {
   }
   .cc-tick-text.is-marquee {
     animation: none !important;
+  }
+  .cc-banner-title::before,
+  .cc-banner-title::after {
+    display: none;
   }
   .cc-tick-track {
     text-overflow: ellipsis;

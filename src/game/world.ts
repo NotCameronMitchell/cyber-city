@@ -104,7 +104,7 @@ export class World {
   /** Increments on every tile mutation; renderers can compare to detect change. */
   version = 0;
 
-  constructor(seed: number, cityName = 'New Kowloon Bay', events?: Emitter<GameEventMap>) {
+  constructor(seed: number, cityName = 'Lanthorn Bay', events?: Emitter<GameEventMap>) {
     this.seed = seed >>> 0;
     this.cityName = cityName;
     this.events = events ?? new Emitter<GameEventMap>();

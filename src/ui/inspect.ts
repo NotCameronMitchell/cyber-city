@@ -10,7 +10,7 @@ import { planAction } from '../game/actions';
 import { BUILDINGS } from '../game/config';
 import type { Selection } from '../game/types';
 import type { UIContext } from './context';
-import { h, prefersReducedMotion, replayClass, setClass, setHidden, setStyle, setText } from './dom';
+import { h, prefersReducedMotion, replayClass, setClass, setHidden, setHtml, setStyle, setText } from './dom';
 import { credits } from './format';
 import { icon } from './icons';
 
@@ -166,8 +166,8 @@ export class InspectSheet {
     if (canDemolish) {
       const plan = planAction(game.world, 'bulldoze', sel, sel);
       const cost = credits(plan.cost);
-      this.demolishBtn.innerHTML = `${icon('trash')}<span>Demolish</span><span class="cc-btn-cost">${cost}</span>`;
-      this.confirmBtn.innerHTML = `${icon('warn')}<span>Confirm · ${cost}</span>`;
+      setHtml(this.demolishBtn, `${icon('trash')}<span>Demolish</span><span class="cc-btn-cost">${cost}</span>`);
+      setHtml(this.confirmBtn, `${icon('warn')}<span>Confirm · ${cost}</span>`);
       setClass(this.confirmBtn, 'is-poor', plan.cost > game.world.funds);
     }
   }

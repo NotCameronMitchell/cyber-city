@@ -18,6 +18,8 @@ export interface Category {
   /** ≤ 5-char label for narrow phones. */
   short: string;
   icon: IconName;
+  /** Desktop keyboard shortcut hint (handled by the input module). */
+  key?: string;
   /** Single-tool categories select this tool directly. */
   tool?: ToolId;
   /** Multi-item categories open a tray. */
@@ -26,10 +28,10 @@ export interface Category {
 }
 
 export const CATEGORIES: Category[] = [
-  { id: 'inspect', label: 'Inspect', short: 'Info', icon: 'inspect', tool: 'inspect', accent: '#22e5ff' },
-  { id: 'bulldoze', label: 'Bulldoze', short: 'Demo', icon: 'bulldoze', tool: 'bulldoze', accent: '#ff3b5c' },
-  { id: 'road', label: 'Road', short: 'Road', icon: 'road', tool: 'road', accent: '#c8d0f0' },
-  { id: 'zones', label: 'Zones', short: 'Zone', icon: 'zones', items: ['res', 'com', 'ind'], accent: '#ff2bd6' },
+  { id: 'inspect', label: 'Inspect', short: 'Info', icon: 'inspect', key: 'Esc', tool: 'inspect', accent: '#22e5ff' },
+  { id: 'bulldoze', label: 'Bulldoze', short: 'Demo', icon: 'bulldoze', key: 'B', tool: 'bulldoze', accent: '#ff3b5c' },
+  { id: 'road', label: 'Road', short: 'Road', icon: 'road', key: 'R', tool: 'road', accent: '#c8d0f0' },
+  { id: 'zones', label: 'Zones', short: 'Zone', icon: 'zones', key: 'Z X C', items: ['res', 'com', 'ind'], accent: '#ff2bd6' },
   { id: 'power', label: 'Power', short: 'Power', icon: 'power', items: ['solar', 'reactor'], accent: '#4dff9a' },
   {
     id: 'services',
@@ -40,7 +42,7 @@ export const CATEGORIES: Category[] = [
     accent: '#3d7bff',
   },
   { id: 'landmarks', label: 'Landmarks', short: 'Mega', icon: 'landmarks', items: ['spire', 'arcology'], accent: '#ffb02e' },
-  { id: 'data', label: 'Data', short: 'Data', icon: 'data', accent: '#22e5ff' },
+  { id: 'data', label: 'Data', short: 'Data', icon: 'data', key: 'O', accent: '#22e5ff' },
 ];
 
 export function categoryOf(tool: ToolId): CategoryId {

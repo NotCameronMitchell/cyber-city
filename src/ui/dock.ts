@@ -69,7 +69,7 @@ export class Dock {
           type: 'button',
           'data-cat': c.id,
           'aria-label': c.label,
-          title: c.label,
+          title: c.key ? `${c.label} (${c.key})` : c.label,
           'aria-pressed': c.tool ? 'false' : undefined,
           'aria-expanded': c.tool ? undefined : 'false',
         },
@@ -365,7 +365,8 @@ export class Dock {
 
   private showHint(tool: ToolId): void {
     const verb = tool === 'bulldoze' ? 'Drag to demolish' : isBuildingTool(tool) ? 'Drag to place' : 'Drag to build';
-    setText(this.hint, `${verb} · two fingers to move the map`);
+    const mouse = typeof matchMedia === 'function' && matchMedia('(hover: hover) and (pointer: fine)').matches;
+    setText(this.hint, `${verb} · ${mouse ? 'right-drag or WASD to move the map' : 'two fingers to move the map'}`);
     if (this.hint.hidden) {
       this.hint.hidden = false;
       this.hint.classList.remove('is-in');

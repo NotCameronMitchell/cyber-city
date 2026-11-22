@@ -64,7 +64,7 @@ export const ZONES: Record<'res' | 'com' | 'ind', ZoneDef> = {
     pollution: [0, 0.02, 0.05, 0.08],
     levelLandValue: [0.4, 0.65],
     color: '#22e5ff',
-    desc: 'Commercial zone. Noodle bars, cyberware clinics and holo-ad towers.',
+    desc: 'Commercial zone. Noodle bars, implant clinics and holo-ad towers.',
   },
   ind: {
     zone: ZoneType.Industrial,
@@ -307,9 +307,9 @@ export const MILESTONES: { pop: number; title: string; grant: number }[] = [
   { pop: 100, title: 'Settlement', grant: 1000 },
   { pop: 500, title: 'Outpost', grant: 2000 },
   { pop: 1500, title: 'Boomtown', grant: 4000 },
-  { pop: 5000, title: 'Neon City', grant: 8000 },
+  { pop: 5000, title: 'Neon Metro', grant: 8000 },
   { pop: 12000, title: 'Megacity', grant: 15000 },
-  { pop: 30000, title: 'Hyper-Sprawl', grant: 30000 },
+  { pop: 30000, title: 'Thousand Lamps', grant: 30000 },
 ];
 
 /** Simulation speeds: ticks (days) per real second, index = speed setting 0..3. */

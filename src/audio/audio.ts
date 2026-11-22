@@ -30,7 +30,7 @@ const MIN_GAP: Record<SfxKind, number> = {
   build: 0.09,
   bulldoze: 0.09,
   error: 0.14,
-  money: 0.4,
+  money: 5, // monthly settlement fires every ~2 s at top speed
   milestone: 1.5,
   alert: 0.8,
 };
