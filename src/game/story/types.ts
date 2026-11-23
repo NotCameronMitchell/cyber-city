@@ -353,6 +353,12 @@ export interface Faction {
   sigil: 'ninering' | 'hexcolumn' | 'spiral' | 'hookwave' | 'kite' | 'window';
   leader: string;
   callsYou: string;
+  /**
+   * Plain-language intro (≤ 160 chars): who they are, what they control and what
+   * they want from MOTH. Shown the first time they speak and on "who is this?".
+   * Clarity pass addition (docs/PACING.md).
+   */
+  about?: string;
   startFavor: number;
   visible: Condition;
   teaser?: Condition;
@@ -392,6 +398,12 @@ export interface Card {
   sys?: string;
   /** ≤ 280 chars after token fill. */
   body: string;
+  /**
+   * Plain-language "What's going on" line (≤ 220 chars after token fill): the
+   * situation, who is asking and what is at stake, with no unexplained jargon.
+   * The body stays in-voice; this explains it. Clarity pass addition.
+   */
+  brief?: string;
   when?: Condition;
   spot?: SpotRule;
   weight?: number;
@@ -427,6 +439,13 @@ export interface Chapter {
   title: string;
   epigraph: string;
   question: string;
+  /**
+   * Plain-language chapter intro (≤ 240 chars): what is happening in the city
+   * now and what the player should work toward. Clarity pass addition.
+   */
+  summary?: string;
+  /** One-line recap once the chapter is done (≤ 160 chars), for "Story so far". */
+  recap?: string;
   trigger: Condition;
   /** Evaluated once daysWaiting ≥ 720; at ≥ 1440 the trigger fires anyway. */
   fallback: Condition;
