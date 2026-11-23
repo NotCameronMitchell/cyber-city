@@ -26,7 +26,8 @@ export interface UIActions {
   openBudget(): void;
   openNews(): void;
   openReport(): void;
-  openMenu(): void;
+  /** Open the main menu, or straight on its Settings page (e.g. from the story pace line). */
+  openMenu(view?: 'main' | 'settings'): void;
   confirm(opts: ConfirmOptions): void;
   /** Open a toolbar tray by category id (used by the onboarding coach). */
   openTray(category: string): void;

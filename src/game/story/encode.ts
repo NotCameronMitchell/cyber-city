@@ -145,6 +145,7 @@ const ARRAY_ITEM: Partial<Record<keyof StoryState, (v: unknown) => boolean>> = {
   crackdowns: (v) => isObj(v) && isNum(v.x) && isNum(v.y) && isNum(v.r) && isNum(v.until) && Array.isArray(v.hit),
   railOut: (v) => isObj(v) && inMap(v.i) && isNum(v.until),
   log: (v) => isObj(v) && isNum(v.tick) && isStr(v.card),
+  met: (v) => FACTION_IDS.includes(v as never),
 };
 
 /** Value checks for StoryState records; records not listed accept any JSON value. */
@@ -177,6 +178,8 @@ const FIELD_CHECK: Partial<Record<keyof StoryState, (v: unknown) => boolean>> = 
   phase: (v) => v === 'waiting' || v === 'active' || v === 'countdown' || v === 'ended',
   pending: nullOr((v) => isObj(v) && isStr(v.card) && isNum(v.tick) && isNum(v.spot)),
   open: nullOr((v) => isObj(v) && isStr(v.card) && isNum(v.spot)),
+  waiting: nullOr((v) => isObj(v) && isStr(v.card) && isNum(v.tick) && isNum(v.spot) && (v.read === undefined || typeof v.read === 'boolean')),
+  waiveFrom: nullOr(isNum),
   lastSpeaker: nullOr((v) => FACTION_IDS.includes(v as never)),
   countdownEnd: nullOr(isNum),
   ending: nullOr((v) => v === 'ironwork' || v === 'pearl' || v === 'lowcrown' || v === 'ledger' || v === 'quiet'),
@@ -233,6 +236,12 @@ export function decodeStoryState(raw: unknown, seed: number): StoryState | null 
   if (def.log.length > STORY_PACING.logKeep) def.log = def.log.slice(-STORY_PACING.logKeep);
   def.logs = [...new Set(def.logs)];
   def.unlocks = [...new Set(def.unlocks)];
+  // Missing in a save from before the pacing pass: the director works out who was met from
+  // the cards already seen, so those factions don't read as a new contact mid-story.
+  if (Array.isArray(raw.met)) def.met = [...new Set(def.met ?? [])];
+  else delete def.met;
+  // Saved clocks are never negative (a hand-edited save can't stall the floors).
+  for (const k of ['chapterSec', 'sinceStartSec', 'deckSec', 'frontSec'] as const) def[k] = Math.max(0, def[k] ?? 0);
   return def;
 }
 
@@ -252,6 +261,10 @@ export function pruneUnknownCards(story: StoryState, has: (id: string) => boolea
   }
   if (story.open && !has(story.open.card)) {
     story.open = null;
+    dropped++;
+  }
+  if (story.waiting && !has(story.waiting.card)) {
+    story.waiting = null;
     dropped++;
   }
   return dropped;

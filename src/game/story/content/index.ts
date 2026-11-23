@@ -19,6 +19,7 @@ export * from './cards';
 export * from './chapters';
 export * from './endings';
 export * from './factions';
+export * from './glossary';
 export * from './lexicon';
 export * from './lines';
 export * from './tokens';

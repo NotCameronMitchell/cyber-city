@@ -5,13 +5,13 @@
 // tool prices and the view's stable COMMS rows.
 
 import { afterEach, describe, expect, it } from 'vitest';
-import { BULLDOZE_COST, GALLERY_KEY, ROAD_COST, STORY_PACING, TURF } from '../../src/game/config';
+import { BULLDOZE_COST, GALLERY_KEY, ROAD_COST, STORY_PACE, STORY_PACING, TURF } from '../../src/game/config';
 import { Game } from '../../src/game/game';
 import { storyContent } from '../../src/game/story/conditions';
 import { readGallery } from '../../src/game/story/director';
 import { driftFavor, standing } from '../../src/game/story/factions';
 import * as turf from '../../src/game/story/turf';
-import type { SaveData } from '../../src/game/types';
+import type { SaveData, StoryPace } from '../../src/game/types';
 import { headlessGame, playStory } from './harness';
 
 const P = STORY_PACING;
@@ -26,6 +26,7 @@ function days(g: Game, n: number, sec = 0) {
 const clone = <T>(v: T): T => JSON.parse(JSON.stringify(v)) as T;
 const reload = (g: Game): Game => {
   const h = new Game();
+  h.settings.storyPace = g.settings.storyPace;
   if (!h.restore(clone(g.world.serialize()))) throw new Error('restore failed');
   return h;
 };
@@ -128,13 +129,18 @@ describe('the ending screen survives a reload', () => {
 // ── Migrated cities and the chapter floor ───────────────────────────────────
 
 describe('an old city loaded as v1 does not rush the early chapters', () => {
-  it('Ch1 waits for its 20 s load delay and every chapter waits out the 600 s floor', () => {
-    const { game } = playStory({ seed: 2091, years: 4 });
+  for (const [pace, dayCount] of [
+    ['brisk', 1600],
+    ['relaxed', 3600],
+  ] as const) it(`Ch1 waits for its 20 s load delay and every chapter waits out the ${pace} floor`, () => {
+    const floor = STORY_PACE[pace as StoryPace].chapterMinSec;
+    const { game } = playStory({ seed: 2091, years: 4, pace: 'brisk' });
     expect(game.world.stats.population).toBeGreaterThan(5000);
     const data = clone(game.world.serialize()) as SaveData;
     data.version = 1;
     delete data.story;
     const g = new Game();
+    g.settings.storyPace = pace;
     expect(g.restore(data)).toBe(true);
     const st = g.world.story;
     expect(st.flags.migrated).toBe(true);
@@ -144,18 +150,24 @@ describe('an old city loaded as v1 does not rush the early chapters', () => {
     g.world.events.on('chapter', (c) => chapters.push({ n: c.n, sec: g.story.activeSec }));
     let cards = 0;
     g.world.events.on('card', (c) => void (c && cards++));
-    for (let day = 0; day < 1600; day++) {
+    const answer = () => {
+      for (let k = 0; k < 10 && (g.story.blocking || g.world.story.waiting); k++) {
+        if (!g.story.blocking) g.openWaiting(); // the player reads waiting messages
+        if (g.story.blocking) g.choose(0);
+      }
+    };
+    for (let day = 0; day < dayCount; day++) {
       g.story.update(0.5, false);
-      for (let k = 0; k < 10 && g.story.blocking; k++) g.choose(0);
+      answer();
       g.sim.step();
       g.story.onDay();
-      for (let k = 0; k < 10 && g.story.blocking; k++) g.choose(0);
+      answer();
       if (day === 2 * 600 - 1) expect(cards).toBeLessThanOrEqual(10); // first 10 minutes
     }
     expect(chapters[0].n).toBe(1);
     expect(chapters[0].sec).toBeGreaterThanOrEqual(P.bootLoadDelaySec - 3 - 1e-6);
     expect(chapters.length).toBeGreaterThanOrEqual(2);
-    for (let k = 1; k < chapters.length; k++) expect(chapters[k].sec - chapters[k - 1].sec).toBeGreaterThanOrEqual(P.chapterMinSec - 1);
+    for (let k = 1; k < chapters.length; k++) expect(chapters[k].sec - chapters[k - 1].sec).toBeGreaterThanOrEqual(floor - 1);
   }, 60000);
 });
 
@@ -307,6 +319,7 @@ describe('a faction that stays Hostile', () => {
     const { log } = playStory({
       seed: 2091,
       years: 25,
+      pace: 'brisk',
       answerPending: 0.5,
       each: (g) => void (g.world.story.ceils.basalt = -80),
     });
@@ -316,7 +329,8 @@ describe('a faction that stays Hostile', () => {
     for (let k = 1; k < deck.length; k++) {
       if (deck[k].kind === 'hostile') expect(deck[k - 1].kind, `deck slot ${k} (${deck[k].id})`).not.toBe('hostile');
     }
-    expect(deck.filter((d) => d.kind === 'faction').length).toBeGreaterThanOrEqual(flags.length);
+    // Strict alternation: at most one more ⚑ than the slots between them.
+    expect(deck.filter((d) => d.kind === 'faction').length).toBeGreaterThanOrEqual(flags.length - 1);
   }, 60000);
 
   it('a negative favorMonthly sours a faction only to −30; below that the drift still recovers it', () => {
@@ -377,7 +391,7 @@ describe('tool prices and view details', () => {
   });
 
   it('an open pending card says how many unpaused seconds its default still waits', () => {
-    const g = headlessGame(13);
+    const g = headlessGame(13, false, 'brisk');
     const st = g.world.story;
     st.unlocks.push('factions', 'comms');
     st.pending = { card: 'ba.shift', tick: g.world.tick, spot: -1 };
@@ -385,6 +399,6 @@ describe('tool prices and view details', () => {
     g.story.openPending();
     const v = g.story.view().card!;
     expect(v.autoInDays).toBe(P.pendingDays);
-    expect(v.autoInSec).toBe(P.pendingMinSec - 25);
+    expect(v.autoInSec).toBe(STORY_PACE.brisk.pendingMinSec - 25);
   });
 });

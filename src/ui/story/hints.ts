@@ -1,7 +1,9 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // Hint chips under story choices and action buttons (docs/STORY.md §8.2):
 // faction sigil with ▲/▼ pips, exact credits, an eye for Trace, a clock for
-// timed modifiers, a key for unlocks, LOG for Silt Logs, "?" inside an `if`.
+// timed modifiers, a key for unlocks, LOG for Silt Logs, a plug for buildings
+// offline, a home for emptied blocks, a star for Charter Night, a letter for
+// a follow-up card, "?" inside an `if`.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { FACTION_LABELS } from '../../game/config';
@@ -44,6 +46,14 @@ export function hintChip(h: Hint): string {
       return chip('is-log', '<b>LOG</b>', 'A Silt Log');
     case 'maybe':
       return chip('is-maybe', '<b>?</b>', 'Depends on the city');
+    case 'offline':
+      return chip('is-misc', icon('plug'), 'Knocks buildings offline');
+    case 'abandon':
+      return chip('is-misc', icon('res'), 'Empties some blocks');
+    case 'charter':
+      return chip('is-misc', icon('star'), 'Opens Charter Night');
+    case 'follow':
+      return chip('is-misc', icon('comms'), 'Leads to a follow-up');
   }
 }
 
@@ -53,4 +63,62 @@ export function hintRow(hints: readonly Hint[] | undefined): string {
   let s = '';
   for (const h of hints) s += hintChip(h);
   return s;
+}
+
+/**
+ * Plain-language summary of what a choice does, always shown under its label
+ * (clarity pass, docs/PACING.md): "Basalt ++ · Nacre − · Trace +3 · −1,200 CR".
+ * Faction names carry their colour; signs repeat by strength (1–3). Returns
+ * HTML ('' when the choice changes nothing visible).
+ */
+export function hintSummary(hints: readonly Hint[] | undefined): string {
+  if (!hints || !hints.length) return '';
+  const parts: string[] = [];
+  for (const h of hints) {
+    switch (h.k) {
+      case 'favor': {
+        const l = FACTION_LABELS[h.f];
+        const sign = (h.dir > 0 ? '+' : MINUS).repeat(h.pips);
+        parts.push(
+          `<span class="cc-sum-fav ${h.dir > 0 ? 'is-up' : 'is-down'}" style="--fc:${l.color}" title="${l.short} ${h.dir > 0 ? 'will like this' : 'will dislike this'}"><b>${l.short}</b> ${sign}</span>`,
+        );
+        break;
+      }
+      case 'cr': {
+        const v = Math.round(h.v);
+        parts.push(`<span class="cc-sum-cr ${v < 0 ? 'is-cost' : 'is-gain'}">${v > 0 ? '+' : v < 0 ? MINUS : ''}${groupInt(Math.abs(v))} CR</span>`);
+        break;
+      }
+      case 'trace': {
+        const v = Math.round(h.v);
+        parts.push(`<span class="cc-sum-trace ${v > 0 ? 'is-up' : 'is-down'}" title="Trace: how close anyone is to finding you">Trace ${v > 0 ? '+' : MINUS}${Math.abs(v)}</span>`);
+        break;
+      }
+      case 'timed':
+        parts.push(`<span class="cc-sum-misc">lasts ${h.months} mo</span>`);
+        break;
+      case 'unlock':
+        parts.push('<span class="cc-sum-misc">unlocks something</span>');
+        break;
+      case 'log':
+        parts.push('<span class="cc-sum-misc">a Silt Log</span>');
+        break;
+      case 'maybe':
+        parts.push('<span class="cc-sum-misc">depends on the city</span>');
+        break;
+      case 'offline':
+        parts.push('<span class="cc-sum-misc is-harm">buildings go offline</span>');
+        break;
+      case 'abandon':
+        parts.push('<span class="cc-sum-misc is-harm">empties blocks</span>');
+        break;
+      case 'charter':
+        parts.push('<span class="cc-sum-misc">opens Charter Night</span>');
+        break;
+      case 'follow':
+        parts.push('<span class="cc-sum-misc">leads to a follow-up</span>');
+        break;
+    }
+  }
+  return parts.join('<span class="cc-sum-sep" aria-hidden="true"> · </span>');
 }

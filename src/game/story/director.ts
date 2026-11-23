@@ -7,17 +7,24 @@
 // recomputeAll(). Never cache game.story across a 'world' event.
 //
 // Clocks: sim days (world.tick; onDay after each sim.step, onMonth on the
-// rollover) and real seconds (update(dt)): `activeSec` counts unpaused
-// seconds (deck gap, beat gap, no-answer timer), `realSec` all seconds (boot
-// and title timers). Real-second timers are per session and restart on load,
-// except story.chapterSec (the chapter floor), which is saved.
+// rollover) and real seconds (update(dt)). The pacing clocks count unpaused
+// seconds and are saved in world.story, so a reload neither resets nor skips
+// them: chapterSec (chapter floor), sinceStartSec (quiet window after a
+// title), deckSec (deck gap), frontSec (gap between story cards). The numbers
+// come from the story pace (Settings.storyPace → STORY_PACE, docs/PACING.md).
+// `activeSec` (unpaused, per session) times the no-answer default; `realSec`
+// (all seconds) the boot and title timers.
 //
-// Cards:
-//   front cards (beats, Silt Logs, endings, chapter rewards) open blocking,
-//     chained (right after a close, ≤ 3 in a row) or after the 10 s beat gap;
-//   deck cards are drawn monthly (pacing.ts): faction cards wait in COMMS as
-//     the pending card (‡ default after 20 d and 60 s), ⚑ and system cards
-//     open at once; whisper cards only go to the COMMS log and the ticker.
+// Cards (docs/PACING.md "Interruptions"):
+//   front cards (beats, Silt Logs, endings, chapter rewards): only the boot,
+//     key-choice beats, the count, endings and direct replies to a choice open
+//     by themselves (blocking). Every other one arrives as the waiting story
+//     message (story.waiting, one at a time, banner + goal chip) and opens when
+//     the player taps it; chapter progress waits until it is read;
+//   deck cards are drawn monthly (pacing.ts): faction, ⚑ and non-urgent system
+//     cards wait in COMMS as the pending card (‡ default after 20 d and the
+//     pace's seconds); urgent system cards (bailout, the Clip) open at once;
+//     whisper cards only go to the COMMS log and the ticker.
 // Everything that must survive a save lives in world.story.
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -32,13 +39,16 @@ import {
   GALLERY_KEY,
   OTHER_REACTIONS,
   SALT,
+  STORY_PACE,
   STORY_PACING,
   TRACE,
   UNLOCK_FALLBACK_POP,
+  paceOf,
+  type PaceTuning,
 } from '../config';
 import { Rng } from '../rng';
 import { storageGet, storageSet } from '../storage';
-import { DAYS_PER_MONTH, MONTHS_PER_YEAR, START_YEAR, type BuildingType } from '../types';
+import { DAYS_PER_MONTH, MONTHS_PER_YEAR, START_YEAR, type BuildingType, type StoryPace } from '../types';
 import type { World } from '../world';
 import {
   evalCond,
@@ -93,15 +103,16 @@ import {
 } from './factions';
 import { STORY_CONTENT } from './content';
 import { composeLayers } from './mods';
-import { cardFaction, deckGatesOpen, defaultChoice, drawCard, FRONT_KINDS, pendingExpired } from './pacing';
+import { cardFaction, deckGate, defaultChoice, drawCard, FRONT_KINDS, pendingExpired, URGENT_SYSTEM } from './pacing';
 import { resolveMods, tierPatches } from './resolve';
-import { CHAPTER_NUMERALS, coherenceFor } from './state';
+import { CHAPTER_NUMERALS, coherenceFor, LONG_AGO_SEC } from './state';
 import * as turf from './turf';
 import type {
   ActionView,
   Card,
   CardView,
   Chapter,
+  ChapterRecapView,
   Choice,
   Effect,
   Ending,
@@ -109,6 +120,7 @@ import type {
   FactionId,
   FlagValue,
   GangId,
+  MessageView,
   Result,
   StoryState,
   StoryView,
@@ -125,10 +137,24 @@ useStoryContent(STORY_CONTENT);
 const P = STORY_PACING;
 /** Real seconds the chapter title card stays up before the trigger beat may open. */
 const TITLE_SEC = 3;
+/**
+ * Longest the UI may hold story cards behind a chapter title it still shows (holdTitle):
+ * the title with a summary stays about 14 s (15 with reduced motion), or until tapped.
+ */
+const TITLE_HOLD_MAX_SEC = 20;
 /** Real seconds the incoming banner stays in the view. */
 const BANNER_SEC = 6;
 /** Choice indices recorded for the ending screen's key-choice icons. */
 const KEY_CARDS: readonly string[] = ['ch1.lark', 'ch2.vote', 'ch3.pier', 'ch4.brine', 'ch5.choice'];
+/** Chapter of each key choice (the goal drawer's "Story so far"). */
+const KEY_CHAPTER: Record<string, number> = { 'ch1.lark': 1, 'ch2.vote': 2, 'ch3.pier': 3, 'ch4.brine': 4, 'ch5.choice': 5 };
+/**
+ * Story cards that open by themselves and pause (docs/PACING.md): the boot (the
+ * story's first card, before COMMS exists), the key choices and the count that
+ * opens Charter Night. Endings and Log 6 after them do too; every other story
+ * card waits as a message unless it directly answers the choice just made.
+ */
+const SELF_OPEN: ReadonlySet<string> = new Set(['ch1.boot', ...KEY_CARDS, 'ch6.count']);
 /** The Charter Claim each faction row shows in Ch6 (§8.6). */
 const FACTION_ENDING: Record<FactionId, EndingId> = {
   board: 'ledger',
@@ -147,6 +173,8 @@ export interface DirectorHost {
   readonly world: World;
   /** The in-progress gesture; beats wait while one is live. */
   readonly preview?: unknown;
+  /** Player settings: the story pace is read live, so a change applies at once (missing = 'relaxed'). */
+  readonly settings?: { readonly storyPace?: StoryPace };
 }
 
 /** Endings gallery kept across saves (§6.3), stored under GALLERY_KEY. */
@@ -229,15 +257,21 @@ export class StoryDirector implements EffectHost {
   private cached: StoryView | null = null;
 
   // Session timers (not saved).
-  private lastCardSec = 0;
-  private lastCloseSec = -1e9;
   private justClosed = false;
   private chainLen = 0;
   private pendingSec = 0;
   private bootAt: number | null = null;
   private chapterStartSec = -1e9;
   private titleUntil = -1;
-  private banner: { id: string; title: string; faction: FactionId; until: number } | null = null;
+  /** The UI still shows the chapter title card (holdTitle): story and urgent cards wait for it. */
+  private titleShown = false;
+  private banner: (NonNullable<StoryView['banner']> & { until: number }) | null = null;
+  /** Story cards queued as a direct reply to the choice being resolved: they open right after it closes. */
+  private readonly replies = new Set<string>();
+  /** > 0 while a player's choice is being applied (replies are recorded). */
+  private resolving = 0;
+  /** The open card is the first this faction speaks on: its intro shows (CardView.firstMeet). */
+  private meetCard: string | null = null;
   private firstUpdate = true;
   private charterDue = false;
   /** The ending screen waits for the final card and Log 6 (mirrors story.flags.endingScreen, which is saved). */
@@ -256,6 +290,8 @@ export class StoryDirector implements EffectHost {
     this.idx = storyContent();
     const w = this.world;
     pruneUnknownCards(w.story, (id) => this.knownCard(id));
+    // A save from before story.met: every faction that already spoke on a card counts as met.
+    if (!Array.isArray(w.story.met)) w.story.met = this.metSoFar();
     if (this.idx.endings.length) turf.setEndingRulesSource((world) => endingRules(world));
     // Derived on load (§10.8): turf stats, vertical caches, local layers, then mods, layers, ledger.
     // The turf layers read world.mods (turfCrimeMul) and standings, so they are written
@@ -286,6 +322,31 @@ export class StoryDirector implements EffectHost {
     return !!this.world.story.flags.charterNightOpen;
   }
 
+  /** The story pace in effect (read live from the host's settings). */
+  get paceId(): StoryPace {
+    return paceOf(this.host.settings?.storyPace);
+  }
+
+  /** Pacing numbers for the current pace (docs/PACING.md). */
+  get pace(): PaceTuning {
+    return STORY_PACE[this.paceId];
+  }
+
+  /**
+   * The UI says whether the chapter title card is still on screen. While it is (for
+   * at most TITLE_HOLD_MAX_SEC after the chapter starts), no story card and no urgent
+   * deck card opens, so the title never sits over an open card (one modal at a time).
+   * Headless runs never call this: the trigger beat then waits TITLE_SEC, as before.
+   */
+  holdTitle(on: boolean): void {
+    this.titleShown = on;
+  }
+
+  /** The UI still shows the chapter title (within the hold cap). */
+  private titleHeld(): boolean {
+    return this.titleShown && this.realSec - this.chapterStartSec < TITLE_HOLD_MAX_SEC;
+  }
+
   // ── Frame update ──────────────────────────────────────────────────────────
 
   /** Per frame: real-time gates, boot / title / banner timers, the no-answer default, front cards. */
@@ -297,6 +358,10 @@ export class StoryDirector implements EffectHost {
     if (!paused) {
       this.activeSec += dt;
       if (st.chapter <= 6) st.chapterSec = (st.chapterSec ?? 0) + dt;
+      // The saved pacing clocks (quiet window, deck gap, story-card gap); capped so they stay small numbers.
+      st.sinceStartSec = Math.min(LONG_AGO_SEC, (st.sinceStartSec ?? LONG_AGO_SEC) + dt);
+      st.deckSec = Math.min(LONG_AGO_SEC, (st.deckSec ?? 0) + dt);
+      st.frontSec = Math.min(LONG_AGO_SEC, (st.frontSec ?? LONG_AGO_SEC) + dt);
       if (st.pending && st.open?.card !== st.pending.card) this.pendingSec += dt;
       // The settle countdown (view.chapter.closesInSec) runs in real seconds, not sim days:
       // rebuild the view when its whole second changes (at most once a second).
@@ -538,10 +603,13 @@ export class StoryDirector implements EffectHost {
         changed = true;
       }
     }
-    // Waivers: after 720 d, one unmet goal per 360 d counts as done.
+    // Waivers: once the chapter has run 720 d AND its real-time floor is met (so no goal
+    // is waived while the chapter still has minutes to run), one unmet goal per 360 d
+    // counts as done.
     const days = tick - st.chapterTick;
-    if (days >= P.waiverAfterDays) {
-      const allowed = 1 + Math.floor((days - P.waiverAfterDays) / P.waiverEveryDays);
+    if (days >= P.waiverAfterDays && this.chapterSettled()) {
+      if (st.waiveFrom === null || st.waiveFrom === undefined) st.waiveFrom = tick;
+      const allowed = 1 + Math.floor((tick - st.waiveFrom) / P.waiverEveryDays);
       while (st.goalsWaived.length < allowed) {
         const g = ch.goals.find((k) => !st.goalsDone.includes(k.id) && !st.goalsWaived.includes(k.id));
         if (!g) break;
@@ -566,6 +634,8 @@ export class StoryDirector implements EffectHost {
     st.beatsShown = [];
     st.goalsDone = [];
     st.goalsWaived = [];
+    st.waiveFrom = null;
+    st.sinceStartSec = 0; // the quiet build window starts with the title
     for (const g of ch.goals) {
       const h = findHold(g.cond);
       if (h) st.holds[h.key] = 0;
@@ -595,8 +665,10 @@ export class StoryDirector implements EffectHost {
         continue;
       }
       if (!this.idx.cards.has(b.card)) continue; // missing content never strands a chapter
+      if (st.waiting?.card === b.card) return null; // delivered, unread: the next beat waits for it
       if (b.after === 'trigger') return b.card;
-      if (st.countdownEnd !== null) return w.tick >= st.countdownEnd ? b.card : null;
+      // Ch6's count also waits for the chapter floor, so the last chapter gets its time to build too.
+      if (st.countdownEnd !== null) return w.tick >= st.countdownEnd && (st.chapter !== 6 || this.chapterSettled()) ? b.card : null;
       if (b.after === 'chain') return b.card;
       if ('days' in b.after) return w.tick >= prevTick + b.after.days ? b.card : null;
       const due = evalCond(w, b.after.cond) || w.tick - st.chapterTick >= P.beatFallbackDays;
@@ -629,9 +701,9 @@ export class StoryDirector implements EffectHost {
     this.completeChapter(ch);
   }
 
-  /** The chapter floor (§5.0): chapterMinSec unpaused seconds since the last chapter closed. */
+  /** The chapter floor (§5.0): the pace's chapterMinSec unpaused seconds since the last chapter closed. */
   private chapterSettled(): boolean {
-    return (this.world.story.chapterSec ?? 0) >= P.chapterMinSec;
+    return (this.world.story.chapterSec ?? 0) >= this.pace.chapterMinSec;
   }
 
   private completeChapter(ch: Chapter): void {
@@ -645,6 +717,8 @@ export class StoryDirector implements EffectHost {
     );
     this.ownLog(ch.log);
     st.queue.push({ card: `${REWARD_PREFIX}${ch.n}`, tick: w.tick });
+    // Completed by the choice just made: the reward card follows it at once.
+    if (this.resolving) this.replies.add(`${REWARD_PREFIX}${ch.n}`);
     st.chapter = ch.n + 1;
     st.phase = 'waiting';
     st.waitingSince = w.tick;
@@ -653,9 +727,9 @@ export class StoryDirector implements EffectHost {
 
   // ── Front cards (beats, logs, endings, rewards) ───────────────────────────
 
-  /** Is a front card due (queued and due, or the chapter's next beat)? */
+  /** Is a front card due (queued and due, or the chapter's next beat), or a story message waiting? */
   private frontDue(): boolean {
-    return this.nextFront() !== null;
+    return !!this.world.story.waiting || this.nextFront() !== null;
   }
 
   private nextFront(): { card: string; queueIndex: number } | null {
@@ -663,7 +737,7 @@ export class StoryDirector implements EffectHost {
     const tick = this.world.tick;
     for (let k = 0; k < st.queue.length; k++) {
       const q = st.queue[k];
-      if (q.tick > tick) continue;
+      if (q.tick > tick || q.card === st.waiting?.card) continue;
       if (q.card.startsWith(REWARD_PREFIX)) return { card: q.card, queueIndex: k };
       const c = this.idx.cards.get(q.card);
       if (c && (FRONT_KINDS.has(c.kind) || this.idx.beatChapter.has(c.id))) return { card: q.card, queueIndex: k };
@@ -672,36 +746,71 @@ export class StoryDirector implements EffectHost {
     return b ? { card: b, queueIndex: -1 } : null;
   }
 
-  /** Open the next due front card if the gates allow (chain, gesture, beat gap, title card). */
+  /**
+   * Deliver the next due front card if the gates allow. Right after a close, a
+   * direct reply to that choice (or, on a pace that chains, the next due card)
+   * opens in place. Otherwise the pace's gap since the last card must have passed,
+   * nothing may wait already, no gesture may be live, and the title card gets its seconds.
+   * Then the card opens by itself if it is a self-opening one (SELF_OPEN, endings,
+   * Log 6), else it becomes the waiting story message.
+   */
   private tryOpenFront(): void {
     const st = this.world.story;
-    const chained = this.justClosed && this.chainLen < P.maxChain;
+    const justClosed = this.justClosed;
     this.justClosed = false;
     if (st.open || this.charterOpen || this.applying) return;
     if (this.host.preview) return;
     const next = this.nextFront();
     if (!next) return;
-    if (!chained && this.activeSec - this.lastCloseSec < P.beatGapSec) return;
-    if (this.realSec - this.chapterStartSec < TITLE_SEC && this.idx.beatChapter.get(next.card) === st.chapter) return;
+    const card = this.cardFor(next.card);
+    if (!card) {
+      if (next.queueIndex >= 0) st.queue.splice(next.queueIndex, 1);
+      return;
+    }
+    const reply = justClosed && this.replies.has(next.card);
+    const chained = reply || (justClosed && this.chainLen < this.pace.maxChain);
+    // One story message at a time: while one waits unread, only cards that open by themselves may come.
+    if (st.waiting && !chained && !this.selfOpens(next.card, card)) return;
+    if (!chained) {
+      if ((st.frontSec ?? LONG_AGO_SEC) < this.pace.beatGapSec) return;
+      // The chapter's own beats wait for the title; while the UI still shows it, every story card does.
+      if (this.titleHeld()) return;
+      if (this.realSec - this.chapterStartSec < TITLE_SEC && this.idx.beatChapter.get(next.card) === st.chapter) return;
+    }
     if (next.queueIndex >= 0) st.queue.splice(next.queueIndex, 1);
-    this.chainLen = chained ? this.chainLen + 1 : 1;
-    this.openFront(next.card);
+    this.replies.delete(next.card);
+    if (chained || this.selfOpens(next.card, card)) {
+      this.chainLen = chained ? this.chainLen + 1 : 1;
+      this.openFront(next.card);
+    } else this.deliverWaiting(next.card, card);
+  }
+
+  /** Does this story card open by itself (and pause)? The boot, key choices, the count, endings and Log 6. */
+  private selfOpens(id: string, card: Card): boolean {
+    return SELF_OPEN.has(id) || card.kind === 'ending' || id === `${REWARD_PREFIX}6`;
   }
 
   private openFront(id: string): void {
     const w = this.world;
-    const st = w.story;
     const card = this.cardFor(id);
     if (!card) return;
+    const spot = card.spot ? findSpot(w, card.spot, this.rng) : -1;
+    this.showFront(id, card, spot);
+  }
+
+  /** Mark a story card shown (beat bookkeeping, seen, onShow) and open it. */
+  private showFront(id: string, card: Card, spot: number): void {
+    const w = this.world;
+    const st = w.story;
     if (this.idx.beatChapter.has(id)) {
       if (!st.beatsShown.includes(id)) st.beatsShown.push(id);
       st.lastBeatTick = w.tick;
       if (st.countdownEnd !== null && w.tick >= st.countdownEnd) st.countdownEnd = null;
     }
-    const spot = card.spot ? findSpot(w, card.spot, this.rng) : -1;
     st.seen[id] = w.tick;
     st.open = { card: id, spot };
     this.titleUntil = -1;
+    this.meet(card);
     this.applying++;
     applyEffects(this, card.onShow, { spot });
     this.applying--;
@@ -709,20 +818,82 @@ export class StoryDirector implements EffectHost {
     this.markChanged();
   }
 
+  /**
+   * A story card that does not open by itself becomes the waiting message: the
+   * incoming banner and the goal chip say so, and it opens when the player taps
+   * (openWaiting). It counts as shown only then; chapter progress waits for it.
+   */
+  private deliverWaiting(id: string, card: Card): void {
+    const w = this.world;
+    const st = w.story;
+    const spot = card.spot ? findSpot(w, card.spot, this.rng) : -1;
+    st.waiting = { card: id, tick: w.tick, spot };
+    st.frontSec = 0;
+    const f = cardFaction(w, card);
+    this.banner = {
+      id,
+      title: fillTokens(w, card.title, spot),
+      faction: f,
+      kind: card.kind,
+      from: this.speakerName(card, f),
+      slot: 'story',
+      until: this.realSec + BANNER_SEC,
+    };
+    w.events.emit('incoming', { id });
+    this.markChanged();
+  }
+
+  /**
+   * Factions already met in a save from before story.met existed: each visible faction
+   * that spoke on a card already shown (not the COMMS card or story message still unread).
+   */
+  private metSoFar(): FactionId[] {
+    const w = this.world;
+    const st = w.story;
+    const unread = new Set<string>();
+    if (st.pending) unread.add(st.pending.card);
+    if (st.waiting && !st.waiting.read) unread.add(st.waiting.card);
+    const met = new Set<FactionId>();
+    for (const id of Object.keys(st.seen)) {
+      if (unread.has(id) && !st.log.some((e) => e.card === id)) continue;
+      const card = this.idx.cards.get(id);
+      const f = card ? cardFaction(w, card) : null;
+      if (f && isVisible(w, f)) met.add(f);
+    }
+    return FACTION_IDS.filter((f) => met.has(f));
+  }
+
+  /** The first card a visible faction speaks on shows its intro (Faction.about) open. */
+  private meet(card: Card): void {
+    const st = this.world.story;
+    const f = cardFaction(this.world, card);
+    this.meetCard = null;
+    if (!f || !isVisible(this.world, f)) return;
+    const met = (st.met ??= []);
+    if (met.includes(f)) return;
+    met.push(f);
+    this.meetCard = card.id;
+  }
+
   // ── Deck (§7.1) ───────────────────────────────────────────────────────────
 
   private drawDeck(): void {
     const w = this.world;
     const st = w.story;
-    const gates = deckGatesOpen(w, {
-      open: this.blocking,
+    const pace = this.pace;
+    const gate = deckGate(w, {
+      // The chapter title still on screen counts as open: an urgent card waits for it too.
+      open: this.blocking || this.titleHeld(),
       pending: st.pending !== null,
-      frontDue: this.frontDue(),
-      activeSec: this.activeSec,
-      lastCardSec: this.lastCardSec,
+      frontDue: this.nextFront() !== null,
+      waiting: !!st.waiting,
+      sinceCardSec: st.deckSec ?? 0,
+      sinceFrontSec: st.frontSec ?? LONG_AGO_SEC,
+      sinceStartSec: st.sinceStartSec ?? LONG_AGO_SEC,
+      pace,
     });
-    if (!gates) return;
-    const { pick, drop } = drawCard(w, this.rng, isUnlocked(w, 'comms'), w.mods.cardRateMul);
+    if (gate === 'none') return;
+    const { pick, drop } = drawCard(w, this.rng, isUnlocked(w, 'comms'), w.mods.cardRateMul * pace.cardChanceMul, gate === 'urgent');
     const remove = [...drop];
     if (pick?.queueIndex !== undefined) remove.push(pick.queueIndex);
     remove.sort((a, b) => b - a);
@@ -730,7 +901,7 @@ export class StoryDirector implements EffectHost {
     if (pick) this.deliver(pick.card);
   }
 
-  /** Deliver a deck card: faction → pending (banner); ⚑ / system → open now. */
+  /** Deliver a deck card: urgent system cards open now; faction, ⚑ and other system cards wait in COMMS (banner). */
   private deliver(card: Card): void {
     const w = this.world;
     const st = w.story;
@@ -738,7 +909,7 @@ export class StoryDirector implements EffectHost {
     const spot = card.spot ? findSpot(w, card.spot, this.rng) : -1;
     st.seen[card.id] = tick;
     st.lastCardTick = tick;
-    this.lastCardSec = this.activeSec;
+    st.deckSec = 0;
     const f = cardFaction(w, card);
     if (f) st.lastSpeaker = f;
     if (card.kind === 'hostile' && f) {
@@ -748,28 +919,37 @@ export class StoryDirector implements EffectHost {
     this.applying++;
     applyEffects(this, card.onShow, { spot });
     this.applying--;
-    if (card.kind === 'faction') {
+    if (!(card.kind === 'system' && URGENT_SYSTEM.has(card.id))) {
       st.pending = { card: card.id, tick, spot };
       this.pendingSec = 0;
-      if (f) this.banner = { id: card.id, title: fillTokens(w, card.title, spot), faction: f, until: this.realSec + BANNER_SEC };
+      this.banner = {
+        id: card.id,
+        title: fillTokens(w, card.title, spot),
+        faction: f,
+        kind: card.kind,
+        from: this.speakerName(card, f),
+        slot: 'comms',
+        until: this.realSec + BANNER_SEC,
+      };
       w.events.emit('incoming', { id: card.id });
       w.events.emit('pending', { id: card.id });
     } else {
       st.open = { card: card.id, spot };
       this.chainLen = 1;
+      this.meet(card);
       w.events.emit('card', { id: card.id });
     }
     this.markChanged();
   }
 
-  /** No-answer default (§7.1): 20 sim days AND 60 unpaused seconds, never while the card is open. */
+  /** No-answer default (§7.1): 20 sim days AND the pace's unpaused seconds, never while the card is open. */
   private checkPending(): void {
     const w = this.world;
     const st = w.story;
     const p = st.pending;
     // Never while any card is open (the player may be reading it, or a beat holds the screen).
     if (!p || st.open || this.applying) return;
-    if (!pendingExpired(w, p.tick, this.pendingSec)) return;
+    if (!pendingExpired(w, p.tick, this.pendingSec, this.pace)) return;
     const card = this.idx.cards.get(p.card);
     st.pending = null;
     w.events.emit('pending', null);
@@ -807,6 +987,7 @@ export class StoryDirector implements EffectHost {
       st.pending = null;
       w.events.emit('pending', null);
     }
+    if (st.waiting?.card === open.card) st.waiting = null;
     this.resolve(card, open.card, choiceIndex, open.spot, false);
   }
 
@@ -817,6 +998,7 @@ export class StoryDirector implements EffectHost {
     const choices = this.choicesOf(card);
     const ch = choices[i] ?? CONTINUE;
     const ctx: EffectCtx = { spot };
+    if (!auto) this.resolving++;
     this.applying++;
     applyEffects(this, ch.fx, ctx);
     this.applying--;
@@ -824,15 +1006,19 @@ export class StoryDirector implements EffectHost {
     if (st.log.length > P.logKeep) st.log.splice(0, st.log.length - P.logKeep);
     if (KEY_CARDS.includes(id)) st.keyChoices[id] = i;
     if (!auto) {
-      // The card was on screen: it closes now, and the next front card may chain.
-      this.lastCloseSec = this.activeSec;
+      // The card was on screen: it closes now, and a direct reply (or a chain) may follow.
+      w.story.frontSec = 0;
       this.justClosed = true;
+      if (this.meetCard === id) this.meetCard = null;
       w.events.emit('card', null);
     }
     this.afterClose();
-    // Completion first, so a chapter's reward card chains right after its last beat.
+    // Completion first, so a chapter's reward card follows right after its last beat.
     this.checkComplete();
-    if (!auto) this.tryOpenFront();
+    if (!auto) {
+      this.resolving--;
+      this.tryOpenFront();
+    }
   }
 
   private afterClose(): void {
@@ -874,19 +1060,45 @@ export class StoryDirector implements EffectHost {
     const st = w.story;
     if (!st.pending || st.open || this.charterOpen) return;
     st.open = { card: st.pending.card, spot: st.pending.spot };
-    this.banner = null;
+    if (this.banner?.id === st.pending.card) this.banner = null;
     this.chainLen = 1;
+    const card = this.idx.cards.get(st.pending.card);
+    if (card) this.meet(card);
     w.events.emit('card', { id: st.pending.card });
     this.markChanged();
   }
 
-  /** Send the open faction card back to COMMS (keeps its no-answer timer). */
+  /** Open the waiting story message (from the banner, the goal chip or COMMS). The first open marks it shown. */
+  openWaiting(): void {
+    const w = this.world;
+    const st = w.story;
+    const wt = st.waiting;
+    if (!wt || st.open || this.charterOpen || this.applying) return;
+    const card = this.cardFor(wt.card);
+    if (!card) {
+      st.waiting = null;
+      this.markChanged();
+      return;
+    }
+    if (this.banner?.id === wt.card) this.banner = null;
+    this.chainLen = 1;
+    if (!wt.read) {
+      wt.read = true;
+      this.showFront(wt.card, card, wt.spot);
+      return;
+    }
+    st.open = { card: wt.card, spot: wt.spot };
+    w.events.emit('card', { id: wt.card });
+    this.markChanged();
+  }
+
+  /** Send the open COMMS card or story message back (a COMMS card keeps its no-answer timer). */
   later(): void {
     const w = this.world;
     const st = w.story;
-    if (!st.open || st.pending?.card !== st.open.card) return;
+    if (!st.open) return;
+    if (st.pending?.card !== st.open.card && st.waiting?.card !== st.open.card) return;
     st.open = null;
-    this.lastCloseSec = this.activeSec;
     w.events.emit('card', null);
     this.markChanged();
   }
@@ -1077,7 +1289,10 @@ export class StoryDirector implements EffectHost {
     // Saved too, so a reload while the final card or Log 6 is up still ends on the screen.
     this.endingDue = e.id;
     st.flags.endingScreen = e.id;
-    this.justClosed = true; // the final card follows the confirm at once
+    // The final card follows the confirm at once, and Log 6 follows the final card.
+    this.replies.add(e.card);
+    this.replies.add(`${REWARD_PREFIX}6`);
+    this.justClosed = true;
     turf.refreshStats(w);
     this.afterAction();
     this.tryOpenFront();
@@ -1134,6 +1349,8 @@ export class StoryDirector implements EffectHost {
     const st = this.world.story;
     if (!this.knownCard(card)) return;
     const tick = this.world.tick + Math.max(0, days);
+    // `+0d` from a choice the player just made: a direct reply, it follows the card at once.
+    if (this.resolving && days <= 0) this.replies.add(card);
     if (st.queue.some((q) => q.card === card && q.tick === tick)) return;
     st.queue.push({ card, tick });
   }
@@ -1437,7 +1654,10 @@ export class StoryDirector implements EffectHost {
       },
       card: st.open ? this.cardView(st.open.card, st.open.spot) : null,
       pending: this.pendingView(),
-      banner: this.banner ? { id: this.banner.id, title: this.banner.title, faction: this.banner.faction } : null,
+      banner: this.bannerView(),
+      messages: this.messagesView(),
+      storySoFar: this.storySoFarView(),
+      pace: this.paceId,
       comms: this.commsView(),
       logs: this.logsView(),
       coherence: coherenceFor(st.logs.length),
@@ -1461,9 +1681,57 @@ export class StoryDirector implements EffectHost {
               epigraph: fillTokens(w, ch.epigraph),
               question: ch.question,
               coherence: coherenceFor(st.logs.length),
+              ...(ch.summary ? { summary: fillTokens(w, ch.summary) } : {}),
             }
           : null,
     };
+  }
+
+  private bannerView(): StoryView['banner'] {
+    const b = this.banner;
+    if (!b) return null;
+    const { until: _until, ...view } = b;
+    return view;
+  }
+
+  /** Messages waiting for the player: the story message (required for progress), then the COMMS card. */
+  private messagesView(): MessageView[] {
+    const w = this.world;
+    const st = w.story;
+    const out: MessageView[] = [];
+    const add = (id: string, spot: number, slot: MessageView['slot']) => {
+      const card = this.cardFor(id);
+      if (!card) return;
+      const f = cardFaction(w, card);
+      out.push({ id, slot, kind: card.kind, title: fillTokens(w, card.title, spot), faction: f, from: this.speakerName(card, f), required: slot === 'story' });
+    };
+    if (st.waiting) add(st.waiting.card, st.waiting.spot, 'story');
+    if (st.pending) add(st.pending.card, st.pending.spot, 'comms');
+    return out;
+  }
+
+  /** Finished chapters with their recap and the key choice made in each (the goal drawer's "Story so far"). */
+  private storySoFarView(): ChapterRecapView[] {
+    const w = this.world;
+    const st = w.story;
+    const last = st.chapter >= 7 ? 6 : st.chapter - 1;
+    const out: ChapterRecapView[] = [];
+    for (let n = 1; n <= last; n++) {
+      const ch = this.idx.chapters.get(n);
+      if (!ch) continue;
+      const choices: string[] = [];
+      for (const [id, i] of Object.entries(st.keyChoices)) {
+        if (KEY_CHAPTER[id] !== n) continue;
+        const label = this.idx.cards.get(id)?.choices[i]?.label;
+        if (label) choices.push(fillTokens(w, label));
+      }
+      if (n === 6 && st.ending) {
+        const e = this.idx.ending.get(st.ending);
+        if (e) choices.push(e.title);
+      }
+      out.push({ n, numeral: CHAPTER_NUMERALS[n] ?? '', title: ch.title, recap: ch.recap ? fillTokens(w, ch.recap) : '', choices });
+    }
+    return out;
   }
 
   private chapterView(ch: Chapter | undefined): StoryView['chapter'] {
@@ -1475,6 +1743,12 @@ export class StoryDirector implements EffectHost {
       question: ch?.question ?? '',
       phase: st.phase,
     };
+    // Not before the chapter's title card: while it waits to start, its summary would be an early reveal.
+    if (ch?.summary && st.phase !== 'waiting') out.summary = fillTokens(this.world, ch.summary);
+    // Ch6: the countdown has run out but the chapter floor still holds the count.
+    if (ch && st.chapter === 6 && st.countdownEnd !== null && this.world.tick >= st.countdownEnd && !this.chapterSettled()) {
+      out.closesInSec = this.closesIn();
+    }
     // Settling: every goal, required beat and queued optional beat done, only the
     // chapter floor holds it open (the same gates as checkComplete, in that order).
     if (ch && st.phase === 'active' && st.chapter < 6 && !this.chapterSettled() && this.beatsDone(ch)) {
@@ -1487,7 +1761,7 @@ export class StoryDirector implements EffectHost {
 
   /** Whole unpaused seconds until the chapter floor lets the chapter close (≥ 1). */
   private closesIn(): number {
-    return Math.max(1, Math.ceil(P.chapterMinSec - (this.world.story.chapterSec ?? 0)));
+    return Math.max(1, Math.ceil(this.pace.chapterMinSec - (this.world.story.chapterSec ?? 0)));
   }
 
   /** Memo key for rows that only change with the log (and the patron, which titles may name). */
@@ -1590,6 +1864,7 @@ export class StoryDirector implements EffectHost {
       exclusive: null,
       penalties: visible ? this.penalties(f) : [],
     };
+    if (visible && def?.about) row.about = fillTokens(w, def.about);
     if (visible && def?.exclusive) {
       const reason = lockedReason(w, def.exclusive);
       row.exclusive = { type: def.exclusive, buildable: !reason, ...(reason ? { reason } : {}) };
@@ -1664,6 +1939,7 @@ export class StoryDirector implements EffectHost {
       if (extra && this.idx.ending.get(st.ending!)?.card === card.id) body += `\n\n${fillTokens(w, extra.body, spot)}`;
     }
     const pending = st.pending?.card === id ? st.pending : null;
+    const message = !!pending || st.waiting?.card === id;
     const view: CardView = {
       id,
       kind: card.kind,
@@ -1671,7 +1947,7 @@ export class StoryDirector implements EffectHost {
       speakerName: this.speakerName(card, f),
       title: fillTokens(w, card.title, spot),
       body,
-      canLater: card.kind === 'faction' && !!pending,
+      canLater: message,
       choices: this.choicesOf(card).map((c) => {
         const locked = c.requires && !evalCond(w, c.requires) ? fillTokens(w, c.lockedHint ?? 'Not available', spot) : undefined;
         return {
@@ -1685,9 +1961,12 @@ export class StoryDirector implements EffectHost {
     };
     if (card.with) view.with = card.with;
     if (card.sys) view.sys = fillTokens(w, card.sys, spot);
+    if (card.brief) view.brief = fillTokens(w, card.brief, spot);
+    if (this.meetCard === id) view.firstMeet = true;
+    if (message) view.fromMessage = true;
     if (pending) {
       view.autoInDays = Math.max(0, P.pendingDays - (w.tick - pending.tick));
-      view.autoInSec = Math.max(0, Math.ceil(P.pendingMinSec - this.pendingSec));
+      view.autoInSec = Math.max(0, Math.ceil(this.pace.pendingMinSec - this.pendingSec));
     }
     return view;
   }
@@ -1711,7 +1990,9 @@ export class StoryDirector implements EffectHost {
       title: fillTokens(w, card.title, p.spot),
       faction: cardFaction(w, card) ?? 'board',
       daysLeft: Math.max(0, P.pendingDays - (w.tick - p.tick)),
-      secLeft: Math.max(0, Math.ceil(P.pendingMinSec - this.pendingSec)),
+      secLeft: Math.max(0, Math.ceil(this.pace.pendingMinSec - this.pendingSec)),
+      secTotal: this.pace.pendingMinSec,
+      kind: card.kind,
     };
   }
 

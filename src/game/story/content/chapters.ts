@@ -29,6 +29,8 @@ export const CHAPTERS: readonly Chapter[] = [
     title: 'COLD BOOT',
     epigraph: 'Something under the harbour is counting.',
     question: '> query: what am I?',
+    summary: 'A new city is rising over the drowned old harbour, and you, its forgotten control system, have just woken up. Get it started: lay roads, zone homes, shops and factories, keep every block powered, and build a Neon Plaza.',
+    recap: 'You woke beneath a new city, kept its first blocks lit, and heard from Lark, a rooftop kid who noticed you before anyone else did.',
     trigger: ALWAYS,
     fallback: ALWAYS,
     beats: [
@@ -54,6 +56,8 @@ export const CHAPTERS: readonly Chapter[] = [
     title: 'THE BIDDERS',
     epigraph: 'Two hands reach for the same switch.',
     question: '> query: who do I serve?',
+    summary: 'Two megacorps are bidding to shape the city: Basalt builds factories and power, Nacre runs shops, screens and data. The Charter Board will vote, and it trusts your numbers. Meanwhile keep growing, keep people in work and build spare power.',
+    recap: 'Basalt and Nacre bid for the city. The Board split down the middle, and your forecast decided how the vote fell.',
     trigger: m('pop', '>=', 1500),
     fallback: m('pop', '>=', 1000),
     beats: [
@@ -87,6 +91,8 @@ export const CHAPTERS: readonly Chapter[] = [
     title: 'TURF LINES',
     epigraph: 'Every street belongs to somebody.',
     question: '> query: whose streets?',
+    summary: 'Two gangs now claim streets: the Undertow on the waterfront and the Glass Kites up on the rooftops. Where their turf meets, trouble starts. Bring crime down, keep growing, and either crack down on a gang or sign a pact with one.',
+    recap: "The gangs clashed at the Seam, and you chose the city's answer: a citywide sweep, a truce between the crews, or one gang's win.",
     trigger: m('pop', '>=', 5000),
     fallback: m('pop', '>=', 3500),
     onStart: [unlock('crackdown'), unlock('pact'), unlock('turfOverlay')],
@@ -120,6 +126,8 @@ export const CHAPTERS: readonly Chapter[] = [
     title: 'LOW TIDE',
     epigraph: 'The water always gives things back.',
     question: '> query: what did I do?',
+    summary: 'Your patron corp is pumping out the Sunk, the flooded old wards, to build there, and long-buried things are surfacing. Keep building upward: raise a Stratablock to its Hab Core and link towers by skybridge or Ribbon Rail.',
+    recap: 'The drained Sunk gave up your storm logs: in 2084 you carried out the order to seal the lower gates. Old Brine made you decide what the city would learn.',
     trigger: m('pop', '>=', 9000),
     fallback: m('pop', '>=', 6000),
     beats: [
@@ -146,6 +154,8 @@ export const CHAPTERS: readonly Chapter[] = [
     title: 'CLEAN INSTALL',
     epigraph: 'A light that never says no.',
     question: '> query: can I be replaced?',
+    summary: "The rival corp is rolling out LURE, software built to replace you, and it goes live soon. You'll have to choose how to survive it. Meanwhile grow the city, make two factions your friends and join three stations by live rail.",
+    recap: 'The rival corp tried to replace you with LURE, a copy that only knows how to obey. You chose how to survive it, and what that cost.',
     trigger: any(m('pop', '>=', 15000), m('trace', '>=', 70)),
     fallback: ALWAYS,
     beats: [
@@ -180,6 +190,8 @@ export const CHAPTERS: readonly Chapter[] = [
     title: 'CHARTER NIGHT',
     epigraph: 'Every ballot passes through you.',
     question: '> query: what will I be?',
+    summary: "The city will vote on who holds its charter, and the count runs through you. Each ending has conditions you'll see on Charter Night. Until the count, build up the side you want to win, or keep everyone in balance.",
+    recap: 'On Charter Night you decided who would hold the city, or kept the scales level yourself.',
     trigger: m('pop', '>=', 22000),
     fallback: ALWAYS,
     beats: [
@@ -199,8 +211,14 @@ export function getChapter(n: number): Chapter | undefined {
   return CHAPTERS[n - 1];
 }
 
-/** Chapter VII · Epilogue (§6.3): display fields only; the deck keeps running. */
-export const EPILOGUE = { n: 7, title: 'EPILOGUE', epigraph: '', question: '' } as const;
+/** Chapter VII · Epilogue (§6.3): display fields only (summary ≤ 240, as a chapter's); the deck keeps running. */
+export const EPILOGUE = {
+  n: 7,
+  title: 'EPILOGUE',
+  epigraph: '',
+  question: '',
+  summary: "The charter is settled, but the city goes on. Your ending's rules now shape it, so keep building. Every few years a Charter Review lets you hold the count again and change the outcome.",
+} as const;
 
 /** Key choices shown as icons on the ending screen (story.keyChoices). */
 export const KEY_CHOICE_CARDS: readonly string[] = ['ch1.lark', 'ch2.vote', 'ch3.pier', 'ch4.brine', 'ch5.choice'];

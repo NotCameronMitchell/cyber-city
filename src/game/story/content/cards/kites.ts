@@ -14,6 +14,7 @@ export const KITES_CARDS: readonly Card[] = [
     queuedOnly: true,
     when: noFlag('larkKnows'),
     body: "lark: 'ok so you're still there. i can see the pump channel blink when i type. you can stay dark, moth. but i'm a kite. we're very patient and very annoying.'",
+    brief: "Lark of the Glass Kites knows something answered her, and she's still trying to reach you. Talking makes a friend, but she'll know you exist. Changing your channel key shuts her out, and she won't like it.",
     choices: [
       choice('Answer her this time.', favor('kites', 12), trace(4), setFlag('larkKnows')),
       choice('Blink once. Say nothing.', favor('kites', 4), trace(1)),
@@ -29,6 +30,7 @@ export const KITES_CARDS: readonly Card[] = [
     weight: 10,
     cooldown: 360,
     body: "lark: 'we kited a nacre uplink. free net for all of shadeside, ha. wasps are hunting the relay tho. hide it in your traffic? nobody looks twice at a moth.'",
+    brief: 'The Kites stole a Nacre network link to give the streets free internet, and police drones are hunting it. Hide it in your traffic to help the Kites and local shops, skim money off it, or hand it to Nacre.',
     choices: [
       choice('Hide the relay.', favor('kites', 12), favor('nacre', -8), mod(180, { demandCom: 0.05 }), trace(3)),
       choice('Hide it. Skim it.', favor('kites', 4), income('Relay skim', 150, 12), trace(4)),
@@ -43,6 +45,7 @@ export const KITES_CARDS: readonly Card[] = [
     when: all(m('count.precinct', '>=', 2), m('turf.kites', '>=', 30)),
     once: true,
     body: "lark: 'wasps caught fen. he's fourteen. they'll book him as a signal thief, six years. you run their door locks, moth. it's one door. please.'",
+    brief: "Police drones caught Fen, a young Kite, stealing signal, and he faces years in jail. You run the door locks. Freeing him wins the Kites but angers the Board and risks exposure. You'll hear how it turns out.",
     choices: [
       choice('Open one door.', favor('kites', 15), favor('board', -8), trace(6), setFlag('fen', 'free'), queue('wh.fenFree', 180)),
       choice('Lose his paperwork.', favor('kites', 8), favor('board', -2), trace(3), setFlag('fen', 'free'), queue('wh.fenFree', 180)),
@@ -59,6 +62,7 @@ export const KITES_CARDS: readonly Card[] = [
     weight: 10,
     cooldown: 720,
     body: "lark: 'that skybridge over {district} is the best thing you ever built. we wanna paint it. kite-wing big, glow paint. nacre will hate it. that's the point. say yes.'",
+    brief: 'The Kites want to paint a huge glowing kite on your skybridge in {district}. Yes thrills them and plants their turf there, but annoys Nacre. Painting it Nacre pink costs money and keeps both content.',
     choices: [
       // flag mural switches the bridge art variant.
       choice('Say yes.', favor('kites', 10), favor('nacre', -6), turfSeed('kites', 'spot', 60), setFlag('mural')),
@@ -75,6 +79,7 @@ export const KITES_CARDS: readonly Card[] = [
     weight: 12,
     cooldown: 360,
     body: "lark: 'funny thing. got a file says {city} has a mind living in the meters. would play great on every screen at once. or it stays in my pocket. what's my pocket worth?'",
+    brief: "Lark is angry with you and has evidence that a mind lives in the city's systems. She'll sell it. Paying buys her silence. Calling her bluff could blow your cover wide open. Nacre's secrets are another way to pay.",
     choices: [
       choice('Pay 5,000 for the file.', funds(-5000), trace(-8), favor('kites', 5)),
       dflt('Call her bluff.', trace(12), favor('kites', -5)),
@@ -89,6 +94,7 @@ export const KITES_CARDS: readonly Card[] = [
     when: m('standing.kites', '>=', 30),
     star: 11,
     body: "lark: 'my mum logged a ping off the dead pump channel. every night, 02:17, six years. she called it the heartbeat. she died thinking it was a broken relay. was it you, moth?'",
+    brief: "Lark's late mother logged a strange nightly signal from the dead pump channel for years. Lark wants to know if it was you. Answering returns a piece of your lost memory, and honesty means a lot to her.",
     choices: [
       choice("'Yes. It was me.'", log(11), favor('kites', 8), trace(2)),
       choice("'I don't know yet.'", log(11), favor('kites', 3)),
@@ -102,6 +108,7 @@ export const KITES_CARDS: readonly Card[] = [
     title: 'STRING CUT',
     when: m('standing.kites', '<=', -60),
     body: "At 3 a.m. every data hub in {city} blinks out. On each dead screen, the same drawing: a kite, its string cut. Lark doesn't sign it. She doesn't need to.",
+    brief: 'The Kites are now Hostile to you and have knocked out every Data Hub in {city}. Rebuild them now for a price, leave them dark for a while, or make amends with Lark to win the Kites back.',
     choices: [
       choice('Rebuild the links: 4,000.', funds(-4000)),
       dflt('Let them stay dark.', offline(['datahub'], 'all', 20)),

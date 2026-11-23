@@ -589,10 +589,27 @@ export interface StoryState {
   seam: number | null;
   /**
    * Unpaused real seconds since the last chapter closed (or Ch1 opened): the
-   * STORY_PACING.chapterMinSec floor reads it. Saved so a reload can't reset
+   * pace's chapterMinSec floor (STORY_PACE) reads it. Saved so a reload can't reset
    * the floor. WP-A addition; missing = 0.
    */
   chapterSec?: number;
+  // ── Pacing pass (docs/PACING.md): saved unpaused clocks, so a reload neither resets nor skips them ──
+  /** Unpaused seconds since the current chapter started (the quiet build window). Missing = long ago. */
+  sinceStartSec?: number;
+  /** Unpaused seconds since the last deck delivery (the deck gap). Missing = 0 (one gap after an old save loads). */
+  deckSec?: number;
+  /** Unpaused seconds since the last card closed or a story message arrived (the beat gap). Missing = long ago. */
+  frontSec?: number;
+  /**
+   * The story message waiting for the player (a beat, Silt Log or chapter reward that
+   * does not open by itself, docs/PACING.md). `read` once it has been opened (its onShow
+   * ran and it counts as shown). Chapter progress waits until it is answered. Missing = none.
+   */
+  waiting?: { card: string; tick: number; spot: number; read?: boolean } | null;
+  /** Factions whose intro ("who is this?") the player has seen on a card. Missing = none. */
+  met?: FactionId[];
+  /** Tick goal waivers started counting in this chapter (720 d in AND the floor met), null before. */
+  waiveFrom?: number | null;
 }
 
 /** Cached turf counts, derived (not saved). Written by story/turf.ts after every update. */
@@ -756,7 +773,15 @@ export type Hint =
   | { k: 'timed'; months: number }
   | { k: 'unlock' }
   | { k: 'log' }
-  | { k: 'maybe' };
+  | { k: 'maybe' }
+  /** Knocks buildings offline (an `offline` effect). */
+  | { k: 'offline' }
+  /** Empties blocks (an `abandon` effect). */
+  | { k: 'abandon' }
+  /** Leads to another card (a `queue` of a beat, faction or system card; whispers don't count). */
+  | { k: 'follow' }
+  /** Opens Charter Night (a `charterNight` effect). */
+  | { k: 'charter' };
 
 export interface ActionView {
   label: string;
@@ -784,6 +809,37 @@ export interface CardView {
    */
   autoInSec?: number;
   choices: { label: string; hints: Hint[]; effectsText: string; locked?: string; isDefault: boolean }[];
+  /** Card.brief with tokens filled: the plain-language "What's going on" (clarity pass). */
+  brief?: string;
+  /** The first card this faction speaks on in this city: show its intro (Faction.about) open. */
+  firstMeet?: boolean;
+  /** Opened by the player from a banner / the goal chip / COMMS (not forced): it may go back with Later. */
+  fromMessage?: boolean;
+}
+
+/** A message waiting for the player (pacing pass, docs/PACING.md). */
+export interface MessageView {
+  id: string;
+  /** 'story': a beat, Silt Log or chapter reward (game.openWaiting); 'comms': the pending COMMS card (game.openPending). */
+  slot: 'story' | 'comms';
+  kind: Card['kind'];
+  title: string;
+  faction: FactionId | null;
+  /** Speaker line, e.g. 'Ilse Marrow' or 'MOTH'. */
+  from: string;
+  /** Chapter progress waits until it is read (story messages). */
+  required: boolean;
+}
+
+/** One finished chapter in the goal drawer's "Story so far" (clarity pass). */
+export interface ChapterRecapView {
+  n: number;
+  numeral: string;
+  title: string;
+  /** Chapter.recap ('' when the content has none). */
+  recap: string;
+  /** The key choice made in it, as its label (e.g. 'Project a Basalt win.'), if any. */
+  choices: string[];
 }
 
 /** Plain data for the UI, every token already filled. Cached; rebuilt on story events. */
@@ -796,13 +852,15 @@ export interface StoryView {
     phase: StoryState['phase'];
     /**
      * Every goal, required beat and queued optional beat is done but the chapter
-     * is still settling (STORY_PACING.chapterMinSec of unpaused play since the
+     * is still settling (the pace's chapterMinSec of unpaused play since the
      * last chapter closed): whole unpaused seconds left before it closes (≥ 1).
      * Absent otherwise. The director rebuilds the view when this whole second
      * changes, so it ticks between sim days. The goal chip and drawer show it
      * as "closes in m:ss". WP-A addition.
      */
     closesInSec?: number;
+    /** Chapter.summary, tokens filled: what is happening now and what to work toward (clarity pass). Absent while the chapter waits to start. */
+    summary?: string;
   };
   goals: { id: string; label: string; done: boolean; waived: boolean; now: string; need: string; progress: number }[];
   countdownDays: number | null;
@@ -831,12 +889,34 @@ export interface StoryView {
     penalties: string[];
     retiredLabel?: string;
     claim?: string;
+    /** Faction.about (plain-language intro), once visible (clarity pass). */
+    about?: string;
   }[];
   trace: { value: number; revealed: boolean; frozen: boolean; retired: boolean };
   /** The open card. */
   card: CardView | null;
-  pending: { id: string; title: string; faction: FactionId; daysLeft: number; secLeft: number } | null;
-  banner: { id: string; title: string; faction: FactionId } | null;
+  pending: {
+    id: string;
+    title: string;
+    faction: FactionId;
+    daysLeft: number;
+    secLeft: number;
+    /** The pace's full unpaused wait (for the countdown ring). Pacing pass addition. */
+    secTotal?: number;
+    /** 'faction', 'hostile' (⚑) or 'system'. Pacing pass addition. */
+    kind?: Card['kind'];
+  } | null;
+  /**
+   * The arrival cue for the newest message (faction card in COMMS, or a story message):
+   * `faction` is null for MOTH, LURE and system speakers. Pacing pass: was faction-only.
+   */
+  banner: { id: string; title: string; faction: FactionId | null; kind?: Card['kind']; from?: string; slot?: 'story' | 'comms' } | null;
+  /** Messages waiting for the player, the story message first (pacing pass). */
+  messages: MessageView[];
+  /** Finished chapters, oldest first, with their recaps and key choices (clarity pass). */
+  storySoFar: ChapterRecapView[];
+  /** The story pace in effect (Settings.storyPace). */
+  pace: 'relaxed' | 'normal' | 'brisk';
   comms: {
     tick: number;
     date: string;
@@ -850,7 +930,7 @@ export interface StoryView {
   coherence: number;
   unlocked: { factions: boolean; comms: boolean; turfOverlay: boolean };
   ending: { id: EndingId; variant: 'lamplight' | null; keyChoices: { card: string; choice: number }[] } | null;
-  titleCard: { numeral: string; title: string; epigraph: string; question: string; coherence: number } | null;
+  titleCard: { numeral: string; title: string; epigraph: string; question: string; coherence: number; summary?: string } | null;
 }
 
 /** Everything story-specific the renderer reads, once per frame (§9). */

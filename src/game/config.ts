@@ -1,4 +1,4 @@
-import type { BuildingType, ServiceEffect, ToolId } from './types';
+import type { BuildingType, ServiceEffect, StoryPace, ToolId } from './types';
 import { ZoneType } from './types';
 import type { BuildingGate, CorpId, CrownId, FactionId, GangId, ModPatch, Unlockable } from './story/types';
 
@@ -547,11 +547,10 @@ export const COHERENCE = { base: 4, perLog: 8, max: 100 } as const;
 export const STORY_PACING = {
   cardChance: 0.35,
   minDaysBetween: 60,
-  minActiveSecBetween: 120,
-  beatGapSec: 10,
+  /** Unpaused seconds between deck deliveries for urgent system cards (bailout, the Clip); faction cards use the pace. */
+  systemGapSec: 120,
   beatMuteDays: 30,
   pendingDays: 20,
-  pendingMinSec: 60,
   /** A Hostile faction's ⚑ repeats at most this often; never in two deck slots running (pacing.ts). */
   hostileEvery: 360,
   hostileGap: 60,
@@ -562,11 +561,9 @@ export const STORY_PACING = {
   fallbackDays: 720,
   hardFallbackDays: 1440,
   beatFallbackDays: 360,
+  /** Goal waivers start once the chapter has run this many days AND its real-time floor is met. */
   waiverAfterDays: 720,
   waiverEveryDays: 360,
-  /** Unpaused seconds between chapter completions (the boot counts as one): about a session per chapter. */
-  chapterMinSec: 600,
-  maxChain: 3,
   bootDelaySec: 8,
   bootLoadDelaySec: 20,
   whisperEvery: 60,
@@ -578,6 +575,42 @@ export const STORY_PACING = {
   bailoutCooldown: 360,
   logKeep: 60,
 } as const;
+
+/**
+ * Per-pace story pacing (Settings.storyPace, docs/PACING.md). Every clock here is
+ * unpaused real seconds at any sim speed, so speed 3 never compresses the story.
+ */
+export interface PaceTuning {
+  /** Unpaused seconds between chapter completions (the boot counts as one); also holds Ch6's first count. */
+  chapterMinSec: number;
+  /** Quiet build window after a chapter title: no faction / ⚑ cards (urgent system cards still come). */
+  quietSec: number;
+  /** Unpaused seconds between faction deck deliveries. */
+  minActiveSecBetween: number;
+  /** Unpaused seconds between story cards (counted from the last close); direct replies to a choice skip it. */
+  beatGapSec: number;
+  /** Cards that may open in a row after a close (1 = no chains; direct replies always follow). */
+  maxChain: number;
+  /** Unpaused seconds a COMMS card waits before its ‡ default (and pendingDays sim days). */
+  pendingMinSec: number;
+  /** Multiplier on cardChance for the weighted random draw (§7.1 step 5). */
+  cardChanceMul: number;
+}
+
+export const STORY_PACE: Record<StoryPace, PaceTuning> = {
+  // ≥ 24 min a chapter, 5 quiet minutes after each title, a faction card at most every 15 min:
+  // about 12 cards an hour in all (a chapter's own beats and logs are ~10 of them).
+  relaxed: { chapterMinSec: 1440, quietSec: 300, minActiveSecBetween: 900, beatGapSec: 90, maxChain: 1, pendingMinSec: 300, cardChanceMul: 0.5 },
+  // ≥ 14 min a chapter, 3 quiet minutes, a faction card at most every 9 min: about 20 cards an hour.
+  normal: { chapterMinSec: 840, quietSec: 180, minActiveSecBetween: 540, beatGapSec: 45, maxChain: 1, pendingMinSec: 180, cardChanceMul: 0.6 },
+  // The original cadence: one chapter per 10 min, a faction card every 2 min, chains of 2 (~40 cards an hour).
+  brisk: { chapterMinSec: 600, quietSec: 0, minActiveSecBetween: 120, beatGapSec: 10, maxChain: 2, pendingMinSec: 60, cardChanceMul: 1 },
+};
+
+/** The pace for a stored value (anything unknown reads as the default, 'relaxed'). */
+export function paceOf(v: unknown): StoryPace {
+  return v === 'normal' || v === 'brisk' ? v : 'relaxed';
+}
 
 /** Population fallbacks for story unlocks (§5.0); others are story or faction only. */
 export const UNLOCK_FALLBACK_POP: Partial<Record<Unlockable, number>> = {

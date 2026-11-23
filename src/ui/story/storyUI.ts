@@ -5,8 +5,12 @@
 //
 //   rail          always visible above the toolbar (dock slot)
 //   card          beats, faction / ⚑ / system cards, logs, ending cards
-//   banner        incoming faction card (one at a time, never over a card)
-//   title         chapter title card (over everything, 2.2 s)
+//   banner        a message arrived: a COMMS card or a story message (one at a
+//                 time, never over a card); repeats gently while a story
+//                 message waits unread (docs/PACING.md)
+//   title         chapter title card (over everything; longer with a summary).
+//                 While it shows, the director holds story and urgent cards
+//                 (holdTitle) and a card already open waits behind it unshown
 //   sheets        goal drawer · faction sheet · COMMS (one at a time)
 //   charter       Charter Night (and its read-only preview)
 //   ending        ending screen, after the final card and its log close
@@ -28,11 +32,14 @@ import { Comms } from './comms';
 import { EndingScreen } from './endingScreen';
 import { FactionSheet } from './factionSheet';
 import { GoalDrawer } from './goalDrawer';
-import { IncomingBanner } from './incoming';
+import { IncomingBanner, type BannerMessage } from './incoming';
 import { StoryCard } from './storyCard';
 import { StoryRail } from './storyRail';
 
 type Sheet = 'goals' | 'factions' | 'comms';
+
+/** Real seconds between gentle repeats of the banner while a story message waits unread. */
+const RECUE_SEC = 150;
 
 export class StoryUI {
   readonly el: HTMLElement;
@@ -55,6 +62,8 @@ export class StoryUI {
   private endingDelay = 0;
   private seenTick = -1;
   private resumeTimer = 0;
+  /** Real seconds since the last banner for the waiting story message (gentle re-cue). */
+  private cueAge = 0;
   private offs: (() => void)[] = [];
   /** Called when a surface opens or closes (the root collapses the coach / tray). */
   onChange: (() => void) | null = null;
@@ -113,9 +122,21 @@ export class StoryUI {
       if (v.claims.length) this.charter.open(v, true);
       this.layout();
     };
+    this.goals.onRead = (slot) => this.openMessage(slot);
+    this.goals.onPace = () => {
+      this.closeSheets();
+      this.layout();
+      this.ctx.actions.openMenu('settings');
+    };
+    this.comms.onWaiting = () => this.openMessage('story');
     this.charter.onClosed = () => this.layout();
     this.ending.onClosed = () => this.layout();
-    this.title.onClose = () => this.layout();
+    this.title.onClose = () => {
+      // Story cards waited behind the title (director.holdTitle): show whatever is open now.
+      this.ctx.game.story.holdTitle(false);
+      this.lastView = null;
+      this.layout();
+    };
 
     this.wire();
     this.onWorld();
@@ -162,7 +183,10 @@ export class StoryUI {
         epigraph: t?.epigraph ?? '',
         question: t?.question || v.chapter.question,
         coherence: t?.coherence ?? v.coherence,
+        summary: t?.summary ?? v.chapter.summary ?? '',
       });
+      // One modal at a time: the chapter's first card waits until the title closes.
+      this.ctx.game.story.holdTitle(true);
       this.layout();
     });
     on('incoming', (e) => this.queueBanner(e.id));
@@ -177,6 +201,7 @@ export class StoryUI {
   }
 
   private onWorld(): void {
+    this.title.hide();
     this.card.hide();
     this.banner.hide(true);
     this.closeSheets();
@@ -207,8 +232,24 @@ export class StoryUI {
     const done = v.goals.filter((g) => g.done || g.waived).length;
     const next = v.goals.find((g) => !g.done && !g.waived);
     const closes = v.chapter.closesInSec;
-    const tail = next ? ` · ${next.label}${next.now && next.need ? ` · now ${next.now}` : ''}` : closes !== undefined ? ` · closes in ${clock(closes)}` : '';
+    const waiting = v.messages.some((m) => m.slot === 'story');
+    const tail = waiting
+      ? ' · a message is waiting'
+      : next
+        ? ` · ${next.label}${next.now && next.need ? ` · now ${next.now}` : ''}`
+        : closes !== undefined
+          ? ` · closes in ${clock(closes)}`
+          : '';
     this.ctx.game.toast(`Chapter ${v.chapter.numeral} · ${done}/${v.goals.length}${tail}`, 'info');
+  }
+
+  /** Open a waiting message from the drawer, COMMS or the banner. */
+  private openMessage(slot: 'story' | 'comms'): void {
+    this.closeSheets();
+    this.banner.hide(true);
+    this.layout();
+    if (slot === 'story') this.ctx.game.openWaiting();
+    else this.ctx.game.openPending();
   }
 
   private queueBanner(id: string): void {
@@ -219,11 +260,19 @@ export class StoryUI {
     this.showBanner(id);
   }
 
+  /** The banner for a message still waiting (from the director's banner, or the message list). */
+  private bannerFor(v: StoryView, id: string): BannerMessage | null {
+    const m = v.messages.find((x) => x.id === id);
+    if (!m) return null;
+    const b = v.banner && v.banner.id === id ? v.banner : null;
+    return { id, title: b?.title ?? m.title, faction: m.faction, kind: m.kind, from: m.from, slot: m.slot };
+  }
+
   private showBanner(id: string): void {
-    const v = this.view();
-    const b = v.banner && v.banner.id === id ? v.banner : v.pending && v.pending.id === id ? { id, title: v.pending.title, faction: v.pending.faction } : null;
+    const b = this.bannerFor(this.view(), id);
     if (!b) return;
-    this.banner.show(b.id, b.title, b.faction);
+    if (b.slot === 'story') this.cueAge = 0;
+    this.banner.show(b);
   }
 
   // ── Sheets ───────────────────────────────────────────────────────────────
@@ -322,24 +371,36 @@ export class StoryUI {
       } else if (this.bannerWaiting && !this.sheet && !this.charter.isOpen && !this.ending.isOpen) {
         const id = this.bannerWaiting;
         this.bannerWaiting = null;
-        if (v.pending?.id === id) this.showBanner(id);
+        if (v.messages.some((m) => m.id === id)) this.showBanner(id);
       }
     }
+    // Gentle re-cue: while a story message waits unread and nothing else is up, the banner
+    // comes back every couple of minutes of play (never while paused or over a surface).
+    const msg = v.messages.find((m) => m.slot === 'story');
+    if (!msg || this.busy || this.banner.isOpen || this.ctx.game.speed === 0 || this.ctx.modals.depth > 0) {
+      if (!msg) this.cueAge = 0;
+      return;
+    }
+    this.cueAge += dt;
+    if (this.cueAge >= RECUE_SEC) this.showBanner(msg.id);
   }
 
   private sync(v: StoryView): void {
-    // Card.
+    // Card. One modal at a time: a card that opens while the chapter title is up waits
+    // for it (the title's close re-syncs), so a first tap never lands on the wrong surface.
     if (v.card) {
-      // One modal at a time: a beat that opens over Budget / City Report / News (z 50 over
-      // the story layer) would sit hidden behind it while the sim waits, so close the dialog.
-      if (this.card.card?.id !== v.card.id && this.ctx.modals.depth > 0) this.ctx.modals.closeAll();
-      if (this.sheet) this.closeSheets();
-      if (this.charter.isOpen && this.charter.isPreview) this.charter.close();
-      this.banner.hide(true);
-      this.card.show(v.card);
+      if (!this.title.isOpen) {
+        // A beat that opens over Budget / City Report / News (z 50 over the story layer)
+        // would sit hidden behind it while the sim waits, so close the dialog.
+        if (this.card.card?.id !== v.card.id && this.ctx.modals.depth > 0) this.ctx.modals.closeAll();
+        if (this.sheet) this.closeSheets();
+        if (this.charter.isOpen && this.charter.isPreview) this.charter.close();
+        this.banner.hide(true);
+        this.card.show(v.card, v);
+      }
     } else if (this.card.isOpen) this.card.hide();
     // Banner whose card was answered or opened elsewhere.
-    if (this.banner.isOpen && v.pending?.id !== this.banner.id) this.banner.hide(false);
+    if (this.banner.isOpen && !v.messages.some((m) => m.id === this.banner.id)) this.banner.hide(false);
     this.rail.sync(v, this.unread(v));
     if (this.sheet === 'goals') this.goals.sync(v);
     else if (this.sheet === 'factions') this.factions.sync(v);

@@ -27,6 +27,7 @@ import {
   STACK_STAGES,
   ZONES,
   isBuildingTool,
+  paceOf,
   zoneDefFor,
 } from './config';
 import { Emitter, type GameEventMap } from './events';
@@ -47,6 +48,7 @@ export const DEFAULT_SETTINGS: Settings = {
   quality: 'high',
   showFps: false,
   events: true,
+  storyPace: 'relaxed',
 };
 
 /** City names are capped at this many characters (§1.6; lint assumes 24). */
@@ -104,7 +106,9 @@ export class Game {
   private storyResumeSpeed: number | null = null;
 
   constructor() {
-    this.settings = { ...DEFAULT_SETTINGS, ...this.readSettings() };
+    const stored = this.readSettings();
+    // Older stored settings have no storyPace (or an unknown one): they read as 'relaxed'.
+    this.settings = { ...DEFAULT_SETTINGS, ...stored, storyPace: paceOf(stored.storyPace) };
     const saved = this.readSave();
     let world: World | null = null;
     if (saved) {
@@ -185,9 +189,13 @@ export class Game {
   }
 
   updateSettings(patch: Partial<Settings>) {
+    const pace = this.settings.storyPace;
     this.settings = { ...this.settings, ...patch };
+    this.settings.storyPace = paceOf(this.settings.storyPace);
     this.sim.options.events = this.settings.events;
     storageSet(SETTINGS_KEY, JSON.stringify(this.settings));
+    // The director reads the pace live: a change applies at once (floors, gaps, timers, the view).
+    if (this.settings.storyPace !== pace) this.story.markDirty();
     this.events.emit('settings');
   }
 
@@ -293,6 +301,10 @@ export class Game {
   }
   openPending() {
     this.story.openPending();
+  }
+  /** Open the story message waiting on the goal chip / banner (a beat, Silt Log or chapter reward). */
+  openWaiting() {
+    this.story.openWaiting();
   }
   later() {
     this.story.later();

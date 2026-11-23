@@ -125,3 +125,21 @@ lands (a valid v2 save per §10.8). Turf, rail and links are not saved yet.
   multipliers ≥ 0.
 - New tools/overlay are **not** in the toolbar or overlay picker yet (D adds the Sky/Deals
   groups and Turf).
+
+## Pacing and clarity pass (additive, docs/PACING.md)
+
+- `Settings.storyPace: StoryPace` ('relaxed' | 'normal' | 'brisk', default 'relaxed'); `STORY_PACE`,
+  `PaceTuning`, `paceOf()` in config. `STORY_PACING` lost `chapterMinSec`, `minActiveSecBetween`,
+  `beatGapSec`, `maxChain`, `pendingMinSec` (now per pace) and gained `systemGapSec`.
+- `StoryState` (all optional): `sinceStartSec`, `deckSec`, `frontSec`, `waiting`, `met`, `waiveFrom`.
+- Director: `openWaiting()`, `get pace`, `get paceId`; `DirectorHost.settings?`. Game: `openWaiting()`.
+- `CardView`: `brief?`, `firstMeet?`, `fromMessage?`. `StoryView`: `messages`, `storySoFar`, `pace`,
+  `chapter.summary?`, `titleCard.summary?`, `factions[].about?`, `pending.secTotal?` / `kind?`;
+  `banner.faction` may be null (MOTH / system messages) and gains `kind?`, `from?`, `slot?`.
+- `pacing.ts`: `deckGate()` ('none' | 'urgent' | 'all'; `DeckGateInput.waiting?`: an unread story
+  message holds back everything but the urgent cards), `URGENT_SYSTEM`, `recentDeckCards()`;
+  `drawCard(..., urgentOnly)`; `pendingExpired(world, tick, sec, pace)`.
+- Director: `holdTitle(on)` (the story UI holds story and urgent cards while the chapter title shows,
+  at most 20 s). `Hint` gains `offline`, `abandon`, `follow`, `charter`. `StoryView.chapter.summary`
+  is absent while the chapter waits to start. `story.met` missing in a save = worked out on load
+  from the cards already seen.

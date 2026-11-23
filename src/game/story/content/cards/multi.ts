@@ -14,6 +14,7 @@ export const MULTI_CARDS: readonly Card[] = [
     weight: 10,
     cooldown: 720,
     body: "Sallow and Oduya meet on a rooftop neither owns. They agree on one thing: whoever keeps 'helping' the Board costs them both. Pick a side by spring.",
+    brief: "Basalt and Nacre both like you, and both suspect you're helping the Board. They want you to pick one of them. Siding with one costs you the other. Making them bid pays well, but they'll trust you less.",
     choices: [
       choice('Side with Basalt.', favor('basalt', 10), favor('nacre', -12)),
       choice('Side with Nacre.', favor('nacre', 10), favor('basalt', -12)),
@@ -31,6 +32,7 @@ export const MULTI_CARDS: readonly Card[] = [
     weight: 10,
     cooldown: 360,
     body: "Undertow salt and Kite signal now trade on one corner in {district}: the city's first joint black market. Loud, crowded, profitable. The Board wants it gone by Friday.",
+    brief: 'The Undertow and the Kites opened a shared black market in {district}, where their turf meets. Letting it run helps shops and the gangs but irks the Board. A quiet tax pays you. Shutting it down needs a Precinct.',
     choices: [
       dflt('Let it trade.', favor('undertow', 5), favor('kites', 5), favor('board', -8), mod(180, { demandCom: 0.06, crimeAdd: 0.03 })),
       choice('Tax it quietly.', income('Corner levy', 250, 12), mod(360, { traceMonthly: 1 }), favor('undertow', 2), favor('kites', 2)),
@@ -57,6 +59,7 @@ export const SYSTEM_CARDS: readonly Card[] = [
     // 360 d and a bond that repays less than it lends: bailouts can't stack into a spiral.
     cooldown: 360,
     body: 'The treasury is dry. Marrow offers a civic bond. {patron} offers cash with a smile. Brine offers salt in a paper bag. Every option is a leash. Pick the one that chafes least.',
+    brief: "The city is deep in debt, so building has stopped. Three lenders offer help. The Board's bond is repaid slowly. {patron}'s loan makes building pricier for a while. Brine's cash is quick, but dirty.",
     choices: [
       dflt('Take the civic bond.', funds(10000), income('Civic bond', -250, 24), favor('board', 3)),
       choice("Take {patron}'s credit.", funds(15000), mod(180, { buildCostMul: 1.15 }), favor('patron', 5)),
@@ -83,6 +86,7 @@ export const SYSTEM_CARDS: readonly Card[] = [
       mod(360, { approvalAdd: -5 }, 'The Clip'),
     ],
     body: 'Every feed in {city} plays the same clip: a street grid blinking in perfect rhythm, block after block, like breathing. You. The city knows something lives in its wires. It wants to hear what.',
+    brief: "The city has found out that something lives in its systems: you. Trust dips and the Board and corps are rattled. Now choose who hears from you first. This isn't a loss. The story goes on.",
     choices: [
       choice('Tell the Board first.', favor('board', 10), favor('tuning', 5)),
       choice('Tell the street first.', favor('undertow', 5), favor('kites', 5), favor('tuning', 5)),

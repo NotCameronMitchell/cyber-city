@@ -463,6 +463,37 @@ describe('tokens, hints and effect text', () => {
     expect(hintsFor(w, [])).toEqual([]);
   });
 
+  it('hint chips: buildings offline, emptied blocks, Charter Night and a follow-up card (never a whisper)', () => {
+    expect(
+      hintsFor(w, [
+        { t: 'queue', card: 'ch3.winner', days: 0 },
+        { t: 'offline', what: 'plant', n: 1, days: 20 },
+        { t: 'abandon', at: 'spot', r: 3, n: 4 },
+        { t: 'charterNight' },
+      ]),
+    ).toEqual([{ k: 'offline' }, { k: 'abandon' }, { k: 'charter' }, { k: 'follow' }]);
+    expect(hintsFor(w, [{ t: 'queue', card: 'wh.clerk', days: 180 }])).toEqual([]); // the ticker only
+    expect(effectsText(w, [{ t: 'queue', card: 'ch3.winner', days: 0 }])).toBe('a follow-up next');
+    expect(effectsText(w, [{ t: 'queue', card: 'kt.probe', days: 90 }])).toBe('a follow-up later');
+    expect(effectsText(w, [{ t: 'queue', card: 'wh.clerk', days: 180 }])).toBe('No effect.');
+  });
+
+  it('every story choice that does something says so under its label (no "no visible effect" over a real effect)', () => {
+    // Effects a player can't see on the choice line, and that do nothing visible on their own.
+    const silent = new Set<Effect['t']>(['flag', 'news']);
+    const bad: string[] = [];
+    for (const c of STORY_CONTENT.cards) {
+      if (c.choices.length < 2) continue; // a lone "Continue." shows no summary
+      c.choices.forEach((ch, i) => {
+        const fx = ch.fx ?? [];
+        if (hintsFor(w, fx).length) return;
+        const loud = fx.filter((e) => !silent.has(e.t) && !(e.t === 'queue' && STORY_CONTENT.cards.find((k) => k.id === e.card)?.kind === 'whisper'));
+        if (loud.length) bad.push(`${c.id} [${i}] "${ch.label}": ${loud.map((e) => e.t).join(', ')}`);
+      });
+    }
+    expect(bad).toEqual([]);
+  });
+
   it('effect text reads like the spec notation', () => {
     expect(effectsText(w, [{ t: 'favor', f: 'board', v: 5 }, { t: 'trace', v: -2 }, { t: 'funds', v: 3000 }])).toBe(
       'Board +5 · Trace −2 · +3,000 CR',

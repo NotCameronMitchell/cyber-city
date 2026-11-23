@@ -4,10 +4,11 @@
 //
 // Pure decisions: nothing here mutates story state. The director applies the
 // result (delivery, seen ticks, queue drops). Time comes in two clocks:
-// sim days (world.tick) and unpaused real seconds (director.activeSec).
+// sim days (world.tick) and unpaused real seconds (the saved story clocks,
+// paced by Settings.storyPace through STORY_PACE, docs/PACING.md).
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { FACTION_IDS, STORY_PACING } from '../config';
+import { FACTION_IDS, STORY_PACING, type PaceTuning } from '../config';
 import type { Rng } from '../rng';
 import type { World } from '../world';
 import { evalCond, storyContent } from './conditions';
@@ -20,8 +21,13 @@ const P = STORY_PACING;
 
 /** Card kinds the monthly deck draw delivers (step 1 follow-ups included). */
 export const DECK_KINDS: ReadonlySet<Card['kind']> = new Set<Card['kind']>(['faction', 'hostile', 'system']);
-/** Card kinds shown as blocking "front" cards (beats, logs, endings). */
+/** Card kinds the director delivers as story ("front") cards (beats, logs, endings). */
 export const FRONT_KINDS: ReadonlySet<Card['kind']> = new Set<Card['kind']>(['beat', 'log', 'ending']);
+/**
+ * System cards urgent enough to open by themselves and pause (docs/PACING.md): the
+ * bailout and the Clip. Every other deck card waits in COMMS behind a banner.
+ */
+export const URGENT_SYSTEM: ReadonlySet<string> = new Set(['sys.bailout', 'sys.revealed']);
 
 /** The faction a card speaks for (patron / rival resolved now), or null for MOTH / system / LURE. */
 export function cardFaction(world: World, card: Card): FactionId | null {
@@ -41,23 +47,50 @@ export function cardFactions(world: World, card: Card): FactionId[] {
   return out;
 }
 
-/** Inputs for the deck gates (§7.1 "Gates for every deck card"). */
+/** Inputs for the deck gates (§7.1 "Gates for every deck card", docs/PACING.md). */
 export interface DeckGateInput {
   /** A card is open (any kind) or Charter Night is up. */
   open: boolean;
-  /** A faction card waits in COMMS. */
+  /** A card waits in COMMS. */
   pending: boolean;
-  /** A beat (or other front card) is due but not yet shown. */
+  /** A story card (beat, log, reward) is due but not delivered yet (it may be queued behind a waiting message). */
   frontDue: boolean;
-  activeSec: number;
-  lastCardSec: number;
+  /**
+   * A story message waits unread (story.waiting). It may wait as long as the player
+   * likes, so it holds back faction, ⚑ and other deck cards but never the urgent ones.
+   */
+  waiting?: boolean;
+  /** Unpaused seconds since the last deck delivery (story.deckSec). */
+  sinceCardSec: number;
+  /** Unpaused seconds since the last card closed or a story message arrived (story.frontSec). */
+  sinceFrontSec: number;
+  /** Unpaused seconds since the chapter title (story.sinceStartSec): the quiet build window. */
+  sinceStartSec: number;
+  pace: PaceTuning;
 }
 
-/** All deck gates hold: nothing open or pending, 120 unpaused s since the last card, no beat open, due or recent. */
+/**
+ * Which deck steps may run now: 'none'; 'urgent' (only the bailout and the Clip:
+ * 120 s since the last delivery, nothing open or pending, no story card about to be
+ * delivered; an unread story message does not hold them back); or 'all' (also nothing
+ * waiting, the pace's deck gap, the beat gap since the last card, past the quiet
+ * window after a chapter title, and no beat in the last 30 d).
+ */
+export function deckGate(world: World, g: DeckGateInput): 'none' | 'urgent' | 'all' {
+  if (g.open || g.pending) return 'none';
+  // A story card due with nothing waiting is delivered within the beat gap: let it go first.
+  if (g.frontDue && !g.waiting) return 'none';
+  if (g.sinceCardSec < P.systemGapSec) return 'none';
+  if (g.waiting || g.frontDue) return 'urgent';
+  if (g.sinceCardSec < g.pace.minActiveSecBetween) return 'urgent';
+  if (g.sinceStartSec < g.pace.quietSec) return 'urgent';
+  if (g.sinceFrontSec < g.pace.beatGapSec) return 'urgent';
+  return world.tick - world.story.lastBeatTick >= P.beatMuteDays ? 'all' : 'urgent';
+}
+
+/** Every deck gate holds (deckGate is 'all'). */
 export function deckGatesOpen(world: World, g: DeckGateInput): boolean {
-  if (g.open || g.pending || g.frontDue) return false;
-  if (g.activeSec - g.lastCardSec < P.minActiveSecBetween) return false;
-  return world.tick - world.story.lastBeatTick >= P.beatMuteDays;
+  return deckGate(world, g) === 'all';
 }
 
 /** Days a card waits after showing before it can be drawn again. */
@@ -118,13 +151,15 @@ export interface DrawResult {
  * winning card (or null) and the indices of due queue entries that turned out
  * ineligible (the caller drops them). Steps 1–3 skip the 60-day gap and the
  * chance roll. `deckOpen` = `unlock comms` owned: before it only system cards
- * (step 2) can come.
+ * (step 2) can come. `urgentOnly`: only URGENT_SYSTEM cards (the deck gate is
+ * 'urgent'). `cardRateMul` already includes the pace's cardChanceMul.
  */
 export function drawCard(
   world: World,
   rng: Rng,
   deckOpen: boolean,
   cardRateMul: number,
+  urgentOnly = false,
 ): { pick: DrawResult | null; drop: number[] } {
   const idx = storyContent();
   const st = world.story;
@@ -133,6 +168,7 @@ export function drawCard(
   // The chance roll always consumes one draw so runs stay deterministic.
   const roll = rng.next();
 
+  if (urgentOnly) deckOpen = false;
   // 1. A due queued follow-up.
   if (deckOpen) {
     for (let k = 0; k < st.queue.length; k++) {
@@ -147,13 +183,14 @@ export function drawCard(
 
   // 2. A system card whose condition holds.
   for (const card of idx.system) {
+    if (urgentOnly && !URGENT_SYSTEM.has(card.id)) continue;
     if (cardEligible(world, card)) return { pick: { card, step: 'system' }, drop };
   }
   if (!deckOpen) return { pick: null, drop };
 
   // 3. A Hostile faction's ⚑ card (most hostile first). Never two deck slots running:
   //    after a ⚑ the next slot goes to the steps below, so a faction that stays Hostile
-  //    can't crowd out the rest of the deck (the 120 s gate alone spaces slots > 180 d).
+  //    can't crowd out the rest of the deck (the deck gap alone spaces slots > 180 d).
   let hostile: Card | null = null;
   let worst = Infinity;
   const lastWasHostile = st.lastHostileTick > NEVER_TICK && st.lastHostileTick === st.lastCardTick;
@@ -176,10 +213,14 @@ export function drawCard(
 
   if (tick - st.lastCardTick < P.minDaysBetween) return { pick: null, drop };
 
-  // 4. A seasonal card that hasn't shown in the last 300 d.
+  // 4. A seasonal card that hasn't shown in the last 300 d, nor in the last 3 deck slots (on a slow
+  //    pace a deck slot opens about every two sim years, always in the same month: without this
+  //    the same seasonal card would take every slot).
+  const recent = recentDeckCards(world, 3);
   for (const card of idx.seasonal) {
     const last = st.seen[card.id];
     if (last !== undefined && tick - last < P.seasonalGapDays) continue;
+    if (recent.includes(card.id)) continue;
     if (cardEligible(world, card)) return { pick: { card, step: 'seasonal' }, drop };
   }
 
@@ -204,9 +245,21 @@ export function drawCard(
   return { pick: { card: pool[pool.length - 1].card, step: 'random' }, drop };
 }
 
-/** Has a pending faction card waited long enough for its ‡ default (20 sim days AND 60 unpaused s)? */
-export function pendingExpired(world: World, sinceTick: number, waitedSec: number): boolean {
-  return world.tick - sinceTick >= P.pendingDays && waitedSec >= P.pendingMinSec;
+/** The last `n` deck cards answered (or defaulted), newest first, from the saved COMMS log. */
+export function recentDeckCards(world: World, n: number): string[] {
+  const idx = storyContent();
+  const out: string[] = [];
+  const log = world.story.log;
+  for (let k = log.length - 1; k >= 0 && out.length < n; k--) {
+    const c = idx.cards.get(log[k].card);
+    if (c && DECK_KINDS.has(c.kind)) out.push(c.id);
+  }
+  return out;
+}
+
+/** Has a pending COMMS card waited long enough for its ‡ default (20 sim days AND the pace's unpaused seconds)? */
+export function pendingExpired(world: World, sinceTick: number, waitedSec: number, pace: Pick<PaceTuning, 'pendingMinSec'>): boolean {
+  return world.tick - sinceTick >= P.pendingDays && waitedSec >= pace.pendingMinSec;
 }
 
 /** Index of a card's ‡ default choice (else its last unlocked choice, else 0). */

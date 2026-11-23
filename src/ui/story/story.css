@@ -861,6 +861,10 @@
   color: var(--cc-ink-3);
 }
 
+.cc-hc.is-misc {
+  color: var(--cc-ink-2);
+}
+
 /* ── Incoming banner ──────────────────────────────────────────────────────── */
 
 .cc-incoming {
@@ -2956,5 +2960,514 @@
   }
   .cc-ss-expand {
     display: none;
+  }
+}
+
+/* ── Pacing and clarity pass (docs/PACING.md) ─────────────────────────────── */
+
+/* Goal chip: a story message waits ("1 message waiting"), amber, with an envelope. */
+.cc-rail-goal.has-msg .cc-goal-chip {
+  --accent: var(--cc-amber);
+}
+
+.cc-rail-goal.has-msg .cc-goal-next {
+  flex: none;
+  max-width: 62%;
+  color: var(--cc-amber);
+  font-weight: 700;
+}
+
+.cc-rail-goal.has-msg .cc-goal-next::before {
+  content: '✉ ';
+}
+
+/* Story card header: the speaker line is the "who is this?" button. */
+button.cc-scard-who {
+  align-self: stretch;
+  justify-content: center;
+  min-height: 44px;
+  padding: 0;
+  text-align: left;
+  color: inherit;
+  background: none;
+  border: 0;
+  font: inherit;
+}
+
+button.cc-scard-who:disabled {
+  cursor: default;
+}
+
+.cc-scard-whorow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.cc-scard-whohint {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 12px;
+  color: var(--cc-cyan);
+  white-space: nowrap;
+}
+
+.cc-scard-whohint .cc-i {
+  width: 13px;
+  height: 13px;
+}
+
+button.cc-scard-who[aria-expanded='true'] .cc-scard-whohint {
+  color: var(--cc-ink-2);
+}
+
+/* Narrow phones: the hint is just the icon, the kind tag tighter, so names fit. */
+@media (max-width: 400px) {
+  .cc-scard-whohint span {
+    display: none;
+  }
+  .cc-scard-whohint .cc-i {
+    width: 16px;
+    height: 16px;
+  }
+  .cc-scard-kind {
+    padding: 3px 5px;
+    letter-spacing: 0.06em;
+  }
+  .cc-scard-speaker {
+    letter-spacing: 0.12em;
+  }
+}
+
+/* "Who is this?" panel (open on a faction's first card). */
+.cc-scard-about {
+  --tier: var(--cc-ink-2);
+  margin: 2px 0 10px;
+  padding: 8px 10px 8px 12px;
+  font-size: 14px;
+  line-height: 19px;
+  color: var(--cc-ink);
+  background: color-mix(in srgb, var(--fc) 10%, rgba(255, 255, 255, 0.03));
+  border-left: 2px solid var(--fc);
+}
+
+.cc-who-k {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--fc);
+}
+
+.cc-who-name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+  font-size: 14px;
+  line-height: 19px;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.cc-who-name b {
+  color: var(--cc-ink);
+}
+
+.cc-who-sig {
+  flex: none;
+  width: 22px;
+  height: 22px;
+}
+
+.cc-who-standing {
+  margin-top: 2px;
+  font-size: 13px;
+  color: var(--cc-ink-2);
+}
+
+.cc-who-tier {
+  color: var(--tier);
+  font-weight: 700;
+}
+
+.cc-who-text {
+  margin: 6px 0 0;
+}
+
+.cc-who-tip {
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--cc-ink-3);
+}
+
+/* "What's going on": plain language, visibly not the in-voice body. */
+.cc-scard-brief {
+  margin: 0 0 10px;
+  padding: 8px 10px 8px 12px;
+  font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  background: rgba(34, 229, 255, 0.07);
+  border-left: 2px solid var(--cc-cyan);
+}
+
+.cc-brief-k {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-family: var(--cc-font);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--cc-cyan);
+}
+
+.cc-brief-k .cc-i {
+  width: 13px;
+  height: 13px;
+}
+
+.cc-brief-text {
+  margin: 3px 0 0;
+  font-size: 14px;
+  line-height: 20px;
+  color: #e9eefc;
+}
+
+/* Under each choice: what it does, in words. */
+.cc-choice-sum {
+  display: block;
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--cc-ink-2);
+}
+
+.cc-choice-sum.is-none {
+  color: var(--cc-ink-3);
+}
+
+.cc-sum-fav b {
+  font-weight: 700;
+  color: var(--fc);
+}
+
+.cc-sum-fav.is-up {
+  color: var(--cc-green);
+}
+
+.cc-sum-fav.is-down {
+  color: var(--cc-red);
+}
+
+.cc-sum-cr.is-cost {
+  color: var(--cc-amber);
+}
+
+.cc-sum-cr.is-gain {
+  color: var(--cc-green);
+}
+
+.cc-sum-trace.is-up {
+  color: var(--cc-magenta, #ff2bd6);
+}
+
+.cc-sum-trace.is-down {
+  color: var(--cc-green);
+}
+
+.cc-sum-misc.is-harm {
+  color: #ffb3c0;
+}
+
+.cc-sum-sep {
+  color: var(--cc-ink-3);
+}
+
+.cc-scard-legend b {
+  font-size: 13px;
+  font-weight: 700;
+}
+
+/* COMMS: a story message waiting to be read. */
+.cc-crow.is-story .cc-crow-choice.is-msg {
+  color: var(--cc-amber);
+}
+
+/* Chapter title: what's happening. */
+.cc-cht-sum {
+  max-width: 340px;
+  margin-top: 14px;
+  padding: 10px 12px;
+  text-align: left;
+  background: rgba(8, 7, 19, 0.72);
+  border-left: 2px solid var(--cc-cyan);
+}
+
+.cc-cht-sumk {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--cc-cyan);
+}
+
+.cc-cht-sumtext {
+  margin: 4px 0 0;
+  font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  font-size: 15px;
+  line-height: 21px;
+  color: #e9eefc;
+}
+
+/* Goal drawer additions. */
+.cc-gd-main {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.cc-gd-k {
+  margin-bottom: 4px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--cc-ink-3);
+}
+
+.cc-gd-msgs {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.cc-gd-msg {
+  --c: 8px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 56px;
+  padding: 6px 12px;
+  text-align: left;
+  color: var(--cc-ink);
+  background: color-mix(in srgb, var(--fc) 12%, rgba(255, 255, 255, 0.04));
+  border-left: 2px solid var(--fc);
+  clip-path: polygon(0 var(--c), var(--c) 0, 100% 0, 100% calc(100% - var(--c)), calc(100% - var(--c)) 100%, 0 100%);
+}
+
+.cc-gd-msg.is-required {
+  border-left-color: var(--cc-amber);
+}
+
+.cc-gd-msg-sig {
+  flex: none;
+}
+
+.cc-gd-msg-main {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.cc-gd-msg-k {
+  font-size: 12px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--fc);
+}
+
+.cc-gd-msg-title {
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cc-gd-msg-go {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--cc-amber);
+}
+
+.cc-gd-msg-go .cc-i {
+  width: 16px;
+  height: 16px;
+}
+
+.cc-gd-msg-note {
+  font-size: 12px;
+  color: var(--cc-amber);
+}
+
+.cc-gd-sum p {
+  margin: 0;
+  font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  font-size: 14px;
+  line-height: 20px;
+  color: #e9eefc;
+}
+
+.cc-gd-sofar .cc-sofar {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.cc-sofar-row {
+  display: flex;
+  gap: 10px;
+}
+
+.cc-sofar-num {
+  flex: none;
+  width: 28px;
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--cc-cyan);
+  text-align: center;
+}
+
+.cc-sofar-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--cc-ink-2);
+}
+
+.cc-sofar-title {
+  font-size: 13px;
+  letter-spacing: 0.1em;
+  color: var(--cc-ink);
+}
+
+.cc-sofar-choice {
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+  color: var(--cc-amber);
+}
+
+.cc-sofar-choice .cc-i {
+  flex: none;
+  width: 13px;
+  height: 13px;
+  margin-top: 2px;
+}
+
+.cc-gd-pace {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 44px;
+  padding: 0 4px;
+  font-size: 13px;
+  color: var(--cc-ink-2);
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.cc-gd-pace b {
+  color: var(--cc-ink);
+}
+
+.cc-gd-pace-go {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  color: var(--cc-cyan);
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  font-size: 12px;
+}
+
+.cc-gd-pace-go .cc-i {
+  width: 15px;
+  height: 15px;
+}
+
+.cc-gd-glossbtn b {
+  font-size: 20px;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--cc-cyan);
+}
+
+.cc-gd-glossbtn[aria-pressed='true'] {
+  background: rgba(34, 229, 255, 0.16);
+}
+
+.cc-gd-gloss-lead {
+  margin: 0 0 10px;
+  font-size: 13px;
+  color: var(--cc-ink-3);
+}
+
+.cc-gloss {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.cc-gloss-row dt {
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: var(--cc-cyan);
+}
+
+.cc-gloss-row dd {
+  margin: 2px 0 0;
+  font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  font-size: 14px;
+  line-height: 20px;
+  color: var(--cc-ink);
+}
+
+/* Short portrait phones: the title card summary and the card's plain text stay readable. */
+@media (orientation: portrait) and (max-height: 700px) {
+  .cc-cht-sum {
+    margin-top: 8px;
+  }
+  .cc-cht-sumtext {
+    font-size: 14px;
+    line-height: 19px;
+  }
+  .cc-brief-text {
+    font-size: 13px;
+    line-height: 18px;
+  }
+}
+
+/* Landscape phones: the title card summary sits beside nothing; keep it compact. */
+@media (orientation: landscape) and (max-height: 520px) {
+  .cc-cht-sum {
+    margin-top: 6px;
+    padding: 6px 10px;
+    max-width: 560px;
+  }
+  .cc-cht-sumtext {
+    font-size: 14px;
+    line-height: 19px;
   }
 }

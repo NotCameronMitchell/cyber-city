@@ -190,7 +190,17 @@ export interface Settings {
   showFps: boolean;
   /** Random city events (grid hacks, gang surges, corp investments…). */
   events: boolean;
+  /**
+   * How often story messages arrive (docs/PACING.md). 'relaxed' (default) leaves
+   * the most room to build between chapters; 'brisk' is the original cadence.
+   * Older stored settings without it read as 'relaxed'. Never changes sim speed.
+   */
+  storyPace: StoryPace;
 }
+
+/** Story pace setting (docs/PACING.md). */
+export type StoryPace = 'relaxed' | 'normal' | 'brisk';
+export const STORY_PACES: readonly StoryPace[] = ['relaxed', 'normal', 'brisk'];
 
 /** Result of planning an action without executing it (used for previews and execution). */
 export interface ActionPlan {

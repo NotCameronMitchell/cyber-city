@@ -606,16 +606,17 @@ Everything sits on the existing 64×64 grid. There is no second layer.
   - Required beats are the ones listed without "if" in the chapter's Beats line.
   - Optional beats (`ch2.tiebreak`, `ch3.winner`, `ch5.kept`, `ch5.hidden`) count only once a choice has queued them.
 - **Beats:**
-  - Each beat is *chained* (it opens right after the previous card closes, at most 3 in a row), *delayed* (N days later) or *conditional* (when a condition holds).
+  - Each beat is *chained* (right after the previous card), *delayed* (N days later) or *conditional* (when a condition holds). How it is delivered depends on the story pace (docs/PACING.md): on Brisk a chained beat opens right after the previous card closes (at most 2 in a row); on Relaxed and Normal it waits the pace's gap like any other beat.
   - **A conditional beat also fires once its chapter has run 360 d**, whatever the condition says, so a waived goal can't strand it.
   - A `queue` effect that names a beat schedules it as a delayed beat (`+0d` means chained). A `queue` that names a deck card adds it to the deck's follow-up queue (§7.1).
-  - A beat waits while a gesture is in progress (`game.preview != null`) and for 10 unpaused seconds after the last card closed.
-  - Beats pause the sim and restore the previous speed afterwards. They have no *Later* button.
+  - A beat waits while a gesture is in progress (`game.preview != null`) and for the pace's `beatGapSec` (Relaxed 90, Normal 45, Brisk 10 unpaused seconds) after the last card closed, unless it directly answers the choice just made (queued `+0d` by it).
+  - **Only key-choice beats open by themselves** (`ch1.boot`, `ch1.lark`, `ch2.vote`, `ch3.pier`, `ch4.brine`, `ch5.choice`, `ch6.count`) and pause the sim; they have no *Later*. Every other beat, Silt Log and chapter reward arrives as the **waiting story message** (one at a time: banner, goal chip "1 message waiting", COMMS row) while the game keeps running. It counts as shown only when the player opens it, and the chapter waits for it. Opened, it pauses and has *Later*. See docs/PACING.md.
   - A beat whose spot can't be found uses the map centre for `{district}` and skips effects aimed at the spot.
 - **Fallbacks:**
   - Each trigger has a fallback after 720 d of waiting (listed per chapter). After **1,440 d** of waiting, the trigger fires even if the fallback's population gate fails.
-  - **Goal waiver:** after 720 d in a chapter's goals, one unmet goal per 360 d is marked *waived* ("The city moved on without it."), which counts as done.
-  - **Chapter floor:** at most one chapter completes per 600 unpaused real seconds (`chapterMinSec`), counted from the previous completion, or from Ch1's start for Ch1 (the boot counts as a completion). The clock is `story.chapterSec`, which is saved, so a reload neither resets nor skips it. While every goal and beat is done and only the floor holds, the goal chip reads "closes in m:ss" (`view.chapter.closesInSec`). This keeps a chapter near one session at any speed and stops migrated saves chain-firing.
+  - **Goal waiver:** once a chapter has run 720 d **and** its chapter floor is met, one unmet goal per 360 d is marked *waived* ("The city moved on without it."), which counts as done. (Before the floor, nothing is waived: the chapter still has time to run.)
+  - **Chapter floor:** at most one chapter completes per the pace's `chapterMinSec` of unpaused real seconds (Relaxed 1,440, Normal 840, Brisk 600), counted from the previous completion, or from Ch1's start for Ch1 (the boot counts as a completion). Ch6's first count also waits for it. The clock is `story.chapterSec`, which is saved, so a reload neither resets nor skips it. While every goal and beat is done and only the floor holds, the goal chip reads "closes in m:ss" (`view.chapter.closesInSec`; in Ch6 "Charter Night · m:ss" once the year is up). This keeps chapters long enough to build in at any sim speed and stops migrated saves chain-firing.
+  - **Quiet window:** after each chapter title, no faction or ⚑ card for the pace's `quietSec` (Relaxed 300, Normal 180, Brisk 0); urgent system cards still come.
 - **The faction deck** (§7) starts drawing only after `unlock comms` (the Ch1 reward), so no banner ever points at a locked COMMS button.
 - **Unlock fallbacks.** Every story unlock also opens by population, so a stalled chapter never locks the sandbox:
 
@@ -647,7 +648,7 @@ Everything sits on the existing 64×64 grid. There is no second layer.
   | `foundry` | `Unlocked: Foundry Spine. Basalt's fire, on your grid.` |
   | `memorial` | `Unlocked: Sunk Memorial. Eleven thousand names.` |
 
-- **Pacing:** about one session (10–15 min) per chapter, roughly 70–80 min for the main story at speed 1–2. One sim year is 180 s at speed 1 (0.5 s a day) and 60 s at speed 2. The scripted mayor reaches 1,500 residents in about 0.6 years and 5,000 in about 2 years, so the population gates fall early and the 600 s chapter floor sets the pace of Ch1–Ch3; Ch4–Ch6 run on their goals, waivers and fallbacks (headless measure, 15 policies × 3 seeds: Charter Night at 61–66 unpaused / 69–82 wall minutes at speed 1, 53 / 58–68 at speed 2). Confirm in playtest.
+- **Pacing:** set by the story pace (docs/PACING.md). Relaxed (default): about 24 min per chapter, Charter Night at ~155 unpaused / ~160 wall minutes, ~12 cards an hour in all, ~4 an hour that open by themselves. Normal: ~14 min per chapter, Charter Night at ~95 / ~100 min, ~20 cards an hour. Brisk (the original cadence): 10 min per chapter, Charter Night at ~72 / ~80 min, ~38 cards an hour. One sim year is 180 s at speed 1 (0.5 s a day) and 60 s at speed 2; every story clock is unpaused real seconds, so speed only adds sim years per chapter. The scripted mayor reaches 1,500 residents in about 0.6 years and 5,000 in about 2 years, so the population gates fall early and the chapter floor sets the pace of Ch1–Ch3; Ch4–Ch6 run on their goals, waivers and fallbacks (headless measure, steady and greedy builders × 3 seeds). Confirm in playtest.
 
 ### Chapter I · COLD BOOT
 
@@ -799,7 +800,7 @@ sys: `> coherence {coherence}% · src: PS6/storm/2084`
 - **Beats:** `ch5.install` → `ch5.lure` (chained) → `ch5.choice` (+15 d; the key choice) → `ch5.kept` or `ch5.hidden` (chained, if *Show yourself* is chosen).
 
 ##### `ch5.install` · {rival} · CLEAN INSTALL
-> {rival} pushes new firmware to every pump, lamp and lock in {city}. It's called LURE. The release note is one line: 'Whatever lives in this city's wiring ends at midnight on the first.' You have thirty days. LURE is already counting.
+> {rival} pushes new firmware to every pump, lamp and lock in {city}. It's called LURE. The release note is one line: 'Whatever lives in this city's wiring ends at midnight on the first.' LURE is already counting.
 - **Read the release.** → none
 
 ##### `ch5.lure` · LURE · HANDSHAKE
@@ -843,7 +844,7 @@ sys: `> coherence {coherence}% · 15 days to install`
 - **Beats:** `ch6.eve` (starts a 360-day countdown; the goal chip becomes the countdown and Charter Claims) → `ch6.count` (when the countdown ends) → the Charter Night screen (§6).
 
 ##### `ch6.eve` · MOTH · CHARTER NIGHT
-> The charter is up for renewal. In twelve months {city} votes on who holds it, and every faction has filed a claim. The count will run on your wires. Nobody has asked who checks the counter. You have a year to decide what it should say.
+> The charter is up for renewal. {city} votes on who holds it, and every faction has filed a claim. The count will run on your wires. Nobody has asked who checks the counter. Until the polls close, you decide what it should say.
 - **Start the count.** → `countdown 360d`
 
 ##### `ch6.count` · MOTH · THE COUNT
@@ -975,19 +976,23 @@ The post-ending column is data on `Ending` (`post: ModPatch` plus `rules: Ending
 
 **Draw check.** This runs at each month rollover, after the budget, turf and mods have been refreshed, and only once `unlock comms` is owned (§5.0).
 
-**Gates for every deck card** (all must hold):
+**Gates for every deck card** (all must hold; numbers per story pace, docs/PACING.md):
 
-- no card is open or pending;
-- `activeSec − lastCardSec ≥ 120`, where `activeSec` is unpaused real seconds (this is what caps reading load, §8.11);
+- no card is open or pending, no story message waits unread, and the chapter title card is not on screen;
+- `story.deckSec ≥ minActiveSecBetween` (Relaxed 900, Normal 540, Brisk 120 unpaused real seconds since the last deck delivery; this is what caps reading load, §8.11);
+- the chapter's quiet window is over (`story.sinceStartSec ≥ quietSec`: Relaxed 300, Normal 180, Brisk 0);
+- `story.frontSec ≥ beatGapSec` (the last card closed at least the pace's beat gap ago);
 - no beat is open or due, and no beat was shown in the last 30 d.
+
+Urgent system cards (`sys.bailout`, `sys.revealed`) need only nothing open or pending, no title card on screen, no story card about to be delivered, and 120 s since the last deck delivery (`systemGapSec`). An unread story message does **not** hold them back (a message may wait as long as the player likes; the bailout can't). When only that holds, step 2 runs for them alone. Every clock is saved in `world.story`.
 
 **Then the first of these that has a card wins:**
 
 1. a due queued follow-up (from a `queue` effect);
 2. a `sys.*` card whose condition holds (bailout, revealed);
 3. a Hostile faction's ⚑ card, if that faction's last ⚑ was ≥ 360 d ago, any ⚑ was ≥ 60 d ago, and the last deck delivery was not a ⚑ (a faction that stays Hostile takes at most every other draw; the 120 s gate alone spaces draws more than 180 d apart at speed 1);
-4. a *seasonal* card (meta `seasonal`) whose condition holds and that hasn't shown in the last 300 d, if `tick − lastCardTick ≥ 60`;
-5. a weighted random draw, only if `tick − lastCardTick ≥ 60` and `rng < 0.35 × cardRateMul`.
+4. a *seasonal* card (meta `seasonal`) whose condition holds, that hasn't shown in the last 300 d and is not one of the last 3 deck cards answered, if `tick − lastCardTick ≥ 60`;
+5. a weighted random draw, only if `tick − lastCardTick ≥ 60` and `rng < 0.35 × cardRateMul × cardChanceMul` (the pace's multiplier: Relaxed 0.5, Normal 0.6, Brisk 1).
 
 Steps 1 to 3 skip the 60-day gap and the chance roll. Without step 4, a card that needs one exact month (Ballot Night) would appear about once in fifteen years.
 
@@ -1002,9 +1007,9 @@ Steps 1 to 3 skip the 60-day gap and the chance roll. Without step 4, a card tha
 
 **Delivery:**
 
-- Faction cards arrive as an **incoming banner** (§8.3) and wait in COMMS.
-- **No-answer default:** once a card has waited **20 sim days and 60 unpaused real seconds** (both), the **‡ default** applies. A toast says "No answer. {faction} took that as a yes." and the log records it as *(no answer)*. The day count alone would fire in 10 s at speed 1 and about 1 s at speed 3. The real-second timer restarts on load.
-- ⚑ cards and `sys.*` cards open immediately, pause the sim and have no *Later*.
+- Faction cards, ⚑ cards and non-urgent system cards (the Charter Review, Full Recall) arrive as an **incoming banner** (§8.3) and wait in COMMS; the game keeps running.
+- **No-answer default:** once a card has waited **20 sim days and the pace's `pendingMinSec` unpaused real seconds** (Relaxed 300, Normal 180, Brisk 60; both), the **‡ default** applies. A toast says "No answer. {faction} took that as a yes." and the log records it as *(no answer)*. The day count alone would fire in 10 s at speed 1 and about 1 s at speed 3. The real-second timer restarts on load.
+- Only urgent system cards (`sys.bailout`, `sys.revealed`) open immediately, pause the sim and have no *Later*.
 
 **Spot rules** set `{district}` and `at: spot`. The closed list:
 
@@ -1054,7 +1059,7 @@ when `standing.board >= 30` · star 7
 - **Leave the box alone.** ‡ → Board +2
 
 ##### `bd.grant` · Charter Board · A PLAZA WITH HIS NAME
-when `approval >= 60 & chapter >= 4 & !published & !marrowKnows` · w8 · cd 720d
+when `approval >= 60 & (buried | leashed) & !published & !marrowKnows` (after Brine names the signer in `ch4.brine`) · w8 · cd 720d
 > Marrow: 'The bay fund has a surplus and I have an election.' One string: a new plaza named for her father, Aldo Marrow. Founder of the old harbour. Signer of the storm order. She doesn't know. You do.
 - **Name it for him.** → CR +4,000, `credit plaza ×1 ×0`, Board +8, Undertow −8
 - **Take the money. Skip the name.** ‡ → CR +4,000, Board −3
@@ -1408,7 +1413,7 @@ Short lines for events that have no card. Ticker lines are ≤ 90 characters aft
 
 A 48 px row directly above the existing bottom toolbar:
 
-- **Goal chip:** flexible width, drawn 36 px tall inside a 44 px hit area, e.g. `III ▸ ◉◉○`, `III ▸ ◉◉◉ closes in 9:35` while only the chapter floor holds the chapter open (§5.0; it counts down in unpaused real seconds), or `Charter Night · 214d` in Ch6. It pulses on progress.
+- **Goal chip:** flexible width, drawn 36 px tall inside a 44 px hit area, e.g. `III ▸ ◉◉○`, `III ▸ ◉◉◉ closes in 9:35` while only the chapter floor holds the chapter open (§5.0; it counts down in unpaused real seconds), or `Charter Night · 214d` in Ch6. While a story message waits it reads `III ▸ ◉○○ ✉ 1 message waiting` in amber (the chapter goes on once it is read). It pulses on progress and on a new message.
 - **Faction button:** 44 px, the patron's sigil (or the highest-standing faction's, before a patron is set) with a tiny tier ring. Hidden until `unlock factions`.
 - **COMMS button:** 44 px, an envelope with an unread badge, and a countdown ring when a faction card is pending. Hidden until `unlock comms`.
 
@@ -1425,33 +1430,40 @@ The rail hides while a sheet or card is open.
   - a 56 px header: 48 px procedural sigil, the speaker name (12 px caps, tracked), and the faction name (12 px);
   - an optional sys line (12 px monospace);
   - the title (20/24 px);
+  - **What's going on** (`Card.brief`, 14/20 px plain sans in a cyan-edged box, docs/PACING.md);
   - the body (16/23 px, about 42 characters per line, so 280 characters ≈ 7 lines ≈ 161 px);
   - choices: 52 px each with an 8 px gap, a maximum of 4;
   - the footer row (44 px): **Later** on the left (faction cards only), and the no-answer countdown ("auto in 14d") on the right.
   - Total with paddings ≈ 582 px. It fits under the 590 px cap.
-  - If a label wraps (see below) and the total would pass 590 px, the body scrolls. The header, choices and footer never move.
-- **Choice button:** the label (16 px; one line for anything up to about 38 characters in the 326 px button, otherwise two lines and a 68 px button) plus a 12 px hint line generated from the effects:
-  - faction sigil ▲/▼ with 1–3 pips (1 = 1–9, 2 = 10–19, 3 = 20+);
+  - If the text block (sys, title, brief, body, and the "who is this?" panel) passes the space left, it scrolls with a "more below" cue. The header, choices and footer never move, so every choice stays visible at 360 × 640.
+- **Who is this?** The speaker line of a faction card is a button (44 px). The first card a faction speaks on opens a panel under **What's going on** (so the card still opens on its title and brief): name, leader, tier and standing, what they call you, and `Faction.about`. Later taps toggle it and scroll it into view. Saves from before `story.met` count every faction that already spoke on a card as met. The one-time hint legend waits past a faction's first card.
+- **Choice button:** the label (16 px; one line for anything up to about 38 characters in the 326 px button, otherwise two lines and a 68 px button) plus a 12 px **plain summary line** generated from the effects, e.g. "Basalt ++ · Nacre − · Trace +3 · −1,200 CR · lasts 6 mo":
+  - each faction's short name (in its colour) with 1–3 signs (1 = 1–9, 2 = 10–19, 3 = 20+);
   - exact CR;
-  - an eye icon ± for Trace;
-  - a clock chip "6 mo" for timed mods;
-  - a key icon for unlocks;
-  - "LOG" for logs.
+  - Trace ±;
+  - "lasts 6 mo" for timed mods;
+  - "unlocks something" for unlocks;
+  - "a Silt Log" for logs, "depends on the city" inside an `if`;
+  - "buildings go offline" (`offline`), "empties blocks" (`abandon`), "opens Charter Night" (`charterNight`), and "leads to a follow-up" for a queued card the player will read (not a whisper).
+
+  Only a choice that changes nothing at all (or only sets flags) reads "no visible effect".
 
   A long-press (400 ms) shows the exact effects popover. A locked choice is greyed out, its hint line shows the reason, and a tap on it shakes it and repeats the reason as a toast (long-press alone is not discoverable). The default ‡ choice carries a small clock glyph.
 - **Typewriter:** 60 characters per second; tapping the body completes it. Choices ignore taps for the first 600 ms, to stop mis-taps.
-- **Pausing:** beats, ⚑ and `sys` cards pause the sim and restore the prior speed after the choice. Beats can't be dismissed.
-- **Faction cards**, opened from the banner or COMMS, pause while open. **Later** (44 px, in the footer row, inside the thumb zone) or a swipe down on the card returns it to COMMS and keeps its no-answer timer.
+- **Pausing:** cards that open by themselves (key-choice beats, the count, endings, urgent system cards) pause the sim and restore the prior speed after the choice; they can't be dismissed.
+- **Messages** (story messages and COMMS cards), opened from the banner, the goal drawer or COMMS, pause while open. **Later** (44 px, in the footer row, inside the thumb zone) or a swipe down on the card sends it back to wait; a COMMS card keeps its no-answer timer.
 
 ### 8.3 Incoming banner
 
-- A 44 px banner slides up from the story rail: sigil (28 px), "INCOMING · BASALT", and the card title.
-- **Tap** opens the card. **Swipe down** dismisses it to COMMS.
-- It auto-hides after 6 s. Only one banner shows at a time.
+- A 44 px banner slides up from the story rail: sigil (28 px), a kicker ("INCOMING · BASALT", "ULTIMATUM · KITES", "MESSAGE · MOTH", "SILT LOG RECOVERED") and the card title. The game keeps running.
+- **Tap** opens the card. **Swipe down** dismisses it; it keeps waiting (COMMS, or the goal chip for story messages).
+- It auto-hides after 6 s. Only one banner shows at a time. While a story message waits unread, the banner comes back every 150 s of play.
 
 ### 8.4 Chapter title card
 
-- Full screen for 2.2 s, over the dimmed city. Tap to skip.
+- Full screen over the dimmed city, 2.2 s; with a `Chapter.summary` it shows a "What's happening" box and stays about 14 s. Tap to continue.
+- One modal at a time: while the title shows, the UI holds the director (`holdTitle`), so no story card or urgent card opens under it (capped at 20 s after the chapter starts); a card already open waits behind it unshown. The chapter's first card opens once the title closes.
+- The goal drawer shows a chapter's summary only once its title card has run (not while the chapter waits to start).
 - **Content:**
   - the numeral `CHAPTER III` (64 px neon);
   - the title (28 px);
@@ -1461,14 +1473,18 @@ The rail hides while a sheet or card is open.
 
 ### 8.5 Goal drawer
 
-The goal chip opens a bottom sheet at 50% height:
+The goal chip opens a bottom sheet at 60% height (expandable):
 
-- the chapter numeral, title and question;
+- the chapter numeral, title and question, with a **"?"** button (44 px) that swaps the body for the glossary (`GLOSSARY`, Back returns);
+- any waiting messages, each a 56 px row with **Read** ("The chapter goes on once you read it." under a story message);
+- **What's happening**: `Chapter.summary` in plain language;
 - three 64 px goal rows, each with a label, a live value ("now 34% · need ≤ 30%") and a progress bar;
 - hold goals show "12/20 days" and waived goals show "waived";
 - once every goal is met and only the chapter floor holds (§5.0), the chip and drawer say so: "closes in m:ss" (`view.chapter.closesInSec`). The drawer puts it on a line above the rows ("All goals done. The chapter closes in 9:35 of unpaused play."); the view is rebuilt when the whole second changes, so it ticks even between sim days.
 
 In Ch6 the drawer shows the **Charter Claims** for all five endings instead: compact ✓/✗ rows, with a tap to see the Charter Night preview.
+
+Below the goals: **Story so far** (every finished chapter's `Chapter.recap` and the key choice made, "You chose: …", and the ending held) and a "Story pace: Relaxed · Settings" row that opens Settings.
 
 ### 8.6 Faction sheet
 
@@ -1540,13 +1556,13 @@ A full-height sheet. Its two 44 px tabs sit at the **bottom**, above the safe ar
 
 Copy limits keep each card short; these rules keep the *number* of cards sane.
 
-| Source | Rate | Size |
+| Source | Rate (Relaxed / Normal / Brisk) | Size |
 |---|---|---|
-| Faction cards | at most 1 per 120 unpaused seconds (§7.1), so ≤ 7 in 15 min, usually 4–6 | body ≤ 280 chars, typically 150–200 |
-| Beats | one chapter's chain of ≤ 3, plus its reward log, about once per session | ≤ 280 chars each |
+| Faction and ⚑ cards | at most 1 per 15 / 9 / 2 unpaused minutes (§7.1), none in the 5 / 3 / 0 quiet minutes after a chapter title; they wait in COMMS | body ≤ 280 chars, typically 150–200; brief ≤ 220 |
+| Beats, logs, rewards | one at a time, 90 / 45 / 10 s apart (direct replies follow at once); only key choices open by themselves | ≤ 280 chars each; brief ≤ 220 |
 | Whispers and MOTH notes | ticker only, 1 per 45–60 sim days | ≤ 90 / ≤ 60 chars, never modal |
 
-A typical 15-minute session reads about 8–10 cards, roughly 1,800 characters or 2 minutes, and every modal card waits for the player (beats and ⚑ cards pause; faction cards wait in COMMS). A 5-minute session can be spent entirely on building: nothing modal fires more often than every 2 minutes of unpaused play, except a chapter's chained beats.
+Measured at speed 1 (docs/PACING.md): about 12 / 20 / 38 cards per wall hour in all, of which about 4 / 6 / 10 open by themselves. On Relaxed a 15-minute session reads about 3 cards, and the game only pauses itself for the chapter's key choice; everything else waits until the player taps it.
 
 ---
 
@@ -1981,7 +1997,8 @@ export type StorySignal =
 ```ts
 export type Hint =
   | { k: 'favor'; f: FactionId; dir: 1 | -1; pips: 1 | 2 | 3 } | { k: 'cr'; v: number } | { k: 'trace'; v: number }
-  | { k: 'timed'; months: number } | { k: 'unlock' } | { k: 'log' } | { k: 'maybe' };   // 'maybe' = inside an if
+  | { k: 'timed'; months: number } | { k: 'unlock' } | { k: 'log' } | { k: 'maybe' }   // 'maybe' = inside an if
+  | { k: 'offline' } | { k: 'abandon' } | { k: 'follow' } | { k: 'charter' };         // clarity pass (docs/PACING.md)
 export interface ActionView { label: string; cost: number; enabled: boolean; reason?: string; hints: Hint[]; cooldownDays?: number }
 export interface CardView {
   id: string; kind: Card['kind']; faction: FactionId | null; with?: FactionId; speakerName: string;
@@ -2265,12 +2282,16 @@ After this, nobody changes a shared interface without a note to all packages.
 ## 14. Tuning knobs (config defaults)
 
 ```ts
-STORY_PACING  = { cardChance: 0.35, minDaysBetween: 60, minActiveSecBetween: 120, beatGapSec: 10, beatMuteDays: 30,
-                  pendingDays: 20, pendingMinSec: 60, hostileEvery: 360, hostileGap: 60, seasonalGapDays: 300,
+STORY_PACING  = { cardChance: 0.35, minDaysBetween: 60, systemGapSec: 120, beatMuteDays: 30,
+                  pendingDays: 20, hostileEvery: 360, hostileGap: 60, seasonalGapDays: 300,
                   starRetryDays: 240, defaultCooldown: 360, fallbackDays: 720, hardFallbackDays: 1440,
-                  beatFallbackDays: 360, waiverAfterDays: 720, waiverEveryDays: 360, chapterMinSec: 600,
+                  beatFallbackDays: 360, waiverAfterDays: 720, waiverEveryDays: 360,
                   whisperEvery: 60, noteEvery: 45, reviewEvery: 1080, nudgeEvery: 360, bailoutFunds: -5000,
                   bailoutCooldown: 360 }
+STORY_PACE    = {   // Settings.storyPace (docs/PACING.md); default 'relaxed'
+  relaxed: { chapterMinSec: 1440, quietSec: 300, minActiveSecBetween: 900, beatGapSec: 90, maxChain: 1, pendingMinSec: 300, cardChanceMul: 0.5 },
+  normal:  { chapterMinSec: 840,  quietSec: 180, minActiveSecBetween: 540, beatGapSec: 45, maxChain: 1, pendingMinSec: 180, cardChanceMul: 0.6 },
+  brisk:   { chapterMinSec: 600,  quietSec: 0,   minActiveSecBetween: 120, beatGapSec: 10, maxChain: 2, pendingMinSec: 60,  cardChanceMul: 1 } }
 UNLOCK_FALLBACK_POP = { factions: 3000, comms: 3000, stack: 8000, deals: 8000, crackdown: 6000, pact: 6000,
                   turfOverlay: 6000, skybridge: 9000, rail: 9000, crowns: 20000 }   // §5.0; others are story or faction only
 TURF          = { capShare: 0.08, seedPop: { undertow: 1200, kites: 2500 }, seedStr: 60, seedMinAff: 0.55,
@@ -2292,6 +2313,8 @@ RIBBON        = { perTile: 110, perWaterTile: 330, upkeep: 1.2, maxDrag: 32, tra
 SALT          = { base: 600, perPop: 0.08, favor: 8, trace: 3, cooldown: 90 }
 POWER_WEIGHTS = { …, basalt.patron: 300, nacre.patron: 300, undertow.perTurfTile: 2, kites.perTurfTile: 2 }   // §2.4
 ```
+
+Pacing pass (owner playtest: cards came too quickly): one cadence → three story paces (`STORY_PACE`, default Relaxed), most cards wait as messages instead of opening, ⚑ cards go to COMMS, `maxChain` 3 → 2 (Brisk) / 1, waivers wait for the chapter floor, seasonal cards skip slots they took in the last 3 deck cards. Measured cards per wall hour 41 → 12 (Relaxed) / 20 (Normal) / 38 (Brisk); see docs/PACING.md.
 
 Tuning pass (integration review, headless measure, 15 policies × 3 seeds × 40 years): `chapterMinSec` 60 → 600 (the boot counts), `hostileEvery` 180 → 360 plus no ⚑ twice running, the −30 floor on negative `favorMonthly`, turf weight 4 → 2, patron weight 150 → 300, corp power claims 30% → 25%, the `sys.bailout` bond −400 × 30 → −250 × 24 with cooldown 360, the `sys.revealed` cost and `factions`/`comms` fallbacks 1,500 → 3,000.
 

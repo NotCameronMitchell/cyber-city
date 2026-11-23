@@ -34,6 +34,16 @@ export const COPY_LIMITS = {
   dealBlurb: 60,
   rewardSys: 48,
   lockedHint: 40,
+  /** Clarity pass: a card's plain-language brief, after token fill. */
+  brief: 220,
+  /** Clarity pass: a chapter's (or the epilogue's) intro summary. */
+  chapterSummary: 240,
+  /** Clarity pass: a chapter's one-line recap for "Story so far". */
+  chapterRecap: 160,
+  /** Clarity pass: a faction's "who is this?" line. */
+  factionAbout: 160,
+  /** Clarity pass: a glossary entry's text. */
+  glossary: 200,
 } as const;
 
 const TOKEN_RE = /\{([a-zA-Z]+)\}/g;

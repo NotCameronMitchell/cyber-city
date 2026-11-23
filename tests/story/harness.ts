@@ -1,13 +1,15 @@
 // Headless story harness for the WP-A tests: a Game on a deterministic map,
 // driven day by day with simulated real seconds, a scripted builder and a
 // choice policy that answers every card the way a (random) player would.
+// Story messages that wait (docs/PACING.md) are opened after `readDelaySec`
+// unpaused seconds, like a player finishing what they were doing.
 
 import { Game } from '../../src/game/game';
 import { Rng } from '../../src/game/rng';
 import { storyContent } from '../../src/game/story/conditions';
 import type { StoryDirector } from '../../src/game/story/director';
 import type { EndingId } from '../../src/game/story/types';
-import { DAYS_PER_MONTH } from '../../src/game/types';
+import { DAYS_PER_MONTH, type StoryPace } from '../../src/game/types';
 import { World } from '../../src/game/world';
 import { ScriptedMayor, flatWorld } from '../helpers';
 
@@ -18,8 +20,14 @@ export interface RunLog {
   worstDayMs: number;
   /** Card ids in the order they opened (beats, ⚑, system, logs, endings, opened faction cards). */
   opened: string[];
-  /** Faction cards that arrived as pending, with the tick and whether comms was unlocked then. */
+  /** Deck cards (faction, ⚑, other system) that arrived as pending, with the tick and whether comms was unlocked then. */
   arrived: { id: string; tick: number; comms: boolean }[];
+  /** Story messages (beats, logs, rewards) that arrived waiting, with the unpaused second. */
+  messages: { id: string; tick: number; sec: number }[];
+  /** Cards that opened by themselves (not from a banner / COMMS / the goal chip). */
+  forced: string[];
+  /** The same, with when they opened and whether it was right after a card closed (a reply or chain). */
+  forcedAt: { id: string; sec: number; afterClose: boolean }[];
   /** Pending defaults that fired, with the unpaused seconds the card had waited. */
   defaults: { id: string; tick: number; waitedSec: number }[];
   chapters: { n: number; tick: number }[];
@@ -29,7 +37,14 @@ export interface RunLog {
   cardSecs: number[];
   /** Deck deliveries (faction arrivals, ⚑ and system cards) with tick and unpaused seconds. */
   deck: { id: string; kind: string; tick: number; sec: number }[];
+  /** Chapter starts with their unpaused second. */
+  chapterSecs: { n: number; sec: number }[];
   maxChapter: number;
+}
+
+/** An empty run log. */
+export function newRunLog(): RunLog {
+  return { deck: [], storyMs: 0, worstDayMs: 0, opened: [], arrived: [], messages: [], forced: [], forcedAt: [], defaults: [], chapters: [], chapterSecs: [], endings: [], charterNights: 0, cardSecs: [], maxChapter: 1 };
 }
 
 export interface RunOptions {
@@ -49,14 +64,28 @@ export interface RunOptions {
   ending?: (ok: EndingId[], rng: Rng) => EndingId | 'recount';
   /** Called once a day after onDay. Return true to stop early. */
   each?: (g: Game, day: number) => boolean | void;
+  /** Story pace (default: the game's default, 'relaxed'). */
+  pace?: StoryPace;
+  /** Unpaused seconds before the player opens a waiting story message (default 10). */
+  readDelaySec?: number;
 }
 
-/** A Game whose world is a fresh deterministic map. */
-export function headlessGame(seed = 2091, terrain = false): Game {
+/** A Game whose world is a fresh deterministic map (and, optionally, a story pace). */
+export function headlessGame(seed = 2091, terrain = false, pace?: StoryPace): Game {
   const g = new Game();
+  if (pace) g.settings.storyPace = pace;
   const w = terrain ? World.generate(seed, 'Harness Bay') : flatWorld(seed, 'Harness Bay');
   if (!g.restore(JSON.parse(JSON.stringify(w.serialize())))) throw new Error('restore failed');
   return g;
+}
+
+/** Open the waiting story message, if any (a player tapping the banner or goal chip). */
+export function readWaiting(g: Game): boolean {
+  const st = g.world.story;
+  const id = st.waiting?.card;
+  if (!id || st.open) return false;
+  g.openWaiting();
+  return (st.open as { card: string } | null)?.card === id;
 }
 
 /**
@@ -118,26 +147,44 @@ export function answerAll(g: Game, rng: Rng, log: RunLog, opts: RunOptions): voi
 
 /** Play `years` sim years headless. */
 export function playStory(opts: RunOptions): { game: Game; log: RunLog } {
-  const g = headlessGame(opts.seed ?? 2091, opts.terrain);
+  const g = headlessGame(opts.seed ?? 2091, opts.terrain, opts.pace);
   const w = g.world;
   const d = g.story;
   const rng = new Rng((opts.seed ?? 2091) ^ 0x51a7);
-  const log: RunLog = { deck: [], storyMs: 0, worstDayMs: 0, opened: [], arrived: [], defaults: [], chapters: [], endings: [], charterNights: 0, cardSecs: [], maxChapter: 1 };
+  const log = newRunLog();
+  const delivered = new Set<string>();
+  let closedAt = -1;
+  let closedTick = -1;
   w.events.on('card', (c) => {
+    if (!c) {
+      closedAt = g.story.activeSec;
+      closedTick = w.tick;
+      return;
+    }
     if (c) {
       log.opened.push(c.id);
+      if (delivered.delete(c.id)) return; // arrived earlier with a banner
+      log.forced.push(c.id);
+      log.forcedAt.push({ id: c.id, sec: g.story.activeSec, afterClose: closedAt === g.story.activeSec && closedTick === w.tick });
       log.cardSecs.push(g.story.activeSec);
       const kind = storyContent().cards.get(c.id)?.kind ?? '';
       if (kind === 'hostile' || kind === 'system') log.deck.push({ id: c.id, kind, tick: w.tick, sec: g.story.activeSec });
     }
   });
   w.events.on('incoming', (c) => {
-    log.arrived.push({ id: c.id, tick: w.tick, comms: g.story.view().unlocked.comms });
+    delivered.add(c.id);
     log.cardSecs.push(g.story.activeSec);
-    log.deck.push({ id: c.id, kind: 'faction', tick: w.tick, sec: g.story.activeSec });
+    if (w.story.waiting?.card === c.id) {
+      log.messages.push({ id: c.id, tick: w.tick, sec: g.story.activeSec });
+      return;
+    }
+    const kind = storyContent().cards.get(c.id)?.kind ?? 'faction';
+    log.arrived.push({ id: c.id, tick: w.tick, comms: g.story.view().unlocked.comms });
+    log.deck.push({ id: c.id, kind, tick: w.tick, sec: g.story.activeSec });
   });
   w.events.on('chapter', (c) => {
     log.chapters.push({ n: c.n, tick: w.tick });
+    log.chapterSecs.push({ n: c.n, sec: g.story.activeSec });
     log.maxChapter = Math.max(log.maxChapter, c.n);
   });
   w.events.on('ending', (e) => log.endings.push(e.id));
@@ -160,12 +207,25 @@ export function playStory(opts: RunOptions): { game: Game; log: RunLog } {
   mayor?.opening();
   const dt = opts.secPerDay ?? 0.5;
   const days = Math.round(opts.years * 12 * DAYS_PER_MONTH);
+  const readDelay = opts.readDelaySec ?? 10;
+  let msgSince = -1;
+  let msgId = '';
   for (let day = 0; day < days; day++) {
     // Real time passes in frames; the day ticks after it, as in Game.update.
     let t = performance.now();
     d.update(dt, false);
     log.storyMs += performance.now() - t;
     answerAll(g, rng, log, opts);
+    // A story message waits: the player finishes what they were doing, then reads it.
+    const wt = w.story.waiting;
+    if (wt && wt.card !== msgId) {
+      msgId = wt.card;
+      msgSince = d.activeSec;
+    } else if (!wt) msgId = '';
+    if (wt && !w.story.open && d.activeSec - msgSince >= readDelay) {
+      d.openWaiting();
+      answerAll(g, rng, log, opts);
+    }
     const pend = w.story.pending;
     if (pend && !w.story.open && answerThis) {
       d.openPending();

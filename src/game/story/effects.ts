@@ -733,7 +733,10 @@ export function fillTokens(world: World, text: string, spot = -1, extra?: Record
 
 const pipsOf = (v: number): 1 | 2 | 3 => (Math.abs(v) >= 20 ? 3 : Math.abs(v) >= 10 ? 2 : 1);
 
-/** Hint chips for a list of effects: favor ▲/▼ pips, CR, Trace, timed, unlock, log, maybe. */
+/**
+ * Hint chips for a list of effects: favor ▲/▼ pips, CR, Trace, timed, unlock, log,
+ * offline, abandon, Charter Night, a follow-up card, maybe (inside an `if`).
+ */
 export function hintsFor(world: World, fx: readonly Effect[] | undefined): Hint[] {
   if (!fx?.length) return [];
   const favor: Partial<Record<FactionId, number>> = {};
@@ -743,6 +746,10 @@ export function hintsFor(world: World, fx: readonly Effect[] | undefined): Hint[
   let unlock = false;
   let log = false;
   let maybe = false;
+  let offline = false;
+  let abandon = false;
+  let follow = false;
+  let charter = false;
   for (const e of fx) {
     switch (e.t) {
       case 'favor':
@@ -770,6 +777,19 @@ export function hintsFor(world: World, fx: readonly Effect[] | undefined): Hint[
       case 'if':
         maybe = true;
         break;
+      case 'offline':
+        offline = true;
+        break;
+      case 'abandon':
+        abandon = true;
+        break;
+      case 'queue':
+        // A whisper only reaches the ticker; any other queued card is something the player will read.
+        if (storyContent().cards.get(e.card)?.kind !== 'whisper') follow = true;
+        break;
+      case 'charterNight':
+        charter = true;
+        break;
     }
   }
   const out: Hint[] = [];
@@ -782,6 +802,10 @@ export function hintsFor(world: World, fx: readonly Effect[] | undefined): Hint[
   if (months) out.push({ k: 'timed', months });
   if (unlock) out.push({ k: 'unlock' });
   if (log) out.push({ k: 'log' });
+  if (offline) out.push({ k: 'offline' });
+  if (abandon) out.push({ k: 'abandon' });
+  if (charter) out.push({ k: 'charter' });
+  if (follow) out.push({ k: 'follow' });
   if (maybe) out.push({ k: 'maybe' });
   return out;
 }
@@ -919,8 +943,11 @@ export function effectText(world: World, e: Effect): string {
       return `${short(e.f)} never above ${e.v}`;
     case 'pact':
       return `${short(e.gang)} pact for ${e.months} mo`;
-    case 'queue':
-      return '';
+    case 'queue': {
+      // A whisper only reaches the ticker; any other queued card follows up on this choice.
+      const k = storyContent().cards.get(e.card)?.kind;
+      return k === 'whisper' ? '' : e.days > 0 ? 'a follow-up later' : 'a follow-up next';
+    }
     case 'log':
       return `Silt Log ${String(e.n).padStart(2, '0')}`;
     case 'reveal':

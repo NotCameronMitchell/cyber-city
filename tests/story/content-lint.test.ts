@@ -117,6 +117,7 @@ const OTHER_TEXT: Record<string, unknown> = {
   FACTIONS: C.FACTIONS,
   CHAPTERS: C.CHAPTERS,
   EPILOGUE: C.EPILOGUE,
+  GLOSSARY: C.GLOSSARY,
   ENDINGS: C.ENDINGS,
   CHARTER_NIGHT_TEXT: C.CHARTER_NIGHT_TEXT,
   CHARTER_CONFIRM: C.CHARTER_CONFIRM,
@@ -143,6 +144,7 @@ function cardTexts(c: Card): { field: string; text: string }[] {
   ];
   if (c.name) out.push({ field: 'name', text: c.name });
   if (c.sys) out.push({ field: 'sys', text: c.sys });
+  if (c.brief) out.push({ field: 'brief', text: c.brief });
   c.choices.forEach((ch, i) => {
     out.push({ field: `label ${i}`, text: ch.label });
     if (ch.lockedHint) out.push({ field: `lockedHint ${i}`, text: ch.lockedHint });
@@ -180,6 +182,7 @@ describe('story content lint (§13)', () => {
       body: COPY_LIMITS.body,
       sys: COPY_LIMITS.sys,
       name: COPY_LIMITS.title,
+      brief: COPY_LIMITS.brief,
     };
     for (const c of CARDS) {
       for (const { field, text } of cardTexts(c)) {
@@ -606,5 +609,250 @@ describe('story content lint (§13)', () => {
     } finally {
       useStoryContent(EMPTY_CONTENT);
     }
+  });
+});
+
+// ── Clarity pass: briefs, chapter intros, faction intros, glossary ──────────
+//
+// Plain-language text that explains the story to a first-time player. It has to
+// fit its limit, read clean (no '!', no chip numbers, no copy of the body) and
+// never spoil a secret before the story itself tells it.
+
+/**
+ * The Night of the Gates truth (what MOTH did in 2084), as it would be written.
+ * `ch4.logs` tells it; nothing a player can read earlier may.
+ */
+const GATES_SECRET =
+  /\bcomply(?:ing)?\b|\bcomplied\b|\bobeyed\b|\bseal(?:ed|ing)?\s+the\b|\bsealed\b|\bgate order\b|\bstorm order\b|\beleven thousand\b|\b11,000\b|\baldo\b|\byou drowned\b|\bcarried (?:it )?out\b|\bbelow the gates\b/i;
+/** Beats and logs shown at or after `ch4.logs` (Ch4's chain, Ch5–Ch6, Logs 4–6, the epilogue). */
+const AFTER_GATES = new Set([
+  'ch4.logs',
+  'ch4.brine',
+  'ch5.install',
+  'ch5.lure',
+  'ch5.choice',
+  'ch5.kept',
+  'ch5.hidden',
+  'ch6.eve',
+  'ch6.count',
+  'log.04',
+  'log.05',
+  'log.06',
+  'ep.review',
+  'coda.recall',
+]);
+
+/** The hidden faction (§2.2): nothing may name it before it shows itself. */
+const TUNING_WORDS = /\btuning\b|\btuners?\b|\bohm\b|\bthe hum\b/i;
+/**
+ * Cards that only show once the Tuning is active: its own (the hidden Tuning draws
+ * nothing), `ch5.hidden` (after Show yourself), `sys.revealed` (its onShow activates
+ * it), Lamplight (Tuning ≥ 50), and Log 12 / the coda (Log 12 comes from `tu.letter`).
+ */
+const AFTER_TUNING = new Set(['ch5.hidden', 'sys.revealed', 'end.lamplight', 'log.12', 'coda.recall']);
+
+/** Sister Ohm is Ada Ohmura: `tu.letter` reveals it, so only it and what follows may join the names. */
+const OHM = /\bohm\b/i;
+const OHMURA = /\bohmura\b|\bada\b/i;
+const AFTER_OHM = new Set(['tu.letter', 'log.12', 'coda.recall']);
+
+/** Exact effect numbers belong on the choice chips, not in the brief. */
+const CHIP_NUMBER = /[+±−]\s?\d|\d,\d{3}|\d\s?%|\bCR\b/;
+/** A brief explains the body; it may not lift a run of this many words from it. */
+const BODY_RUN = 6;
+
+/** Highest `chapter >= n` (or `> n−1`) bound at a condition's top level or in a top-level `all`. */
+function minChapter(c: Condition | undefined): number {
+  if (!c) return 0;
+  let n = 0;
+  for (const t of 'all' in c ? c.all : [c]) {
+    if (!('m' in t) || t.m !== 'chapter') continue;
+    if (t.op === '>=' || t.op === '==') n = Math.max(n, t.v);
+    else if (t.op === '>') n = Math.max(n, t.v + 1);
+  }
+  return n;
+}
+
+/** Flags only `ch4.brine` sets (after Brine names the signer). */
+const BRINE_FLAGS = new Set(['published', 'buried', 'leashed']);
+
+/** A condition that needs a flag only `ch4.brine` sets: at its top level, in a top-level `all`, or an `any` of them. */
+function needsBrine(c: Condition | undefined): boolean {
+  if (!c) return false;
+  const isBrine = (t: Condition): boolean => 'flag' in t && t.eq === undefined && BRINE_FLAGS.has(t.flag);
+  for (const t of 'all' in c ? c.all : [c]) {
+    if (isBrine(t)) return true;
+    if ('any' in t && t.any.length > 0 && t.any.every(isBrine)) return true;
+  }
+  return false;
+}
+
+/**
+ * Shown no earlier than `ch4.logs`: the explicit list, ending cards, deck cards gated on
+ * chapter ≥ 5 (Ch4 only completes after all its beats) or on a flag `ch4.brine` sets.
+ * Chapter ≥ 4 alone is not enough: st.chapter is already 4 while Ch4 waits to start
+ * and before its chain reaches the logs.
+ */
+const afterGates = (c: Card): boolean => AFTER_GATES.has(c.id) || c.kind === 'ending' || minChapter(c.when) >= 5 || needsBrine(c.when);
+const afterTuning = (c: Card): boolean => c.speaker === 'tuning' || AFTER_TUNING.has(c.id);
+
+const words = (s: string): string[] => s.toLowerCase().match(/[a-z0-9’']+/g) ?? [];
+
+/** Every clarity-pass string, with where it lives. */
+function clarityTexts(): { where: string; text: string }[] {
+  const out: { where: string; text: string }[] = [];
+  for (const c of CARDS) if (c.brief) out.push({ where: `${c.id} brief`, text: c.brief });
+  for (const ch of C.CHAPTERS) {
+    if (ch.summary) out.push({ where: `chapter ${ch.n} summary`, text: ch.summary });
+    if (ch.recap) out.push({ where: `chapter ${ch.n} recap`, text: ch.recap });
+  }
+  out.push({ where: 'epilogue summary', text: C.EPILOGUE.summary });
+  for (const f of C.FACTION_LIST) if (f.about) out.push({ where: `${f.id} about`, text: f.about });
+  for (const g of C.GLOSSARY) out.push({ where: `glossary ${g.term}`, text: `${g.term} ${g.text}` });
+  return out;
+}
+
+describe('story clarity pass (briefs, intros, glossary)', () => {
+  it('gives every card a player reads a brief within its limit after worst-case token fill', () => {
+    const bad: string[] = [];
+    for (const c of CARDS) {
+      if (!c.brief || !c.brief.trim()) {
+        bad.push(`${c.id}: no brief`);
+        continue;
+      }
+      const len = worstCase(c.brief, CARD_TOKEN_MAX).length;
+      if (len > COPY_LIMITS.brief) bad.push(`${c.id}: brief ${len} > ${COPY_LIMITS.brief}`);
+    }
+    expect(bad).toEqual([]);
+    // Every kind a player reads is covered: beats, faction, ⚑, system, log, ending, whisper.
+    expect(new Set(CARDS.map((c) => c.kind))).toEqual(new Set(['beat', 'faction', 'hostile', 'system', 'log', 'ending', 'whisper']));
+  });
+
+  it('writes briefs as plain explanation: a sentence, no chip numbers, no copy of the body', () => {
+    const bad: string[] = [];
+    for (const c of CARDS) {
+      const b = c.brief ?? '';
+      if (!/^[A-Z{]/.test(b)) bad.push(`${c.id}: brief should start with a capital or a token`);
+      if (!/[.)]$/.test(b)) bad.push(`${c.id}: brief should end in a period`);
+      if (/^[a-z]+:/.test(b)) bad.push(`${c.id}: brief is plain narration, not a speaker line`);
+      if (b.includes('!')) bad.push(`${c.id}: no '!' in a brief`);
+      if (CHIP_NUMBER.test(b)) bad.push(`${c.id}: brief repeats a chip number "${CHIP_NUMBER.exec(b)?.[0]}"`);
+      const bw = words(c.body);
+      const runs = new Set(bw.slice(0, Math.max(0, bw.length - BODY_RUN + 1)).map((_, i) => bw.slice(i, i + BODY_RUN).join(' ')));
+      const own = words(b);
+      for (let i = 0; i + BODY_RUN <= own.length; i++) {
+        const run = own.slice(i, i + BODY_RUN).join(' ');
+        if (runs.has(run)) {
+          bad.push(`${c.id}: brief copies the body ("${run}")`);
+          break;
+        }
+      }
+    }
+    expect(bad).toEqual([]);
+  });
+
+  it('gives every chapter (and the epilogue) a summary and a recap within limits, with no tokens', () => {
+    const bad: string[] = [];
+    for (const ch of C.CHAPTERS) {
+      if (!ch.summary?.trim()) bad.push(`chapter ${ch.n}: no summary`);
+      else if (ch.summary.length > COPY_LIMITS.chapterSummary) bad.push(`chapter ${ch.n}: summary ${ch.summary.length}`);
+      if (!ch.recap?.trim()) bad.push(`chapter ${ch.n}: no recap`);
+      else if (ch.recap.length > COPY_LIMITS.chapterRecap) bad.push(`chapter ${ch.n}: recap ${ch.recap.length}`);
+      for (const t of [ch.summary ?? '', ch.recap ?? '']) if (tokensIn(t).length) bad.push(`chapter ${ch.n}: tokens in intro text`);
+    }
+    const epi = C.EPILOGUE.summary;
+    if (!epi.trim() || epi.length > COPY_LIMITS.chapterSummary || tokensIn(epi).length) bad.push('epilogue summary');
+    expect(bad).toEqual([]);
+  });
+
+  it('gives every faction an "about" line within its limit', () => {
+    const bad: string[] = [];
+    for (const f of C.FACTION_LIST) {
+      if (!f.about?.trim()) bad.push(`${f.id}: no about`);
+      else {
+        if (f.about.length > COPY_LIMITS.factionAbout) bad.push(`${f.id}: about ${f.about.length} > ${COPY_LIMITS.factionAbout}`);
+        if (tokensIn(f.about).length) bad.push(`${f.id}: tokens in about`);
+        if (!f.about.includes(f.leader)) bad.push(`${f.id}: about should name the leader, ${f.leader}`);
+      }
+    }
+    expect(bad).toEqual([]);
+  });
+
+  it('keeps a glossary of 12–20 unique terms, each within its limit, covering the story vocabulary', () => {
+    const g = C.GLOSSARY;
+    expect(g.length).toBeGreaterThanOrEqual(12);
+    expect(g.length).toBeLessThanOrEqual(20);
+    const bad: string[] = [];
+    const seen = new Set<string>();
+    for (const e of g) {
+      const key = e.term.trim().toLowerCase();
+      if (!key) bad.push('empty term');
+      if (seen.has(key)) bad.push(`duplicate term ${e.term}`);
+      seen.add(key);
+      if (e.term.length > COPY_LIMITS.title) bad.push(`${e.term}: term too long`);
+      if (!e.text.trim()) bad.push(`${e.term}: empty text`);
+      if (e.text.length > COPY_LIMITS.glossary) bad.push(`${e.term}: ${e.text.length} > ${COPY_LIMITS.glossary}`);
+      if (tokensIn(e.text).length) bad.push(`${e.term}: tokens`);
+    }
+    // Terms a player meets in the HUD, on cards and in the faction panel.
+    const must = ['MOTH', 'Trace', 'Silt Logs', 'standing', 'Salt', 'Deal', 'Patron', 'Turf', 'Seam', 'Crackdown', 'Pact', 'Wasps'];
+    must.push('Stratablock', 'Skybridge', 'Ribbon Rail', 'COMMS', 'Charter', 'Charter Night', 'Sunk');
+    for (const t of must) if (!g.some((e) => e.term.toLowerCase().includes(t.toLowerCase()))) bad.push(`missing term ${t}`);
+    expect(bad).toEqual([]);
+  });
+
+  it('runs the banned-term and "!" scans over every clarity text', () => {
+    const texts = clarityTexts();
+    // 86 briefs, 6 summaries, 6 recaps, the epilogue, 6 faction lines and the glossary.
+    expect(texts.length).toBe(CARDS.length + 6 + 6 + 1 + 6 + C.GLOSSARY.length);
+    const bad: string[] = [];
+    for (const { where, text } of texts) {
+      const hit = C.BANNED_RE.exec(text);
+      if (hit) bad.push(`${where}: "${hit[0]}"`);
+      if (text.includes('!')) bad.push(`${where}: '!'`);
+    }
+    expect(bad).toEqual([]);
+  });
+
+  it('never explains the Night of the Gates before the story reveals it', () => {
+    // The keyword list matches the truth as the story tells it.
+    expect(GATES_SECRET.test(CARD_BY_ID.get('ch4.logs')!.body)).toBe(true);
+    expect(GATES_SECRET.test(CARD_BY_ID.get('ch4.logs')!.brief ?? '')).toBe(true);
+    const bad: string[] = [];
+    const check = (where: string, text: string | undefined) => {
+      const hit = text && GATES_SECRET.exec(text);
+      if (hit) bad.push(`${where}: "${hit[0]}"`);
+    };
+    for (const c of CARDS) if (!afterGates(c)) check(`${c.id} brief`, c.brief);
+    // A chapter's summary shows at its start, its recap once it is done; Ch4's chain tells the truth.
+    for (const ch of C.CHAPTERS) {
+      if (ch.n <= 4) check(`chapter ${ch.n} summary`, ch.summary);
+      if (ch.n <= 3) check(`chapter ${ch.n} recap`, ch.recap);
+    }
+    for (const f of C.FACTION_LIST) check(`${f.id} about`, f.about);
+    for (const e of C.GLOSSARY) check(`glossary ${e.term}`, `${e.term} ${e.text}`);
+    expect(bad).toEqual([]);
+  });
+
+  it('keeps the Tuning and Sister Ohm a mystery until they show themselves', () => {
+    expect(TUNING_WORDS.test(CARD_BY_ID.get('tu.hymn')!.brief ?? '')).toBe(true);
+    const letter = CARD_BY_ID.get('tu.letter')!.brief ?? '';
+    expect(OHM.test(letter) && OHMURA.test(letter)).toBe(true);
+    const bad: string[] = [];
+    for (const c of CARDS) {
+      const b = c.brief ?? '';
+      if (!afterTuning(c) && TUNING_WORDS.test(b)) bad.push(`${c.id} brief names the Tuning ("${TUNING_WORDS.exec(b)?.[0]}")`);
+      if (!AFTER_OHM.has(c.id) && OHM.test(b) && OHMURA.test(b)) bad.push(`${c.id} brief links Sister Ohm to Ada Ohmura`);
+    }
+    // Shown whenever: chapter intros, the glossary and the other factions' lines.
+    for (const ch of C.CHAPTERS)
+      for (const [k, t] of [['summary', ch.summary], ['recap', ch.recap]] as const) if (t && TUNING_WORDS.test(t)) bad.push(`chapter ${ch.n} ${k}`);
+    if (TUNING_WORDS.test(C.EPILOGUE.summary)) bad.push('epilogue summary');
+    for (const e of C.GLOSSARY) if (TUNING_WORDS.test(`${e.term} ${e.text}`)) bad.push(`glossary ${e.term}`);
+    for (const f of C.FACTION_LIST) if (f.id !== 'tuning' && f.about && TUNING_WORDS.test(f.about)) bad.push(`${f.id} about`);
+    // Its own line introduces the movement, not the secret.
+    const own = C.FACTIONS.tuning.about ?? '';
+    if (OHMURA.test(own) || /\bbuilt you\b|\bengineer\b|\b2084\b/i.test(own)) bad.push('tuning about spoils Sister Ohm');
+    expect(bad).toEqual([]);
   });
 });

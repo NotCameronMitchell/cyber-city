@@ -36,6 +36,7 @@ export const FACTIONS: Record<FactionId, Faction> = {
     sigil: 'ninering',
     leader: 'Ilse Marrow',
     callsYou: 'the Automatic',
+    about: "The city's nine-seat elected council, chaired by Ilse Marrow. It runs permits, police and the budget, and expects you to be an obedient records machine.",
     visible: ALWAYS,
     inPowerBar: true,
     mood: [
@@ -66,6 +67,7 @@ export const FACTIONS: Record<FactionId, Faction> = {
     sigil: 'hexcolumn',
     leader: 'Oren Sallow',
     callsYou: 'Operations',
+    about: "The heavy-industry megacorp behind the city's factories and reactors, led here by Oren Sallow. It wants cheap power, busy factories and you working to quota.",
     visible: ALWAYS,
     inPowerBar: true,
     mood: [
@@ -100,6 +102,7 @@ export const FACTIONS: Record<FactionId, Faction> = {
     sigil: 'spiral',
     leader: 'Minna Oduya',
     callsYou: 'partner',
+    about: 'The cheerful megacorp of shops, screens and data, fronted by Minna Oduya. It wants pretty, pricey streets, happy shoppers and a look at everything you see.',
     visible: ALWAYS,
     inPowerBar: true,
     mood: [
@@ -136,6 +139,7 @@ export const FACTIONS: Record<FactionId, Faction> = {
     sigil: 'hookwave',
     leader: 'Old Brine',
     callsYou: 'little light',
+    about: 'Salvagers and smugglers led by Old Brine, who never left the drowned Sunk. They hold dark waterfront blocks and want you to look the other way.',
     visible: ALWAYS,
     inPowerBar: true,
     mood: [
@@ -173,6 +177,7 @@ export const FACTIONS: Record<FactionId, Faction> = {
     sigil: 'kite',
     leader: 'Lark',
     callsYou: 'moth',
+    about: 'Rooftop climbers who steal signal and sell it back, led by Lark. They hold busy high-rise streets. Lark found you first and wants a friend, not a master.',
     visible: ALWAYS,
     inPowerBar: true,
     mood: [
@@ -205,6 +210,7 @@ export const FACTIONS: Record<FactionId, Faction> = {
     sigil: 'window',
     leader: 'Sister Ohm',
     callsYou: 'the Hum',
+    about: 'A quiet movement led by Sister Ohm. Members press radios to lamp posts and hum along with the grid. They believe the city is listening, and want it to answer.',
     // Hidden until flag tuningActive (set at Trace ≥ 40, on Publish, or when Revealed);
     // a silhouette row from Trace ≥ 25 (§2.2). The director sets the flag.
     visible: flagIs('tuningActive'),

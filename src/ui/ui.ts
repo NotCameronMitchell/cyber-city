@@ -83,7 +83,7 @@ export class UI {
       openBudget: () => this.budget.open(),
       openNews: () => this.news.open(),
       openReport: () => this.report.open(),
-      openMenu: () => this.menu.open(),
+      openMenu: (view) => this.menu.open(view ?? 'main'),
       confirm: (opts) => this.confirm.open(opts),
       openTray: (cat) => this.dock.openTray(cat as CategoryId),
       closeTray: () => this.dock.closeTray(),

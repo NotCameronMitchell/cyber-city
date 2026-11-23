@@ -3,7 +3,9 @@
 //
 //   goal chip   flexible width, 36 px tall in a 44 px hit area:
 //               "III ▸ ◉◉○", "III ▸ ◉◉◉ closes in 9:35" while only the
-//               chapter floor holds it open, or "Charter Night · 214d" in Ch VI
+//               chapter floor holds it open, or "Charter Night · 214d" in Ch VI;
+//               "III ▸ ◉○○ ✉ 1 message waiting" (amber, pulsing) while a story
+//               message waits: the chapter goes on once it is read (PACING.md)
 //   faction     44 px: the leading faction's sigil with a tiny tier ring
 //               (hidden until the factions unlock)
 //   COMMS       44 px: envelope, unread badge, countdown ring while a faction
@@ -43,6 +45,7 @@ export class StoryRail {
   private readonly ring: SVGCircleElement;
   private doneCount = -1;
   private chapterN = -1;
+  private msgId = '';
 
   constructor(
     private readonly ctx: UIContext,
@@ -120,11 +123,25 @@ export class StoryRail {
       if (this.chapterN === ch.n && done > this.doneCount && this.doneCount >= 0) this.pulse();
       this.doneCount = done;
     }
+    // Ch6: the countdown has run out but the chapter floor still holds the count (PACING.md).
+    if (v.countdownDays !== null && v.countdownDays !== undefined && v.countdownDays <= 0 && ch.closesInSec !== undefined) {
+      setText(this.goalText, `Charter Night · ${clock(ch.closesInSec)}`);
+    }
     this.chapterN = ch.n;
+    // A story message waits: say so on the chip (the chapter goes on once it is read).
+    const story = v.messages.find((m) => m.slot === 'story');
+    const msgs = story ? v.messages.length : 0;
+    if (msgs) {
+      setText(this.goalNext, `${msgs === 1 ? '1 message' : `${msgs} messages`} waiting`);
+      if (story && story.id !== this.msgId) this.pulse();
+    }
+    this.msgId = story?.id ?? '';
+    setClass(this.goal, 'has-msg', msgs > 0);
     setClass(this.goal, 'is-done', v.goals.length > 0 && v.goals.every((g) => g.done || g.waived));
     setClass(this.goal, 'is-settling', ch.closesInSec !== undefined);
     let label = v.goals.length ? `Chapter ${ch.numeral} goals: ${v.goals.filter((g) => g.done || g.waived).length} of ${v.goals.length} done` : 'Chapter';
     if (ch.closesInSec !== undefined) label += `, chapter closes in ${clock(ch.closesInSec)}`;
+    if (msgs) label += `, ${msgs === 1 ? '1 message' : `${msgs} messages`} waiting`;
     setAttr(this.goal, 'aria-label', label);
 
     // Faction button: the highest-standing visible faction.

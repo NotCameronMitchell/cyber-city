@@ -6,7 +6,7 @@
 
 import { BUILDINGS, ZONES } from '../game/config';
 import { randomCityName, randomSeed } from '../game/game';
-import type { Settings } from '../game/types';
+import { STORY_PACES, type Settings, type StoryPace } from '../game/types';
 import { buildDialog, type UIContext } from './context';
 import { closestData, h, setAttr, setClass, setHidden, setText } from './dom';
 import { groupInt } from './format';
@@ -32,6 +32,13 @@ const TOGGLES: Toggle[] = [
 
 const TITLES: Record<View, string> = { main: '', settings: 'Settings', help: 'How to play', about: 'About' };
 
+/** Story pace (docs/PACING.md): label and the one line that explains the selected pace. */
+const PACE: Record<StoryPace, { label: string; desc: string }> = {
+  relaxed: { label: 'Relaxed', desc: 'Most time to build: a chapter every 20+ min, few messages' },
+  normal: { label: 'Normal', desc: 'A chapter about every 15 min, a message every few minutes' },
+  brisk: { label: 'Brisk', desc: 'The original pace: a chapter every 10 min, frequent messages' },
+};
+
 export class Menu {
   readonly el: HTMLElement;
   private readonly title: HTMLElement;
@@ -43,6 +50,8 @@ export class Menu {
   private readonly restoreDesc: HTMLElement;
   private readonly toggles = new Map<keyof Settings, HTMLButtonElement>();
   private readonly quality: HTMLButtonElement[] = [];
+  private readonly paces: HTMLButtonElement[] = [];
+  private readonly paceDesc: HTMLElement;
   private view: View = 'main';
   private resumeSpeed = 0;
 
@@ -78,13 +87,30 @@ export class Menu {
       item('new', 'newCity', 'New city', 'Fresh map, fresh charter'),
       this.restoreBtn,
       h('div', { class: 'cc-menu-sep' }),
-      item('view:settings', 'gear', 'Settings', 'Sound, music, weather, quality'),
+      item('view:settings', 'gear', 'Settings', 'Story pace, sound, weather, quality'),
       item('view:help', 'help', 'How to play', 'Roads, zones, power, the story'),
       item('view:about', 'info', 'About', 'Credits'),
     );
 
     // ── Settings ───────────────────────────────────────────────────────────
     const settings = h('div', { class: 'cc-menu-view cc-settings', hidden: true });
+    // Story pace first: it is the setting that changes how the game feels most. Applies at once.
+    const paceSeg = h('div', { class: 'cc-seg cc-seg-pace', role: 'radiogroup', 'aria-label': 'Story pace' });
+    for (const p of STORY_PACES) {
+      const b = h('button', { class: 'cc-seg-btn', type: 'button', role: 'radio', 'aria-checked': 'false', 'data-pace': p, text: PACE[p].label });
+      this.paces.push(b);
+      paceSeg.append(b);
+    }
+    this.paceDesc = h('span', { class: 'cc-set-pace-desc' });
+    settings.append(
+      h(
+        'div',
+        { class: 'cc-set-row is-stack' },
+        h('span', { class: 'cc-menu-ico', html: icon('comms') }),
+        h('span', { class: 'cc-menu-text' }, h('strong', { text: 'Story pace' }), this.paceDesc),
+        paceSeg,
+      ),
+    );
     for (const t of TOGGLES) {
       const sw = h('button', { class: 'cc-switch', type: 'button', role: 'switch', 'aria-checked': 'false', 'data-setting': t.key, 'aria-label': t.label }, h('i'));
       this.toggles.set(t.key, sw);
@@ -150,9 +176,10 @@ export class Menu {
         step('pinch', '6 · Move the map', 'One finger draws with the active tool. Two fingers pan; pinch to zoom. On desktop: drag with right mouse, scroll to zoom, WASD to pan.', '#22e5ff'),
         step('data', '7 · Use data views', 'Open Data for power, land value, crime, pollution, traffic and service coverage overlays.', '#22e5ff'),
         step('star', '8 · Hit milestones', 'Population milestones pay a charter grant and unlock bigger buildings: reactors, data hubs, spires and arcologies.', '#ffb02e'),
-        step('flag', '9 · Follow the chapter', 'Once the story starts, the chip above the toolbar shows the chapter goals. Tap it for the list; meeting them moves the story on.', '#ffb02e'),
-        step('comms', '10 · Answer COMMS', 'Faction messages wait in COMMS with a countdown ring. Answer them, or tap Later; when the ring runs out, the default answer goes through.', '#22e5ff'),
-        step('eye', '11 · Read the chips', 'Under a choice, ▲ and ▼ show how a faction will feel. The eye is Trace: how close anyone is to finding you. Hold a choice to see exactly what it does.', '#ff2bd6'),
+        step('flag', '9 · Follow the chapter', "Once the story starts, the chip above the toolbar shows the chapter goals. Tap it for the list, what's happening, the story so far and a glossary (?).", '#ffb02e'),
+        step('comms', '10 · Read messages', 'Story messages and faction cards arrive with a banner and wait for you; the game keeps running. Tap to read. The chapter goes on once its messages are read; faction cards take their default answer when the ring runs out.', '#22e5ff'),
+        step('eye', '11 · Read the choices', 'Under each choice, a line says what it does: "Basalt ++" means Basalt will like it, Trace is how close anyone is to finding you. Hold a choice for the exact effects. Tap a speaker to see who they are.', '#ff2bd6'),
+        step('clock', '12 · Set the story pace', 'Settings › Story pace: Relaxed (the default) leaves the most time to build between chapters; Brisk is the quickest.', '#ffb02e'),
       ),
       h('p', { class: 'cc-help-foot', text: 'Watch the treasury: taxes come in monthly, upkeep goes out. Tap your credits to open the budget.' }),
     );
@@ -234,6 +261,12 @@ export class Menu {
       setAttr(b, 'aria-checked', on ? 'true' : 'false');
       setClass(b, 'is-on', on);
     }
+    for (const b of this.paces) {
+      const on = b.dataset.pace === s.storyPace;
+      setAttr(b, 'aria-checked', on ? 'true' : 'false');
+      setClass(b, 'is-on', on);
+    }
+    setText(this.paceDesc, PACE[s.storyPace]?.desc ?? PACE.relaxed.desc);
   }
 
   private readonly onClick = (e: MouseEvent) => {
@@ -252,6 +285,12 @@ export class Menu {
     const q = closestData(t, 'quality', this.el);
     if (q) {
       game.updateSettings({ quality: q.dataset.quality as Settings['quality'] });
+      return;
+    }
+    const pace = closestData(t, 'pace', this.el);
+    if (pace) {
+      game.updateSettings({ storyPace: pace.dataset.pace as StoryPace });
+      this.refresh();
       return;
     }
     const act = closestData(t, 'act', this.el)?.dataset.act;

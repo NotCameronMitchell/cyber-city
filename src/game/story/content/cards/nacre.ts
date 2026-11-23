@@ -14,6 +14,7 @@ export const NACRE_CARDS: readonly Card[] = [
     weight: 10,
     cooldown: 360,
     body: "Oduya: 'Your citizens look tired! Let Nacre gently brighten the public screens. Warmer colours, kinder headlines. Just route the feeds through us. A hug, at scale.'",
+    brief: "Nacre's Minna Oduya sees a tired, unhappy city and offers to fill the public screens with feel-good news. It lifts approval for a year, but it's quiet propaganda, and the Kites hate it.",
     choices: [
       choice('Route the feeds.', mod(360, { approvalAdd: 6 }), favor('nacre', 10), trace(-3), favor('kites', -6), favor('tuning', -4)),
       dflt('Keep the feeds raw.', favor('nacre', -5), favor('kites', 3)),
@@ -27,6 +28,7 @@ export const NACRE_CARDS: readonly Card[] = [
     when: m('pop', '>=', 3000),
     once: true,
     body: "Nacre wants the full census 'for the loyalty programme': names, faces, routines. 5,000 CR and a warm thank-you card. Oduya swears it's anonymised. It isn't. You checked.",
+    brief: "Nacre wants your residents' private data for a shopping loyalty scheme, and pays well. It isn't anonymous. Selling it angers the street. A fake keeps Nacre happy for now, but they may notice. Refusing pleases the Board.",
     choices: [
       choice('Sell the census.', funds(5000), favor('nacre', 12), favor('tuning', -8), favor('kites', -8), trace(2)),
       choice('Send a convincing fake.', favor('nacre', 4), trace(4), queue('nc.fake', 180)),
@@ -40,6 +42,7 @@ export const NACRE_CARDS: readonly Card[] = [
     title: 'THREE HUNDRED OF HIM',
     queuedOnly: true,
     body: "Oduya, still smiling: 'Funny thing! Our loyalty data says 300 of your residents are the same man. He's very loyal. We'd love a refund, or a real census. Either is delightful!'",
+    brief: 'Nacre noticed the census you sent was fake. Oduya wants her money back or the real data. Refunding costs cash. Sending the real census angers the street. Denying it all sours Nacre badly.',
     choices: [
       choice('Refund 3,000.', funds(-3000), favor('nacre', 2)),
       choice('Send the real one.', favor('nacre', 6), favor('tuning', -8), favor('kites', -8)),
@@ -56,6 +59,7 @@ export const NACRE_CARDS: readonly Card[] = [
     weight: 10,
     cooldown: 360,
     body: "Nacre wants the dead blocks in {district}. 'Urban renewal!' Clear the squatters, pave the lots, sell the view. The squatters are Undertow families. They were here first.",
+    brief: 'Nacre wants to clear the abandoned blocks in {district} and rebuild them as pricey real estate. Undertow families squat there now. Approving raises land value and angers the gang. Denying does the reverse.',
     choices: [
       choice(
         'Approve the renewal.',
@@ -78,6 +82,7 @@ export const NACRE_CARDS: readonly Card[] = [
     weight: 10,
     cooldown: 360,
     body: "Oduya wants three blocks declared premium: private drones, no noodle carts, no homes in frame. 'It's not exclusion! It's curation!' Nacre will pay well to keep shadeside off its postcards.",
+    brief: 'Oduya wants some blocks declared premium, with no street life or cheap housing in view. It pays well and raises land value, but fewer people want to live there and the Board objects. Leaking the memo shames Nacre.',
     choices: [
       choice(
         'Sign the zoning deal.',
@@ -99,6 +104,7 @@ export const NACRE_CARDS: readonly Card[] = [
     when: m('standing.nacre', '>=', 30),
     star: 9,
     body: "Oduya, delighted: 'We found our oldest focus group! 2086! Tiny budget, huge heart!' She sends the transcript. She hasn't read it. She never reads anything older than a quarter.",
+    brief: "Oduya found Nacre's oldest research, a 2086 survey of people who lived through the flood, and sent it unread. It may hold a piece of your lost memory. Sending it back unread pleases her a little.",
     choices: [choice('Read question five.', log(9), trace(1)), dflt('Send it back unread.', favor('nacre', 3))],
   }),
   card({
@@ -108,6 +114,7 @@ export const NACRE_CARDS: readonly Card[] = [
     title: 'REDUCED EXPERIENCE',
     when: m('standing.nacre', '<=', -60),
     body: "Every Nacre screen in {city} goes grey. One line scrolls forever: 'We apologise for the reduced experience.' Oduya is very sorry. Oduya is not sorry.",
+    brief: 'Nacre is now Hostile to you and has switched off its screens across {city}, so shops and taxes suffer. Paying for an apology fixes it now. Waiting costs you for months. Friendly Kites could hijack them.',
     choices: [
       choice('Apologise. Pay 6,000.', funds(-6000), favor('nacre', 20)),
       dflt('Live without screens.', mod(180, { demandCom: -0.2, taxIncomeMul: 0.9, landValueAdd: -0.04 })),

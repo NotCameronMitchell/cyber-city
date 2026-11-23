@@ -2,13 +2,19 @@
 // Story card (docs/STORY.md §8.2): the bottom sheet for beats, faction cards,
 // ⚑ cards, system cards, Silt Logs and ending cards.
 //
-//   3 px faction edge · 56 px header (48 px sigil, speaker, faction)
-//   sys line · title · body (typewriter, scrolls if needed)
-//   up to 4 choices (52 px; 68 px when the label wraps) with hint chips
-//   footer: Later (faction cards) · "auto in 14d" ("auto soon" on the last day)
+//   3 px faction edge · 56 px header (48 px sigil, speaker, faction; the
+//     speaker line is a "who is this?" button for faction speakers)
+//   sys line · title · "What's going on" (Card.brief, plain language) ·
+//     [who is this: name, leader, standing, Faction.about — open on first
+//     meeting, under the brief so the card still opens on what's going on] ·
+//     body (typewriter); this whole block scrolls, the choices never move
+//   up to 4 choices (52 px; 68 px when the label wraps), each with a plain
+//     summary of what it does ("Basalt ++ · Trace +3 · −1,200 CR")
+//   footer: Later (messages: COMMS cards and story messages) · "auto in 14d"
 //
-// When the body overflows its area a chevron and edge glow say "more below".
-// The first card with hint chips carries a one-time legend line for them.
+// When the text overflows its area a chevron and edge glow say "more below".
+// The first card with favor or Trace effects carries a one-time legend line
+// (deferred past a faction's first card, whose intro already takes the room).
 //
 // Press-and-hold anywhere that is not a button fades the card to 15% so the
 // player can peek at the map. Swipe down = Later (faction cards only).
@@ -17,13 +23,14 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { storageGet, storageSet } from '../../game/game';
-import type { CardView, Hint } from '../../game/story/types';
+import type { CardView, Hint, StoryView } from '../../game/story/types';
 import type { UIContext } from '../context';
-import { esc, h, prefersReducedMotion, replayClass, setClass, setHidden, setStyle, setText } from '../dom';
+import { esc, h, prefersReducedMotion, replayClass, setClass, setHidden, setHtml, setStyle, setText } from '../dom';
+import { MINUS } from '../format';
 import { icon } from '../icons';
 import { longPress, swipeDown } from './gesture';
-import { hintRow } from './hints';
-import { factionColor, factionName, factionSigil, sigilImg, speakerMark } from './sigils';
+import { hintSummary } from './hints';
+import { TIER_COLOR, TIER_WORD, factionColor, factionName, factionSigil, sigilImg, speakerMark } from './sigils';
 
 const CPS = 60;
 const ARM_MS = 600;
@@ -51,6 +58,14 @@ export class StoryCard {
   private readonly sig: HTMLElement;
   private readonly speaker: HTMLElement;
   private readonly faction: HTMLElement;
+  private readonly who: HTMLButtonElement;
+  private readonly whoHint: HTMLElement;
+  private readonly about: HTMLElement;
+  private readonly brief: HTMLElement;
+  private readonly briefText: HTMLElement;
+  private aboutOpen = false;
+  private aboutFor: string | null = null;
+  private factions: StoryView['factions'] = [];
   private readonly kind: HTMLElement;
   private readonly scroll: HTMLElement;
   private readonly sys: HTMLElement;
@@ -87,20 +102,28 @@ export class StoryCard {
     this.sig = h('span', { class: 'cc-scard-sig' });
     this.speaker = h('span', { class: 'cc-scard-speaker' });
     this.faction = h('span', { class: 'cc-scard-faction' });
+    this.whoHint = h('span', { class: 'cc-scard-whohint', html: `${icon('info')}<span>Who is this?</span>` });
+    // The speaker line doubles as the "who is this?" button for faction speakers.
+    this.who = h('button', { class: 'cc-scard-who', type: 'button', 'data-act': 'who', 'aria-expanded': 'false' }, this.speaker, h('span', { class: 'cc-scard-whorow' }, this.faction, this.whoHint));
     this.kind = h('span', { class: 'cc-scard-kind' });
+    this.about = h('div', { class: 'cc-scard-about', hidden: true, role: 'note' });
     this.sys = h('div', { class: 'cc-scard-sys' });
     this.title = h('h2', { class: 'cc-scard-title', id: 'cc-scard-title' });
+    this.briefText = h('p', { class: 'cc-brief-text' });
+    this.brief = h('div', { class: 'cc-scard-brief', hidden: true, role: 'note' }, h('div', { class: 'cc-brief-k', html: `${icon('info')}<span>What's going on</span>` }), this.briefText);
     this.shown = h('span');
     this.rest = h('span', { class: 'cc-tw-rest', 'aria-hidden': 'true' });
     this.body = h('p', { class: 'cc-scard-body' }, this.shown, this.rest);
-    this.scroll = h('div', { class: 'cc-scard-scroll' }, this.sys, this.title, this.body);
+    // The intro sits under "What's going on", so a faction's first card still opens on its
+    // title and plain-language brief; the in-voice body follows the intro.
+    this.scroll = h('div', { class: 'cc-scard-scroll' }, this.sys, this.title, this.brief, this.about, this.body);
     this.choices = h('div', { class: 'cc-scard-choices', role: 'group', 'aria-label': 'Choices' });
     this.more = h('div', { class: 'cc-scard-more', 'aria-hidden': 'true', html: icon('chevron') });
     this.legendSeen = storageGet(LEGEND_KEY) === '1';
     this.legend = h(
       'div',
       { class: 'cc-scard-legend', hidden: true },
-      h('span', { class: 'cc-scard-legend-row' }, h('span', { class: 'cc-scard-legend-k', html: '<b class="is-up">▲</b><b class="is-down">▼</b>' }), h('span', { text: 'How a faction will feel' })),
+      h('span', { class: 'cc-scard-legend-row' }, h('span', { class: 'cc-scard-legend-k', html: `<b class="is-up">+</b><b class="is-down">${MINUS}</b>` }), h('span', { text: 'How that faction will feel about it (more signs, more feeling)' })),
       h('span', { class: 'cc-scard-legend-row' }, h('span', { class: 'cc-scard-legend-k', html: icon('eye') }), h('span', { text: 'Trace: how close anyone is to finding you' })),
       h('span', { class: 'cc-scard-legend-tip', text: 'Hold a choice to see exactly what it does.' }),
     );
@@ -112,7 +135,7 @@ export class StoryCard {
       'section',
       { class: 'cc-scard cc-panel', hidden: true, role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'cc-scard-title', tabindex: '-1' },
       this.edge,
-      h('header', { class: 'cc-scard-head' }, this.sig, h('div', { class: 'cc-scard-who' }, this.speaker, this.faction), this.kind),
+      h('header', { class: 'cc-scard-head' }, this.sig, this.who, this.kind),
       this.scroll,
       this.more,
       this.legend,
@@ -156,11 +179,12 @@ export class StoryCard {
     return this.card !== null;
   }
 
-  /** Show (or replace) the open card. */
-  show(card: CardView): void {
+  /** Show (or replace) the open card; `v` gives the speaker's faction row for "who is this?". */
+  show(card: CardView, v?: StoryView): void {
     const same = this.card?.id === card.id;
     this.card = card;
     this.busy = false;
+    if (v) this.factions = v.factions;
     if (card.kind === 'ending') this.lastEndingBody = card.body;
     const mark = speakerMark(card);
     const color = card.faction ? factionColor(card.faction) : mark.color;
@@ -174,6 +198,18 @@ export class StoryCard {
     const fname = card.faction ? factionName(card.faction) + (card.with ? ` · ${factionName(card.with)}` : '') : card.kind === 'log' ? 'Pump Station 6' : '';
     setText(this.faction, fname);
     setHidden(this.faction, !fname);
+    // "Who is this?" for a visible faction speaker; the first card a faction speaks on opens it.
+    const row = this.speakerRow(card);
+    this.who.disabled = !row;
+    setClass(this.who, 'has-about', !!row);
+    setHidden(this.whoHint, !row);
+    if (!same || this.aboutFor !== card.id) {
+      this.aboutFor = card.id;
+      this.aboutOpen = !!row && !!card.firstMeet;
+    }
+    this.renderAbout(row, !!card.firstMeet);
+    setText(this.briefText, card.brief ?? '');
+    setHidden(this.brief, !card.brief);
     this.kind.innerHTML = (card.kind === 'hostile' ? icon('flag') : '') + `<span>${esc(KIND_LABEL[card.kind])}</span>`;
     setText(this.sys, card.sys ?? '');
     setHidden(this.sys, !card.sys);
@@ -187,10 +223,12 @@ export class StoryCard {
       this.scroll.scrollTop = 0;
     }
     this.renderChoices(card);
-    // One-time legend for the hint chips, on the first card that has favor or Trace chips.
-    const legend = !this.legendSeen && card.choices.some((c) => c.hints.some((x: Hint) => x.k === 'favor' || x.k === 'trace'));
+    // One-time legend for the hint chips, on the first card that has favor or Trace chips
+    // (not on a faction's first card: its intro already takes the room).
+    const legend = !this.legendSeen && !card.firstMeet && card.choices.some((c) => c.hints.some((x: Hint) => x.k === 'favor' || x.k === 'trace'));
     setHidden(this.legend, !legend);
     setHidden(this.laterBtn, !card.canLater);
+    this.laterBtn.setAttribute('aria-label', card.fromMessage && card.autoInDays === undefined ? 'Later: keep it waiting on the goal chip' : 'Later: keep it waiting in COMMS');
     const auto = card.autoInDays;
     setText(this.auto, auto !== undefined && auto !== null ? autoLabel(auto) : '');
     setHidden(this.foot, !card.canLater && (auto === undefined || auto === null));
@@ -207,10 +245,46 @@ export class StoryCard {
     this.checkMore();
   }
 
+  /** The speaker's faction row, if it is visible and has something to say about itself. */
+  private speakerRow(card: CardView): StoryView['factions'][number] | null {
+    if (!card.faction) return null;
+    const row = this.factions.find((f) => f.id === card.faction);
+    return row && row.shown === 'yes' ? row : null;
+  }
+
+  /** "Who is this?": name, leader, standing and the faction's plain-language intro. */
+  private renderAbout(row: StoryView['factions'][number] | null, first: boolean): void {
+    this.who.setAttribute('aria-expanded', this.aboutOpen && row ? 'true' : 'false');
+    this.who.setAttribute('aria-label', row ? `${row.leader || row.name}, ${row.name}. Who is this?` : this.speaker.textContent ?? '');
+    setHidden(this.about, !(this.aboutOpen && row));
+    if (!row || !this.aboutOpen) return;
+    const s = Math.round(row.standing);
+    const standing = `${TIER_WORD[row.tier]} · standing ${s > 0 ? '+' : s < 0 ? MINUS : ''}${Math.abs(s)}`;
+    setStyle(this.about, '--tier', TIER_COLOR[row.tier]);
+    setHtml(
+      this.about,
+      `<div class="cc-who-k">${first ? 'New contact' : 'Who is this?'}</div>` +
+        `<div class="cc-who-name">${factionSigil(row.id, 22, 'cc-who-sig')}<span><b>${esc(row.name)}</b>${row.leader ? ` · ${esc(row.leader)}` : ''}</span></div>` +
+        `<div class="cc-who-standing"><span class="cc-who-tier">${esc(standing)}</span>${row.callsYou ? `<span> · calls you “${esc(row.callsYou)}”</span>` : ''}</div>` +
+        (row.about ? `<p class="cc-who-text">${esc(row.about)}</p>` : '') +
+        `<div class="cc-who-tip">Tap the name above to hide this.</div>`,
+    );
+  }
+
+  /** Scroll the text so the just-opened intro shows (it sits under the brief). */
+  private revealAbout(): void {
+    const sc = this.scroll;
+    const top = this.about.offsetTop - 4;
+    const bottom = this.about.offsetTop + this.about.offsetHeight + 4;
+    if (top < sc.scrollTop) sc.scrollTop = Math.max(0, top);
+    else if (bottom > sc.scrollTop + sc.clientHeight) sc.scrollTop = Math.max(0, Math.min(top, bottom - sc.clientHeight));
+  }
+
   hide(): void {
     if (!this.card) return;
     if (!this.legend.hidden) this.markLegendSeen();
     this.card = null;
+    this.aboutFor = null;
     this.busy = false;
     this.setPeek(false);
     this.el.hidden = true;
@@ -265,7 +339,15 @@ export class StoryCard {
     list.forEach((c, i) => {
       const locked = 'locked' in c && c.locked ? c.locked : '';
       const long = c.label.length > 34;
-      const hints = locked ? `<span class="cc-choice-lock">${icon('lock')}<span>${esc(locked)}</span></span>` : hintRow(c.hints);
+      // Always-visible plain summary of what the choice does; hold for the exact effects.
+      const sum = hintSummary(c.hints);
+      const hints = locked
+        ? `<span class="cc-choice-lock">${icon('lock')}<span>${esc(locked)}</span></span>`
+        : sum
+          ? `<span class="cc-choice-sum">${sum}</span>`
+          : card.choices.length > 1
+            ? '<span class="cc-choice-sum is-none">no visible effect</span>'
+            : '';
       html +=
         `<button class="cc-choice${locked ? ' is-locked' : ''}${long ? ' is-long' : ''}${c.isDefault ? ' is-default' : ''}" type="button" data-i="${i}"` +
         `${locked ? ' aria-disabled="true"' : ''}>` +
@@ -300,6 +382,15 @@ export class StoryCard {
     const t = e.target as HTMLElement;
     if (t.closest('[data-act="later"]')) {
       this.later();
+      return;
+    }
+    if (t.closest('[data-act="who"]')) {
+      const row = this.card ? this.speakerRow(this.card) : null;
+      if (!row) return;
+      this.aboutOpen = !this.aboutOpen;
+      this.renderAbout(row, !!this.card?.firstMeet);
+      if (this.aboutOpen) this.revealAbout();
+      this.checkMore();
       return;
     }
     const btn = t.closest<HTMLElement>('.cc-choice');

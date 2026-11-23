@@ -1,12 +1,15 @@
 // Headless playthroughs and director features (STORY.md §13 "Playthrough",
-// §2.5, §2.6, §6, §7.9, §9, §10.9), against the real content in
-// src/game/story/content.
+// §2.5, §2.6, §6, §7.9, §9, §10.9, docs/PACING.md), against the real content
+// in src/game/story/content.
 //
-//   - a greedy builder with random choices plays 40 sim years without throwing,
-//     reaches Ch6 through fallbacks and waivers, sees a ⚑ card and a bailout;
-//     the Quiet Hand is always selectable; no faction card before COMMS; no ‡
-//     default before 60 unpaused seconds
-//   - a city that never passes 800 residents still reaches Ch6
+//   - a greedy builder with random choices plays 40 sim years (brisk) without
+//     throwing, reaches Ch6 through fallbacks and waivers, sees a ⚑ card and a
+//     bailout; the Quiet Hand is always selectable; no faction card before
+//     COMMS; no ‡ default before the pace's unpaused seconds
+//   - every pace (relaxed, normal, brisk) reaches every chapter and an ending,
+//     with its own chapter floor, deck gap, quiet window and message gap, and
+//     only the allowed cards opening by themselves
+//   - a city that never passes 800 residents still reaches Ch6 (brisk and relaxed)
 //   - a run that picks Run Clean Glass completes Ch3
 //   - endings, Charter Night, Recount, Charter Review, Lamplight, the gallery
 //   - deals, pacts, salt, nudge, build reactions, signals, Trace, whispers,
@@ -14,14 +17,16 @@
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { applyAction } from '../../src/game/actions';
-import { GALLERY_KEY, STORY_PACING } from '../../src/game/config';
+import { GALLERY_KEY, STORY_PACE, STORY_PACING } from '../../src/game/config';
 import type { Game } from '../../src/game/game';
 import { Rng } from '../../src/game/rng';
 import { readGallery } from '../../src/game/story/director';
 import { isRetired, standing } from '../../src/game/story/factions';
 import * as turf from '../../src/game/story/turf';
-import { ZoneType } from '../../src/game/types';
-import { answerAll, headlessGame, playStory, spiteLowest, type RunLog } from './harness';
+import { storyContent } from '../../src/game/story/conditions';
+import { URGENT_SYSTEM } from '../../src/game/story/pacing';
+import { ZoneType, type StoryPace } from '../../src/game/types';
+import { answerAll, headlessGame, newRunLog, playStory, spiteLowest, type RunLog } from './harness';
 
 const P = STORY_PACING;
 
@@ -49,14 +54,37 @@ afterEach(() => {
   store = null;
 });
 
-/** Common invariants of every headless run. */
-function invariants(log: RunLog) {
+/** Cards allowed to open by themselves (docs/PACING.md): the boot, key choices, the count, endings, Log 6, urgent system cards. */
+const SELF_OPEN = new Set(['ch1.boot', 'ch1.lark', 'ch2.vote', 'ch3.pier', 'ch4.brine', 'ch5.choice', 'ch6.count', 'reward.6']);
+
+/** Common invariants of every headless run, for its pace. */
+function invariants(log: RunLog, pace: StoryPace = 'brisk') {
+  const T = STORY_PACE[pace];
+  const eps = 1e-6;
   // No faction card before COMMS.
   expect(log.arrived.every((a) => a.comms)).toBe(true);
-  // Reading budget (§7.1, §8.11): deck deliveries at least 120 unpaused seconds apart.
-  for (let k = 1; k < log.deck.length; k++) expect(log.deck[k].sec - log.deck[k - 1].sec).toBeGreaterThanOrEqual(P.minActiveSecBetween - 1e-6);
-  // No ‡ default before 60 unpaused seconds.
-  for (const d of log.defaults) expect(d.waitedSec).toBeGreaterThanOrEqual(P.pendingMinSec - 1e-6);
+  // Reading budget (§7.1, §8.11, PACING.md): faction / ⚑ deliveries the pace's deck gap apart,
+  // urgent system cards (bailout, the Clip) at least 120 s after any deck card.
+  for (let k = 1; k < log.deck.length; k++) {
+    const gap = log.deck[k].sec - log.deck[k - 1].sec;
+    expect(gap).toBeGreaterThanOrEqual((URGENT_SYSTEM.has(log.deck[k].id) ? P.systemGapSec : T.minActiveSecBetween) - eps);
+  }
+  // The quiet build window: no faction / ⚑ card within quietSec of a chapter title.
+  for (const d of log.deck) {
+    if (URGENT_SYSTEM.has(d.id)) continue;
+    const start = [...log.chapterSecs].reverse().find((c) => c.sec <= d.sec);
+    if (start) expect(d.sec - start.sec).toBeGreaterThanOrEqual(T.quietSec - eps);
+  }
+  // Story messages one at a time, the pace's beat gap apart.
+  for (let k = 1; k < log.messages.length; k++) expect(log.messages[k].sec - log.messages[k - 1].sec).toBeGreaterThanOrEqual(T.beatGapSec - eps);
+  // Only the allowed cards open by themselves (replies and chains open right after a close).
+  const kinds = storyContent().cards;
+  for (const f of log.forcedAt) {
+    const ok = SELF_OPEN.has(f.id) || kinds.get(f.id)?.kind === 'ending' || URGENT_SYSTEM.has(f.id) || f.afterClose;
+    expect(ok, `${f.id} opened by itself`).toBe(true);
+  }
+  // No ‡ default before the pace's unpaused seconds.
+  for (const d of log.defaults) expect(d.waitedSec).toBeGreaterThanOrEqual(T.pendingMinSec - eps);
 }
 
 const HOSTILE_CARDS = ['bd.freeze', 'ba.embargo', 'nc.blackout', 'ut.highwater', 'kt.string', 'tu.snuff'];
@@ -64,7 +92,7 @@ const HOSTILE_CARDS = ['bd.freeze', 'ba.embargo', 'nc.blackout', 'ut.highwater',
 // ── The long runs ───────────────────────────────────────────────────────────
 
 describe('headless playthroughs (§13)', () => {
-  it('a greedy builder with random choices plays 40 years: Ch6, an ending, ⚑ cards, a bailout', () => {
+  it('a greedy builder with random choices plays 40 years (brisk): Ch6, an ending, ⚑ cards, a bailout', () => {
     const quietAlways: boolean[] = [];
     const random = (choices: { locked?: string }[], rng: Rng) => {
       const open = choices.map((c, k) => (c.locked ? -1 : k)).filter((k) => k >= 0);
@@ -73,6 +101,7 @@ describe('headless playthroughs (§13)', () => {
     const { game, log } = playStory({
       seed: 2091,
       years: 40,
+      pace: 'brisk',
       answerPending: 0.5,
       // Random choices, half of them leaning against whoever is already lowest (a player with a grudge).
       pick: (id, choices, rng, d) => (rng.next() < 0.5 ? spiteLowest()(id, choices, rng, d) : random(choices, rng)),
@@ -91,7 +120,7 @@ describe('headless playthroughs (§13)', () => {
     expect(log.maxChapter).toBeGreaterThanOrEqual(6);
     expect(w.story.chapter).toBe(7);
     expect(log.endings.length).toBeGreaterThanOrEqual(1);
-    expect(log.opened.some((id) => HOSTILE_CARDS.includes(id))).toBe(true);
+    expect(log.deck.some((d) => HOSTILE_CARDS.includes(d.id))).toBe(true); // ⚑ cards arrive in COMMS
     expect(log.opened).toContain('sys.bailout');
     expect(w.funds).toBeGreaterThan(-5000); // no losing: the city recovered
     expect(quietAlways.length).toBeGreaterThan(0);
@@ -112,20 +141,47 @@ describe('headless playthroughs (§13)', () => {
     expect(JSON.parse(JSON.stringify(w.story))).toEqual(w.story);
   }, 120000);
 
-  it('a city that never passes 800 residents still reaches Ch6 (1,440-day fallbacks, beat time-outs, waivers)', () => {
-    const { game, log } = playStory({ seed: 77, years: 40, builder: 'low', answerPending: 0.3 });
-    expect(game.world.maxPopulation).toBeLessThanOrEqual(800);
-    expect(log.maxChapter).toBeGreaterThanOrEqual(6);
-    expect(game.world.story.chapter).toBe(7); // and an ending was held
-    expect(log.endings).toContain('quiet');
-    invariants(log);
-  }, 120000);
+  for (const [pace, years, secPerDay] of [
+    ['brisk', 40, 0.5],
+    ['relaxed', 50, 1.5],
+  ] as const) {
+    it(`a city that never passes 800 residents still reaches Ch6 (${pace}: 1,440-day fallbacks, beat time-outs, waivers)`, () => {
+      const { game, log } = playStory({ seed: 77, years, secPerDay, pace, builder: 'low', answerPending: 0.3 });
+      expect(game.world.maxPopulation).toBeLessThanOrEqual(800);
+      expect(log.maxChapter).toBeGreaterThanOrEqual(6);
+      expect(game.world.story.chapter).toBe(7); // and an ending was held
+      expect(log.endings).toContain('quiet');
+      invariants(log, pace);
+    }, 120000);
+  }
+
+  // Every pace reaches every chapter and an ending at speed 1 (0.5 s a day), with its own cadence.
+  for (const [pace, years] of [
+    ['relaxed', 62],
+    ['normal', 40],
+  ] as const) {
+    it(`${pace}: a greedy builder with random choices reaches every chapter and an ending at speed 1`, () => {
+      const T = STORY_PACE[pace];
+      const { game, log } = playStory({ seed: 2091, years, pace, answerPending: 0.5, readDelaySec: 20, each: (g) => g.world.story.chapter >= 7 && !g.story.blocking && !g.world.story.waiting });
+      const st = game.world.story;
+      expect(log.chapters.map((c) => c.n)).toEqual([1, 2, 3, 4, 5, 6]);
+      expect(st.chapter).toBe(7);
+      expect(log.endings.length).toBe(1);
+      for (let n = 1; n <= 6; n++) expect(st.logs).toContain(n);
+      // Each chapter lasts at least the pace's floor of unpaused play.
+      for (let k = 1; k < log.chapterSecs.length; k++) expect(log.chapterSecs[k].sec - log.chapterSecs[k - 1].sec).toBeGreaterThanOrEqual(T.chapterMinSec - 1);
+      invariants(log, pace);
+      // Few interruptions: on average no more than one card opened by itself every 8 unpaused minutes.
+      expect(log.forcedAt.length / (game.story.activeSec / 3600)).toBeLessThan(7.5);
+    }, 120000);
+  }
 
   it('a run that picks Run Clean Glass completes Ch3', () => {
     let pier = -1;
     const { game, log } = playStory({
       seed: 5,
       years: 15,
+      pace: 'brisk',
       pick: (id, choices, rng, d) => {
         if (id === 'ch3.pier') return (pier = d.view().card!.choices.findIndex((c) => c.label === 'Run Clean Glass.'));
         const open = choices.map((c, k) => (c.locked ? -1 : k)).filter((k) => k >= 0);
@@ -154,7 +210,7 @@ describe('headless playthroughs (§13)', () => {
     // Two loads of one save play out the same.
     for (const g of [a, b]) {
       const r = new Rng(4);
-      const log: RunLog = { deck: [], storyMs: 0, worstDayMs: 0, opened: [], arrived: [], defaults: [], chapters: [], endings: [], charterNights: 0, cardSecs: [], maxChapter: 1 };
+      const log: RunLog = newRunLog();
       for (let d = 0; d < 720; d++) {
         g.story.update(0.5, false);
         answerAll(g, r, log, { years: 0 });
@@ -166,13 +222,39 @@ describe('headless playthroughs (§13)', () => {
     expect(a.world.story.log).toEqual(b.world.story.log);
     expect(a.world.story.favor).toEqual(b.world.story.favor);
   }, 60000);
+
+  it('the pacing clocks and the waiting message survive a save and load', () => {
+    const g = headlessGame(15, false, 'relaxed');
+    const st = g.world.story;
+    st.chapter = 2;
+    st.phase = 'active';
+    st.chapterTick = 0;
+    st.sinceStartSec = 0; // the chapter title just showed
+    g.story.update(5, false);
+    expect(st.waiting?.card).toBe('ch2.sallow');
+    g.story.update(200, false);
+    const h = headlessGame(16, false, 'relaxed');
+    expect(h.restore(JSON.parse(JSON.stringify(g.world.serialize())))).toBe(true);
+    const s2 = h.world.story;
+    expect(s2.waiting).toEqual(st.waiting);
+    expect(s2.chapterSec).toBeCloseTo(st.chapterSec!, 6);
+    expect(s2.sinceStartSec).toBeCloseTo(st.sinceStartSec!, 6);
+    expect(s2.deckSec).toBeCloseTo(st.deckSec!, 6);
+    expect(s2.frontSec).toBeCloseTo(st.frontSec!, 6);
+    expect(h.story.view().messages.map((m) => m.id)).toEqual(['ch2.sallow']);
+    // The quiet window keeps counting from where it was: no faction card until it has passed.
+    expect(s2.sinceStartSec!).toBeLessThan(STORY_PACE.relaxed.quietSec);
+    h.openWaiting();
+    expect(h.world.story.open?.card).toBe('ch2.sallow');
+    expect(s2.beatsShown).toEqual(['ch2.sallow']);
+  });
 });
 
 // ── Endings (§6) ────────────────────────────────────────────────────────────
 
 /** A game whose Charter Night is about to open (Ch6, countdown ending tomorrow). */
-function charterEve(seed = 60): Game {
-  const g = headlessGame(seed);
+function charterEve(seed = 60, pace: StoryPace = 'brisk'): Game {
+  const g = headlessGame(seed, false, pace);
   const st = g.world.story;
   st.unlocks.push('factions', 'comms');
   st.chapter = 6;
@@ -181,6 +263,7 @@ function charterEve(seed = 60): Game {
   st.beatsShown = ['ch6.eve'];
   st.seen['ch6.eve'] = 0;
   st.logs = [1, 2, 3, 4, 5];
+  st.chapterSec = 3600; // Ch6's floor is long met: these tests are about the count itself
   g.world.tick = 400;
   st.countdownEnd = 401;
   return g;
@@ -195,6 +278,22 @@ function openCount(g: Game): void {
 
 describe('Charter Night and endings (§6)', () => {
   beforeEach(() => mockStorage());
+
+  it("relaxed: Ch6's count also waits for the chapter floor, and the chip counts it down", () => {
+    const g = charterEve(60, 'relaxed');
+    const st = g.world.story;
+    st.chapterSec = 100;
+    days(g, 1);
+    g.story.update(11, false);
+    expect(openId(g)).toBeNull(); // the year is up, the floor is not
+    const v = g.story.view();
+    expect(v.countdownDays).toBe(0);
+    expect(v.chapter.closesInSec).toBe(STORY_PACE.relaxed.chapterMinSec - 111);
+    g.story.update(STORY_PACE.relaxed.chapterMinSec, false);
+    days(g, 1);
+    g.story.update(0.1, false);
+    expect(openId(g)).toBe('ch6.count');
+  });
 
   it('the count opens Charter Night; claims are checked live; the Quiet Hand is always selectable', () => {
     const g = charterEve();
@@ -291,7 +390,9 @@ describe('Charter Night and endings (§6)', () => {
     g.world.tick = st.nextReview! - 1;
     g.story.update(200, false);
     days(g, 1);
-    for (let k = 0; k < 40 && openId(g) !== 'ep.review'; k++) days(g, 1);
+    for (let k = 0; k < 40 && st.pending?.card !== 'ep.review'; k++) days(g, 1);
+    expect(st.pending?.card).toBe('ep.review'); // a COMMS card now: it waits for the player
+    g.openPending();
     expect(openId(g)).toBe('ep.review');
     g.choose(1); // Open a new count
     expect(st.flags.charterNightOpen).toBe(true);

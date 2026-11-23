@@ -4,25 +4,26 @@
 //
 //   Log        56 px rows (sigil, title, the choice made or "(no answer)",
 //              date), bottom-anchored like a chat; the pending card with its
-//              countdown ring sits just above the tabs. Whispers are one-line
-//              rows. Tap a row to expand it; tap the pending row to answer.
+//              countdown ring sits just above the tabs, and below it any story
+//              message waiting to be read (docs/PACING.md). Whispers are
+//              one-line rows. Tap a row to expand it; tap a waiting row to read.
 //   Silt Logs  coherence %, then a 4 × 3 grid of 72 px tiles; found tiles glow
 //              and open the log, missing ones show their source.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { STORY_PACING } from '../../game/config';
+import { STORY_PACE, STORY_PACING } from '../../game/config';
 import type { FactionId, StoryView } from '../../game/story/types';
 import type { UIContext } from '../context';
 import { esc, h, setClass, setHidden, setText } from '../dom';
 import { icon } from '../icons';
 import { pressGuard, swipeDown } from './gesture';
-import { MOTH_COLOR, factionColor, factionSigil, sigilImg } from './sigils';
+import { MOTH_COLOR, SYSTEM_COLOR, factionColor, factionSigil, sigilImg } from './sigils';
 import { autoLabel } from './storyCard';
 
-/** Countdown ring fill for a waiting card: the later of the day and real-second clocks. */
-export function pendingFrac(p: { daysLeft: number; secLeft: number }): number {
+/** Countdown ring fill for a waiting card: the later of the day and real-second clocks (the pace sets the seconds). */
+export function pendingFrac(p: { daysLeft: number; secLeft: number; secTotal?: number }): number {
   const d = p.daysLeft / Math.max(1, STORY_PACING.pendingDays);
-  const s = p.secLeft / Math.max(1, STORY_PACING.pendingMinSec);
+  const s = p.secLeft / Math.max(1, p.secTotal ?? STORY_PACE.relaxed.pendingMinSec);
   return Math.max(0, Math.min(1, Math.max(d, s)));
 }
 
@@ -61,6 +62,8 @@ export class Comms {
   private view: StoryView | null = null;
   private readonly press: { readonly down: boolean };
   onClosed: (() => void) | null = null;
+  /** Read the waiting story message (game.openWaiting via the story UI). */
+  onWaiting: (() => void) | null = null;
 
   constructor(private readonly ctx: UIContext) {
     this.title = h('h2', { class: 'cc-ss-title', text: 'COMMS' });
@@ -149,7 +152,7 @@ export class Comms {
     if (!this._open && !force) return;
     // ── Log (oldest first, newest at the bottom, pending last) ──
     let s = '';
-    if (!v.comms.length && !v.pending) s += '<div class="cc-comms-empty">Nothing yet. The wires are quiet.</div>';
+    if (!v.comms.length && !v.pending && !v.messages.length) s += '<div class="cc-comms-empty">Nothing yet. The wires are quiet.</div>';
     v.comms.forEach((r, i) => {
       const f = rowFaction(r);
       const sig = f ? factionSigil(f, 28) : sigilImg('moth', MOTH_COLOR, 28);
@@ -176,6 +179,16 @@ export class Comms {
         `<span class="cc-crow-sig cc-crow-ring">${factionSigil(p.faction, 28)}</span>` +
         `<span class="cc-crow-main"><span class="cc-crow-title">${esc(p.title)}</span><span class="cc-crow-choice is-wait"></span></span>` +
         `<span class="cc-crow-answer">Answer${icon('chevron')}</span></button>`;
+    }
+    const sm = v.messages.find((m) => m.slot === 'story');
+    if (sm) {
+      const color = sm.faction ? factionColor(sm.faction) : sm.kind === 'system' ? SYSTEM_COLOR : MOTH_COLOR;
+      const sig = sm.faction ? factionSigil(sm.faction, 28) : sigilImg(sm.kind === 'system' ? 'system' : 'moth', color, 28);
+      s +=
+        `<button class="cc-crow is-pending is-story" type="button" data-act="read-story" style="--fc:${color}">` +
+        `<span class="cc-crow-sig">${sig}</span>` +
+        `<span class="cc-crow-main"><span class="cc-crow-title">${esc(sm.title)}</span><span class="cc-crow-choice is-msg">Waiting for you · the chapter goes on once it is read</span></span>` +
+        `<span class="cc-crow-answer">Read${icon('chevron')}</span></button>`;
     }
     // Rows change only on a new entry, an expanded row or a new pending card; hold off while a finger is down.
     let rebuilt = false;
@@ -242,6 +255,12 @@ export class Comms {
     if (act === 'answer') {
       this.close();
       this.ctx.game.openPending();
+      return;
+    }
+    if (act === 'read-story') {
+      this.close();
+      if (this.onWaiting) this.onWaiting();
+      else this.ctx.game.openWaiting();
       return;
     }
     if (act === 'reader-close') {

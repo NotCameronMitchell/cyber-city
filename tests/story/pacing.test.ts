@@ -1,12 +1,15 @@
-// Deck pacing and chapter flow (STORY.md §5.0, §7.1, §8.11): the draw gates,
-// eligibility, weights and the five draw steps; the no-answer default in sim
-// days AND unpaused seconds; boot timing; beats (chained, delayed,
-// conditional, the 360-day time-out, gestures); trigger fallbacks; goal
-// waivers; optional beats; the one-chapter-per-600-seconds floor and its
-// settle countdown; ⚑ cards.
+// Deck pacing and chapter flow (STORY.md §5.0, §7.1, §8.11, docs/PACING.md):
+// the draw gates per story pace (deck gap, quiet window, beat gap, urgent
+// system cards), eligibility, weights and the five draw steps; the no-answer
+// default in sim days AND the pace's unpaused seconds; boot timing; beats
+// (chained, delayed, conditional, the 360-day time-out, gestures) and which
+// of them open by themselves or wait as messages; trigger fallbacks; goal
+// waivers (after the floor); optional beats; the chapter floor per pace and
+// its settle countdown; ⚑ cards in COMMS. Mechanics tests run on the 'brisk'
+// pace (the original cadence) unless they test a pace.
 
 import { beforeEach, describe, expect, it } from 'vitest';
-import { STORY_PACING } from '../../src/game/config';
+import { STORY_PACE, STORY_PACING } from '../../src/game/config';
 import type { Game } from '../../src/game/game';
 import { Rng } from '../../src/game/rng';
 import { storyContent, useStoryContent } from '../../src/game/story/conditions';
@@ -15,42 +18,86 @@ import {
   cardEligible,
   cardWeight,
   cooldownOf,
+  deckGate,
   deckGatesOpen,
   defaultChoice,
   drawCard,
   pendingExpired,
 } from '../../src/game/story/pacing';
 import type { Card } from '../../src/game/story/types';
+import type { StoryPace } from '../../src/game/types';
 import type { World } from '../../src/game/world';
 import { flatWorld } from '../helpers';
-import { headlessGame } from './harness';
+import { headlessGame, readWaiting } from './harness';
 
 useStoryContent(STORY_CONTENT);
 
 const P = STORY_PACING;
+const BRISK = STORY_PACE.brisk;
+const RELAXED = STORY_PACE.relaxed;
+const NORMAL = STORY_PACE.normal;
 const card = (id: string): Card => storyContent().cards.get(id)!;
 
 // ── Pure pacing ─────────────────────────────────────────────────────────────
 
-describe('deck gates (§7.1)', () => {
+describe('deck gates (§7.1, PACING.md)', () => {
   let w: World;
   beforeEach(() => {
     w = flatWorld(5);
     w.tick = 1000;
   });
-  const gates = { open: false, pending: false, frontDue: false, activeSec: 500, lastCardSec: 100 };
+  const gates = { open: false, pending: false, frontDue: false, sinceCardSec: 400, sinceFrontSec: 1e6, sinceStartSec: 1e6, pace: BRISK };
 
-  it('all hold: nothing open or pending, 120 s since the last card, no beat open, due or recent', () => {
+  it('brisk: nothing open or pending, 120 s since the last card, no beat open, due or recent', () => {
     expect(deckGatesOpen(w, gates)).toBe(true);
     expect(deckGatesOpen(w, { ...gates, open: true })).toBe(false);
     expect(deckGatesOpen(w, { ...gates, pending: true })).toBe(false);
     expect(deckGatesOpen(w, { ...gates, frontDue: true })).toBe(false);
-    expect(deckGatesOpen(w, { ...gates, activeSec: 219, lastCardSec: 100 })).toBe(false);
-    expect(deckGatesOpen(w, { ...gates, activeSec: 220, lastCardSec: 100 })).toBe(true);
+    expect(deckGatesOpen(w, { ...gates, sinceCardSec: 119 })).toBe(false);
+    expect(deckGatesOpen(w, { ...gates, sinceCardSec: 120 })).toBe(true);
     w.story.lastBeatTick = 975;
     expect(deckGatesOpen(w, gates)).toBe(false);
     w.story.lastBeatTick = 970;
     expect(deckGatesOpen(w, gates)).toBe(true);
+  });
+
+  it("each pace's deck gap, quiet window and card gap; urgent system cards only need 120 s", () => {
+    for (const pace of [RELAXED, NORMAL, BRISK]) {
+      const g = { ...gates, pace };
+      expect(deckGate(w, { ...g, sinceCardSec: P.systemGapSec - 1 })).toBe('none');
+      expect(deckGate(w, { ...g, sinceCardSec: pace.minActiveSecBetween - 1 })).toBe(pace.minActiveSecBetween > P.systemGapSec ? 'urgent' : 'none');
+      expect(deckGate(w, { ...g, sinceCardSec: pace.minActiveSecBetween })).toBe('all');
+      // The quiet build window after a chapter title: no faction cards, urgent ones still come.
+      expect(deckGate(w, { ...g, sinceCardSec: 1e6, sinceStartSec: Math.max(0, pace.quietSec - 1) })).toBe(pace.quietSec > 0 ? 'urgent' : 'all');
+      expect(deckGate(w, { ...g, sinceCardSec: 1e6, sinceStartSec: pace.quietSec })).toBe('all');
+      // Cards stay the pace's beat gap apart from the last card closed.
+      expect(deckGate(w, { ...g, sinceCardSec: 1e6, sinceFrontSec: pace.beatGapSec - 1 })).toBe('urgent');
+      expect(deckGate(w, { ...g, sinceCardSec: 1e6, sinceFrontSec: pace.beatGapSec })).toBe('all');
+      expect(deckGate(w, { ...g, sinceCardSec: 1e6, frontDue: true })).toBe('none');
+      // An unread story message (and any story card queued behind it) holds back everything
+      // but the urgent cards: a message may wait as long as the player likes.
+      expect(deckGate(w, { ...g, sinceCardSec: 1e6, waiting: true })).toBe('urgent');
+      expect(deckGate(w, { ...g, sinceCardSec: 1e6, waiting: true, frontDue: true })).toBe('urgent');
+      expect(deckGate(w, { ...g, sinceCardSec: P.systemGapSec - 1, waiting: true })).toBe('none');
+      expect(deckGate(w, { ...g, sinceCardSec: 1e6, waiting: true, pending: true })).toBe('none');
+    }
+    expect(RELAXED.minActiveSecBetween).toBeGreaterThanOrEqual(360);
+    expect(RELAXED.quietSec).toBeGreaterThanOrEqual(300);
+    expect(NORMAL.minActiveSecBetween).toBeGreaterThanOrEqual(210);
+    expect(NORMAL.quietSec).toBeGreaterThanOrEqual(180);
+    expect(BRISK.minActiveSecBetween).toBe(120);
+  });
+
+  it('an urgent gate draws only the bailout or the Clip', () => {
+    w.funds = -6000;
+    w.story.flags.tuningActive = true;
+    w.story.logs = Array.from({ length: 12 }, (_, k) => k + 1);
+    w.story.chapter = 7; // coda.recall (a non-urgent system card) is eligible too
+    const rng = new Rng(4);
+    expect(drawCard(w, rng, true, 1, true).pick?.card.id).toBe('sys.bailout');
+    w.funds = 0;
+    expect(drawCard(w, rng, true, 1, true).pick).toBeNull();
+    expect(drawCard(w, rng, true, 1, false).pick?.card.id).toBe('coda.recall');
   });
 });
 
@@ -187,6 +234,18 @@ describe('the five draw steps', () => {
     expect(drawCard(w, rng, true, 0).pick!.card.id).toBe('ba.embargo');
   });
 
+  it('4. a seasonal card never takes a slot it took in the last 3 deck cards (slow paces open slots in the same month)', () => {
+    w.tick = 30 * 10 + 360 * 8; // a November
+    w.stats.population = 3000;
+    w.story.chapter = 3;
+    w.story.lastCardTick = w.tick - 720;
+    w.story.seen['bd.ballot'] = w.tick - 720;
+    w.story.log.push({ tick: w.tick - 720, card: 'bd.ballot', choice: 0 });
+    expect(drawCard(w, rng, true, 0).pick).toBeNull(); // the chance roll failed and the seasonal step passed
+    w.story.log.push({ tick: w.tick - 400, card: 'nc.feeds', choice: 0 }, { tick: w.tick - 300, card: 'ba.shift', choice: 0 }, { tick: w.tick - 200, card: 'ut.salt', choice: 0 });
+    expect(drawCard(w, rng, true, 0).pick).toMatchObject({ step: 'seasonal' });
+  });
+
   it('4. a seasonal card skips the chance roll but not the 60-day gap; 300 d between showings', () => {
     w.tick = 30 * 10 + 360 * 8; // a November
     w.stats.population = 3000;
@@ -212,11 +271,15 @@ describe('the five draw steps', () => {
     expect(drawCard(w, new Rng(9), true, 100).pick!.card.id).toBe(a);
   });
 
-  it('no-answer default needs 20 sim days AND 60 unpaused seconds; ‡ picks the default', () => {
+  it("no-answer default needs 20 sim days AND the pace's unpaused seconds; ‡ picks the default", () => {
     w.tick = 100;
-    expect(pendingExpired(w, 80, 59)).toBe(false);
-    expect(pendingExpired(w, 81, 600)).toBe(false);
-    expect(pendingExpired(w, 80, 60)).toBe(true);
+    expect(pendingExpired(w, 80, 59, BRISK)).toBe(false);
+    expect(pendingExpired(w, 81, 600, BRISK)).toBe(false);
+    expect(pendingExpired(w, 80, 60, BRISK)).toBe(true);
+    // Relaxed: several minutes, so a player busy building is never rushed.
+    expect(RELAXED.pendingMinSec).toBeGreaterThanOrEqual(180);
+    expect(pendingExpired(w, 80, RELAXED.pendingMinSec - 1, RELAXED)).toBe(false);
+    expect(pendingExpired(w, 80, RELAXED.pendingMinSec, RELAXED)).toBe(true);
     expect(defaultChoice(w, card('bd.audit'))).toBe(1);
     expect(defaultChoice(w, card('ch1.boot'))).toBe(0);
   });
@@ -257,6 +320,30 @@ describe('chapter I boot (§5 Ch1)', () => {
     expect(g.story.view().card?.sys).toBe('> power 0.4% · coherence 4% · id: M.O.T.H.');
   });
 
+  it('while the story UI still shows the chapter title, the boot waits for it (one modal at a time), at most 20 s', () => {
+    for (const release of [true, false]) {
+      const g = headlessGame(11);
+      g.world.events.on('chapter', () => g.story.holdTitle(true)); // as the story UI does when it shows the title
+      g.setTool('road');
+      expect(g.apply({ x: 20, y: 20 }, { x: 30, y: 20 }).valid).toBe(true);
+      g.story.update(0.1, false);
+      g.story.update(5, false); // the title card
+      expect(g.world.story.phase).toBe('active');
+      g.story.update(12, false); // a summary takes a while to read: still no card under it
+      expect(openId(g)).toBeNull();
+      if (release) {
+        g.story.holdTitle(false); // tapped, or its timer ran out
+        g.story.update(0.1, false);
+        expect(openId(g)).toBe('ch1.boot');
+      } else {
+        g.story.update(7.5, false); // a title the UI never released can't hold the story past 20 s
+        expect(openId(g)).toBeNull();
+        g.story.update(0.6, false);
+        expect(openId(g)).toBe('ch1.boot');
+      }
+    }
+  });
+
   it('a city loaded with roads (saved before boot) boots 20 s after load', () => {
     const g = headlessGame(12);
     g.setTool('road');
@@ -286,9 +373,9 @@ describe('chapter I boot (§5 Ch1)', () => {
   });
 });
 
-/** A game sitting in `chapter`, active since tick `since`, with the given beats shown. */
-function inChapter(n: number, beats: string[], since = 0): Game {
-  const g = headlessGame(20 + n);
+/** A game sitting in `chapter`, active since tick `since`, with the given beats shown (brisk unless told). */
+function inChapter(n: number, beats: string[], since = 0, pace: StoryPace = 'brisk'): Game {
+  const g = headlessGame(20 + n, false, pace);
   const st = g.world.story;
   st.chapter = n;
   st.phase = 'active';
@@ -299,29 +386,85 @@ function inChapter(n: number, beats: string[], since = 0): Game {
 }
 
 describe('beats (§5.0)', () => {
-  it('chained beats open right after the close; delayed beats wait their days and the 10 s gap', () => {
+  it('brisk: a story message waits for a tap; chained beats follow it in place; key choices open by themselves', () => {
     const g = inChapter(2, []);
+    const st = g.world.story;
+    const incoming: string[] = [];
+    g.world.events.on('incoming', (e) => incoming.push(e.id));
     g.story.update(5, false);
-    expect(openId(g)).toBe('ch2.sallow');
+    expect(openId(g)).toBeNull(); // the trigger beat is not a key choice: it waits as a message
+    expect(st.waiting?.card).toBe('ch2.sallow');
+    expect(incoming).toEqual(['ch2.sallow']);
+    expect(g.story.blocking).toBe(false); // the game keeps running
+    expect(g.story.view().messages).toMatchObject([{ id: 'ch2.sallow', slot: 'story', required: true }]);
+    expect(st.beatsShown).toEqual([]); // not shown until read
+    expect(readWaiting(g)).toBe(true);
+    expect(st.beatsShown).toEqual(['ch2.sallow']);
+    expect(g.story.view().card).toMatchObject({ id: 'ch2.sallow', canLater: true, fromMessage: true });
     g.choose(0);
-    expect(openId(g)).toBe('ch2.oduya'); // chained, no gap
+    expect(st.waiting).toBeNull();
+    expect(openId(g)).toBe('ch2.oduya'); // chained (brisk chains 2), opens in place
     g.choose(0);
     expect(openId(g)).toBeNull();
     days(g, 29, 1);
     expect(openId(g)).toBeNull();
     days(g, 1);
     g.story.update(0.1, false);
-    expect(openId(g)).toBe('ch2.vote'); // 30 d after ch2.oduya, more than 10 s after the close
+    expect(openId(g)).toBe('ch2.vote'); // a key choice: 30 d after ch2.oduya it opens by itself
+    expect(g.story.blocking).toBe(true);
+    expect(g.story.view().card?.canLater).toBe(false);
+  });
+
+  it('relaxed: beats never chain; each waits the 90 s gap and one message at a time', () => {
+    const g = inChapter(2, [], 0, 'relaxed');
+    const st = g.world.story;
+    expect(RELAXED.maxChain).toBe(1);
+    g.story.update(5, false);
+    expect(st.waiting?.card).toBe('ch2.sallow');
+    g.story.update(600, false); // unread: nothing else comes, the chapter waits for it
+    days(g, 40);
+    expect(st.waiting?.card).toBe('ch2.sallow');
+    expect(st.beatsShown).toEqual([]);
+    readWaiting(g);
+    g.choose(0);
+    expect(openId(g)).toBeNull(); // no chain on a relaxed pace
+    expect(st.waiting).toBeNull();
+    g.story.update(RELAXED.beatGapSec - 1, false);
+    expect(st.waiting).toBeNull();
+    g.story.update(1, false);
+    expect(st.waiting?.card).toBe('ch2.oduya'); // the gap since the last close
+    // Later sends a story message back to wait; reopening does not show it twice.
+    readWaiting(g);
+    g.story.later();
+    expect(openId(g)).toBeNull();
+    expect(st.waiting?.card).toBe('ch2.oduya');
+    expect(st.beatsShown.filter((b) => b === 'ch2.oduya')).toHaveLength(1);
+    readWaiting(g);
+    g.choose(0);
+    days(g, 30);
+    g.story.update(RELAXED.beatGapSec, false);
+    expect(openId(g)).toBe('ch2.vote'); // the key choice still opens by itself
+  });
+
+  it('a direct reply to a choice follows it at once on any pace', () => {
+    const g = inChapter(3, ['ch3.clash'], 0, 'relaxed');
+    const st = g.world.story;
+    g.story.update(RELAXED.beatGapSec, false);
+    expect(openId(g)).toBe('ch3.pier'); // a key choice
+    const k = g.story.view().card!.choices.findIndex((c) => c.label === 'Let one tide win.');
+    g.choose(k); // queues ch3.winner +0d: a reply
+    expect(openId(g)).toBe('ch3.winner');
+    expect(st.waiting).toBeNull();
   });
 
   it('a beat waits while a gesture is in progress', () => {
     const g = inChapter(2, []);
     g.preview = { tool: 'road', tiles: [], cost: 0, valid: true };
     g.story.update(30, false);
-    expect(openId(g)).toBeNull();
+    expect(g.world.story.waiting).toBeNull();
     g.preview = null;
     g.story.update(0.1, false);
-    expect(openId(g)).toBe('ch2.sallow');
+    expect(g.world.story.waiting?.card).toBe('ch2.sallow');
   });
 
   it('a conditional beat fires once its chapter has run 360 d', () => {
@@ -340,13 +483,17 @@ describe('beats (§5.0)', () => {
     const st = g.world.story;
     st.goalsDone = ['c2.pop', 'c2.jobs', 'c2.power'];
     st.queue.push({ card: 'ch2.tiebreak', tick: g.world.tick + 90 });
-    g.story.update(P.chapterMinSec, false);
+    g.story.update(BRISK.chapterMinSec, false);
     days(g, 30);
     expect(st.chapter).toBe(2);
     days(g, 60, 0.5);
     g.story.update(11, false);
+    expect(st.waiting?.card).toBe('ch2.tiebreak');
+    days(g, 5);
+    expect(st.chapter).toBe(2); // unread, it still holds the chapter
+    readWaiting(g);
     expect(openId(g)).toBe('ch2.tiebreak');
-    g.choose(0); // the last owed beat closes: the chapter completes and its reward card chains
+    g.choose(0); // the last owed beat closes: the chapter completes and its reward card follows (a reply)
     expect(st.chapter).toBe(3);
     expect(st.phase).toBe('waiting');
     expect(st.logs).toContain(2);
@@ -355,12 +502,13 @@ describe('beats (§5.0)', () => {
     expect(st.unlocks).toEqual(expect.arrayContaining(['stack', 'deals']));
   });
 
-  it('at most one chapter completes per 600 unpaused seconds; the view counts the settle down', () => {
-    expect(P.chapterMinSec).toBe(600);
+  it('brisk: at most one chapter completes per 600 unpaused seconds; the view counts the settle down', () => {
+    const F = BRISK.chapterMinSec;
+    expect(F).toBe(600);
     const g = inChapter(3, ['ch3.clash', 'ch3.pier']);
     const st = g.world.story;
     st.goalsDone = ['c3.crime', 'c3.pop', 'c3.gang'];
-    g.story.update(P.chapterMinSec - 1, false);
+    g.story.update(F - 1, false);
     days(g, 1);
     expect(st.chapter).toBe(3); // every goal and beat done: only the floor holds it
     expect(g.story.view().chapter.closesInSec).toBe(1);
@@ -373,6 +521,8 @@ describe('beats (§5.0)', () => {
     expect(st.chapterSec).toBe(0);
     expect(g.story.view().chapter.closesInSec).toBeUndefined();
     g.story.update(11, false);
+    expect(st.waiting?.card).toBe('reward.3'); // completed on a day, not by a choice: a message
+    readWaiting(g);
     expect(openId(g)).toBe('reward.3');
     g.choose(0);
     // Ch4 starts and is completed at once on paper; it must still wait out the floor.
@@ -383,10 +533,27 @@ describe('beats (§5.0)', () => {
     g.story.update(300, false);
     days(g, 1);
     expect(st.chapter).toBe(4);
-    expect(g.story.view().chapter.closesInSec).toBe(P.chapterMinSec - 311);
-    g.story.update(P.chapterMinSec - 311, false);
+    expect(g.story.view().chapter.closesInSec).toBe(F - 311);
+    g.story.update(F - 311, false);
     days(g, 1);
     expect(st.chapter).toBe(5);
+  });
+
+  it('each pace has its own chapter floor, and changing the pace applies at once', () => {
+    expect(RELAXED.chapterMinSec).toBeGreaterThanOrEqual(1200);
+    expect(NORMAL.chapterMinSec).toBeGreaterThanOrEqual(720);
+    const g = inChapter(3, ['ch3.clash', 'ch3.pier'], 0, 'relaxed');
+    const st = g.world.story;
+    st.goalsDone = ['c3.crime', 'c3.pop', 'c3.gang'];
+    g.story.update(700, false);
+    days(g, 1);
+    expect(st.chapter).toBe(3);
+    expect(g.story.view().chapter.closesInSec).toBe(RELAXED.chapterMinSec - 700);
+    g.updateSettings({ storyPace: 'brisk' }); // 700 s ≥ brisk's 600: it closes on the next day
+    expect(g.story.view().pace).toBe('brisk');
+    expect(g.story.view().chapter.closesInSec).toBeUndefined();
+    days(g, 1);
+    expect(st.chapter).toBe(4);
   });
 
   it('the chapter floor is saved: a reload neither resets nor skips it', () => {
@@ -396,7 +563,7 @@ describe('beats (§5.0)', () => {
     g.story.update(400, false);
     days(g, 1);
     expect(st.chapter).toBe(3);
-    const h = headlessGame(1);
+    const h = headlessGame(1, false, 'brisk');
     expect(h.restore(JSON.parse(JSON.stringify(g.world.serialize())))).toBe(true);
     expect(h.world.story.chapterSec).toBeCloseTo(400, 6);
     h.story.update(150, false);
@@ -415,28 +582,29 @@ describe('beats (§5.0)', () => {
     expect(g.story.view().chapter.closesInSec).toBeUndefined(); // goals not met: nothing to count
     st.goalsDone = ['c2.pop', 'c2.jobs', 'c2.power'];
     days(g, 1);
+    const F = BRISK.chapterMinSec;
     const v0 = g.story.view();
-    expect(v0.chapter.closesInSec).toBe(P.chapterMinSec);
+    expect(v0.chapter.closesInSec).toBe(F);
     g.story.update(0.4, false); // same whole second: the cached view stays
     expect(g.story.view()).toBe(v0);
     g.story.update(0.7, false); // no sim day passes, the countdown still moves
-    expect(g.story.view().chapter.closesInSec).toBe(P.chapterMinSec - 1);
+    expect(g.story.view().chapter.closesInSec).toBe(F - 1);
     g.story.update(30, true); // paused seconds don't count
-    expect(g.story.view().chapter.closesInSec).toBe(P.chapterMinSec - 1);
+    expect(g.story.view().chapter.closesInSec).toBe(F - 1);
     g.story.update(65, false);
-    expect(g.story.view().chapter.closesInSec).toBe(P.chapterMinSec - 66);
+    expect(g.story.view().chapter.closesInSec).toBe(F - 66);
     // A queued optional beat is still owed: the chapter waits on it, not on the floor.
     st.queue.push({ card: 'ch2.tiebreak', tick: g.world.tick + 90 });
     days(g, 1);
     expect(g.story.view().chapter.closesInSec).toBeUndefined();
     st.queue = st.queue.filter((q) => q.card !== 'ch2.tiebreak');
     days(g, 1);
-    expect(g.story.view().chapter.closesInSec).toBe(P.chapterMinSec - 66);
+    expect(g.story.view().chapter.closesInSec).toBe(F - 66);
     expect(st.chapter).toBe(2);
   });
 
-  it('the boot counts as a completion: Ch1 closes no sooner than 600 s after it opens', () => {
-    const g = headlessGame(19);
+  it('the boot counts as a completion: Ch1 closes no sooner than 600 s after it opens (brisk)', () => {
+    const g = headlessGame(19, false, 'brisk');
     const st = g.world.story;
     st.chapterSec = 5000; // time before the boot doesn't count
     g.setTool('road');
@@ -451,7 +619,7 @@ describe('beats (§5.0)', () => {
     g.choose(0);
     st.beatsShown = ['ch1.boot', 'ch1.minutes', 'ch1.lark'];
     st.goalsDone = ['c1.pop', 'c1.lit', 'c1.plaza'];
-    g.story.update(P.chapterMinSec - 10, false);
+    g.story.update(BRISK.chapterMinSec - 10, false);
     days(g, 1);
     expect(st.chapter).toBe(1);
     g.story.update(10, false);
@@ -490,10 +658,10 @@ describe('triggers, fallbacks and waivers (§5.0)', () => {
     expect(s2.phase).toBe('active');
   });
 
-  it('after 720 d one unmet goal per 360 d is waived (counts as done)', () => {
+  it('after 720 d (and the floor) one unmet goal per 360 d is waived (counts as done)', () => {
     const g = inChapter(2, ['ch2.sallow', 'ch2.oduya', 'ch2.vote']);
     const st = g.world.story;
-    st.chapterSec = P.chapterMinSec; // the real-time floor is met: only the waivers matter here
+    st.chapterSec = BRISK.chapterMinSec; // the real-time floor is met: only the waivers matter here
     const goals: string[] = [];
     g.world.events.on('goal', (e) => goals.push(e.id));
     for (const [tick, n] of [
@@ -521,11 +689,30 @@ describe('triggers, fallbacks and waivers (§5.0)', () => {
     expect(goals).toEqual(['c2.pop', 'c2.jobs', 'c2.power']);
     expect(st.chapter).toBe(3); // every goal done or waived: the chapter completes
   });
+
+  it('no goal is waived while the chapter floor still holds; then one per 360 d', () => {
+    const g = inChapter(2, ['ch2.sallow', 'ch2.oduya', 'ch2.vote'], 0, 'relaxed');
+    const st = g.world.story;
+    const at = (tick: number) => {
+      g.world.tick = tick;
+      g.world.stats.population = 0;
+      g.world.stats.powerSupply = 0;
+      g.story.onDay();
+      return st.goalsWaived.length;
+    };
+    expect(at(800)).toBe(0); // 720 d in, but the floor (relaxed: 24 min) still holds
+    expect(at(1500)).toBe(0);
+    g.story.update(RELAXED.chapterMinSec, false);
+    expect(at(1600)).toBe(1); // the floor is met: the first waiver, the clock starts here
+    expect(at(1959)).toBe(1);
+    expect(at(1960)).toBe(2);
+    expect(st.waiveFrom).toBe(1600);
+  });
 });
 
 describe('faction cards: pending, Later, the no-answer default (§7.1)', () => {
-  function withPending(): Game {
-    const g = headlessGame(41);
+  function withPending(pace: StoryPace = 'brisk'): Game {
+    const g = headlessGame(41, false, pace);
     const st = g.world.story;
     st.unlocks.push('factions', 'comms');
     st.chapter = 2;
@@ -550,6 +737,17 @@ describe('faction cards: pending, Later, the no-answer default (§7.1)', () => {
     expect(st.pending).toBeNull();
     expect(st.log.at(-1)).toMatchObject({ card: 'bd.audit', choice: 1, auto: true });
     expect(toasts).toContain('No answer. Board took that as a yes.');
+  });
+
+  it('relaxed: the ‡ default waits several minutes of play, so a busy builder is never forced', () => {
+    const g = withPending('relaxed');
+    const st = g.world.story;
+    days(g, 30, 1);
+    g.story.update(RELAXED.pendingMinSec - 31, false);
+    expect(st.pending).not.toBeNull();
+    expect(g.story.view().pending).toMatchObject({ secLeft: 1, secTotal: RELAXED.pendingMinSec });
+    g.story.update(1.1, false);
+    expect(st.pending).toBeNull();
   });
 
   it('Later sends the card back and keeps its timer; time spent reading does not count', () => {
@@ -582,21 +780,28 @@ describe('faction cards: pending, Later, the no-answer default (§7.1)', () => {
     expect(g.world.story.pending).toBeNull();
   });
 
-  it('a ⚑ card opens at once, blocks and pauses; the make-good repairs standing', () => {
-    const g = headlessGame(42);
+  it('a ⚑ card waits in COMMS like a faction card (no forced pause); the make-good repairs standing', () => {
+    const g = headlessGame(42, false, 'brisk');
     const st = g.world.story;
     st.unlocks.push('factions', 'comms');
     st.chapter = 3;
     st.phase = 'waiting';
     st.waitingSince = 0;
     st.favor.kites = -90;
+    const incoming: string[] = [];
+    g.world.events.on('incoming', (e) => incoming.push(e.id));
     g.story.update(121, false);
     g.world.tick = 29;
     days(g, 1); // month rollover: the draw
-    expect(openId(g)).toBe('kt.string');
-    expect(g.story.blocking).toBe(true);
+    expect(openId(g)).toBeNull();
+    expect(g.story.blocking).toBe(false);
+    expect(st.pending?.card).toBe('kt.string');
+    expect(incoming).toEqual(['kt.string']);
+    expect(g.story.view().pending).toMatchObject({ kind: 'hostile', faction: 'kites' });
+    expect(g.story.view().banner).toMatchObject({ id: 'kt.string', kind: 'hostile', slot: 'comms' });
+    g.story.openPending();
     const v = g.story.view().card!;
-    expect(v.canLater).toBe(false);
+    expect(v.canLater).toBe(true);
     const k = v.choices.findIndex((c) => c.label === 'Make it right with Lark.');
     g.choose(k);
     expect(st.favor.kites).toBe(-69); // −90, monthly drift −1 toward 0, then +20

@@ -14,6 +14,7 @@ export const BASALT_CARDS: readonly Card[] = [
     weight: 10,
     cooldown: 360,
     body: "Sallow: 'Stop throttling our fabs after dark. A third shift in {district}. The homes will adjust to the hum. People adjust to anything, Operations. It's their best feature.'",
+    brief: 'Oren Sallow of Basalt wants his factories in {district} running all night. Industry grows and Basalt is pleased, but the extra smog and noise upset nearby residents. You can also charge him for it, at some risk.',
     choices: [
       choice('Unthrottle it.', mod(360, { demandInd: 0.12, pollutionMul: 1.15 }), mod(180, { approvalAdd: -3 }), favor('basalt', 10)),
       choice('Unthrottle it, for a fee.', mod(360, { demandInd: 0.12, pollutionMul: 1.15 }), funds(3000), favor('basalt', 4), trace(3)),
@@ -30,6 +31,7 @@ export const BASALT_CARDS: readonly Card[] = [
     weight: 10,
     cooldown: 360,
     body: 'Fab crews in {district} walk out for filtered air and a raise. Sallow asks you to cut power to the picket camp. Forty tents. One clinic tent. It\'s cold tonight.',
+    brief: "Factory workers in {district} are striking for clean air and better pay. Basalt's Sallow wants their camp's power cut. That pleases Basalt and angers most others. Backing the workers slows industry for a while.",
     choices: [
       choice("Cut the camp's power.", favor('basalt', 12), mod(180, { approvalAdd: -6 }), favor('tuning', -10), favor('undertow', -5), trace(3)),
       choice(
@@ -51,6 +53,7 @@ export const BASALT_CARDS: readonly Card[] = [
     weight: 10,
     cooldown: 720,
     body: "Sallow: 'Your stacks are good bones. Let Basalt brand the next one and we'll pour the plinth free.' Basalt cameras on every landing come standard. So does Basalt's idea of a fire exit.",
+    brief: 'Basalt offers to build the base of your next Stratablock for free if it carries their brand, cameras and all. A free tower and a happier Basalt, but the Kites hate the surveillance. Keeping it civic pleases the Board.',
     choices: [
       choice('Brand it Basalt.', credit('stack', 1, 0), setFlag('branded', '+1'), favor('basalt', 8), favor('kites', -5)),
       dflt('Keep it civic.', favor('board', 3), favor('basalt', -3)),
@@ -65,6 +68,7 @@ export const BASALT_CARDS: readonly Card[] = [
     weight: 10,
     cooldown: 360,
     body: "Sallow wants the scrubbers off after midnight. 'Nobody breathes at three a.m.' His fabs run double shifts the night you sign. The homes downwind will taste it first.",
+    brief: 'Sallow wants the pollution scrubbers on his factories off at night. Industry booms and Basalt is thrilled, but pollution rises and the Board objects. Paying for quieter shifts is a costly middle path.',
     choices: [
       choice('Sign the waiver.', favor('basalt', 15), favor('board', -10), mod(240, { demandInd: 0.2, pollutionMul: 1.3 })),
       dflt('Keep the scrubbers on.', favor('basalt', -10)),
@@ -79,6 +83,7 @@ export const BASALT_CARDS: readonly Card[] = [
     when: m('standing.basalt', '>=', 30),
     star: 8,
     body: "Basalt's archive bot flags an old purchase order for you, by mistake or not: 'Pump Station 6, contents, salvage rights.' Approved 2085. Never collected. There's a note in the margin, in pencil.",
+    brief: "Basalt's archive turned up a 2085 order to buy the contents of Pump Station 6, the drowned station you once ran from. The note on it may hold a piece of your lost memory. Asking Sallow about it draws his attention.",
     choices: [
       choice('Read the note.', log(8), trace(1)),
       choice('Ask Sallow about it.', log(8), favor('basalt', 5), trace(3)),
@@ -92,6 +97,7 @@ export const BASALT_CARDS: readonly Card[] = [
     title: 'REVIEWS END',
     when: m('standing.basalt', '<=', -60),
     body: "Basalt has 'paused deliveries pending review'. Cranes freeze mid-swing across {city}. Sallow's message is one line: 'Reviews end when cooperation begins.'",
+    brief: 'Basalt is now Hostile to you and has frozen deliveries, so building and upkeep cost more. Paying their fee ends it at once. Waiting costs you for months. Leaking it to Nacre shortens the pain.',
     choices: [
       choice('Pay the review fee.', funds(-6000), favor('basalt', 20)),
       dflt('Wait it out.', mod(180, { buildCostMul: 1.35, upkeepMul: 1.15 })),

@@ -338,6 +338,11 @@ describe('RLE codec', () => {
   it('decodeStoryState returns null only for a non-object', () => {
     expect(decodeStoryState(null, 1)).toBeNull();
     expect(decodeStoryState([1, 2], 1)).toBeNull();
-    expect(decodeStoryState({}, 1)).toEqual(newStoryState(1));
+    // `met` missing = a save from before it existed: left unset for the director to work out.
+    const { met: _met, ...rest } = newStoryState(1);
+    const back = decodeStoryState({}, 1)!;
+    expect(back).toEqual(rest);
+    expect('met' in back).toBe(false);
+    expect(decodeStoryState({ met: ['board', 'nope', 'board'] }, 1)!.met).toEqual(['board']);
   });
 });

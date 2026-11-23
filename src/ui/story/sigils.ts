@@ -9,7 +9,7 @@ import type { CardView, FactionId, Tier } from '../../game/story/types';
 import { FACTION_SIGIL, LURE_COLOR, MOTH_COLOR, SYSTEM_COLOR, drawSigil, type SigilKind } from '../../render/art/sigils';
 import { esc } from '../dom';
 
-export { FACTION_SIGIL, MOTH_COLOR, type SigilKind };
+export { FACTION_SIGIL, MOTH_COLOR, SYSTEM_COLOR, type SigilKind };
 
 const urlCache = new Map<string, string>();
 

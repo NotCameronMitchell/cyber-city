@@ -14,6 +14,9 @@ const AREA = MAP_SIZE * MAP_SIZE;
 /** Sentinel for "never happened" ticks: `tick − NEVER_TICK` is always ≥ 99,999. */
 export const NEVER_TICK = -100000;
 
+/** "Long ago" for the saved unpaused clocks (sinceStartSec, frontSec): every gap already met. */
+export const LONG_AGO_SEC = 1e6;
+
 /** Chapter numerals for display (index = chapter number; 7 = epilogue). */
 export const CHAPTER_NUMERALS = ['', 'I', 'II', 'III', 'IV', 'V', 'VI', 'VII'] as const;
 
@@ -77,6 +80,12 @@ export function newStoryState(seed: number): StoryState {
     rng: ((seed >>> 0) ^ 0x5eed5107) >>> 0 || 0x9e3779b9,
     seam: null,
     chapterSec: 0,
+    sinceStartSec: LONG_AGO_SEC,
+    deckSec: 0,
+    frontSec: LONG_AGO_SEC,
+    waiting: null,
+    met: [],
+    waiveFrom: null,
   };
 }
 
@@ -147,6 +156,9 @@ export function emptyStoryView(story?: Pick<StoryState, 'chapter' | 'phase' | 't
     card: null,
     pending: null,
     banner: null,
+    messages: [],
+    storySoFar: [],
+    pace: 'relaxed',
     comms: [],
     logs: [],
     coherence: coherenceFor(story?.logs.length ?? 0),
