@@ -8,6 +8,7 @@ import {
   raiseStage,
   skywayNetwork,
   stageStatus,
+  type PlanOpts,
   type Point,
 } from './actions';
 import { buildingStats } from './buildingStats';
@@ -57,6 +58,7 @@ import {
   ZoneType,
   type ActionPlan,
   type Building,
+  type BuildingType,
   type OverlayId,
   type SaveData,
   type Selection,
@@ -203,6 +205,20 @@ const snapOf = (world: World, i: number): TileSnap => {
 const sameSnap = (a: TileSnap, b: TileSnap) =>
   a.road === b.road && a.roadKind === b.roadKind && a.zone === b.zone && a.level === b.level && a.sky === b.sky;
 
+/** The inspect sheet's Demolish: a ground bulldoze, never the deck over a docked anchor's roof. */
+const GROUND_ONLY: PlanOpts = { layer: 'ground' };
+
+/** A story build credit a placement used (EXPANSION §7.7: a refund gives it back). */
+type UsedCredit = { what: BuildingType; mul: number };
+
+/** Give a build credit back: the next building of its type uses it again. */
+function returnCredit(world: World, c: UsedCredit): void {
+  const credits = world.story.credits;
+  const k = credits.findIndex((e) => e.what === c.what && e.mul === c.mul);
+  if (k >= 0) credits[k].n++;
+  else credits.unshift({ what: c.what, n: 1, mul: c.mul });
+}
+
 /** A city with any progress (worth a backup before it is replaced). */
 function worthKeeping(world: World): boolean {
   if (world.tick > 0 || world.buildings.size > 0) return true;
@@ -256,8 +272,8 @@ export class Game {
   pendingConfirm: PendingConfirm | null = null;
   /** The last road, skyway or zone drag, undoable for SAFETY.undoSec (one step, no history). */
   private undoSnap: UndoSnapshot | null = null;
-  /** Buildings placed this session: credits paid and wall time, for the SAFETY.refundSec refund. Not saved. */
-  private placed = new Map<number, { at: number; paid: number }>();
+  /** Buildings placed this session: credits paid, any build credit used and wall time, for the SAFETY.refundSec refund. Not saved. */
+  private placed = new Map<number, { at: number; paid: number; credit?: UsedCredit }>();
   /** Unpaused real seconds since each complete Spaceport's last liftoff. Not saved. */
   private launchClock = new Map<number, number>();
   /** Spaceports seen under construction in this world (their first launch waits only for night). */
@@ -373,11 +389,36 @@ export class Game {
    * also carries `refund`: what bulldozing buildings placed under SAFETY.refundSec ago returns.
    */
   plan(from: Point, to: Point): ActionPlan {
-    const plan = planAction(this.world, this.tool, from, to);
-    if (this.tool === 'bulldoze' && plan.layer !== 'sky') {
-      const r = this.refundFor(plan);
-      if (r.total > 0) plan.refund = r.total;
-    }
+    return this.planTool(this.tool, from, to);
+  }
+
+  /**
+   * planAction as apply() runs it: a ground bulldoze over buildings placed under SAFETY.refundSec
+   * ago waives their demolition fee (the refund is in full, so a low treasury never blocks it).
+   */
+  private planTool(tool: ToolId, from: Point, to: Point, opts?: PlanOpts): ActionPlan {
+    const plan = planAction(this.world, tool, from, to, opts);
+    if (tool !== 'bulldoze' || plan.layer === 'sky') return plan;
+    const r = this.refundFor(plan);
+    if (!r.ids.length) return plan;
+    const waived = planAction(this.world, tool, from, to, { ...opts, waive: new Set(r.ids) });
+    if (r.total > 0) waived.refund = r.total;
+    return waived;
+  }
+
+  /**
+   * The inspect sheet's Demolish (EXPANSION §7.7): a ground bulldoze of the building at `at`. On a
+   * docked anchor it never takes the skyway deck over the roof instead. planDemolish prices it.
+   */
+  planDemolish(at: Point): ActionPlan {
+    return this.planTool('bulldoze', at, at, GROUND_ONLY);
+  }
+
+  demolish(at: Point): ActionPlan {
+    // The normal tool path, so costs, refunds, sfx, toasts and the sim recompute all apply.
+    this.setTool('bulldoze');
+    const plan = this.apply(at, at, GROUND_ONLY);
+    this.setTool('inspect');
     return plan;
   }
 
@@ -427,7 +468,7 @@ export class Game {
    * Apply the current tool over a gesture. For 'inspect' this selects the tile.
    * Emits sfx / toast / stats events. Returns the executed plan.
    */
-  apply(from: Point, to: Point): ActionPlan {
+  apply(from: Point, to: Point, opts?: PlanOpts): ActionPlan {
     this.preview = null;
     this.pendingConfirm = null;
     if (this.tool === 'inspect') {
@@ -438,10 +479,14 @@ export class Game {
     const tool = this.tool;
     const w = this.world;
     // Read what the drag will touch before it changes anything: undo before-states, refunds.
-    const pre = undoableTool(tool) || tool === 'bulldoze' ? planAction(w, tool, from, to) : null;
+    const pre = undoableTool(tool) || tool === 'bulldoze' ? planAction(w, tool, from, to, opts) : null;
     const before = pre && undoableTool(tool) ? this.snapBefore(tool, pre) : null;
     const refund = pre && tool === 'bulldoze' && pre.layer !== 'sky' ? this.refundFor(pre) : null;
-    const plan = applyAction(w, tool, from, to);
+    // The story build credit a placement uses (applyAction consumes it): a refund gives it back.
+    const c = isBuildingTool(tool) ? w.story.credits.find((e) => e.what === tool && e.n > 0) : undefined;
+    const credit: UsedCredit | undefined = c ? { what: c.what, mul: c.mul } : undefined;
+    // Refunded buildings' demolition fees are waived, not charged and credited back.
+    const plan = applyAction(w, tool, from, to, refund?.ids.length ? { ...opts, waive: new Set(refund.ids) } : opts);
     if (!plan.valid) {
       if (plan.reason && plan.reason !== 'Nothing to change') this.toast(plan.reason, 'error');
       this.events.emit('sfx', 'error');
@@ -460,14 +505,17 @@ export class Game {
               ? 'zone'
               : 'click';
     this.events.emit('sfx', kind);
-    if (isBuildingTool(tool)) this.placedBuilding(tool, plan);
+    if (isBuildingTool(tool)) this.placedBuilding(tool, plan, credit);
     else if (tool === 'skybridge') this.toast('Skybridge built', 'good');
-    if (refund && refund.total > 0) {
-      // In full: the price paid, and the demolition fee for those buildings is waived too.
-      w.funds += refund.total + refund.fees;
+    if (refund?.ids.length) {
+      // In full: the price paid and any build credit used come back (the demolition fee was waived).
+      w.funds += refund.total;
       for (const id of refund.ids) this.placed.delete(id);
-      plan.refund = refund.total;
-      this.toast(`Refunded ${num(refund.total)} ${CURRENCY}`, 'good');
+      for (const used of refund.credits) returnCredit(w, used);
+      if (refund.total > 0) {
+        plan.refund = refund.total;
+        this.toast(`Refunded ${num(refund.total)} ${CURRENCY}`, 'good');
+      } else if (refund.credits.length) this.toast(`Refunded: next ${BUILDINGS[refund.credits[0].what].name} free`, 'good');
     }
     if (this.undoSnap) this.toast(this.undoText(tool, plan), 'info', { id: 'undo', label: 'Undo', sec: SAFETY.undoSec });
     this.sim.recomputeAll();
@@ -481,13 +529,13 @@ export class Game {
   }
 
   /** After a building is placed: the toast, its refund record and (Spaceport) the real-time floor. */
-  private placedBuilding(tool: ToolId, plan: ActionPlan): void {
+  private placedBuilding(tool: ToolId, plan: ActionPlan, credit?: UsedCredit): void {
     if (!isBuildingTool(tool)) return;
     const def = BUILDINGS[tool];
     const fp = plan.footprint;
     const b = fp ? this.world.buildingAt(fp.x, fp.y) : null;
     if (b) {
-      this.placed.set(b.id, { at: this.now(), paid: plan.cost });
+      this.placed.set(b.id, credit ? { at: this.now(), paid: plan.cost, credit } : { at: this.now(), paid: plan.cost });
       // §5.3: 240 days AND at least 4 minutes of play; Game counts waitSec down per unpaused frame.
       if (b.type === 'spaceport') b.waitSec = SPACEPORT.minBuildSec;
     }
@@ -572,7 +620,7 @@ export class Game {
     }
     for (const t of u.tiles) w.restoreTile(t.before.i, t.before);
     w.funds += u.spent;
-    this.pendingConfirm = null;
+    this.cancelPending(); // a plan waiting for ✓ goes with its ghost
     this.events.emit('sfx', 'click');
     this.toast('Undone', 'info');
     this.sim.recomputeAll();
@@ -586,10 +634,13 @@ export class Game {
 
   // ── Refund (EXPANSION §7.7) ───────────────────────────────────────────────
 
-  /** Credits paid for the buildings a ground bulldoze plan removes that were placed under SAFETY.refundSec ago. */
-  private refundFor(plan: ActionPlan): { total: number; fees: number; ids: number[] } {
+  /**
+   * Credits paid (and build credits used) for the buildings a ground bulldoze plan removes that were
+   * placed under SAFETY.refundSec ago; `ids` are the buildings whose demolition fee is waived.
+   */
+  private refundFor(plan: ActionPlan): { total: number; ids: number[]; credits: UsedCredit[] } {
     const w = this.world;
-    const out = { total: 0, fees: 0, ids: [] as number[] };
+    const out = { total: 0, ids: [] as number[], credits: [] as UsedCredit[] };
     if (!this.placed.size) return out;
     const now = this.now();
     const seen = new Set<number>();
@@ -602,8 +653,7 @@ export class Game {
       const b = w.buildings.get(id);
       if (rec && b && now - rec.at < SAFETY.refundSec) {
         out.total += rec.paid;
-        // The demolition fee planAction charges for it (5% of the base price × buildCostMul).
-        out.fees += Math.round(Math.round(BUILDINGS[b.type].cost * 0.05) * w.mods.buildCostMul);
+        if (rec.credit) out.credits.push(rec.credit);
         out.ids.push(id);
       }
     }
@@ -906,7 +956,7 @@ export class Game {
       return { ok: false, reason: plan.reason ?? 'Nothing to demolish', cost: 0 };
     }
     this.undoSnap = null;
-    this.pendingConfirm = null;
+    this.cancelPending();
     this.events.emit('sfx', 'bulldoze');
     if (this.selected?.sky && this.selected.x === x && this.selected.y === y) this.select(null);
     this.sim.recomputeAll();
@@ -1047,14 +1097,23 @@ export class Game {
     }
     this.keepOldSave(raw, world);
     const current = worthKeeping(this.world) ? JSON.stringify(this.world.serialize()) : null;
+    if (this.saveBlocked) {
+      // An explicit replacement, like New City: it lifts the newer-save block (the newer city keeps
+      // its copy in FUTURE_SAVE_KEY), so the restored city can be saved.
+      const main = storageGet(SAVE_KEY);
+      if (main !== null && storageGet(FUTURE_SAVE_KEY) === null) storageSet(FUTURE_SAVE_KEY, main);
+      this.saveBlocked = false;
+      for (let k = this.notices.length - 1; k >= 0; k--) if (this.notices[k].text === FUTURE_SAVE_TEXT) this.notices.splice(k, 1);
+    }
     this.world = world;
     this.attachSystems();
     this.selected = null;
     this.preview = null;
-    if (current === null || !storageSet(PREV_SAVE_KEY, current)) storageRemove(PREV_SAVE_KEY);
+    // Save the restored city first; only then does the backup slot take the city it replaced (or empty).
+    // If the save fails the slot keeps the restored city, so a reload loses nothing it held.
+    if (this.save() && (current === null || !storageSet(PREV_SAVE_KEY, current))) storageRemove(PREV_SAVE_KEY);
     this.events.emit('world');
     this.events.emit('stats');
-    this.save();
     return true;
   }
 

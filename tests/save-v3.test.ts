@@ -2,7 +2,7 @@
 
 import { afterEach, describe, expect, it } from 'vitest';
 import { BUILDINGS, SAVE_KEY, SAVE_VERSION, SAVE_VERSIONS_SUPPORTED, SPACEPORT } from '../src/game/config';
-import { FUTURE_SAVE_KEY, FUTURE_SAVE_TEXT, Game, MIRROR_SAVE_KEY, RESTORED_SAVE_TEXT, STALE_SAVE_KEY, UNREADABLE_SAVE_KEY, V2_SAVE_KEY } from '../src/game/game';
+import { FUTURE_SAVE_KEY, FUTURE_SAVE_TEXT, Game, MIRROR_SAVE_KEY, PREV_SAVE_KEY, RESTORED_SAVE_TEXT, STALE_SAVE_KEY, UNREADABLE_SAVE_KEY, V2_SAVE_KEY } from '../src/game/game';
 import { Simulation } from '../src/game/sim';
 import { MAP_SIZE, RoadKind, Terrain, ZoneType, type SaveData, type WealthTier } from '../src/game/types';
 import { World } from '../src/game/world';
@@ -414,6 +414,37 @@ describe('save safety (§2.5, §10.2 #4)', () => {
     const m3 = memStorage({ [SAVE_KEY]: v4, [MIRROR_SAVE_KEY]: v3 });
     expect(new Game().saveBlocked).toBe(true);
     expect(m3.get(SAVE_KEY)).toBe(v4);
+  });
+
+  it('Previous city in a save-blocked session lifts the block and saves before it drops the backup (review game-2)', () => {
+    const v4 = JSON.stringify({ ...json(World.generate(3, 'Future Reach')), version: 4 });
+    const old = JSON.stringify(json(World.generate(9, 'Old Town')));
+    const m = memStorage({ [SAVE_KEY]: v4, [PREV_SAVE_KEY]: old });
+    const g = new Game();
+    expect(g.saveBlocked).toBe(true);
+    expect(g.hasPreviousSave()).toBe(true);
+    expect(g.loadPrevious()).toBe(true);
+    expect(g.world.cityName).toBe('Old Town');
+    // Restoring is an explicit replacement, like New City: the newer city keeps its .future copy.
+    expect(g.saveBlocked).toBe(false);
+    expect(m.get(FUTURE_SAVE_KEY)).toBe(v4);
+    expect(JSON.parse(m.get(SAVE_KEY)!).cityName).toBe('Old Town');
+    const toasts: string[] = [];
+    g.events.on('toast', (t) => toasts.push(t.text));
+    g.update(0.1);
+    expect(toasts).not.toContain(FUTURE_SAVE_TEXT);
+    expect(g.save()).toBe(true);
+    expect(new Game().world.cityName).toBe('Old Town');
+    // A restore that cannot be saved (storage full) keeps the backup slot.
+    const m2 = memStorage({ [PREV_SAVE_KEY]: old });
+    const g2 = new Game();
+    const ls = globalThis.localStorage as unknown as { setItem: (k: string, v: string) => void };
+    ls.setItem = (k, v) => {
+      if (k === SAVE_KEY) throw new Error('QuotaExceededError');
+      m2.set(k, v);
+    };
+    expect(g2.loadPrevious()).toBe(true);
+    expect(m2.get(PREV_SAVE_KEY)).toBe(old);
   });
 });
 

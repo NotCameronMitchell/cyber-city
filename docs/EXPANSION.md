@@ -313,7 +313,7 @@ clearSky(x: number, y: number): void;              // unhooks neighbours like cl
 
 **Save safety (Step 0, game.ts).** Today an "Incompatible save" makes the `Game` constructor start a fresh city, and the next autosave (monthly, or `pagehide` in main.ts) overwrites the player's city. A stale cached build (the PWA serves the old `index.html` offline, or a second tab) would do exactly that to a v3 save. So:
 
-1. `readSave` checks `data.version`. If it is above `max(SAVE_VERSIONS_SUPPORTED)`, Game copies the raw stored string to `${SAVE_KEY}.future` (if that key is empty), sets `saveBlocked = true`, starts a fresh city in memory and toasts "This city was saved by a newer version. Reload to update." While `saveBlocked`, `save()` writes nothing and returns false (so main.ts autosaves are harmless). Only an explicit **New City** clears the block.
+1. `readSave` checks `data.version`. If it is above `max(SAVE_VERSIONS_SUPPORTED)`, Game copies the raw stored string to `${SAVE_KEY}.future` (if that key is empty), sets `saveBlocked = true`, starts a fresh city in memory and toasts "This city was saved by a newer version. Reload to update." While `saveBlocked`, `save()` writes nothing and returns false (so main.ts autosaves are harmless). Only an explicit **New City** or **Previous city** (restoring the backup slot) clears the block; `loadPrevious` saves the restored city before it changes the backup slot, and leaves the slot alone if that save fails.
 2. Any other load failure copies the raw string to `${SAVE_KEY}.unreadable` before the fresh city starts (autosave is not blocked).
 3. The first time a v1 or v2 save loads in a v3 build, Game copies its raw string to `${SAVE_KEY}.v2` (once; never overwritten), so a downgrade can recover it.
 4. Step 7 bumps `public/sw.js` `VERSION` with the release so old caches drop.
@@ -837,7 +837,9 @@ dir = (t < 2 && s >= WEALTH.up[t] && cap > t) ? +1
 streak = world.wealthStreak
 streak[i] = dir === 0 ? 0 : (sign(streak[i]) === dir ? streak[i] + dir : dir)
 if |streak[i]| ≥ WEALTH.streak (5):
-    if dir > 0: need power.canFeed(i) and power.tryReserve(i, zoneDraw(z, l, 0, t + 1) − zoneDraw(z, l, 0, t)), else wait (streak stays)
+    extra = zoneDraw(z, l, 0, t + dir) − zoneDraw(z, l, 0, t)
+    if dir > 0 or extra > 0: need power.canFeed(i) and power.tryReserve(i, extra), else wait (streak stays)
+        (a $$$ Fab stepping down to $$ draws more: it waits for headroom too, so a falling block never browns out its grid)
     world.setWealth(x, y, t + dir); streak[i] = 0; mark reachedWealth[z * 3 + t + dir] when stepping up
 ```
 

@@ -152,6 +152,31 @@ describe('hysteresis and the latch (§4.3)', () => {
     expect(tight).toEqual([1]);
   });
 
+  it('a $$$ Fab stepping down to $$ draws more, so it waits for grid headroom: no brownout (review sim-4)', () => {
+    const w = street(48);
+    for (let x = 6; x <= 12; x++) {
+      w.setZone(x, 11, ZoneType.Industrial);
+      w.setLevel(x, 11, 3, false, 2);
+    }
+    const r = rig(w);
+    const solar = 100; // MW before powerSupplyMul
+    const fall = (spare: number) => {
+      // A plateaued grid: `spare` MW over demand. One Fab step ($$$ 12.6 → $$ 14 MW) needs 1.4.
+      w.mods.powerSupplyMul = (r.power.demand + spare) / solar;
+      for (let t = 0; t < 300; t++) {
+        for (let x = 6; x <= 12; x++) w.fields.wealth[w.idx(x, 11)] = 0;
+        r.tick();
+        expect(r.power.overloaded).toBe(false);
+      }
+      let fell = 0;
+      for (let x = 6; x <= 12; x++) if (w.tileAt(x, 11)!.wealth < 2) fell++;
+      return fell;
+    };
+    expect(fall(0.5)).toBe(0);
+    expect(fall(3)).toBe(2); // room for two steps; those two go on to $ (no extra draw)
+    for (let x = 6; x <= 12; x++) expect(w.tileAt(x, 11)!.abandoned).toBe(false);
+  });
+
   it('tier steps draw nothing from world.rng (other rolls never shift)', () => {
     const make = (lift: boolean) => {
       const w = street(46);

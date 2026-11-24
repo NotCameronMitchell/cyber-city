@@ -421,15 +421,24 @@ export class World {
 
   /**
    * Undo only (EXPANSION §7.7): write a tile's snapshot back (road, road kind, zone, level,
-   * sky bits) and touch it. Ignored on building tiles. Keeps the §2.1 invariants: a lot or
-   * non-zone tile is $, a non-road tile is Street, Alley / Ramp never on water.
+   * sky bits) and touch it. On a building tile only the sky bits are written (a skyway docked
+   * into an anchor crosses its roof). Keeps the §2.1 invariants: a lot or non-zone tile is $,
+   * a non-road tile is Street, Alley / Ramp never on water.
    */
   restoreTile(i: number, snap: TileSnap) {
     if (!(i >= 0 && i < N * N)) return;
     const t = this.tiles[i];
-    if (t.buildingId >= 0) return;
     const x = i % N;
     const y = (i / N) | 0;
+    const sky = snap.sky & 31;
+    if (this.sky[i] !== sky) {
+      this.sky[i] = sky;
+      this.skyVersion++;
+    }
+    if (t.buildingId >= 0) {
+      this.touch(x, y, x, y);
+      return;
+    }
     t.road = !!snap.road;
     t.roadKind = t.road ? storedKind(snap.roadKind, t.terrain) : RoadKind.Street;
     const zone = t.road || t.terrain === Terrain.Water ? ZoneType.None : snap.zone;
@@ -438,11 +447,6 @@ export class World {
     if (t.level === 0) {
       t.abandoned = false;
       t.wealth = 0;
-    }
-    const sky = snap.sky & 31;
-    if (this.sky[i] !== sky) {
-      this.sky[i] = sky;
-      this.skyVersion++;
     }
     this.touch(x, y, x, y);
   }

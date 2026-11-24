@@ -434,12 +434,20 @@ export function skywayNetwork(world: World, i: number): SkywayNetwork {
 
 // ── Plan / apply ────────────────────────────────────────────────────────────
 
+/** Options for a bulldoze plan (EXPANSION §3.6, §7.7). */
+export interface PlanOpts {
+  /** 'ground': never the sky layer, even when the first tile carries a deck (the inspect sheet's Demolish). */
+  layer?: 'ground';
+  /** Building ids whose demolition fee is waived (Game's full refund for buildings placed under SAFETY.refundSec ago). */
+  waive?: ReadonlySet<number>;
+}
+
 /**
  * Plan what `tool` would do for a gesture from `from` to `to` (tile coords).
  * Pure: never mutates the world. Used for live previews and by applyPlan.
  * Skybridge plans carry `span`, rail plans `railMasks`, for the renderer.
  */
-export function planAction(world: World, tool: ToolId, from: Point, to: Point): ActionPlan {
+export function planAction(world: World, tool: ToolId, from: Point, to: Point, opts?: PlanOpts): ActionPlan {
   const plan: ActionPlan = { tool, tiles: [], cost: 0, valid: false };
   let changes = 0;
   let blocked = 0;
@@ -487,7 +495,7 @@ export function planAction(world: World, tool: ToolId, from: Point, to: Point): 
       } else blocked++;
     }
     if (blocked) plan.reason = 'Some tiles are occupied';
-  } else if (tool === 'bulldoze' && world.inBounds(from.x, from.y) && world.sky[world.idx(from.x, from.y)] !== 0) {
+  } else if (tool === 'bulldoze' && opts?.layer !== 'ground' && world.inBounds(from.x, from.y) && world.sky[world.idx(from.x, from.y)] !== 0) {
     // Sky drag (§3.6): the first tile carries a skyway, so this drag removes skyway segments only.
     plan.layer = 'sky';
     for (const p of rectTiles(world, from, to)) {
@@ -512,7 +520,7 @@ export function planAction(world: World, tool: ToolId, from: Point, to: Point): 
           const b = world.buildings.get(t.buildingId);
           if (b) {
             changes++;
-            plan.cost += Math.round(BUILDINGS[b.type].cost * 0.05);
+            if (!opts?.waive?.has(b.id)) plan.cost += Math.round(BUILDINGS[b.type].cost * 0.05);
           }
         }
         continue;
@@ -611,8 +619,8 @@ export function planAction(world: World, tool: ToolId, from: Point, to: Point): 
  * rail, links or buildings changed, and pushes story signals. Returns the
  * executed plan (valid=false means nothing happened).
  */
-export function applyAction(world: World, tool: ToolId, from: Point, to: Point): ActionPlan {
-  const plan = planAction(world, tool, from, to);
+export function applyAction(world: World, tool: ToolId, from: Point, to: Point, opts?: PlanOpts): ActionPlan {
+  const plan = planAction(world, tool, from, to, opts);
   if (!plan.valid) return plan;
 
   if (isRoadTool(tool)) {

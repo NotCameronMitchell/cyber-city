@@ -140,7 +140,10 @@ export class GrowthSystem {
         streak[i] = next > 127 ? 127 : next < -127 ? -127 : next;
         if ((next < 0 ? -next : next) >= STREAK) {
           const to = tier + dir;
-          if (dir < 0 || (power.canFeed(i) && power.tryReserve(i, zoneDraw(z, l, 0, to) - zoneDraw(z, l, 0, tier)))) {
+          // Reserve whenever the new tier draws more, either way: a $$$ Fab stepping down to $$ does.
+          // Otherwise (a cheaper down-step) it steps at once. Waiting keeps the streak: it retries next sample.
+          const extra = zoneDraw(z, l, 0, to) - zoneDraw(z, l, 0, tier);
+          if ((dir < 0 && extra <= 0) || (power.canFeed(i) && power.tryReserve(i, extra))) {
             world.setWealth(i % N, (i / N) | 0, to as WealthTier);
             gw[i] = to;
             streak[i] = 0;

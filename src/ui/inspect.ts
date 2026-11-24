@@ -6,7 +6,6 @@
 // When the sheet would hide the selected tile, the camera eases it into view.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { planAction } from '../game/actions';
 import { BUILDINGS, WEALTH } from '../game/config';
 import type { TileInfo } from '../game/game';
 import type { Selection } from '../game/types';
@@ -211,7 +210,8 @@ export class InspectSheet {
     const canDemolish = !!building;
     setHidden(this.actionsEl, !canDemolish);
     if (canDemolish) {
-      const plan = planAction(game.world, 'bulldoze', sel, sel);
+      // The building, never the skyway deck over a docked anchor's roof (EXPANSION §3.6).
+      const plan = game.planDemolish(sel);
       // Placed under SAFETY.refundSec ago: bulldozing it now refunds it in full (EXPANSION §7.7).
       const refund = game.refundLeft(building!.id) > 0;
       const cost = refund ? 'Full refund' : credits(plan.cost);
@@ -271,10 +271,7 @@ export class InspectSheet {
       const sel = this.sel;
       this.resetConfirm();
       if (!sel) return;
-      // Route through the normal tool path so costs, sfx, toasts and the sim recompute all apply.
-      game.setTool('bulldoze');
-      game.apply(sel, sel);
-      game.setTool('inspect');
+      game.demolish(sel);
     }
   };
 

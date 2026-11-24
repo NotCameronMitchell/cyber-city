@@ -165,6 +165,33 @@ describe('undo (§7.7)', () => {
     use(g, 'bulldoze', { x: 30, y: 30 });
     expect(g.undoLeft()).toBe(0); // bulldoze is not undoable and ends the window
   });
+
+  it('undoes a skyway docked into an anchor: the deck over its roof goes too (review sim-1)', () => {
+    const { g } = richGame();
+    const w = g.world;
+    w.addBuilding('arcology', 30, 30);
+    for (let x = 28; x <= 34; x++) w.setRoad(x, 29);
+    g.sim.recomputeAll();
+    const funds = w.funds;
+    expect(use(g, 'skyway', { x: 31, y: 29 }, { x: 31, y: 33 }).valid).toBe(true);
+    expect(w.sky[w.idx(31, 31)]).not.toBe(0); // the deck crosses the roof
+    expect(g.undo()).toBe(true);
+    expect(w.sky.every((v) => v === 0)).toBe(true);
+    expect(w.funds).toBe(funds);
+    expect(w.buildingAt(31, 31)?.type).toBe('arcology');
+  });
+
+  it('undo while a plan waits for ✓ drops the pending ghost too (review game-7)', () => {
+    const { g } = richGame();
+    use(g, 'road', { x: 28, y: 28 }, { x: 35, y: 28 });
+    g.setTool('arcology');
+    g.commit({ x: 31, y: 30 }, { x: 31, y: 30 });
+    expect(g.pendingConfirm).not.toBeNull();
+    expect(g.preview?.tool).toBe('arcology');
+    expect(g.undo()).toBe(true);
+    expect(g.pendingConfirm).toBeNull();
+    expect(g.preview).toBeNull();
+  });
 });
 
 describe('refund (§7.7)', () => {
@@ -192,6 +219,84 @@ describe('refund (§7.7)', () => {
     const f2 = w.funds;
     g.apply({ x: 20, y: 20 }, { x: 20, y: 20 });
     expect(w.funds).toBe(f2 - Math.round(BUILDINGS.clinic.cost * 0.05));
+  });
+
+  it('works with funds below the demolition fee: the fee is waived, not charged first (review sim-2)', () => {
+    const { g } = richGame();
+    const w = g.world;
+    w.setRoad(30, 29);
+    w.funds = BUILDINGS.arcology.cost + 1000;
+    g.setTool('arcology');
+    g.commit({ x: 31, y: 31 }, { x: 31, y: 31 });
+    expect(g.confirmPending()!.valid).toBe(true);
+    expect(w.funds).toBe(1000); // below the 3,000 CR fee
+    g.setTool('bulldoze');
+    const p = g.plan({ x: 31, y: 31 }, { x: 31, y: 31 });
+    expect(p).toMatchObject({ valid: true, cost: 0, refund: BUILDINGS.arcology.cost });
+    // Other fees in the same drag still have to be affordable.
+    w.funds = 0;
+    expect(g.plan({ x: 30, y: 29 }, { x: 31, y: 31 }).valid).toBe(false);
+    w.funds = 1000;
+    const toasts = record(g, 'toast');
+    const done = g.apply({ x: 31, y: 31 }, { x: 31, y: 31 });
+    expect(done.valid).toBe(true);
+    expect(done.refund).toBe(BUILDINGS.arcology.cost);
+    expect(w.buildings.size).toBe(0);
+    expect(w.funds).toBe(BUILDINGS.arcology.cost + 1000);
+    expect(toasts.map((t) => t.text)).toContain('Refunded 60,000 CR');
+  });
+
+  it('a building placed with a story build credit gets its credit back, and no fee (review sim-5)', () => {
+    const { g } = richGame();
+    const w = g.world;
+    const funds = w.funds;
+    w.story.credits.push({ what: 'plaza', n: 1, mul: 0 });
+    expect(use(g, 'plaza', { x: 40, y: 40 }).cost).toBe(0);
+    expect(w.story.credits).toEqual([]);
+    expect(g.refundLeft(w.buildingAt(40, 40)!.id)).toBe(SAFETY.refundSec);
+    const toasts = record(g, 'toast');
+    expect(use(g, 'bulldoze', { x: 40, y: 40 }).valid).toBe(true);
+    expect(w.buildings.size).toBe(0);
+    expect(w.funds).toBe(funds);
+    expect(w.story.credits).toEqual([{ what: 'plaza', n: 1, mul: 0 }]);
+    expect(toasts.map((t) => t.text)).toContain(`Refunded: next ${BUILDINGS.plaza.name} free`);
+    // A discounted credit: the price paid and the discount both come back.
+    w.story.credits.length = 0;
+    w.story.credits.push({ what: 'arcology', n: 1, mul: 0.8 });
+    w.setRoad(30, 29);
+    g.setTool('arcology');
+    g.commit({ x: 31, y: 31 }, { x: 31, y: 31 });
+    expect(g.confirmPending()!.cost).toBe(BUILDINGS.arcology.cost * 0.8);
+    expect(w.story.credits).toEqual([]);
+    use(g, 'bulldoze', { x: 31, y: 31 });
+    expect(w.funds).toBe(funds);
+    expect(w.story.credits).toEqual([{ what: 'arcology', n: 1, mul: 0.8 }]);
+  });
+
+  it('Demolish on a docked anchor removes the building, not the deck over its roof (review game-1)', () => {
+    const { g, clock } = richGame();
+    const w = g.world;
+    for (let x = 28; x <= 34; x++) w.setRoad(x, 29);
+    g.setTool('arcology');
+    g.commit({ x: 31, y: 31 }, { x: 31, y: 31 });
+    g.confirmPending();
+    use(g, 'skyway', { x: 31, y: 29 }, { x: 31, y: 33 });
+    const deck = w.sky[w.idx(31, 31)];
+    expect(deck).not.toBe(0);
+    const funds = w.funds;
+    g.setTool('inspect');
+    // The sheet's price: the building (refunded in full), not the 5 CR deck segment.
+    expect(g.planDemolish({ x: 31, y: 31 })).toMatchObject({ layer: 'ground', valid: true, cost: 0, refund: BUILDINGS.arcology.cost });
+    const done = g.demolish({ x: 31, y: 31 });
+    expect(done.valid).toBe(true);
+    expect(w.buildingAt(31, 31)).toBeNull();
+    expect(w.sky[w.idx(31, 31)]).toBe(deck); // decks keep spanning the cleared site (§3.6)
+    expect(w.funds).toBe(funds + BUILDINGS.arcology.cost);
+    expect(g.tool).toBe('inspect');
+    // After the window it quotes the building's fee.
+    w.addBuilding('arcology', 30, 30);
+    clock.t += SAFETY.refundSec + 1;
+    expect(g.planDemolish({ x: 31, y: 31 })).toMatchObject({ layer: 'ground', cost: Math.round(BUILDINGS.arcology.cost * 0.05) });
   });
 });
 
