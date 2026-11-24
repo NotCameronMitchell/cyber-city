@@ -39,9 +39,16 @@ const CAP_T = Tiers.CAP_T;
 const POL_T = Tiers.POL_T;
 const CAP_AFF = Tiers.CAP_AFF;
 
-/** 1 / capacity and the volume scale (capacity / TRAFFIC_SCALE) per road kind. */
-const INV_CAP = KIND_CAPACITY.map((c) => 1 / c);
-const VOL_SCALE = KIND_CAPACITY.map((c) => c / Tuning.TRAFFIC_SCALE);
+/**
+ * Utilisation is carried in street units (u × TRAFFIC_SCALE, so u = 1 reads one street at ~63%):
+ * STREET_EQ[k] = TRAFFIC_SCALE / capacity turns trips into that unit (exactly 1 for a Street, so a
+ * streets-only city is bit-identical to the pre-expansion maths), INV_SCALE turns it back into
+ * congestion, and VOL_K[k] = capacity / TRAFFIC_SCALE² gives the volume against a street.
+ */
+const STREET_EQ = KIND_CAPACITY.map((c) => Tuning.TRAFFIC_SCALE / c);
+const INV_SCALE = 1 / Tuning.TRAFFIC_SCALE;
+const VOL_K = KIND_CAPACITY.map((c) => c / (Tuning.TRAFFIC_SCALE * Tuning.TRAFFIC_SCALE));
+const VOL_STREET = KIND_CAPACITY.map((c) => c === Tuning.TRAFFIC_SCALE);
 const KPOL = [...KIND_POLLUTION];
 const HW_DIVERT = ROAD_FLOW.highwayDivert;
 const HW_INV = 1 / (ROAD_FLOW.highwayReach + 1);
@@ -245,8 +252,8 @@ export class FieldSystem {
       }
     }
 
-    // 5. Utilisation against each kind's capacity.
-    for (let i = 0; i < AREA; i++) if (road[i]) raw[i] *= INV_CAP[kind[i]];
+    // 5. Utilisation against each kind's capacity (in street units; ×1 on a street).
+    for (let i = 0; i < AREA; i++) if (road[i]) raw[i] *= STREET_EQ[kind[i]];
 
     // 6. Spread congestion along linked roads (roadLinks: a highway only joins highways and ramps).
     for (let pass = 0; pass < T.TRAFFIC_SMOOTH_PASSES; pass++) {
@@ -279,13 +286,13 @@ export class FieldSystem {
       raw.set(tmp);
     }
 
-    // 7. Congestion, and volume against a street (the pollution source).
+    // 7. Congestion 1 − e^−u, and volume against a street (the pollution source).
     for (let i = 0; i < AREA; i++) {
       if (road[i]) {
-        const u = raw[i];
+        const us = raw[i];
         const k = kind[i];
-        out[i] = 1 - Math.exp(-u);
-        volume[i] = VOL_SCALE[k] === 1 ? out[i] : 1 - Math.exp(-u * VOL_SCALE[k]);
+        out[i] = 1 - Math.exp(-us * INV_SCALE);
+        volume[i] = VOL_STREET[k] ? out[i] : 1 - Math.exp(-us * VOL_K[k]);
       } else volume[i] = 0;
     }
     const skyT = f.skyTraffic;

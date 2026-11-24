@@ -9,8 +9,11 @@ import { SimGrid } from '../src/game/sim/grid';
 import * as Tuning from '../src/game/sim/tuning';
 import { SKY_E, SKY_RAMP, SKY_W } from '../src/game/skyway';
 import { MAP_SIZE, RoadKind, ZoneType } from '../src/game/types';
-import type { World } from '../src/game/world';
-import { flatWorld, makeSim } from './helpers';
+import { World } from '../src/game/world';
+import { Advisor } from '../src/game/sim/advisor';
+import { Census } from '../src/game/sim/census';
+import { PowerGrid } from '../src/game/sim/power';
+import { ScriptedMayor, flatWorld, makeSim } from './helpers';
 import { run as tiles, skyPath } from './expansion-fixture';
 
 const N = MAP_SIZE;
@@ -92,7 +95,7 @@ function oldTraffic(w: World): Float32Array {
     for (let i = 0; i < AREA; i++) if (road[i]) raw[i] = tmp[i];
   }
   const out = new Float32Array(AREA);
-  for (let i = 0; i < AREA; i++) if (road[i]) out[i] = 1 - Math.exp(-raw[i] / 220);
+  for (let i = 0; i < AREA; i++) if (road[i]) out[i] = 1 - Math.exp(-raw[i] * (1 / 220)); // exactly the old production expression
   return out;
 }
 
@@ -138,7 +141,7 @@ describe('traffic (§3.8)', () => {
     for (let i = 0; i < AREA; i++) {
       if (!w.tiles[i].road) continue;
       roads++;
-      expect(w.fields.traffic[i]).toBeCloseTo(old[i], 5);
+      expect(w.fields.traffic[i]).toBe(old[i]); // bit-identical (street units, §3.8)
     }
     expect(roads).toBeGreaterThan(400);
     expect(Math.max(...old)).toBeGreaterThan(0.3);
@@ -451,6 +454,164 @@ describe('skyways (§3.7)', () => {
     expect(g.roadLv[live.idx(32, 42)]).toBeCloseTo(SKYWAY.lvRamp, 5);
     expect(g.roadLv[live.idx(33, 42)]).toBe(0);
     expect(g.roadLv[live.idx(30, 34)]).toBeCloseTo(SKYWAY.lvUnder, 5);
+  });
+});
+
+describe('advisor (§7.1, §7.6, Appendix B)', () => {
+  /** News texts and hint ids posted while `fn` runs. */
+  function listen(w: World, fn: () => void) {
+    const news: { text: string; kind: string }[] = [];
+    const hints: string[] = [];
+    const offN = w.events.on('news', (n) => news.push({ text: n.text, kind: n.kind }));
+    const offH = w.events.on('hint', (h) => hints.push(h.id));
+    fn();
+    offN();
+    offH();
+    return { news, hints, texts: news.map((n) => n.text) };
+  }
+
+  it('unlock news names the tray for road kinds, the Skyway and the new buildings (Power reads Infra from the Seaport)', () => {
+    const w = flatWorld(34);
+    const sim = makeSim(w);
+    const at = (pop: number) =>
+      listen(w, () => {
+        w.maxPopulation = pop;
+        sim.step();
+      }).texts.filter((t) => t.startsWith('Unlocked: '));
+    expect(at(500)).toEqual([
+      `Unlocked: ${BUILDINGS.precinct.name} (Civic). ${BUILDINGS.precinct.desc}`,
+      `Unlocked: ${BUILDINGS.clinic.name} (Civic). ${BUILDINGS.clinic.desc}`,
+    ]);
+    expect(at(700)).toEqual([`Unlocked: ${BUILDINGS.reactor.name} (Power). ${BUILDINGS.reactor.desc}`]);
+    expect(at(1300)).toEqual([`Unlocked: Back Alley (Road). ${ROAD_KINDS[L].desc}`, `Unlocked: ${BUILDINGS.datahub.name} (Civic). ${BUILDINGS.datahub.desc}`]);
+    expect(at(1600)).toEqual([`Unlocked: Avenue (Road). ${ROAD_KINDS[A].desc}`, `Unlocked: Academy (Civic). ${BUILDINGS.academy.desc}`]);
+    const at5k = at(5200);
+    expect(at5k[0]).toBe(`Unlocked: Highway (Road). ${ROAD_KINDS[H].desc}`); // road kinds first
+    expect(at5k).toContain(`Unlocked: ${BUILDINGS.maglev.name} (Civic). ${BUILDINGS.maglev.desc}`);
+    expect(at5k).toContain(`Unlocked: Seaport (Infra). ${BUILDINGS.seaport.desc}`);
+    expect(at5k).toContain(`Unlocked: ${BUILDINGS.spire.name} (Sky). ${BUILDINGS.spire.desc}`);
+    expect(at5k.some((t) => t.includes('On-ramp'))).toBe(false); // ramps come with the highway
+    const at12k = at(12500);
+    expect(at12k).toContain(`Unlocked: Skyway (Sky). ${SKYWAY.desc}`);
+    expect(at12k).toContain(`Unlocked: Airport (Infra). ${BUILDINGS.airport.desc}`);
+    expect(at(31000)).toEqual([`Unlocked: Spaceport (Infra). ${BUILDINGS.spaceport.desc}`]);
+    expect(at(40000)).toEqual([]);
+  });
+
+  it('the six first-tier highlights post once each, with the wealth hint on the first step up; a loaded city never replays them', () => {
+    const w = flatWorld(35);
+    w.cityName = 'Lumen';
+    const adv = new Advisor();
+    const census = new Census();
+    adv.prime(w, census);
+    const reached = new Uint8Array(12);
+    for (const z of [ZoneType.Residential, ZoneType.Commercial, ZoneType.Industrial]) for (const t of [1, 2]) reached[z * 3 + t] = 1;
+    const first = listen(w, () => adv.wealthHighlights(w, reached));
+    expect(first.texts).toEqual([
+      'Window boxes and working lifts: the first $$ Hab Blocks in Lumen.',
+      'Glass balconies, private lifts: the first $$$ Hab Blocks in Lumen. Land value did that.',
+      'The noodle bars get real chairs. First $$ Market Strip.',
+      'A boutique with no prices on anything: the first $$$ Market Strip.',
+      'Cleaner lines, better pay: the first $$ Fab District.',
+      'A fab so clean it has a lobby: the first $$$ Fab District. The smog lifts a little.',
+    ]);
+    expect(first.news[4].kind).toBe('info');
+    expect(first.hints).toEqual(['wealth']);
+    expect(listen(w, () => adv.wealthHighlights(w, reached)).news).toEqual([]);
+    // Primed from the tiers a loaded city already has (index zone * 3 + tier).
+    const loaded = new Advisor();
+    census.tierCount[ZoneType.Residential * 3 + 1] = 4;
+    loaded.prime(w, census);
+    const again = listen(w, () => loaded.wealthHighlights(w, reached));
+    expect(again.texts.some((t) => t.startsWith('Window boxes'))).toBe(false);
+    expect(again.texts.length).toBe(5);
+  });
+
+  it('a settled old city never announces the tiers it settled into', () => {
+    const w = World.generate(4243, 'Old Quay');
+    const sim = makeSim(w);
+    const mayor = new ScriptedMayor(w, sim);
+    mayor.opening();
+    for (let m = 0; m < 12; m++) {
+      for (let d = 0; d < 30; d++) sim.step();
+      mayor.turn();
+    }
+    const data = JSON.parse(JSON.stringify(w.serialize()));
+    data.version = 2;
+    for (let k = 0; k < data.tiles.length; k++) data.tiles[k] &= ~(3 << 18); // a v2 build saved no tiers
+    const old = World.deserialize(data);
+    const s2 = new Simulation(old);
+    s2.recomputeAll();
+    expect(s2.settleWealth()).toBeGreaterThan(0);
+    s2.recomputeAll();
+    // Which first-tier highlights the settle covered (zone * 3 + tier), e.g. $$ Hab Blocks on the waterfront.
+    const settled = new Uint8Array(12);
+    for (const t of old.tiles) if (t.zone !== ZoneType.None && t.level > 0 && t.wealth > 0) settled[t.zone * 3 + t.wealth] = 1;
+    expect(settled[ZoneType.Residential * 3 + 1]).toBe(1);
+    // A later step up into a tier the city already settled into is not "the first".
+    const adv = (s2 as unknown as { advisor: Advisor }).advisor;
+    const after = listen(old, () => adv.wealthHighlights(old, settled));
+    expect(after.texts).toEqual([]);
+    expect(after.hints).toEqual(['wealth']); // the tip still shows on the session's first step up
+  });
+
+  it('hwnoramp, skyloose and noisehome post with their hints; the traffic line names what is unlocked', () => {
+    const w = flatWorld(36);
+    for (let x = 10; x <= 30; x++) w.setRoad(x, 20, H);
+    skyPath(w, tiles(40, 40, 45, 40)); // over plain ground: lands nowhere
+    const g = new SimGrid(w);
+    g.scan(w, true);
+    const census = new Census();
+    census.developed[ZoneType.Residential] = 20;
+    census.avgNoiseRes = 0.5;
+    census.avgTraffic = 0.7;
+    const power = new PowerGrid();
+    const adv = new Advisor();
+    const demand = { res: 0, com: 0, ind: 0 };
+    w.tick = 0;
+    w.maxPopulation = 2000;
+    const a = listen(w, () => adv.warnings(w, census, power, demand, g));
+    expect(a.news).toContainEqual({ text: 'Advisor: a highway with no on-ramps carries nothing. Drag a street across it to add them.', kind: 'warn' });
+    expect(a.news).toContainEqual({ text: 'Advisor: a skyway that lands nowhere carries nothing. End it on a street or run it into a megastructure.', kind: 'info' });
+    expect(a.news).toContainEqual({
+      text: `Advisor: noise from highways and runways is dragging down nearby ${ZONES.res.name}. Keep homes back, or add ${BUILDINGS.plaza.name}s.`,
+      kind: 'warn',
+    });
+    expect(a.texts).toContain('Advisor: gridlock on the main drags. Widen them into Avenues.');
+    expect(a.hints.sort()).toEqual(['noise', 'ramps']);
+    // Rate-limited: nothing repeats inside its cooldown.
+    w.tick = 5;
+    expect(listen(w, () => adv.warnings(w, census, power, demand, g)).hints).toEqual([]);
+    // Past the cooldowns, with highways unlocked: the traffic line adds the highway clause.
+    w.tick = 600;
+    w.maxPopulation = 6000;
+    expect(listen(w, () => adv.warnings(w, census, power, demand, g)).texts).toContain(
+      'Advisor: gridlock on the main drags. Widen them into Avenues, or run a Highway with on-ramps.',
+    );
+    // Before avenues the old fallback stays.
+    const early = new Advisor();
+    w.maxPopulation = 500;
+    expect(listen(w, () => early.warnings(w, census, power, demand)).texts).toContain('Advisor: gridlock on the main drags. Add parallel roads and spread zones out.');
+    // Ramps on the highway and a ramp under the deck: neither line.
+    w.setRoad(20, 21, R);
+    for (let x = 40; x <= 45; x++) w.setRoad(x, 41);
+    w.setRoad(40, 40);
+    w.setSky(40, 40, w.sky[w.idx(40, 40)] | SKY_RAMP);
+    g.scan(w, true);
+    const quiet = new Advisor();
+    w.tick = 0;
+    const q = listen(w, () => quiet.warnings(w, census, power, demand, g));
+    expect(q.texts.some((t) => t.includes('no on-ramps') || t.includes('lands nowhere'))).toBe(false);
+  });
+
+  it('the roads line says what reaches a lot', () => {
+    const w = flatWorld(37);
+    for (let x = 10; x < 20; x++) w.setZone(x, 30, ZoneType.Residential);
+    const sim = makeSim(w);
+    const { texts } = listen(w, () => {
+      for (let d = 0; d < 10; d++) sim.step();
+    });
+    expect(texts).toContain('Advisor: 10 zoned lots have no road in reach. Streets reach 3 tiles, alleys 1, highways none.');
   });
 });
 

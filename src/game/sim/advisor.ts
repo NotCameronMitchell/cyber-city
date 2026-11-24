@@ -86,10 +86,15 @@ export class Advisor {
     for (const key of Object.keys(HIGHLIGHTS)) {
       if (census.levelCount[Number(key)] > 0) this.seen.add(Number(key));
     }
+    this.primeWealth(census);
+    if (this.unlockedAt < 0) this.unlockedAt = world.maxPopulation;
+  }
+
+  /** Mark the tiers the city already has as seen (also after Simulation.settleWealth), so they never replay. */
+  primeWealth(census: Census): void {
     for (const key of Object.keys(WEALTH_HIGHLIGHTS)) {
       if (census.tierCount[Number(key)] > 0) this.seenWealth.add(Number(key));
     }
-    if (this.unlockedAt < 0) this.unlockedAt = world.maxPopulation;
   }
 
   /** One-time news for the first tile of each zone/level; `reached` comes from GrowthSystem. */

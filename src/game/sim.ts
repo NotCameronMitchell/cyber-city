@@ -85,7 +85,13 @@ export class Simulation {
    */
   settleWealth(): number {
     if (!this.primed) this.recomputeAll();
-    return this.growth.settle(this.world, this.grid, this.power);
+    const steps = this.growth.settle(this.world, this.grid, this.power);
+    if (steps > 0) {
+      // The settled tiers count as present at load: their "first $$" highlights never replay.
+      this.census.count(this.grid);
+      this.advisor.primeWealth(this.census);
+    }
+    return steps;
   }
 
   /** Advance one day. */
