@@ -54,13 +54,14 @@ import { ScriptedMayor, flatWorld, makeSim } from './helpers';
 import { demandLedRun, scriptedMayorYears, unitsOnly, type S4Run } from './megacity-density';
 import { measureSave, type S1Snapshot } from './megacity-s1';
 import { playStory } from './story/harness';
+import { LEGACY_REGION } from '../src/game/types';
 
 const S = POP_SCALE;
 
 // ── The v3 tables (docs/EXPANSION.md as built, commit 479a8b5) ──────────────
 
 /** v3 head counts per building: residents, jobs, jobsInd (undefined = default), unlockPop, gate fallbackPop. */
-const V3_BUILDINGS: Record<BuildingType, [number, number, number | undefined, number, number | undefined]> = {
+const V3_BUILDINGS: Partial<Record<BuildingType, [number, number, number | undefined, number, number | undefined]>> = {
   solar: [0, 0, undefined, 0, undefined],
   reactor: [0, 40, undefined, 600, undefined],
   plaza: [0, 0, undefined, 0, undefined],
@@ -189,10 +190,11 @@ describe('Megacity scale: the units (§4.1, §4.3, §4.4)', () => {
   });
 
   it('every building: residents, jobs, Fab share, unlockPop and gate fallback are v3 × 10', () => {
-    expect(Object.keys(BUILDINGS).sort()).toEqual(Object.keys(V3_BUILDINGS).sort());
+    // Every v3 type is still there; the Megacity types (MEGACITY §6.3, Step 0b) are new rows, not rescaled ones.
+    for (const t of Object.keys(V3_BUILDINGS)) expect(BUILDINGS[t as BuildingType], t).toBeDefined();
     for (const t of Object.keys(V3_BUILDINGS) as BuildingType[]) {
       const d = BUILDINGS[t];
-      const [res, jobs, ind, unlock, fb] = V3_BUILDINGS[t];
+      const [res, jobs, ind, unlock, fb] = V3_BUILDINGS[t]!;
       expect(d.residents, `${t}.residents`).toBe(want(`BUILDINGS.${t}.residents`, res));
       expect(d.jobs, `${t}.jobs`).toBe(want(`BUILDINGS.${t}.jobs`, jobs));
       if (ind === undefined) expect(d.jobsInd, `${t}.jobsInd`).toBeUndefined();
@@ -210,7 +212,11 @@ describe('Megacity scale: the units (§4.1, §4.3, §4.4)', () => {
       [1_000_000, 'Million Windows', 60000],
       [2_000_000, 'Neon Coast', 90000],
       [4_000_000, 'Endless City', 150_000],
+      // 5×5 region only (Step 0b, `region: 5`).
+      [6_000_000, 'Electric Tide', 200_000],
+      [8_000_000, 'Glass Horizon', 250_000],
     ]);
+    expect(MILESTONES.filter((m) => m.region === 5).map((m) => m.title)).toEqual(['Electric Tide', 'Glass Horizon']);
     for (let i = 1; i < MILESTONES.length; i++) expect(MILESTONES[i].pop).toBeGreaterThan(MILESTONES[i - 1].pop);
     // "Lamp" and "Lantern" stay the Tuning's (§4.5).
     for (const m of MILESTONES.slice(6)) expect(m.title).not.toMatch(/lamp|lantern/i);
@@ -329,7 +335,7 @@ describe('Megacity scale: saves carry their units', () => {
     delete (globalThis as { localStorage?: unknown }).localStorage;
   });
   const v3Save = (): SaveData => {
-    const d = JSON.parse(JSON.stringify(new World(5, 'Old Units').serialize())) as SaveData;
+    const d = JSON.parse(JSON.stringify(new World(5, 'Old Units', undefined, LEGACY_REGION).serialize())) as SaveData;
     delete d.scale;
     d.maxPopulation = 12345;
     d.milestones = [100, 500, 1500];
@@ -337,7 +343,7 @@ describe('Megacity scale: saves carry their units', () => {
   };
 
   it('serialize writes scale: POP_SCALE; that save loads without multiplying again', () => {
-    const w = new World(5, 'New Units');
+    const w = new World(5, 'New Units', undefined, LEGACY_REGION);
     w.maxPopulation = 123450;
     w.milestones = [1000, 5000, 15000];
     const d = JSON.parse(JSON.stringify(w.serialize())) as SaveData;
@@ -445,7 +451,8 @@ describe('Megacity scale lints (§4.4)', () => {
     // turf tiles; Step 0b divides it by owned districts), SKYBRIDGE / RIBBON / SKYWAY perTile and
     // upkeepPerTile (CR per tile), and their readers. A new match fails until it is reviewed here.
     const REVIEWED: Record<string, Record<string, number>> = {
-      'src/game/config.ts': { demandPer100: 1, perTile: 3, upkeepPerTile: 1 },
+      // + 2 perTile: Step 0b's SKYBRIDGE.v2 price (CR per gap tile) and its comment (MEGACITY §5.7).
+      'src/game/config.ts': { demandPer100: 1, perTile: 5, upkeepPerTile: 1 },
       'src/game/story/vertical.ts': { upkeepPerTile: 1, perTile: 2 },
       'src/game/story/turf.ts': { 'per 100': 2, demandPer100: 1 },
     };

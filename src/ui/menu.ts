@@ -7,6 +7,7 @@
 // "New city" to its setup sheet (one New City flow).
 // ─────────────────────────────────────────────────────────────────────────────
 
+import { defaultRegion } from '../game/device';
 import { BUILDINGS, ZONES } from '../game/config';
 import { randomCityName, randomSeed } from '../game/game';
 import { STORY_PACES, type Settings, type StoryPace } from '../game/types';
@@ -370,7 +371,7 @@ export class Menu {
         input: { label: 'City name', value: randomCityName(randomSeed()), maxLength: 24, reroll: () => randomCityName(randomSeed()) },
         onConfirm: (name) => {
           this.resumeSpeed = 0; // newCity() sets its own speed
-          game.newCity(name || undefined);
+          game.newCity(name || undefined, undefined, defaultRegion()); // the device default region (MEGACITY §3.11) until WP-5's control
           modals.closeAll();
           game.toast(`Charter signed: welcome to ${game.world.cityName}`, 'good');
         },

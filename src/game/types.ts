@@ -11,6 +11,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import type { CrownId, StorySave } from './story/types';
+// (Megacity, docs/MEGACITY.md §3.2: regions, districts, save v4. Additive; the map-size constant went in part 1.)
 
 /**
  * The per-world frame (MEGACITY §3.1). There is no map-size constant: every World has its own
@@ -20,8 +21,41 @@ import type { CrownId, StorySave } from './story/types';
  */
 /** A district slot is SLOT × SLOT tiles (MEGACITY §3.1). */
 export const SLOT = 64;
-/** Map side of v1–v3 saves (and of every city until regions land, Step 0b part 2). */
+/** Map side of v1–v3 saves. */
 export const LEGACY_SIZE = 64;
+/** Region side in slots, chosen per city at New City (MEGACITY §3.11) and saved. */
+export type Region = 3 | 5;
+export const REGIONS: readonly Region[] = [3, 5];
+/**
+ * The legacy single-slot frame (64×64, today's map), a 1×1 "region": headless tests and
+ * measurement of the v1–v3 sim only, until WP-1's owned-segment loops make a 3×3 world as cheap
+ * to step as a 64 one (MEGACITY §2.3). Never offered at New City, never written by the game, and
+ * a save that names it is a future save (Game) and fails `validateSaveShape`.
+ */
+export const LEGACY_REGION = 1;
+/** What a World's frame can be: a city region (3 or 5) or the legacy test frame (1). */
+export type FrameRegion = Region | typeof LEGACY_REGION;
+/** Slot id = sy * region + sx, 0 .. region² − 1. */
+export type SlotId = number;
+/** The centre slot: 4 on a 3×3 region, 12 on a 5×5 (0 on the legacy frame). */
+export const startSlot = (r: FrameRegion): SlotId => (r * r - 1) / 2;
+
+export type DistrictKind = 'shore' | 'shoals' | 'sunk' | 'flats' | 'terraces' | 'reedmere' | 'skeleton' | 'tarmac' | 'bazaar';
+export const DISTRICT_KINDS: readonly DistrictKind[] = ['shore', 'shoals', 'sunk', 'flats', 'terraces', 'reedmere', 'skeleton', 'tarmac', 'bazaar'];
+/** Which repeat of its kind a slot is (§3.7): 0 = the kind's own district (every 3×3 slot), 1..3 = its 5×5 variants. */
+export type DistrictVariant = 0 | 1 | 2 | 3;
+
+/**
+ * Ground feature of a land tile (tile bits 22-23). What it does depends on the district (§3.7).
+ * A **ruin** is a zoned, abandoned tile with ground Rubble (the Sunk's annex content): it is counted
+ * in `ruins`, not `abandoned`, never collapses, and turns Plain when it recovers (§3.3).
+ */
+export enum Ground {
+  Plain = 0,
+  Reed = 1,
+  Brownfield = 2,
+  Rubble = 3,
+}
 /**
  * The largest world side (a 5×5 region). Feeds the index-width assertions only.
  * SimGrid keeps tile indices in Uint32 / Int32 lists, and every index must stay a small
@@ -97,7 +131,40 @@ export type BuildingType =
   /** Airport: 6×6, loud, business district. */
   | 'airport'
   /** Spaceport: 6×6 late-game megaproject with a slow build. */
-  | 'spaceport';
+  | 'spaceport'
+  // Megacity (MEGACITY §6.3): services and utilities.
+  | 'floodwatch'
+  | 'pumphouse'
+  | 'canopypark'
+  | 'medtower'
+  | 'reclaim'
+  | 'metro'
+  | 'markethall'
+  | 'tidal'
+  | 'geothermal'
+  | 'datavault'
+  // Landmarks, one each (§6.3).
+  | 'charterhall'
+  | 'hexworks'
+  | 'pearlatrium'
+  | 'hullhouse'
+  | 'kitemast'
+  | 'lampchoir'
+  | 'beacon'
+  | 'arena'
+  | 'halolookout'
+  | 'terminal'
+  // Ending landmarks, one each, buildable only while that ending is current (§9.2).
+  | 'gantry'
+  | 'glasssmile'
+  | 'breadpier'
+  | 'recordtower'
+  | 'stillsquare'
+  // Fixed structures placed by annex content, never in a tray, never bulldozed.
+  /** Skeleton Row's unfinished frames (inert until finished). */
+  | 'frame'
+  /** The Sunk's old pump hall (Pump Station 6, §3.7). */
+  | 'pumphall';
 
 /**
  * Every selectable tool. Zone tools are 'res' | 'com' | 'ind'. Building tools use the BuildingType id.
@@ -123,7 +190,7 @@ export type ToolId =
 export type OverlayId = 'none' | 'power' | 'landValue' | 'crime' | 'pollution' | 'traffic' | 'services' | 'turf' | 'wealth' | 'noise';
 
 /** Coverage effect a service building radiates. 'education' is the Academy's (X1, feeds only the wealth score). */
-export type ServiceEffect = 'security' | 'health' | 'net' | 'park' | 'transit' | 'prestige' | 'education';
+export type ServiceEffect = 'security' | 'health' | 'net' | 'park' | 'transit' | 'prestige' | 'education' | 'resilience' | 'filter';
 
 export interface Tile {
   terrain: Terrain;
@@ -146,6 +213,10 @@ export interface Tile {
   roadKind: RoadKind;
   /** Wealth tier (EXPANSION §4). Always 0 when zone = None or level = 0. Abandonment keeps it. */
   wealth: WealthTier;
+  /** Terrace step 0..3 (Highstep Terraces; 0 elsewhere and on water). Saved in bits 20-21 (MEGACITY §3.2). */
+  elev: number;
+  /** Ground feature (bits 22-23). Plain on water. */
+  ground: Ground;
 }
 
 export interface Building {
@@ -179,6 +250,16 @@ export interface Building {
   waitSec?: number;
   /** Spaceport only: launches seen so far (0 = the next one is the first). Saved. */
   launches?: number;
+  // ── Megacity (MEGACITY §3.2, §6.2) ──
+  /** Corp Spire only: who paid for it. Missing on old saves → 'nacre' (today's power weights and today's art). */
+  sponsor?: 'basalt' | 'nacre' | 'none';
+  /**
+   * Faction building, crown, Spire or landmark design 0..3 (§6.2). **Look 0 is exactly today's art.**
+   * Missing → 0 (every v1–v3 building keeps its look). A new placement that skips the picker gets a hash of its id.
+   */
+  look?: 0 | 1 | 2 | 3;
+  /** Pump House only: reclamation days left (90 → 0), then it becomes a pump garden. */
+  reclaim?: number;
 }
 
 /**
@@ -212,6 +293,23 @@ export interface Fields {
   sea: Float32Array;
   /** 1 where a Back Alley lies within Chebyshev 1 (§4.4), else 0. */
   alleyNear: Uint8Array;
+  // ── Megacity (MEGACITY §3.2). All zeros until the sim fills them (WP-1). ──
+  /** 0..1 Floodwatch coverage (cancels king tides and floodplain caps). */
+  resilience: Float32Array;
+  /** 0..1 Reclaim Works coverage (pollution × (1 − 0.25 × filter)). */
+  filter: Float32Array;
+}
+
+/** One owned district's census (MEGACITY §3.2, §3.3). */
+export interface DistrictCensus {
+  slot: SlotId;
+  kind: DistrictKind;
+  variant: DistrictVariant;
+  residents: number;
+  jobs: number;
+  developed: number;
+  avgLandValue: number;
+  ruins: number;
 }
 
 export interface Demand {
@@ -258,6 +356,15 @@ export interface CityStats {
   edgeLinks: number;
   /** Visitors per month (X3; 0 when cut). */
   visitors: number;
+  // ── Megacity (MEGACITY §3.2). Empty / zeros until the sim fills them (WP-1). ──
+  /** Owned districts, in annex order. */
+  districts: DistrictCensus[];
+  /** Skybridge clusters of ≥ 3 anchors (§5.5). */
+  skyLobbies: { count: number; largest: number; visitors: number };
+  /** Ruins standing (zoned, abandoned, ground Rubble); not part of `abandoned`. */
+  ruins: number;
+  /** Ruins that came back as homes or shops (district goal, §3.7); copied from `districts.ruinsRestored`. */
+  ruinsRestored: number;
 }
 
 export interface BudgetLine {
@@ -299,6 +406,11 @@ export interface Settings {
    * Older stored settings without it read as 'relaxed'. Never changes sim speed.
    */
   storyPace: StoryPace;
+  /**
+   * Lower-detail mode for a 5×5 city (MEGACITY §3.11). Missing until the first 5×5 city loads on this device; then
+   * written once from the device class (on for a handheld, off for a PC), so it never flips mid-session. Ignored on a 3×3 region.
+   */
+  lowerDetail?: boolean;
 }
 
 /** Story pace setting (docs/PACING.md). */
@@ -351,6 +463,40 @@ export interface ActionPlan {
   confirm?: boolean;
   /** A non-blocking note for the action pill, ≤ SAFETY.noteMax (32) characters. `reason` stays for invalid or skipped tiles. */
   note?: string;
+  // ── Megacity (MEGACITY §3.4, §5.4, §5.5) ──
+  /** Skybridge: what this bridge pays (§5.5). */
+  bridge?: BridgePayoff;
+  /** Skybridge: a two-bridge route through this tower (§5.4). */
+  route?: { via: { x: number; y: number }; second: { ax: number; ay: number; bx: number; by: number; gap: number } };
+  /** The first locked slot the plan touched (the pill's "Map" action, §3.4). */
+  slot?: SlotId;
+}
+
+/** What a skybridge pays (MEGACITY §5.5). */
+export interface BridgePayoff {
+  /** People a day walking the bridge: 0.2 × (residents + jobs of both anchors; a parcel counts all its members). */
+  walkers: number;
+  /** Car trips a day the two towers no longer make (20%, 25% inside a Sky Lobby). */
+  tripsCut: number;
+  /** Tiles that gain +5% land value. */
+  lvTiles: number;
+  /** The Sky Lobby this bridge forms or joins (k ≥ 3 anchors), else null. */
+  lobby: { k: number; name: string; visitors: number } | null;
+}
+
+/** A merged parcel (MEGACITY §6.1): a pure function of tiles and seed, computed by `src/game/parcels.ts`. */
+export interface Parcel {
+  /** Head tile (the front corner): the parcel's skybridge anchor key and sort key. */
+  hx: number;
+  hy: number;
+  /** Footprint origin and size: 2×2, 2×1 or 1×2. */
+  x: number;
+  y: number;
+  w: 1 | 2;
+  h: 1 | 2;
+  /** Drawn level and tier: the lowest among its members. */
+  level: number;
+  tier: number;
 }
 
 export interface Selection {
@@ -358,6 +504,8 @@ export interface Selection {
   y: number;
   /** The player tapped the skyway deck over this tile, not the ground (EXPANSION §3.7). */
   sky?: true;
+  /** A skybridge tube was tapped (MEGACITY §5.4): the link id. */
+  link?: number;
 }
 
 /**
@@ -373,13 +521,58 @@ export interface TileSnap {
   sky: number;
 }
 
-/** Once-per-city moments (EXPANSION §5.4), saved in SaveData.moments. */
-export type MomentId = 'seaport' | 'airport' | 'spaceport' | 'launch';
-export const MOMENT_IDS: readonly MomentId[] = ['seaport', 'airport', 'spaceport', 'launch'];
+/** City life happenings (MEGACITY §6.4.1, WP-6). */
+export type CityEventId = 'nightmarket' | 'lanterns' | 'stormwatch' | 'arenanight' | 'kiteday' | 'parade';
 
-/** Serialized save (JSON-safe). Version 1 (sandbox), 2 (story) and 3 (expansion) all load. */
+/**
+ * The City life happening in progress (MEGACITY §6.4.1), `world.cityEvent`; not saved (a happening in progress
+ * ends on reload). The sim reads its terms only while `daysLeft > 0`: census approval adds `approval`, PortSystem raw
+ * visitors add `visitors` (a monthly rate), the Market demand target adds `demandCom`.
+ */
+export interface CityEventState {
+  id: CityEventId;
+  /** Unpaused real seconds of visuals left. */
+  until: number;
+  /** Sim days its gameplay terms still apply (≤ CITY_LIFE.capDays). */
+  daysLeft: number;
+  visitors: number;
+  approval: number;
+  demandCom: number;
+  slot?: SlotId;
+}
+
+/** Once-per-city moments (EXPANSION §5.4), saved in SaveData.moments. */
+export type MomentId = 'seaport' | 'airport' | 'spaceport' | 'launch' | 'region';
+/** + 'region' (MEGACITY §3.8): the once-per-city "region is whole" banner. */
+export const MOMENT_IDS: readonly MomentId[] = ['seaport', 'airport', 'spaceport', 'launch', 'region'];
+
+/** District state of a city (MEGACITY §3.2), saved as SaveData.districts. */
+export interface DistrictSave {
+  /** Length region², indexed by SlotId. */
+  kinds: DistrictKind[];
+  /** Length region², indexed by SlotId: each slot's variant of its kind (§3.6.2). Missing or malformed → the seed's layout. */
+  variants?: DistrictVariant[];
+  /** Owned slots in annex order (the start slot first). */
+  owned: SlotId[];
+  /** Unspent land grants. */
+  grants: number;
+  /** Districts bought with credits. */
+  bought: number;
+  /** Length region², indexed by SlotId: the tick the slot was annexed, −1 while locked. */
+  annexedAt: number[];
+  /** The annex-sheet lease (Tarmac Reach, variant 0, only, §3.7). */
+  leases?: { tarmac?: 'nacre' | 'basalt' };
+  /** Unpaused real seconds since the ending or the last epilogue grant (§3.8). Missing → 0. */
+  epilogueSec?: number;
+  /** District goals completed (§3.7), as `goalId@slot` (goals are per district). Missing → none. */
+  goalsDone?: string[];
+  /** Ruins restored since annex (§3.7). Missing → 0. */
+  ruinsRestored?: number;
+}
+
+/** Serialized save (JSON-safe). Version 1 (sandbox), 2 (story), 3 (expansion) and 4 (megacity) all load. */
 export interface SaveData {
-  /** 1, 2 or 3. */
+  /** 1, 2, 3 or 4. */
   version: number;
   cityName: string;
   seed: number;
@@ -393,8 +586,11 @@ export interface SaveData {
    */
   scale?: number;
   nextBuildingId: number;
-  /** Run-length-free compact tile encoding, see World.serialize() (v3: bits 15-17 roadKind, 18-19 wealth). */
-  tiles: number[];
+  /**
+   * v1–v3: the whole 64×64 map as tile numbers (v3: bits 15-17 roadKind, 18-19 wealth). v4 saves have
+   * no `tiles` (they store `tileBlocks`); migration turns `tiles` into the start slot's block.
+   */
+  tiles?: number[];
   buildings: Building[];
   news: NewsItem[];
   history: number[];
@@ -406,4 +602,19 @@ export interface SaveData {
   sky?: number[];
   /** v3: once-per-city moments already shown ('seaport', 'airport', 'spaceport', 'launch'). Missing → none. */
   moments?: string[];
+  // ── Megacity, v4 (MEGACITY §3.10) ──
+  /**
+   * v4: the region side in slots, 3 or 5. Missing on v1–v3 (migrated as 3, §3.10); any other value on a v4 save →
+   * a future save. `upgradeRegion` turns a 3 into a 5 (§3.11).
+   */
+  region?: number;
+  /** World side, 64 × region (192 or 320). Missing on v1–v3; a v4 save whose size is not 64 × region → a future save. */
+  size?: number;
+  /** v4 district state. */
+  districts?: DistrictSave;
+  /**
+   * v4: one base64 block per owned slot, in districts.owned order: 4096 tiles × 3 bytes (bits 0-23, little-endian),
+   * row-major inside the slot. v4 saves have no `tiles`.
+   */
+  tileBlocks?: string[];
 }

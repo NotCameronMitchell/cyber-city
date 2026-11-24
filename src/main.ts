@@ -15,6 +15,7 @@
 import { AudioEngine } from './audio/audio';
 import { SAVE_KEY } from './game/config';
 import { Game } from './game/game';
+import { readStoredSave } from './game/saveStore';
 import { storageGet } from './game/storage';
 import type { SaveData } from './game/types';
 import { InputController } from './input/input';
@@ -41,8 +42,9 @@ interface HotApi {
   snapshot?: (fn: () => unknown) => void;
 }
 
+/** A hot-reload snapshot of a city: v1–v3 carry `tiles`, v4 `tileBlocks` (MEGACITY §3.10). */
 function looksLikeSave(data: unknown): data is SaveData {
-  return !!data && typeof data === 'object' && Array.isArray((data as SaveData).tiles);
+  return !!data && typeof data === 'object' && (Array.isArray((data as SaveData).tiles) || Array.isArray((data as SaveData).tileBlocks));
 }
 
 function start(data?: unknown): void {
@@ -224,6 +226,17 @@ function registerServiceWorker(): void {
   }
 }
 
+/**
+ * Boot is async for one case (MEGACITY §3.10): a compressed envelope in SAVE_KEY (after an older build restored our
+ * envelope mirror there) is unpacked first, and the envelopes in the mirror, `.prev` and `.future` are read into
+ * memory, so the synchronous Game paths can use them. The title shows as soon as it resolves.
+ */
+function boot(data?: unknown): void {
+  readStoredSave()
+    .catch((err) => console.warn('[boot] stored envelopes could not be read', err))
+    .then(() => start(data));
+}
+
 const hot = (window as any).claude?.hot as HotApi | undefined;
-if (hot?.ready) hot.ready(start);
-else start(hot?.data);
+if (hot?.ready) hot.ready(boot);
+else boot(hot?.data);

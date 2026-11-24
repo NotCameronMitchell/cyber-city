@@ -75,8 +75,9 @@ export const DISTRICTS = [
 ] as const;
 
 /** Stable district name for a tile (same 8×8 block, same name, per city seed). */
-export function districtName(x: number, y: number, seed = 0): string {
-  return DISTRICTS[Math.floor(hash2(x >> 3, y >> 3, seed ^ 0x51ed) * DISTRICTS.length)];
+export function districtName(x: number, y: number, seed = 0, artOffset = 0): string {
+  // Art coordinates (MEGACITY §3.2 artXY: pass the world's art offset): the start slot keeps its names on either region.
+  return DISTRICTS[Math.floor(hash2((x - artOffset) >> 3, (y - artOffset) >> 3, seed ^ 0x51ed) * DISTRICTS.length)];
 }
 
 /** Ticker flavor. Keep them short enough to read while scrolling (~120 chars). */

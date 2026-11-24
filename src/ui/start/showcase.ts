@@ -29,7 +29,8 @@ const AGE = 400;
  * Deterministic for a seed. Exported for tests.
  */
 export function buildShowcase(seed = SHOWCASE_SEED): World {
-  const w = World.generate(seed, 'Showcase');
+  // Always a 3×3 region, whatever the city's size (MEGACITY §3.9): the showcase lives in the start slot.
+  const w = World.generate(seed, 'Showcase', undefined, 3);
   const N = w.N;
   w.funds = 1e9;
   const c = N / 2;

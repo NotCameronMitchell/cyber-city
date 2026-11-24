@@ -112,7 +112,7 @@ export function emptyVerticalMetrics(): VerticalMetrics {
   return {
     stacksStage2: 0,
     stacksStage3: 0,
-    crowns: { foundry: 0, glare: 0, nest: 0, commons: 0 },
+    crowns: { foundry: 0, glare: 0, nest: 0, commons: 0, salvage: 0, lamp: 0 },
     skybridges: 0,
     railTiles: 0,
     railMaxStations: 0,
@@ -128,6 +128,8 @@ export function emptyVertical(area: number): VerticalCache {
     railLive: new Uint8Array(area),
     liveStations: new Set(),
     metrics: emptyVerticalMetrics(),
+    lobbies: [],
+    lobbyVisitors: 0,
   };
 }
 

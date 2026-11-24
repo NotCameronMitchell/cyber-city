@@ -50,6 +50,15 @@ export class Camera {
   /** Viewport size in CSS px. */
   width = 1;
   height = 1;
+  /**
+   * Megacity (MEGACITY §3.9, additive): the tile rect (inclusive) `clamp()` keeps the view centre in instead of the
+   * whole map: the owned box ± ANNEX.peek, set by the Renderer. Null = the whole map (today's rule).
+   */
+  bounds: { x0: number; y0: number; x1: number; y1: number } | null = null;
+  /** The tile rect `fitMap()` frames (the owned box); null = the whole map. */
+  fitRect: { x0: number; y0: number; x1: number; y1: number } | null = null;
+  /** Screen px the UI covers (§3.9, §14.1): fitBox, fitMap and centerOnTile use the uncovered area. */
+  insets = { top: 0, right: 0, bottom: 0, left: 0 };
 
   /** A camera on a map of `mapSize` tiles a side, centred on the map at zoom 1. */
   constructor(mapSize: number) {
@@ -121,13 +130,29 @@ export class Camera {
     this.clamp();
   }
 
-  /** Keep the view centre inside the map diamond (with a little slack). */
+  /** Megacity: set (or clear) the tile rect the view centre stays in (§3.9). */
+  setBounds(r: { x0: number; y0: number; x1: number; y1: number } | null) {
+    this.bounds = r ? { ...r } : null;
+    this.clamp();
+  }
+
+  /** Megacity: the screen px the UI covers (§3.9; the desktop side panel sets `right`, §14.1). */
+  setInsets(i: Partial<{ top: number; right: number; bottom: number; left: number }>) {
+    this.insets = { ...this.insets, ...i };
+  }
+
+  /** Keep the view centre inside the map diamond, or `bounds` when set (with a little slack). */
   clamp() {
     const t = worldToTileF(this.x, this.y);
     const slack = 2;
     const n = this.mapSize;
-    const cx = Math.max(-slack, Math.min(n + slack, t.x));
-    const cy = Math.max(-slack, Math.min(n + slack, t.y));
+    const b = this.bounds;
+    const lo = b ? b.x0 : 0;
+    const hi = b ? b.x1 + 1 : n;
+    const loY = b ? b.y0 : 0;
+    const hiY = b ? b.y1 + 1 : n;
+    const cx = Math.max(lo - slack, Math.min(hi + slack, t.x));
+    const cy = Math.max(loY - slack, Math.min(hiY + slack, t.y));
     if (cx !== t.x || cy !== t.y) {
       this.x = (cx - cy) * HALF_W;
       this.y = (cx + cy) * HALF_H;
@@ -156,13 +181,31 @@ export class Camera {
     };
   }
 
-  /** Zoom so the whole map fits the viewport. */
+  /** Zoom so the whole map fits the viewport: the owned box (`fitRect`) when set (MEGACITY §3.9). */
   fitMap() {
     const n = this.mapSize;
-    const mapW = n * TILE_W;
-    const mapH = n * TILE_H;
-    this.zoom = Math.max(this.minZoom, Math.min(this.maxZoom, Math.min(this.width / mapW, this.height / mapH) * 1.1));
-    this.x = 0;
-    this.y = n * HALF_H;
+    this.fitBox(this.fitRect ?? { x0: 0, y0: 0, x1: n - 1, y1: n - 1 });
+  }
+
+  /**
+   * Frame a tile rect (inclusive) in the area the UI leaves uncovered (`insets`, plus `insetBottomPx` for a bottom
+   * sheet): the zoom that fits it × 1.1 (clamped), its centre at the uncovered area's centre (§3.9).
+   */
+  fitBox(r: { x0: number; y0: number; x1: number; y1: number }, insetBottomPx = 0) {
+    const w = r.x1 - r.x0 + 1;
+    const h = r.y1 - r.y0 + 1;
+    const ins = this.insets;
+    const vw = Math.max(1, this.width - ins.left - ins.right);
+    const vh = Math.max(1, this.height - ins.top - ins.bottom - insetBottomPx);
+    const boxW = ((w + h) / 2) * TILE_W;
+    const boxH = ((w + h) / 2) * TILE_H;
+    this.zoom = Math.max(this.minZoom, Math.min(this.maxZoom, Math.min(vw / boxW, vh / boxH) * 1.1));
+    const cx = r.x0 + w / 2;
+    const cy = r.y0 + h / 2;
+    // The box centre shows at the centre of the uncovered area.
+    const dx = (ins.left - ins.right) / 2;
+    const dy = (ins.top - ins.bottom - insetBottomPx) / 2;
+    this.x = (cx - cy) * HALF_W - dx / this.zoom;
+    this.y = (cx + cy) * HALF_H - dy / this.zoom;
   }
 }

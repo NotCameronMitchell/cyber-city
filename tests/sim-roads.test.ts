@@ -15,6 +15,8 @@ import { Census } from '../src/game/sim/census';
 import { PowerGrid } from '../src/game/sim/power';
 import { ScriptedMayor, flatWorld, makeSim } from './helpers';
 import { run as tiles, skyPath } from './expansion-fixture';
+import { LEGACY_REGION } from '../src/game/types';
+import { toV3 } from './legacy-save';
 
 const N = LEGACY_SIZE;
 const AREA = N * N;
@@ -529,7 +531,7 @@ describe('advisor (§7.1, §7.6, Appendix B)', () => {
   });
 
   it('a settled old city never announces the tiers it settled into', () => {
-    const w = World.generate(4243, 'Old Quay');
+    const w = World.generate(4243, 'Old Quay', undefined, LEGACY_REGION);
     const sim = makeSim(w);
     const mayor = new ScriptedMayor(w, sim);
     mayor.opening();
@@ -537,9 +539,8 @@ describe('advisor (§7.1, §7.6, Appendix B)', () => {
       for (let d = 0; d < 30; d++) sim.step();
       mayor.turn();
     }
-    const data = JSON.parse(JSON.stringify(w.serialize()));
-    data.version = 2;
-    for (let k = 0; k < data.tiles.length; k++) data.tiles[k] &= ~(3 << 18); // a v2 build saved no tiers
+    const data = toV3(JSON.parse(JSON.stringify(w.serialize())), 2); // the v2 shape (a 3×3 region once loaded)
+    for (let k = 0; k < data.tiles!.length; k++) data.tiles![k] &= ~(3 << 18); // a v2 build saved no tiers
     const old = World.deserialize(data);
     const s2 = new Simulation(old);
     s2.recomputeAll();

@@ -37,6 +37,9 @@ const EFFECT_RGB: Record<ServiceEffect, RGB> = {
   prestige: NEON.magenta,
   /** Academy coverage (EXPANSION §6.1): the Services overlay's "Schools" swatch. */
   education: [255, 208, 160],
+  /** Megacity (MEGACITY §6.3): Floodwatch and Reclaim Works coverage (all zeros until WP-1 fills them). */
+  resilience: [120, 200, 255],
+  filter: [170, 240, 120],
 };
 const EFFECTS = Object.keys(EFFECT_RGB) as ServiceEffect[];
 

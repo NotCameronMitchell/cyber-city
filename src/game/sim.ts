@@ -65,6 +65,18 @@ export class Simulation {
   private approval = 60;
   private primed = false;
 
+  // ── Megacity hooks (docs/MEGACITY.md §3.3), frozen in Step 0b; WP-1 fills them. ──
+  /**
+   * O8 sleeping districts: 'off', 'auto' (a PC under strain) or 'forced' (lower detail). Set by Game. Step 0b: read by
+   * nothing yet (every slot is always awake).
+   */
+  sleep: 'off' | 'auto' | 'forced' = 'off';
+  /**
+   * The district daily hook (unit C1, after growth): WP-2's districts/daily.ts (Pump Houses, king tides, frame crime,
+   * district goals on the month tick). Called once per sim day with the world and whether this day ends a month.
+   */
+  districtDaily: ((world: World, monthEnd: boolean) => void) | null = null;
+
   constructor(world: World) {
     this.world = world;
     // The frame is the world's (MEGACITY §3.1): every system sizes its arrays from world.area.
@@ -148,6 +160,7 @@ export class Simulation {
 
     this.growth.run(w, g, this.power, this.fields, d);
     if (this.growth.changes > 0 || this.growth.tierSteps > 0) this.census.count(g);
+    if (this.districtDaily) this.districtDaily(w, w.tick % DAYS_PER_MONTH === 0);
     this.advisor.highlights(w, this.growth.reached);
     this.advisor.wealthHighlights(w, this.growth.reachedWealth);
     this.portSystem.announce(w);
@@ -170,6 +183,28 @@ export class Simulation {
     this.incidents.update(w, g, this.fields, this.census, this.options.events);
     this.advisor.flavor(w, this.census.population);
     this.advisor.warnings(w, this.census, this.power, d, g);
+    // City life terms count down one sim day at a time (MEGACITY §6.4.1): speed never multiplies them.
+    if (w.cityEvent && w.cityEvent.daysLeft > 0) w.cityEvent.daysLeft--;
+  }
+
+  /**
+   * Run the current day's next units within `budgetMs` of sim time (MEGACITY §3.3, signature frozen in Step 0b).
+   * Returns true when a day completed (stats and events published). Step 0b: runs one whole day, whatever the
+   * budget; WP-1 cuts it into the resumable units of §3.3, so a sliced day equals a whole step() exactly.
+   */
+  stepSlice(budgetMs: number): boolean {
+    void budgetMs;
+    this.step();
+    return true;
+  }
+
+  /**
+   * Recompute after a player action around a tile rect (MEGACITY §3.3, O5). Step 0b: a full recomputeAll; WP-1
+   * recomputes power, coverage and traffic in full and the local fields on rect ⊕ 12 only.
+   */
+  recomputeAround(rect: { x0: number; y0: number; x1: number; y1: number }): void {
+    void rect;
+    this.recomputeAll();
   }
 
   /**

@@ -9,6 +9,7 @@ import { berthTiles, shoreSites } from '../src/game/ports';
 import { RoadKind, Terrain, ZoneType, type BuildingType } from '../src/game/types';
 import { World } from '../src/game/world';
 import { flatWorld } from './helpers';
+import { LEGACY_REGION } from '../src/game/types';
 
 const N = 64;
 
@@ -85,7 +86,7 @@ describe('seaport (§5.1)', () => {
   it('every sampled generated seed has shore sites a seaport can actually take', () => {
     let placed = 0;
     for (let seed = 1; seed <= 10; seed++) {
-      const w = World.generate(seed * 7919);
+      const w = World.generate(seed * 7919, undefined, undefined, LEGACY_REGION);
       w.funds = 1e7;
       w.maxPopulation = 1e6;
       const marks = new Uint8Array(N * N);

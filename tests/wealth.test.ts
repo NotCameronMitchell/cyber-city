@@ -14,6 +14,8 @@ import { potentialTier, tierCap, tierCapAt, wealthScoreAt, zoneCapacity } from '
 import { World } from '../src/game/world';
 import { ScriptedMayor, act, flatWorld, fullyBuiltWorld, makeSim, run } from './helpers';
 import { expansionFixture } from './expansion-fixture';
+import { LEGACY_REGION } from '../src/game/types';
+import { toV3 } from './legacy-save';
 
 const N = LEGACY_SIZE;
 const RES = ZoneType.Residential;
@@ -204,7 +206,7 @@ describe('hysteresis and the latch (§4.3)', () => {
 describe('settleWealth (§4.3)', () => {
   /** A generated-terrain city after a scripted year, saved as a v2 build would (no tiers). */
   function v2City(): SaveData {
-    const w = World.generate(4242, 'Old Harbor');
+    const w = World.generate(4242, 'Old Harbor', undefined, LEGACY_REGION);
     const sim = makeSim(w);
     const mayor = new ScriptedMayor(w, sim);
     mayor.opening();
@@ -213,8 +215,7 @@ describe('settleWealth (§4.3)', () => {
       mayor.turn();
     }
     for (let i = 0; i < N * N; i++) w.setWealth(i % N, (i / N) | 0, 0);
-    const data = JSON.parse(JSON.stringify(w.serialize())) as SaveData;
-    data.version = 2;
+    const data = toV3(JSON.parse(JSON.stringify(w.serialize())) as SaveData, 2); // migrates to a 3×3 region
     delete data.sky;
     delete data.moments;
     return data;

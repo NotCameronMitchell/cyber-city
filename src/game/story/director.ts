@@ -30,9 +30,11 @@
 
 import { isUnlocked, lockedReason } from '../actions';
 import {
+  ANNEX,
   BUILDINGS,
   BUILD_REACTION_LIMIT,
   BUILD_REACTION_LIMIT_BY_TYPE,
+  DISTRICTS,
   FACTION_BUILD_REACTIONS,
   FACTION_IDS,
   FACTION_LABELS,
@@ -48,7 +50,7 @@ import {
 } from '../config';
 import { Rng } from '../rng';
 import { storageGet, storageSet } from '../storage';
-import { DAYS_PER_MONTH, MONTHS_PER_YEAR, START_YEAR, type BuildingType, type StoryPace } from '../types';
+import { DAYS_PER_MONTH, MONTHS_PER_YEAR, START_YEAR, type BuildingType, type DistrictKind, type StoryPace } from '../types';
 import type { World } from '../world';
 import {
   evalCond,
@@ -74,6 +76,7 @@ import {
   effectsText,
   fillTokens,
   findSpot,
+  grantLand,
   hintsFor,
   logId,
   signPactEffect,
@@ -243,6 +246,7 @@ export class StoryDirector implements EffectHost {
     revealed: false,
     mural: false,
     crackdowns: [],
+    marks: { list: [], version: 0 },
   };
 
   /** Unpaused real seconds this session (not saved). */
@@ -1311,9 +1315,22 @@ export class StoryDirector implements EffectHost {
     const w = this.world;
     const st = w.story;
     const v = e.rules.variant;
+    const prev = st.ending;
+    const prevVariant = st.endingVariant;
+    const prevTick = st.endingTick;
     st.ending = e.id;
     st.endingTick = w.tick;
     st.endingVariant = v && evalCond(w, v.when) ? v.id : null;
+    // Megacity (MEGACITY §9.6): the ending history (each ending held and for how long); a review that keeps the
+    // ending adds nothing. The first ending also brings a land grant (§8.2); a review swap does not.
+    const hist = (st.endingHistory ??= prev ? [{ id: prev, variant: prevVariant, from: prevTick ?? w.tick, to: null }] : []);
+    const last = hist[hist.length - 1];
+    if (!last || last.id !== e.id || last.variant !== st.endingVariant || last.to !== null) {
+      if (last && last.to === null) last.to = w.tick;
+      hist.push({ id: e.id, variant: st.endingVariant, from: w.tick, to: null });
+      if (hist.length > 32) hist.splice(0, hist.length - 32);
+    }
+    if (!prev) grantLand(w, 1, 'ending');
     st.nextReview = w.tick + P.reviewEvery;
     st.flags.charterNightOpen = false;
     this.charterDue = false;
@@ -1434,6 +1451,38 @@ export class StoryDirector implements EffectHost {
     if (this.world.story.open || this.applying) this.charterDue = true;
     else this.world.events.emit('charterNight');
     this.markChanged();
+  }
+
+  /**
+   * Annex reactions (MEGACITY §8.2): each lobbyist of the annexed district +ANNEX.lobbyFavor (+repeat when a district
+   * of this kind was owned before); each lobbyist of the other current candidates (kinds not yet owned) rivalLobbyFavor
+   * once per faction (a faction that lobbied for the annexed one too gets only the plus); the Tarmac lease: the chosen
+   * corp leaseFavor, the other leaseRivalFavor. The hidden Tuning is never a lobbyist before it is active (the kind's
+   * lobbyFallback speaks instead). Ordinary favor changes; no card opens.
+   */
+  onAnnex(kind: DistrictKind, lease: 'nacre' | 'basalt' | undefined, repeat: boolean, rivalKinds: readonly DistrictKind[] = []): void {
+    const w = this.world;
+    const owned = new Set(w.districts.owned.map((s) => w.districts.kinds[s]));
+    const lobbyOf = (k: DistrictKind): FactionId[] => {
+      const def = DISTRICTS[k];
+      if (!def) return [];
+      return def.lobby.flatMap((f) => (f === 'tuning' && !w.story.flags.tuningActive ? (def.lobbyFallback ? [def.lobbyFallback] : []) : [f]));
+    };
+    const mine = new Set(lobbyOf(kind));
+    const plus = repeat ? ANNEX.repeatLobbyFavor : ANNEX.lobbyFavor;
+    const minus = repeat ? ANNEX.repeatRivalLobbyFavor : ANNEX.rivalLobbyFavor;
+    for (const f of mine) changeFavor(w, f, plus);
+    const hit = new Set<FactionId>();
+    for (const k of rivalKinds) {
+      if (k === kind || owned.has(k)) continue;
+      for (const f of lobbyOf(k)) if (!mine.has(f)) hit.add(f);
+    }
+    for (const f of hit) changeFavor(w, f, minus);
+    if (lease) {
+      changeFavor(w, lease, ANNEX.leaseFavor);
+      changeFavor(w, lease === 'nacre' ? 'basalt' : 'nacre', ANNEX.leaseRivalFavor);
+    }
+    this.markDirty();
   }
 
   ending(id: EndingId): void {

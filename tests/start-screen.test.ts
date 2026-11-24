@@ -441,7 +441,7 @@ describe('title warning for a save the game cannot continue', () => {
   it('a real stale Game on a newer save: blocked, no Continue, the warning shows until New City', () => {
     const src = new Game();
     src.newCity('Future Reach', 4243);
-    const v4 = JSON.stringify({ ...src.world.serialize(), version: 4 });
+    const v4 = JSON.stringify({ ...src.world.serialize(), version: 5 });
     const m = new Map<string, string>([[SAVE_KEY, v4]]);
     (globalThis as { localStorage?: unknown }).localStorage = {
       getItem: (k: string) => m.get(k) ?? null,

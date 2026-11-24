@@ -119,7 +119,9 @@ export class PortSystem implements PortView {
       TOURISM.spaceport * space +
       TOURISM.perHighCom * highCom +
       landmarks +
-      TOURISM.perEdgePoint * g.edgePoints;
+      TOURISM.perEdgePoint * g.edgePoints +
+      // City life (MEGACITY §6.4.1): a happening's visitors (a monthly rate) while it has sim days left.
+      (world.cityEvent && world.cityEvent.daysLeft > 0 ? world.cityEvent.visitors : 0);
     let mood = approval / TOURISM.approvalRef;
     mood = mood < TOURISM.moodMin ? TOURISM.moodMin : mood > TOURISM.moodMax ? TOURISM.moodMax : mood;
     mood *= 1 - TOURISM.crimeHit * census.avgCrime;

@@ -13,6 +13,7 @@ import { driftFavor, standing } from '../../src/game/story/factions';
 import * as turf from '../../src/game/story/turf';
 import type { SaveData, StoryPace } from '../../src/game/types';
 import { headlessGame, playStory } from './harness';
+import { toV3 } from '../legacy-save';
 
 const P = STORY_PACING;
 
@@ -136,8 +137,7 @@ describe('an old city loaded as v1 does not rush the early chapters', () => {
     const floor = STORY_PACE[pace as StoryPace].chapterMinSec;
     const { game } = playStory({ seed: 2091, years: 4, pace: 'brisk' });
     expect(game.world.stats.population).toBeGreaterThan(50000);
-    const data = clone(game.world.serialize()) as SaveData;
-    data.version = 1;
+    const data = toV3(clone(game.world.serialize()) as SaveData, 1);
     delete data.story;
     const g = new Game();
     g.settings.storyPace = pace;

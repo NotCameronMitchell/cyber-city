@@ -655,13 +655,15 @@ export class SimGrid {
       }
     }
     const seed = (world.seed % 10007) + 77;
+    // Art coordinates (MEGACITY §3.2 artXY): the noise is the same on the start slot of either region as on the 64 map.
+    const o = 64 * ((world.region - 1) >> 1);
     for (let i = 0; i < area; i++) {
       const d = dist[i];
       let v = 0;
       if (d > 0 && d <= WATER_VIEW_RANGE) v += LV_WATER * (1 - (d - 1) / WATER_VIEW_RANGE);
       const x = i % N;
       const y = (i / N) | 0;
-      v += (fbm(x * 0.11, y * 0.11, seed, 3) - 0.5) * 2 * LV_NOISE;
+      v += (fbm((x - o) * 0.11, (y - o) * 0.11, seed, 3) - 0.5) * 2 * LV_NOISE;
       this.terrainValue[i] = v;
     }
   }

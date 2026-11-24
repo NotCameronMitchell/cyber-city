@@ -13,6 +13,8 @@ import { storyContent } from '../src/game/story/conditions';
 import { RoadKind, Terrain, ZoneType, type Building, type ToolId } from '../src/game/types';
 import { World } from '../src/game/world';
 import { flatWorld } from './helpers';
+import { LEGACY_REGION } from '../src/game/types';
+import { toV3 } from './legacy-save';
 
 /** A Game on a flat rich map with everything unlocked, and a fake wall clock. */
 function richGame(seed = 5150): { g: Game; clock: { t: number } } {
@@ -456,8 +458,7 @@ describe('old saves settle once (§4.3)', () => {
     const spy = vi.spyOn(Simulation.prototype, 'settleWealth');
     const { g } = richGame(); // a v3 restore
     expect(spy).not.toHaveBeenCalled();
-    const data = JSON.parse(JSON.stringify(g.world.serialize()));
-    data.version = 2;
+    const data = toV3(JSON.parse(JSON.stringify(g.world.serialize())), 2); // the v2 shape (MEGACITY: v1–v3 saves carry `tiles`)
     expect(g.restore(data)).toBe(true);
     expect(spy).toHaveBeenCalledTimes(1);
     data.version = 1;
@@ -655,7 +656,7 @@ describe('prices, sounds and story refresh', () => {
     const { g } = richGame();
     use(g, 'road', { x: 5, y: 5 }, { x: 9, y: 5 });
     expect(g.undoLeft()).toBeGreaterThan(0);
-    g.restore(JSON.parse(JSON.stringify(new World(3).serialize())));
+    g.restore(JSON.parse(JSON.stringify(new World(3, undefined, undefined, LEGACY_REGION).serialize())));
     expect(g.undoLeft()).toBe(0);
     expect(g.pendingConfirm).toBeNull();
     expect(g.launchLead).toBeNull();

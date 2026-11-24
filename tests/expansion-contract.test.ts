@@ -49,6 +49,7 @@ import {
 } from '../src/game/wealth';
 import { World } from '../src/game/world';
 import { headlessGame } from './story/harness';
+import { LEGACY_REGION } from '../src/game/types';
 
 const N = LEGACY_SIZE;
 const { Street: S, Avenue: A, Highway: H, Alley: L, Ramp: R } = RoadKind;
@@ -71,8 +72,10 @@ describe('config (§2.8, §10.2 #9)', () => {
   });
 
   it('inserts the new buildings before the Stratablock; the story types stay last', () => {
-    const k = BUILDING_ORDER.indexOf('stack');
-    expect(BUILDING_ORDER.slice(k - 5, k)).toEqual(['arcology', ...NEW_TYPES]);
+    // Megacity (MEGACITY §6.3) adds its types after these, still before the Stratablock.
+    const a = BUILDING_ORDER.indexOf('arcology');
+    expect(BUILDING_ORDER.slice(a, a + 5)).toEqual(['arcology', ...NEW_TYPES]);
+    expect(BUILDING_ORDER.indexOf('stack')).toBeGreaterThan(a + 4);
     expect(BUILDING_ORDER.slice(-7)).toEqual(STORY_TYPES);
     expect(new Set(BUILDING_ORDER)).toEqual(new Set(Object.keys(BUILDINGS)));
     expect(BUILDING_ORDER.length).toBe(Object.keys(BUILDINGS).length);
@@ -144,7 +147,7 @@ function invariants(w: World): string[] {
 describe('World mutators keep the invariants (§10.2 #7)', () => {
   it('random sequences of every mutator', () => {
     for (let seed = 1; seed <= 4; seed++) {
-      const w = new World(seed);
+      const w = new World(seed, undefined, undefined, LEGACY_REGION);
       for (let y = 20; y < 26; y++) for (let x = 0; x < N; x++) w.tiles[y * N + x].terrain = Terrain.Water;
       const rng = new Rng(seed * 31);
       const at = () => ({ x: rng.int(0, 40), y: rng.int(15, 30) });
@@ -209,7 +212,7 @@ describe('World mutators keep the invariants (§10.2 #7)', () => {
   });
 
   it('setRoad(x, y) still lays a Street; Alley and Ramp on water are written as Street', () => {
-    const w = new World(1);
+    const w = new World(1, undefined, undefined, LEGACY_REGION);
     w.tiles[w.idx(5, 6)].terrain = Terrain.Water;
     w.setRoad(5, 5);
     expect(w.tileAt(5, 5)!.roadKind).toBe(S);
@@ -225,7 +228,7 @@ describe('World mutators keep the invariants (§10.2 #7)', () => {
   });
 
   it('setRoadKind keeps variant and age; setWealth emits no tiles event', () => {
-    const w = new World(2);
+    const w = new World(2, undefined, undefined, LEGACY_REGION);
     w.setRoad(3, 3);
     const t = w.tileAt(3, 3)!;
     t.age = 500;
@@ -262,7 +265,7 @@ describe('World mutators keep the invariants (§10.2 #7)', () => {
   });
 
   it('sky: setSky / clearSky bump skyVersion; clearSky unhooks neighbours; ground clears keep decks', () => {
-    const w = new World(3);
+    const w = new World(3, undefined, undefined, LEGACY_REGION);
     const v0 = w.skyVersion;
     w.setSky(10, 10, 2 | 16); // ramp, east
     w.setSky(11, 10, 8 | 2);
@@ -287,7 +290,7 @@ describe('World mutators keep the invariants (§10.2 #7)', () => {
   });
 
   it('restoreTile writes a snapshot back', () => {
-    const w = new World(4);
+    const w = new World(4, undefined, undefined, LEGACY_REGION);
     const i = w.idx(7, 7);
     w.setZone(7, 7, ZoneType.Industrial);
     w.restoreTile(i, { i, road: true, roadKind: A, zone: ZoneType.None, level: 0, sky: 2 | 16 });
@@ -350,7 +353,7 @@ describe('wealth helpers (§4)', () => {
   });
 
   it('the score reads only world.fields and the tile; its parts sum to it', () => {
-    const w = new World(5);
+    const w = new World(5, undefined, undefined, LEGACY_REGION);
     const f = w.fields;
     const put = (x: number, y: number, zone: ZoneType) => {
       w.setZone(x, y, zone);
@@ -383,7 +386,7 @@ describe('wealth helpers (§4)', () => {
   });
 
   it('wealthInfo: tier, potential, trend, notes', () => {
-    const w = new World(6);
+    const w = new World(6, undefined, undefined, LEGACY_REGION);
     const f = w.fields;
     w.setZone(10, 10, ZoneType.Residential);
     w.setLevel(10, 10, 2, false, 1);
@@ -439,7 +442,7 @@ describe('wealth helpers (§4)', () => {
 describe('port helpers (§5.1, §5.4)', () => {
   /** Water below y = 40 and right of x = 50. */
   function shore(): World {
-    const w = new World(7);
+    const w = new World(7, undefined, undefined, LEGACY_REGION);
     for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) if (y >= 40 || x >= 50) w.tiles[y * N + x].terrain = Terrain.Water;
     return w;
   }
@@ -457,10 +460,10 @@ describe('port helpers (§5.1, §5.4)', () => {
     v.setRail(11, 40, 2);
     expect(shoreFacing(v, 10, 36, 4)).toBe(-1);
     // North and west shores.
-    const u = new World(8);
+    const u = new World(8, undefined, undefined, LEGACY_REGION);
     for (let x = 0; x < N; x++) for (let y = 0; y < 5; y++) u.tiles[y * N + x].terrain = Terrain.Water;
     expect(shoreFacing(u, 20, 5, 4)).toBe(0);
-    const s = new World(9);
+    const s = new World(9, undefined, undefined, LEGACY_REGION);
     for (let y = 0; y < N; y++) for (let x = 0; x < 5; x++) s.tiles[y * N + x].terrain = Terrain.Water;
     expect(shoreFacing(s, 5, 20, 4)).toBe(3);
   });
@@ -489,7 +492,7 @@ describe('port helpers (§5.1, §5.4)', () => {
   it('every sampled generated map has at least 2 non-overlapping shore sites', () => {
     const marks = new Uint8Array(N * N);
     for (let seed = 1; seed <= 30; seed++) {
-      const w = World.generate(seed * 7919);
+      const w = World.generate(seed * 7919, undefined, undefined, LEGACY_REGION);
       expect(shoreSites(w, marks), `seed ${seed}`).toBeGreaterThan(0);
       // Greedy non-overlapping pick.
       const taken: { x: number; y: number }[] = [];
@@ -504,7 +507,7 @@ describe('port helpers (§5.1, §5.4)', () => {
   });
 
   it('noiseReach lists developed Hab Blocks inside the Chebyshev reach', () => {
-    const w = new World(10);
+    const w = new World(10, undefined, undefined, LEGACY_REGION);
     expect(noiseDef('airport')).toEqual({ v: 0.9, r: 10 });
     expect(noiseDef('plaza')).toBeNull();
     for (const [x, y, z, l] of [
@@ -531,7 +534,7 @@ describe('port helpers (§5.1, §5.4)', () => {
 
 describe('skyway helpers (§3.7)', () => {
   it('ramps are active only over a Street, Avenue or Ramp; links back are mutual', () => {
-    const w = new World(11);
+    const w = new World(11, undefined, undefined, LEGACY_REGION);
     w.setRoad(10, 10);
     w.setSky(10, 10, 2 | 16);
     w.setSky(11, 10, 8);
@@ -551,7 +554,7 @@ describe('skyway helpers (§3.7)', () => {
   });
 
   it('skywayDocks: a BFS over mutual links from an anchor footprint', () => {
-    const w = new World(12);
+    const w = new World(12, undefined, undefined, LEGACY_REGION);
     const stack = w.addBuilding('stack', 20, 20)!; // 20..23
     const plaza = w.addBuilding('plaza', 30, 30)!;
     expect(isSkyAnchorAt(w, 21, 21)).toBe(true);
@@ -576,7 +579,7 @@ describe('skyway helpers (§3.7)', () => {
   });
 
   it('planSkyway fills the plan (the Step 0 stub, filled by WP-2; rules in tests/actions-roads.test.ts)', () => {
-    const w = new World(13);
+    const w = new World(13, undefined, undefined, LEGACY_REGION);
     const plan: ActionPlan = { tool: 'skyway', tiles: [], cost: 0, valid: false };
     expect(planSkyway(w, [{ x: 1, y: 1 }, { x: 2, y: 1 }], plan)).toBe(2);
     expect(plan.skyMasks).toEqual([2, 8]);
@@ -621,7 +624,7 @@ describe('buildingStats (§2.8, §5.3)', () => {
 
 describe('sim stubs (§2.7)', () => {
   it('sim.ports reads zeros; buildProgress combines days and seconds; settleWealth is a no-op', () => {
-    const w = new World(14);
+    const w = new World(14, undefined, undefined, LEGACY_REGION);
     const sim = new Simulation(w);
     const sp = w.addBuilding('spaceport', 10, 10)!;
     const plaza = w.addBuilding('plaza', 30, 30)!;
@@ -683,7 +686,7 @@ describe('story metrics and spot rules (§2.2)', () => {
       expect(isMetric(m)).toBe(true);
     }
     for (const s of ['highway', 'alley', 'shore']) expect(SPOT_RULES.has(s)).toBe(true);
-    const w = new World(15);
+    const w = new World(15, undefined, undefined, LEGACY_REGION);
     w.addBuilding('seaport', 10, 10);
     expect(metric(w, 'count.seaport')).toBe(1);
   });

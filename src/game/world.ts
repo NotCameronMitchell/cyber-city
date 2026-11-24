@@ -1,7 +1,12 @@
-import { BUILDINGS, DEFAULT_TAX, POP_SCALE, ROAD_ACCESS_RANGE, SAVE_VERSION, SAVE_VERSIONS_SUPPORTED, SPACEPORT, START_FUNDS } from './config';
+import { ANNEX_SALT, BUILDINGS, DEFAULT_TAX, DISTRICTS, POP_SCALE, ROAD_ACCESS_RANGE, SAVE_VERSION, SAVE_VERSIONS_SUPPORTED, SPACEPORT, START_FUNDS } from './config';
+import { placeAnnexContent } from './districts/annex';
+import { presetOf, seedLayout } from './districts/layout';
+import { BLOCK_TILES, decodeBlock, encodeBlock, upgradeSave, validateSaveShape } from './districts/migrate';
+import { rebuildSegments, ringKey, slotX, slotY, validSlot, type TileRect } from './districts/slots';
+import { generateRegionTerrain } from './districts/terrain';
 import { Emitter, type GameEventMap } from './events';
 import { shoreFacing } from './ports';
-import { Rng, fbm, hash2 } from './rng';
+import { Rng, hash2 } from './rng';
 import { accessRange, roadLinks, storedKind } from './roads';
 import { decodeRle, decodeStory, encodeRle, encodeStory, isCrownId, type DecodeOptions } from './story/encode';
 import { cloneMods, makeLayerParts, makeLayers } from './story/mods';
@@ -19,9 +24,19 @@ import type {
   VerticalCache,
 } from './story/types';
 import {
+  DISTRICT_KINDS,
+  Ground,
+  LEGACY_REGION,
   LEGACY_SIZE,
-  MAX_MAP_SIZE,
   MOMENT_IDS,
+  SLOT,
+  startSlot,
+  type CityEventState,
+  type DistrictKind,
+  type DistrictSave,
+  type DistrictVariant,
+  type FrameRegion,
+  type SlotId,
   RoadKind,
   Terrain,
   ZoneType,
@@ -87,6 +102,8 @@ function makeFields(area: number): Fields {
     hub: f(),
     sea: f(),
     alleyNear: new Uint8Array(area),
+    resilience: f(),
+    filter: f(),
   };
 }
 
@@ -114,6 +131,10 @@ export function emptyStats(): CityStats {
     roads: { street: 0, avenue: 0, highway: 0, alley: 0, ramp: 0, skyway: 0 },
     edgeLinks: 0,
     visitors: 0,
+    districts: [],
+    skyLobbies: { count: 0, largest: 0, visitors: 0 },
+    ruins: 0,
+    ruinsRestored: 0,
   };
 }
 
@@ -134,8 +155,69 @@ function blankTile(): Tile {
     age: 9999,
     roadKind: RoadKind.Street,
     wealth: 0,
+    elev: 0,
+    ground: Ground.Plain,
   };
 }
+
+/** A fresh city's district state on a region: the seed's layout, only the start slot owned (annexed at tick 0). */
+export function freshDistricts(seed: number, region: FrameRegion): DistrictSave {
+  const layout = seedLayout(seed, region);
+  const annexedAt = new Array(region * region).fill(-1);
+  annexedAt[startSlot(region)] = 0;
+  return {
+    kinds: layout.kinds,
+    variants: layout.variants,
+    owned: [startSlot(region)],
+    grants: 0,
+    bought: 0,
+    annexedAt,
+    epilogueSec: 0,
+    goalsDone: [],
+    ruinsRestored: 0,
+  };
+}
+
+/** Tile bits 0-23 (EXPANSION §2.3 + MEGACITY §3.10: 20-21 elev, 22-23 ground; both 0 on water). */
+function tileBits(t: Tile): number {
+  const land = t.terrain !== Terrain.Water;
+  return (
+    (t.terrain & 1) |
+    ((t.road ? 1 : 0) << 1) |
+    ((t.zone & 3) << 2) |
+    ((t.level & 3) << 4) |
+    ((t.abandoned ? 1 : 0) << 6) |
+    ((t.variant & 255) << 7) |
+    ((t.road ? t.roadKind & 7 : 0) << 15) |
+    ((t.zone !== ZoneType.None && t.level >= 1 ? t.wealth & 3 : 0) << 18) |
+    ((land ? t.elev & 3 : 0) << 20) |
+    ((land ? t.ground & 3 : 0) << 22)
+  );
+}
+
+/** Write tile bits 0-23 into a tile (sanitised: §2.3 road kinds, tiers only on developed lots, elev / ground 0 on water). */
+function setTileBits(t: Tile, p: number): void {
+  t.terrain = (p & 1) as Terrain;
+  t.road = ((p >> 1) & 1) === 1;
+  t.zone = ((p >> 2) & 3) as ZoneType;
+  t.level = (p >> 4) & 3;
+  t.abandoned = ((p >> 6) & 1) === 1;
+  t.variant = (p >> 7) & 255;
+  t.age = 9999;
+  // §2.3: kind 0 without a road or out of range; Alley / Ramp never on water.
+  t.roadKind = t.road ? storedKind((p >> 15) & 7, t.terrain) : RoadKind.Street;
+  const tier = (p >> 18) & 3;
+  t.wealth = t.zone === ZoneType.None || t.level === 0 ? 0 : tierOf(tier);
+  const land = t.terrain !== Terrain.Water;
+  t.elev = land ? (p >> 20) & 3 : 0;
+  t.ground = (land ? (p >> 22) & 3 : 0) as Ground;
+}
+
+const isKind = (k: unknown): k is DistrictKind => typeof k === 'string' && (DISTRICT_KINDS as readonly string[]).includes(k);
+const nonNegInt = (v: unknown): number => {
+  const n = Number(v);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
+};
 
 /** A stored head count as a whole number ≥ 0 (no int32 wrap: a 25-district city passes 10 M). */
 function wholeCount(v: unknown): number {
@@ -165,6 +247,11 @@ export class World {
    */
   readonly N: number;
   readonly area: number;
+  /**
+   * Region side in slots (MEGACITY §3.1): 3 or 5, fixed for this World (1 = the legacy 64×64 test frame,
+   * types.ts LEGACY_REGION). N = SLOT × region. Growing a 3×3 city builds a new World from `upgradeRegion(save)`.
+   */
+  readonly region: FrameRegion;
   readonly events: Emitter<GameEventMap>;
   cityName: string;
   seed: number;
@@ -222,16 +309,47 @@ export class World {
   /** Once-per-city moments already shown (§5.4). Saved as SaveData.moments. */
   moments = new Set<MomentId>();
 
+  // ── Megacity districts (docs/MEGACITY.md §3.2). ──
+  /** District state (saved as SaveData.districts). Written by world.annex() and Game only. */
+  districts: DistrictSave;
+  /** 1 = owned, index SlotId. */
+  slotOwned: Uint8Array;
+  /** Owned row segments as [start, end) index pairs, ascending; owned slots side by side in a row merge into one segment. */
+  segs: Int32Array;
+  /** Number of ints used in `segs` (2 per segment). */
+  segCount = 0;
+  /** ++ on every annex (renderer, SimGrid and turf compare it). */
+  slotsVersion = 0;
+  /** ++ when road / zone / building presence changes (power labels, O2). setLevel and setWealth do not bump it. */
+  conductorVersion = 0;
   /**
-   * `side` is the world's side in tiles (MEGACITY §3.1): LEGACY_SIZE (64) for every city until
-   * regions land (Step 0b part 2), any multiple of 64 up to MAX_MAP_SIZE for frame tests.
+   * ++ when anything coverage reads changes (O3): building add / remove / stage / crown here; offline, powered,
+   * sponsor, look, the Metro network flag and Sky Lobby membership by their writers (WP-1, WP-2).
    */
-  constructor(seed: number, cityName = 'Lanthorn Bay', events?: Emitter<GameEventMap>, side: number = LEGACY_SIZE) {
-    if (!(Number.isInteger(side) && side >= LEGACY_SIZE && side <= MAX_MAP_SIZE && side % LEGACY_SIZE === 0))
-      throw new Error(`World side ${side} is not a multiple of ${LEGACY_SIZE} up to ${MAX_MAP_SIZE}`);
+  coverageVersion = 0;
+  /** ++ on every setTerrain (Pump House reclamation); the 'terrain' event carries the rect. */
+  terrainVersion = 0;
+  /** Tile rect of the owned slots (inclusive). */
+  ownedBox: TileRect = { x0: 0, y0: 0, x1: -1, y1: -1 };
+  /** Shoals king tide: days left (0 = none). Not saved. */
+  tide = 0;
+  /** The City life happening in progress (§6.4.1; WP-6), read by the sim while daysLeft > 0. Not saved. */
+  cityEvent: CityEventState | null = null;
+  /** While set, touch() only grows this rect (World.annex batches its content into one 'tiles' event). */
+  private batchRect: TileRect | null = null;
+
+  /**
+   * `region` is the region side in slots (MEGACITY §3.1): 3 or 5 for a city, LEGACY_REGION (1) for the 64×64
+   * test frame. A fresh World owns only the start slot, with the seed's district layout; its land is blank
+   * (World.generate adds terrain).
+   */
+  constructor(seed: number, cityName = 'Lanthorn Bay', events?: Emitter<GameEventMap>, region: FrameRegion = 3) {
+    if (!(region === 3 || region === 5 || region === LEGACY_REGION)) throw new Error(`World region ${region} is not 3, 5 or the legacy frame`);
+    const side = SLOT * region;
     const area = side * side;
     this.N = side;
     this.area = area;
+    this.region = region;
     this.seed = seed >>> 0;
     this.cityName = cityName;
     this.events = events ?? new Emitter<GameEventMap>();
@@ -246,11 +364,19 @@ export class World {
     this.sky = new Uint8Array(area);
     this.wealthStreak = new Int8Array(area);
     this.story = newStoryState(this.seed);
+    this.districts = freshDistricts(this.seed, region);
+    this.slotOwned = new Uint8Array(region * region);
+    this.slotOwned[startSlot(region)] = 1;
+    this.segs = new Int32Array(region * side * 2);
+    rebuildSegments(this);
   }
 
-  /** Create a fresh world with generated terrain (`side` as in the constructor). */
-  static generate(seed: number, cityName?: string, events?: Emitter<GameEventMap>, side: number = LEGACY_SIZE): World {
-    const w = new World(seed, cityName, events, side);
+  /**
+   * Create a fresh world with generated terrain (`region` as in the constructor): the start slot with today's
+   * generator (bit-identical to the 64×64 map for the same seed on either region), every other slot with its kind's.
+   */
+  static generate(seed: number, cityName?: string, events?: Emitter<GameEventMap>, region: FrameRegion = 3): World {
+    const w = new World(seed, cityName, events, region);
     w.generateTerrain();
     return w;
   }
@@ -265,6 +391,98 @@ export class World {
   }
   tileAt(x: number, y: number): Tile | null {
     return this.inBounds(x, y) ? this.tiles[y * this.N + x] : null;
+  }
+
+  // ── Districts (MEGACITY §3.2) ─────────────────────────────────────────────
+  /** In bounds and its slot is owned. */
+  isOwned(x: number, y: number): boolean {
+    const N = this.N;
+    if (x < 0 || y < 0 || x >= N || y >= N) return false;
+    return this.slotOwned[(y >> 6) * this.region + (x >> 6)] === 1;
+  }
+  /** Tile index i is on an owned slot. */
+  ownedAt(i: number): boolean {
+    if (!(i >= 0 && i < this.area)) return false;
+    const N = this.N;
+    return this.slotOwned[(((i / N) | 0) >> 6) * this.region + ((i % N) >> 6)] === 1;
+  }
+  /** The slot of a tile, (y >> 6) * region + (x >> 6); −1 off the map. */
+  slotAt(x: number, y: number): SlotId {
+    if (!this.inBounds(x, y)) return -1;
+    return (y >> 6) * this.region + (x >> 6);
+  }
+  /** The district kind of a tile's slot ('shore' off the map). */
+  kindAt(x: number, y: number): DistrictKind {
+    const s = this.slotAt(x, y);
+    return s < 0 ? 'shore' : this.districts.kinds[s] ?? 'shore';
+  }
+  /** The variant of a slot's kind (0 = the kind's own district). */
+  variantOf(s: SlotId): DistrictVariant {
+    return this.districts.variants?.[s] ?? 0;
+  }
+
+  /**
+   * Structural annex (§3.2): mark owned, place the district's content (districts/annex.ts) with per-tile events
+   * suspended, rebuild segs and ownedBox, then emit one 'tiles' touch for the slot rect and 'annex'. No cost, no
+   * rules (Game.annex checks and pays). Content draws from `new Rng(seed ^ ANNEX_SALT[ringKey(slot)])`, never
+   * world.rng. A slot already owned or out of range is ignored.
+   */
+  annex(slot: SlotId): void {
+    if (!validSlot(this.region, slot) || this.slotOwned[slot]) return;
+    this.slotOwned[slot] = 1;
+    this.districts.owned.push(slot);
+    this.districts.annexedAt[slot] = this.tick;
+    rebuildSegments(this);
+    this.slotsVersion++;
+    const x0 = slotX(this.region, slot) * SLOT;
+    const y0 = slotY(this.region, slot) * SLOT;
+    this.batchRect = { x0, y0, x1: x0 + SLOT - 1, y1: y0 + SLOT - 1 };
+    try {
+      placeAnnexContent(this, slot, new Rng((this.seed ^ ANNEX_SALT[ringKey(this.region, slot)]) >>> 0));
+    } finally {
+      const r = this.batchRect;
+      this.batchRect = null;
+      this.conductorVersion++;
+      this.coverageVersion++;
+      this.touch(r.x0, r.y0, r.x1, r.y1);
+    }
+    this.events.emit('annex', { slot, kind: this.districts.kinds[slot], variant: this.variantOf(slot) });
+  }
+
+  /**
+   * Pump House reclamation (§3.2): water → land (or back) on an **owned** tile only. A bridge becomes a road of its
+   * kind on land (Alley / Ramp rules hold through storedKind); land → water clears zone, building and ground.
+   * Bumps conductorVersion and terrainVersion and emits 'terrain'.
+   */
+  setTerrain(x: number, y: number, terrain: Terrain) {
+    if (!this.isOwned(x, y)) return;
+    const t = this.tiles[y * this.N + x];
+    if (t.terrain === terrain) return;
+    if (terrain === Terrain.Water) {
+      if (t.buildingId >= 0) this.removeBuilding(t.buildingId);
+      t.zone = ZoneType.None;
+      t.level = 0;
+      t.abandoned = false;
+      t.wealth = 0;
+      t.elev = 0;
+      t.ground = Ground.Plain;
+    }
+    t.terrain = terrain;
+    if (t.road) t.roadKind = storedKind(t.roadKind, terrain);
+    this.conductorVersion++;
+    this.terrainVersion++;
+    this.touch(x, y, x, y);
+    this.events.emit('terrain', { x0: x, y0: y, x1: x, y1: y });
+  }
+
+  /** Set a land tile's ground feature (§3.2). Plain on water; ignored on locked tiles. */
+  setGround(x: number, y: number, g: Ground) {
+    if (!this.isOwned(x, y)) return;
+    const t = this.tiles[y * this.N + x];
+    const v = (t.terrain === Terrain.Water ? Ground.Plain : g & 3) as Ground;
+    if (t.ground === v) return;
+    t.ground = v;
+    this.touch(x, y, x, y);
   }
   buildingAt(x: number, y: number): Building | null {
     const t = this.tileAt(x, y);
@@ -340,6 +558,15 @@ export class World {
   // ── Low-level mutators ────────────────────────────────────────────────────
   private touch(x0: number, y0: number, x1: number, y1: number) {
     this.version++;
+    const b = this.batchRect;
+    if (b) {
+      // Batched (World.annex): grow the pending rect; one event at the end.
+      b.x0 = Math.min(b.x0, x0);
+      b.y0 = Math.min(b.y0, y0);
+      b.x1 = Math.max(b.x1, x1);
+      b.y1 = Math.max(b.y1, y1);
+      return;
+    }
     // Expand by 1 so neighbours (road masks, building occlusion) redraw too.
     this.events.emit('tiles', {
       x0: Math.max(0, x0 - 1),
@@ -364,8 +591,10 @@ export class World {
    * Alley and Ramp can't sit on water: they are written as Street there.
    */
   setRoad(x: number, y: number, kind: RoadKind = RoadKind.Street) {
-    const t = this.tileAt(x, y);
-    if (!t || t.buildingId >= 0) return;
+    if (!this.isOwned(x, y)) return;
+    const t = this.tiles[y * this.N + x];
+    if (t.buildingId >= 0) return;
+    if (!t.road) this.conductorVersion++;
     t.road = true;
     t.roadKind = storedKind(kind, t.terrain);
     t.zone = ZoneType.None;
@@ -381,8 +610,9 @@ export class World {
    * reroll, no age reset. No-op on a non-road tile. Alley / Ramp on water are written as Street.
    */
   setRoadKind(x: number, y: number, kind: RoadKind) {
-    const t = this.tileAt(x, y);
-    if (!t || !t.road) return;
+    if (!this.isOwned(x, y)) return;
+    const t = this.tiles[y * this.N + x];
+    if (!t.road) return;
     const k = storedKind(kind, t.terrain);
     if (t.roadKind === k) return;
     t.roadKind = k;
@@ -390,8 +620,10 @@ export class World {
   }
 
   setZone(x: number, y: number, zone: ZoneType) {
-    const t = this.tileAt(x, y);
-    if (!t || t.terrain === Terrain.Water || t.buildingId >= 0) return;
+    if (!this.isOwned(x, y)) return;
+    const t = this.tiles[y * this.N + x];
+    if (t.terrain === Terrain.Water || t.buildingId >= 0) return;
+    if (t.road || t.zone !== zone) this.conductorVersion++;
     t.road = false;
     t.roadKind = RoadKind.Street;
     t.zone = zone;
@@ -446,6 +678,7 @@ export class World {
       this.removeBuilding(t.buildingId);
       return;
     }
+    if (t.road || t.zone !== ZoneType.None) this.conductorVersion++;
     t.road = false;
     t.roadKind = RoadKind.Street;
     t.zone = ZoneType.None;
@@ -479,6 +712,15 @@ export class World {
       this.touch(x, y, x, y);
       return;
     }
+    if (!this.ownedAt(i)) {
+      // Locked land holds nothing (§3.2): only the sky bits above were written back, and they are cleared too.
+      if (this.sky[i]) {
+        this.sky[i] = 0;
+        this.skyVersion++;
+      }
+      return;
+    }
+    this.conductorVersion++;
     t.road = !!snap.road;
     t.roadKind = t.road ? storedKind(snap.roadKind, t.terrain) : RoadKind.Street;
     const zone = t.road || t.terrain === Terrain.Water ? ZoneType.None : snap.zone;
@@ -493,7 +735,7 @@ export class World {
 
   /** Set a tile's skyway bits (mask | ramp << 4; 0 removes). Callers keep neighbours consistent (like setRail). */
   setSky(x: number, y: number, bits: number) {
-    if (!this.inBounds(x, y)) return;
+    if (!this.isOwned(x, y)) return;
     const i = y * this.N + x;
     const v = bits & 31;
     if (this.sky[i] === v) return;
@@ -531,7 +773,7 @@ export class World {
     for (let dy = 0; dy < size; dy++)
       for (let dx = 0; dx < size; dx++) {
         const t = this.tileAt(x + dx, y + dy);
-        if (!t || t.terrain === Terrain.Water || t.buildingId >= 0) return null;
+        if (!t || t.terrain === Terrain.Water || t.buildingId >= 0 || !this.isOwned(x + dx, y + dy)) return null;
       }
     const b: Building = {
       id: this.nextBuildingId++,
@@ -564,6 +806,8 @@ export class World {
         }
         this.reroll(t, x + dx, y + dy);
       }
+    this.conductorVersion++;
+    this.coverageVersion++;
     this.touch(x, y, x + size - 1, y + size - 1);
     return b;
   }
@@ -583,6 +827,8 @@ export class World {
         this.clearRail(b.x + dx, b.y + dy);
         this.removeLinksAt(b.x + dx, b.y + dy);
       }
+    this.conductorVersion++;
+    this.coverageVersion++;
     this.touch(b.x, b.y, b.x + b.size - 1, b.y + b.size - 1);
   }
 
@@ -590,7 +836,7 @@ export class World {
 
   /** Set the rail connection mask (N1 E2 S4 W8) of a tile; 0 removes it. Callers keep neighbours consistent. */
   setRail(x: number, y: number, mask: number) {
-    if (!this.inBounds(x, y)) return;
+    if (!this.isOwned(x, y)) return;
     const i = y * this.N + x;
     const m = mask & 15;
     if (this.rail[i] === m) return;
@@ -616,6 +862,8 @@ export class World {
   /** Add a skybridge between two anchor tiles. Returns the stored link (with its new id). */
   addLink(l: Omit<SkyLink, 'id'> & { id?: number }): SkyLink {
     const link: SkyLink = { id: l.id ?? this.nextLinkId, ax: l.ax, ay: l.ay, bx: l.bx, by: l.by };
+    // No anchor on a locked tile (§3.2): the link is returned but not stored.
+    if (!this.isOwned(link.ax, link.ay) || !this.isOwned(link.bx, link.by)) return link;
     if (link.id >= this.nextLinkId) this.nextLinkId = link.id + 1;
     this.links.push(link);
     this.touchLink(link);
@@ -642,6 +890,7 @@ export class World {
     b.stage = stage;
     b.buildDays = Math.max(0, Math.round(buildDays));
     if (crown) b.crown = crown;
+    this.coverageVersion++;
     this.touch(b.x, b.y, b.x + b.size - 1, b.y + b.size - 1);
   }
 
@@ -663,67 +912,41 @@ export class World {
   }
 
   // ── Terrain generation ────────────────────────────────────────────────────
-  private generateTerrain() {
-    const rng = new Rng(this.seed);
-    const side = rng.int(0, 3); // which edge has the bay
-    const riverAxis = rng.int(0, 1); // river runs along x or y
-    const riverPhase = rng.next() * Math.PI * 2;
-    const riverOffset = rng.int(18, 46);
-    const s = this.seed % 10000;
-    const N = this.N;
-
-    for (let y = 0; y < N; y++) {
-      for (let x = 0; x < N; x++) {
-        const t = this.tiles[y * N + x];
-        // Bay along one edge with a noisy coastline.
-        const edgeDist = [y, N - 1 - x, N - 1 - y, x][side];
-        const along = side % 2 === 0 ? x : y;
-        const coast = 5 + fbm(along * 0.09, 3.7, s + 11) * 9;
-        let water = edgeDist < coast;
-
-        // Meandering river from the bay inland.
-        const u = riverAxis === 0 ? x : y; // along
-        const v = riverAxis === 0 ? y : x; // across
-        const center = riverOffset + Math.sin(u * 0.11 + riverPhase) * 6 + (fbm(u * 0.05, 9.1, s + 23) - 0.5) * 10;
-        const width = 1.2 + fbm(u * 0.08, 1.3, s + 37) * 1.6;
-        if (Math.abs(v - center) < width) water = true;
-
-        // A few lakes / flooded lots.
-        const lake = fbm(x * 0.07, y * 0.07, s + 51, 3);
-        if (lake > 0.76) water = true;
-
-        t.terrain = water ? Terrain.Water : Terrain.Land;
-        t.variant = Math.floor(hash2(x, y, this.seed) * 256);
-      }
-    }
-
-    // Keep a generous buildable core near the map centre (lakes there are drained): 22..41 on 64.
-    const c0 = (N >> 1) - 10;
-    const c1 = (N >> 1) + 10;
-    for (let y = c0; y < c1; y++)
-      for (let x = c0; x < c1; x++) {
-        const t = this.tiles[y * N + x];
-        const lake = fbm(x * 0.07, y * 0.07, s + 51, 3);
-        if (t.terrain === Terrain.Water && lake > 0.76) t.terrain = Terrain.Land;
-      }
+  /** Generate every slot's terrain (districts/terrain.ts): the start slot bit-identical to today's map. */
+  private generateTerrain(only?: (s: SlotId) => boolean) {
+    const d = this.districts;
+    generateRegionTerrain(
+      this.tiles,
+      this.N,
+      this.region,
+      this.seed,
+      d.kinds,
+      d.variants ?? [],
+      (k, v) => presetOf(DISTRICTS[k]?.variants, v),
+      only,
+    );
     this.version++;
   }
 
   // ── Persistence ───────────────────────────────────────────────────────────
+  /**
+   * Save version 4 (MEGACITY §3.10): `region`, `size`, `scale`, `districts` and one base64 tile block per owned slot
+   * in `districts.owned` order (4096 tiles × 3 bytes, bits 0-23 little-endian, row-major inside the slot). Locked
+   * slots are not saved (they regenerate from the seed). Buildings, sky, turf, rail and links are in world coordinates.
+   */
   serialize(): SaveData {
-    // Tile bits (EXPANSION §2.3): 0 terrain, 1 road, 2-3 zone, 4-5 level, 6 abandoned,
-    // 7-14 variant, 15-17 roadKind (0 without a road), 18-19 wealth (0 on lots), 20+ zero.
-    const tiles = this.tiles.map(
-      (t) =>
-        (t.terrain & 1) |
-        ((t.road ? 1 : 0) << 1) |
-        ((t.zone & 3) << 2) |
-        ((t.level & 3) << 4) |
-        ((t.abandoned ? 1 : 0) << 6) |
-        ((t.variant & 255) << 7) |
-        ((t.road ? t.roadKind & 7 : 0) << 15) |
-        ((t.zone !== ZoneType.None && t.level >= 1 ? t.wealth & 3 : 0) << 18),
-    );
+    const N = this.N;
+    const vals = new Int32Array(BLOCK_TILES);
+    const tileBlocks = this.districts.owned.map((s) => {
+      const ox = slotX(this.region, s) * SLOT;
+      const oy = slotY(this.region, s) * SLOT;
+      for (let y = 0; y < SLOT; y++) {
+        const row = (oy + y) * N + ox;
+        for (let x = 0; x < SLOT; x++) vals[y * SLOT + x] = tileBits(this.tiles[row + x]);
+      }
+      return encodeBlock(vals);
+    });
+    const d = this.districts;
     return {
       version: SAVE_VERSION,
       cityName: this.cityName,
@@ -734,7 +957,6 @@ export class World {
       maxPopulation: this.maxPopulation,
       scale: POP_SCALE,
       nextBuildingId: this.nextBuildingId,
-      tiles,
       buildings: [...this.buildings.values()].map((b) => ({ ...b })),
       news: this.news.slice(-20),
       history: this.budget.history.slice(-12),
@@ -743,34 +965,43 @@ export class World {
       story: encodeStory(this),
       sky: encodeRle(this.sky),
       moments: [...this.moments],
+      region: this.region,
+      size: N,
+      districts: {
+        kinds: [...d.kinds],
+        variants: [...(d.variants ?? [])],
+        owned: [...d.owned],
+        grants: d.grants,
+        bought: d.bought,
+        annexedAt: [...d.annexedAt],
+        ...(d.leases ? { leases: { ...d.leases } } : {}),
+        epilogueSec: d.epilogueSec ?? 0,
+        goalsDone: [...(d.goalsDone ?? [])],
+        ruinsRestored: d.ruinsRestored ?? 0,
+      },
+      tileBlocks,
     };
   }
 
   /**
-   * Load a save (§10.8). Accepts every version in SAVE_VERSIONS_SUPPORTED and
-   * throws for others. A v1 save, or a v2 save whose `story` is missing or
-   * fails to decode, gets a fresh story with flag `migrated` and empty turf,
-   * rail and links. Derived state (mods, layers, ledger, vertical, turf.stats)
-   * is rebuilt by the director on construction.
+   * Load a save (§10.8, MEGACITY §3.10). Accepts every version in SAVE_VERSIONS_SUPPORTED and throws
+   * "Incompatible save" for others or a malformed shape. v1–v3 go through `upgradeSave` first (a 3×3 region with the
+   * old map in the start slot); `loadedVersion` keeps the original version. A v4 save: `validateSaveShape` (blocks,
+   * owned slots, region and size; the legacy 1×1 test frame is accepted here, never by Game's future-save gate or by
+   * Import), then the locked slots are generated from the seed and the owned blocks decoded over them. District
+   * state is sanitised (unknown or wrong-length kinds → the seed's layout, negative grants → 0, a lease on an unowned
+   * or wrong district dropped), and nothing is kept on a locked tile.
    *
-   * Expansion (EXPANSION §2.3, §2.5): tile bits 15-19 decode for every version
-   * (old saves read all-Street, all-$); `sky` and `moments` decode for v3 (missing
-   * or malformed → empty, never a throw); port fields are sanitised per type.
-   *
-   * Megacity units (MEGACITY §4.4): `maxPopulation` and `milestones` of a save without `scale`
-   * are × POP_SCALE (savePopScale); serialize() writes `scale: POP_SCALE`.
+   * A v1 save, or a v2 save whose `story` is missing or fails to decode, gets a fresh story with flag `migrated`.
+   * Megacity units: `maxPopulation` and `milestones` of a save without `scale` are × POP_SCALE (savePopScale).
    */
-  static deserialize(data: SaveData, events?: Emitter<GameEventMap>, opts?: DecodeOptions): World {
-    if (
-      !data ||
-      !SAVE_VERSIONS_SUPPORTED.includes(data.version) ||
-      !Array.isArray(data.tiles) ||
-      data.tiles.length !== LEGACY_SIZE * LEGACY_SIZE
-    ) {
-      throw new Error('Incompatible save');
-    }
-    // Every save today is a LEGACY_SIZE map (v1–v3); regions and v4 come with Step 0b part 2.
-    const w = new World(data.seed, data.cityName, events);
+  static deserialize(raw: SaveData, events?: Emitter<GameEventMap>, opts?: DecodeOptions): World {
+    if (!raw || !SAVE_VERSIONS_SUPPORTED.includes(raw.version)) throw new Error('Incompatible save');
+    const loadedVersion = raw.version;
+    if (raw.version <= 3 && !(Array.isArray(raw.tiles) && raw.tiles.length === LEGACY_SIZE * LEGACY_SIZE)) throw new Error('Incompatible save');
+    const data = raw.version <= 3 ? upgradeSave(raw) : raw;
+    const { region } = validateSaveShape(data, { allowLegacy: true });
+    const w = new World(data.seed, data.cityName, events, region);
     w.tick = data.tick | 0;
     w.funds = Number(data.funds) || 0;
     w.taxRate = Math.max(0, Math.min(20, Number(data.taxRate) || DEFAULT_TAX));
@@ -778,26 +1009,30 @@ export class World {
     const popMul = savePopScale(data);
     w.maxPopulation = Math.round(wholeCount(data.maxPopulation) * popMul);
     w.nextBuildingId = data.nextBuildingId | 0 || 1;
-    w.loadedVersion = data.version;
-    for (let i = 0; i < w.area; i++) {
-      const p = data.tiles[i] | 0;
-      const t = w.tiles[i];
-      t.terrain = (p & 1) as Terrain;
-      t.road = ((p >> 1) & 1) === 1;
-      t.zone = ((p >> 2) & 3) as ZoneType;
-      t.level = (p >> 4) & 3;
-      t.abandoned = ((p >> 6) & 1) === 1;
-      t.variant = (p >> 7) & 255;
-      t.age = 9999;
-      // §2.3: kind 0 without a road or out of range; Alley / Ramp never on water.
-      t.roadKind = t.road ? storedKind((p >> 15) & 7, t.terrain) : RoadKind.Street;
-      const tier = (p >> 18) & 3;
-      t.wealth = t.zone === ZoneType.None || t.level === 0 ? 0 : tierOf(tier);
-    }
+    w.loadedVersion = loadedVersion;
+    w.decodeDistricts(data);
+    // Locked slots regenerate from the seed; owned slots come from their blocks.
+    w.generateTerrain((s) => !w.slotOwned[s]);
+    const vals = new Int32Array(BLOCK_TILES);
+    const N = w.N;
+    data.tileBlocks!.forEach((block, k) => {
+      if (!decodeBlock(block, vals)) throw new Error('Incompatible save');
+      const s = w.districts.owned[k];
+      const ox = slotX(region, s) * SLOT;
+      const oy = slotY(region, s) * SLOT;
+      for (let y = 0; y < SLOT; y++) {
+        const row = (oy + y) * N + ox;
+        for (let x = 0; x < SLOT; x++) setTileBits(w.tiles[row + x], vals[y * SLOT + x]);
+      }
+    });
     const needFacing: Building[] = [];
     for (const b of data.buildings ?? []) {
-      if (!BUILDINGS[b.type]) continue;
+      if (!b || !BUILDINGS[b.type]) continue;
       const nb: Building = { ...b, size: BUILDINGS[b.type].size, offline: b.offline | 0, powered: !!b.powered };
+      // Nothing stands on locked land or off the map (§3.2).
+      let inside = Number.isInteger(nb.x) && Number.isInteger(nb.y);
+      for (let dy = 0; inside && dy < nb.size; dy++) for (let dx = 0; inside && dx < nb.size; dx++) inside = w.isOwned(nb.x + dx, nb.y + dy);
+      if (!inside) continue;
       // Stage fields are optional and Stratablock-only; keep them only when well-formed.
       if (nb.type !== 'stack') {
         delete nb.stage;
@@ -831,6 +1066,11 @@ export class World {
         delete nb.waitSec;
         delete nb.launches;
       }
+      // Megacity fields (§3.2): sponsor on Spires, look 0..3, reclaim on Pump Houses; malformed → dropped.
+      if (nb.type !== 'spire' || !(nb.sponsor === 'basalt' || nb.sponsor === 'nacre' || nb.sponsor === 'none')) delete nb.sponsor;
+      if (!(nb.look === 0 || nb.look === 1 || nb.look === 2 || nb.look === 3)) delete nb.look;
+      if (nb.type !== 'pumphouse') delete nb.reclaim;
+      else if (nb.reclaim !== undefined) nb.reclaim = Math.min(90, nonNegInt(nb.reclaim));
       w.buildings.set(nb.id, nb);
       for (let dy = 0; dy < nb.size; dy++)
         for (let dx = 0; dx < nb.size; dx++) {
@@ -845,18 +1085,22 @@ export class World {
     w.milestones = Array.isArray(data.milestones)
       ? [...new Set(data.milestones.map((p) => Math.round(wholeCount(p) * popMul)).filter((p) => p > 0))]
       : [];
-    // Story (§10.8): v2 decodes data.story; v1, or a missing / undecodable block, keeps the
+    // Story (§10.8): v2+ decodes data.story; v1, or a missing / undecodable block, keeps the
     // constructor's fresh story (empty turf, rail, links) and is marked migrated.
-    if (!(data.version >= 2 && decodeStory(data.story, w, opts))) {
+    if (!(loadedVersion >= 2 && decodeStory(data.story, w, opts))) {
       // The story starts now, not at tick 0: chapter fallbacks, waivers and the
       // ambient timers count from the load, so an old city doesn't chain-fire Ch1.
       const st = w.story;
       st.flags.migrated = true;
       st.waitingSince = st.chapterTick = st.lastWhisperTick = st.lastNoteTick = w.tick;
     }
-    // Expansion (§2.5): skyways and once-per-city moments (v3). Missing or malformed → empty.
-    if (data.version >= 3) {
-      if (decodeRle(data.sky, w.sky, 31)) w.sanitizeSky();
+    w.clearLocked();
+    // Expansion (§2.5): skyways and once-per-city moments (v3+). Missing or malformed → empty.
+    if (loadedVersion >= 3) {
+      if (decodeRle(data.sky, w.sky, 31)) {
+        for (let i = 0; i < w.area; i++) if (w.sky[i] && !w.ownedAt(i)) w.sky[i] = 0;
+        w.sanitizeSky();
+      }
       if (Array.isArray(data.moments))
         for (const m of data.moments) if ((MOMENT_IDS as readonly unknown[]).includes(m)) w.moments.add(m as MomentId);
     }
@@ -867,6 +1111,81 @@ export class World {
     }
     w.version++;
     return w;
+  }
+
+  /** Decode and sanitise SaveData.districts into this world (owned slots were checked by validateSaveShape). */
+  private decodeDistricts(data: SaveData): void {
+    const R = this.region;
+    const n = R * R;
+    const raw = (data.districts ?? {}) as Partial<DistrictSave>;
+    const seed = seedLayout(this.seed, R);
+    const kindsOk = Array.isArray(raw.kinds) && raw.kinds.length === n && raw.kinds.every(isKind) && raw.kinds[startSlot(R)] === 'shore';
+    const kinds = kindsOk ? [...(raw.kinds as DistrictKind[])] : seed.kinds;
+    const varsOk =
+      kindsOk &&
+      Array.isArray(raw.variants) &&
+      raw.variants.length === n &&
+      raw.variants.every((v) => v === 0 || v === 1 || v === 2 || v === 3);
+    const variants = varsOk ? [...(raw.variants as DistrictVariant[])] : kindsOk ? seed.variants.map((v, s) => (kinds[s] === seed.kinds[s] ? v : 0)) : seed.variants;
+    const owned = [...(raw.owned as SlotId[])];
+    const annexedAt = new Array(n).fill(-1);
+    if (Array.isArray(raw.annexedAt) && raw.annexedAt.length === n)
+      raw.annexedAt.forEach((t, s) => (annexedAt[s] = Number.isFinite(Number(t)) ? Math.trunc(Number(t)) : -1));
+    for (let s = 0; s < n; s++) if (!owned.includes(s)) annexedAt[s] = -1;
+    for (const s of owned) if (annexedAt[s] < 0) annexedAt[s] = 0;
+    const d: DistrictSave = {
+      kinds,
+      variants,
+      owned,
+      grants: nonNegInt(raw.grants),
+      bought: nonNegInt(raw.bought),
+      annexedAt,
+      epilogueSec: Number.isFinite(Number(raw.epilogueSec)) ? Math.max(0, Number(raw.epilogueSec)) : 0,
+      goalsDone: Array.isArray(raw.goalsDone) ? raw.goalsDone.filter((g) => typeof g === 'string') : [],
+      ruinsRestored: nonNegInt(raw.ruinsRestored),
+    };
+    // The lease belongs to an owned Tarmac Reach (variant 0) only.
+    const lease = raw.leases?.tarmac;
+    if ((lease === 'nacre' || lease === 'basalt') && owned.some((s) => kinds[s] === 'tarmac' && (variants[s] ?? 0) === 0)) d.leases = { tarmac: lease };
+    this.districts = d;
+    this.slotOwned.fill(0);
+    for (const s of owned) this.slotOwned[s] = 1;
+    rebuildSegments(this);
+  }
+
+  /** Drop anything on locked land (§3.2 invariants): roads, zones, rail, sky, turf and link anchors. */
+  private clearLocked(): void {
+    const N = this.N;
+    for (let i = 0; i < this.area; i++) {
+      if (this.ownedAt(i)) continue;
+      const t = this.tiles[i];
+      t.road = false;
+      t.roadKind = RoadKind.Street;
+      t.zone = ZoneType.None;
+      t.level = 0;
+      t.abandoned = false;
+      t.wealth = 0;
+      t.buildingId = -1;
+      this.rail[i] = 0;
+      this.sky[i] = 0;
+      this.turf.owner[i] = 0;
+      this.turf.str[i] = 0;
+      this.turf.contested[i] = 0;
+    }
+    if (this.links.length) this.links = this.links.filter((l) => this.isOwned(l.ax, l.ay) && this.isOwned(l.bx, l.by));
+    // Rail links into locked land go too.
+    for (let y = 0; y < N; y++)
+      for (let x = 0; x < N; x++) {
+        const i = y * N + x;
+        const m = this.rail[i];
+        if (!m) continue;
+        let k = m;
+        if (m & 1 && !this.isOwned(x, y - 1)) k &= ~1;
+        if (m & 2 && !this.isOwned(x + 1, y)) k &= ~2;
+        if (m & 4 && !this.isOwned(x, y + 1)) k &= ~4;
+        if (m & 8 && !this.isOwned(x - 1, y)) k &= ~8;
+        this.rail[i] = k;
+      }
   }
 
   /**

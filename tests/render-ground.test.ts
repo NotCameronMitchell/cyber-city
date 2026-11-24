@@ -102,7 +102,7 @@ const view = (zoom: number) => ({ camX: 0, camY: N * 16, zoom, dpr: 1, width: 39
 
 describe('ground cache paints every road kind cleanly (§3.11)', () => {
   it('far, mid and near zoom, day and night, plus a partial redraw after an edit', () => {
-    const w = new M.World(4242);
+    const w = new M.World(4242, undefined, undefined, 1);
     scene(w);
     for (const zoom of [0.2, 0.5, 1, 2.5]) {
       for (const night of [0, 1]) {
@@ -125,7 +125,7 @@ describe('ground cache paints every road kind cleanly (§3.11)', () => {
 
 describe('skyway layer (§3.7)', () => {
   it('draws every deck, the deferred pieces, portals, car lights and the one glow pass without errors', () => {
-    const w = new M.World(77);
+    const w = new M.World(77, undefined, undefined, 1);
     scene(w);
     const layer = new M.skyway.SkywayLayer();
     for (const [zoom, night] of [
@@ -156,7 +156,7 @@ describe('skyway layer (§3.7)', () => {
 
 describe('overlays and previews (§7.3, §7.5)', () => {
   it('wealth (with pips), noise, traffic, power and services build and draw cleanly', () => {
-    const w = new M.World(5);
+    const w = new M.World(5, undefined, undefined, 1);
     scene(w);
     // The shared mock has no createImageData; the overlay needs one ImageData per layer.
     const proto = Object.getPrototypeOf(mockContext()) as Record<string, unknown>;
@@ -176,6 +176,8 @@ describe('overlays and previews (§7.3, §7.5)', () => {
 
   it('road, skyway, bulldoze and port ghosts plus shore-site hints draw from real plans', () => {
     const g = new M.Game();
+    // The legacy 64×64 frame (the scene's coordinates): a fresh Game holds a 3×3 region whose start slot is 64..127.
+    g.restore(JSON.parse(JSON.stringify(new M.World(9, undefined, undefined, 1).serialize())));
     scene(g.world);
     g.sim.recomputeAll();
     g.world.maxPopulation = 600_000;
@@ -222,7 +224,7 @@ describe('overlays and previews (§7.3, §7.5)', () => {
 
 describe('street traffic draws on every kind (§3.11)', () => {
   it('runs and draws cars, trucks and bikes by day and night without errors', () => {
-    const w = new M.World(8);
+    const w = new M.World(8, undefined, undefined, 1);
     scene(w);
     w.stats.population = 90000;
     const t = new M.traffic.StreetTraffic();

@@ -215,7 +215,9 @@ export class Census {
       Math.min(1, this.serviceCoverage * 2.5) * T.APPROVAL_SERVICES +
       world.mods.approvalAdd +
       this.prosperity() * PROSPERITY -
-      this.avgNoise * NOISE_APPROVAL;
+      this.avgNoise * NOISE_APPROVAL +
+      // City life (MEGACITY §6.4.1): a happening's approval term while it has sim days left.
+      (world.cityEvent && world.cityEvent.daysLeft > 0 ? world.cityEvent.approval : 0);
     return Math.max(0, Math.min(100, v));
   }
 
@@ -250,7 +252,9 @@ export class Census {
     const ind = (indTarget - this.jobsInd) / Math.max(T.JOB_DEMAND_FLOOR, indTarget * 0.35);
 
     out.res = clampDemand(clampDemand(res) + tax + mood + m.demandRes);
-    out.com = clampDemand(clampDemand(com) + tax * 0.8 + mood * 0.5 + comBoost + m.demandCom);
+    // City life (MEGACITY §6.4.1): a happening's Market demand term while it has sim days left.
+    const life = world.cityEvent && world.cityEvent.daysLeft > 0 ? world.cityEvent.demandCom : 0;
+    out.com = clampDemand(clampDemand(com) + tax * 0.8 + mood * 0.5 + comBoost + m.demandCom + life);
     out.ind = clampDemand(clampDemand(ind) + tax + m.demandInd);
     return out;
   }

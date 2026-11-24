@@ -24,8 +24,10 @@ import {
   MIN_TAX,
   RIBBON,
   SAFETY,
+  DISTRICTS,
+  LOW_DETAIL,
+  REGION,
   SAVE_KEY,
-  SAVE_VERSION,
   SAVE_VERSIONS_SUPPORTED,
   SEAPORT,
   SETTINGS_KEY,
@@ -35,18 +37,39 @@ import {
   SPEED_TICKS_PER_SEC,
   STACK_STAGES,
   ZONES,
+  districtPrice,
   isBuildingTool,
   isZoneTool,
   paceOf,
   zoneDefFor,
 } from './config';
+import { CityEvents } from './cityEvents';
+import { deviceClass } from './device';
+import { adjacentLocked, validSlot } from './districts/slots';
+import { isFutureSave } from './districts/migrate';
 import { Emitter, type GameEventMap, type ToastAction } from './events';
+import type { Region, SlotId } from './types';
+import {
+  FUTURE_SAVE_KEY,
+  MIRROR_SAVE_KEY,
+  PREV_SAVE_KEY,
+  STALE_SAVE_KEY,
+  STORAGE_FULL_TEXT,
+  UNREADABLE_SAVE_KEY,
+  V2_SAVE_KEY,
+  V3_SAVE_KEY,
+  readHeader,
+  readPlain,
+  tickMirrorClock,
+  writeMainSave,
+  writePrev,
+} from './saveStore';
 import { ROAD_TOOL_KIND, isRoadTool, roadDef, roadLinks } from './roads';
 import { Simulation } from './sim';
 import type { PortView } from './sim/ports';
 import { SKY_RAMP, skyRampGround } from './skyway';
 import { storageGet, storageRemove, storageSet } from './storage';
-import { storyContent } from './story/conditions';
+import { evalCond, storyContent } from './story/conditions';
 import { StoryDirector } from './story/director';
 import * as turf from './story/turf';
 import type { ActionResult, CrownId, EndingId, FactionId, GangId, InspectAction } from './story/types';
@@ -82,24 +105,12 @@ export const DEFAULT_SETTINGS: Settings = {
 /** City names are capped at this many characters (§1.6; lint assumes 24). */
 export const CITY_NAME_MAX = 24;
 
-/** Backup slot: "New City" moves the city it replaces here, so the menu can offer "Restore previous city". */
-export const PREV_SAVE_KEY = `${SAVE_KEY}.prev`;
-
-// ── Save safety (docs/EXPANSION.md §2.5) ─────────────────────────────────────
-/** Raw copy of a save written by a newer build (written once, if empty). While it is the stored save, autosave is blocked. */
-export const FUTURE_SAVE_KEY = `${SAVE_KEY}.future`;
-/** Raw copy of a stored save that failed to load for any other reason, taken before the fresh city starts. */
-export const UNREADABLE_SAVE_KEY = `${SAVE_KEY}.unreadable`;
-/** Raw copy of the first v1 / v2 save loaded by a v3 build (once; never overwritten), so a downgrade can recover it. */
-export const V2_SAVE_KEY = `${SAVE_KEY}.v2`;
-/**
- * Mirror of the last save a v3+ build wrote (same string as SAVE_KEY). A pre-expansion build cannot read a
- * v3 save, starts a fresh city and autosaves it over SAVE_KEY; it never touches this key, so the next v3+
- * load finds an older-version main next to a v3+ mirror and restores the mirror (Step 7, §2.5).
- */
-export const MIRROR_SAVE_KEY = `${SAVE_KEY}.mirror`;
-/** Raw copy of the older-version save that replaced the city, kept when the mirror is restored. */
-export const STALE_SAVE_KEY = `${SAVE_KEY}.stale`;
+// ── Save safety (docs/EXPANSION.md §2.5, MEGACITY §3.10). The keys and the storage plan live in saveStore.ts. ──
+export { FUTURE_SAVE_KEY, MIRROR_SAVE_KEY, PREV_SAVE_KEY, STALE_SAVE_KEY, UNREADABLE_SAVE_KEY, V2_SAVE_KEY, V3_SAVE_KEY };
+/** Shown once per city per device when a 5×5 city opens in lower detail (MEGACITY §3.11). */
+export const LOW_DETAIL_TEXT = 'Big city, small screen: lower detail is on to keep it smooth. Settings › Lower detail.';
+/** localStorage key of the cities (by seed) that have shown the lower-detail notice on this device. */
+export const LOW_DETAIL_NOTICE_KEY = 'cybercity.ui.lowdetail.v1';
 /** Shown once when the stored city came from a newer build. */
 export const FUTURE_SAVE_TEXT = 'This city was saved by a newer version. Reload to update.';
 /** Shown once when an older version had saved over the city and the mirror brought it back. */
@@ -253,7 +264,16 @@ export class Game {
    */
   saveBlocked = false;
   /** Toasts raised before the UI exists (constructor); emitted on the first update(). */
-  private notices: { text: string; kind: 'info' | 'error' | 'good' }[] = [];
+  private notices: { text: string; kind: 'info' | 'error' | 'good'; action?: ToastAction }[] = [];
+  /** City life (MEGACITY §6.4.1, WP-6): driven by update(dt) on unpaused seconds. */
+  readonly cityEvents: CityEvents = new CityEvents(this);
+  /** The storage-full toast shows once a session (§3.10). */
+  private storageFullShown = false;
+  /**
+   * The name of the city a New City / Restore could not keep in `.prev` (storage full, §3.10): nothing changed and
+   * the UI offers Export and Replace without a copy (newCity's `replaceWithoutCopy`). Null otherwise.
+   */
+  keepCopyFailed: string | null = null;
   private tickAcc = 0;
   /** Speed to restore once a blocking story card closes (null = not paused by the story). */
   private storyResumeSpeed: number | null = null;
@@ -288,6 +308,52 @@ export class Game {
     this.world = world ?? World.generate(randomSeed(), undefined, this.events);
     this.attachSystems();
     if (!world) this.welcome();
+    else this.adoptCity();
+  }
+
+  // ── Megacity: region, lower detail, story pace (MEGACITY §3.10, §3.11) ─────
+  /**
+   * Lower-detail mode (§3.11): true for a 5×5 city when `settings.lowerDetail` is true; a 3×3 city ignores it.
+   * WP-1 (forced sleep), WP-2 (speed cap, autosave interval), WP-3 and WP-6 read it.
+   */
+  get lowerDetail(): boolean {
+    return this.world.region === 5 && this.settings.lowerDetail === true;
+  }
+
+  /**
+   * A stored city just became the current one (Continue, Restore previous city, the kept city, later Import and
+   * Grow): apply its saved story pace to Settings, write the lower-detail default once for the first 5×5 city on this
+   * device (from the device class), and queue the lower-detail notice once per city per device.
+   */
+  private adoptCity(): void {
+    const pace = this.world.story.pace;
+    if (pace && paceOf(pace) === pace && pace !== this.settings.storyPace) {
+      this.settings = { ...this.settings, storyPace: pace };
+      storageSet(SETTINGS_KEY, JSON.stringify(this.settings));
+    }
+    if (!this.world.story.pace) this.world.story.pace = this.settings.storyPace;
+    this.noteRegion();
+  }
+
+  /** The 5×5 parts of adoptCity (also run by New City): the one-time lower-detail default and its notice. */
+  private noteRegion(): void {
+    if (this.world.region !== 5) return;
+    if (this.settings.lowerDetail === undefined) {
+      this.settings = { ...this.settings, lowerDetail: deviceClass() === 'handheld' };
+      storageSet(SETTINGS_KEY, JSON.stringify(this.settings));
+    }
+    if (!this.lowerDetail) return;
+    let seen: number[] = [];
+    try {
+      const v = JSON.parse(storageGet(LOW_DETAIL_NOTICE_KEY) ?? '[]') as unknown;
+      if (Array.isArray(v)) seen = v.filter((x): x is number => typeof x === 'number');
+    } catch {
+      seen = [];
+    }
+    if (seen.includes(this.world.seed)) return;
+    seen.push(this.world.seed);
+    storageSet(LOW_DETAIL_NOTICE_KEY, JSON.stringify(seen.slice(-50)));
+    this.notices.push({ text: LOW_DETAIL_TEXT, kind: 'info' });
   }
 
   // ── Tool / mode state ─────────────────────────────────────────────────────
@@ -370,6 +436,8 @@ export class Game {
     const pace = this.settings.storyPace;
     this.settings = { ...this.settings, ...patch };
     this.settings.storyPace = paceOf(this.settings.storyPace);
+    // The story pace travels with the city (MEGACITY §3.10): written on every change.
+    this.world.story.pace = this.settings.storyPace;
     this.sim.options.events = this.settings.events;
     storageSet(SETTINGS_KEY, JSON.stringify(this.settings));
     // The director reads the pace live: a change applies at once (floors, gaps, timers, the view).
@@ -673,9 +741,13 @@ export class Game {
     dt = Math.min(Math.max(dt, 0), 0.25);
     if (this.notices.length) {
       const n = this.notices.splice(0);
-      for (const t of n) this.toast(t.text, t.kind);
+      for (const t of n) this.toast(t.text, t.kind, t.action);
     }
     this.story.update(dt, this.speed === 0);
+    if (this.speed > 0) {
+      tickMirrorClock(dt);
+      this.cityEvents.update(dt);
+    }
     this.syncStoryPause();
     if (this.speed > 0) {
       this.clock += dt * this.clockRate;
@@ -1011,16 +1083,24 @@ export class Game {
   }
 
   // ── Lifecycle ─────────────────────────────────────────────────────────────
-  /** Start a fresh city. The city it replaces is kept in the backup slot (see loadPrevious). */
-  newCity(name?: string, seed = randomSeed()) {
-    this.backupCurrent();
+  /**
+   * Start a fresh city on a region (MEGACITY §3.11: the New City sheet's choice, the device default until WP-5 adds the
+   * control). Synchronous, as `found()` expects. The city it replaces is kept in `.prev` first, plain and synchronously
+   * (§3.10), unless saveBlocked (the city in memory is then a stand-in) or it is untouched. If even after the quota
+   * drops it doesn't fit, nothing changes: `keepCopyFailed` names the city and the UI offers Export and
+   * "Replace without a copy" (`opts.replaceWithoutCopy`).
+   */
+  newCity(name?: string, seed = randomSeed(), region: Region = 3, opts: { replaceWithoutCopy?: boolean } = {}) {
+    if (!this.backupCurrent(opts.replaceWithoutCopy === true)) return;
     // An explicit New City is the only thing that lifts the newer-save block (its copy stays in FUTURE_SAVE_KEY);
     // the "saved by a newer version" notice no longer applies.
     this.saveBlocked = false;
     this.notices.length = 0;
     const clean = name?.trim().slice(0, CITY_NAME_MAX);
-    this.world = World.generate(seed, clean || randomCityName(seed), this.events);
+    this.world = World.generate(seed, clean || randomCityName(seed), this.events, region === 5 ? 5 : 3);
+    this.world.story.pace = this.settings.storyPace;
     this.attachSystems();
+    this.noteRegion();
     this.selected = null;
     this.preview = null;
     this.tool = 'inspect';
@@ -1031,16 +1111,83 @@ export class Game {
     this.events.emit('tool', this.tool);
     this.events.emit('speed', this.speed);
     this.events.emit('stats');
+    this.save(true);
+  }
+
+  // ── Districts (MEGACITY §3.8). Step 0b stubs with the final signatures; WP-2 adds the rules, lease, banners. ──
+  /**
+   * Annex a slot (§3.8): a locked slot 4-adjacent to the city whose `opensWhen` holds, paid with one land grant.
+   * Structural annex, the lobbyists' reactions (director.onAnnex), a full recompute and a save. Not undoable.
+   */
+  annex(slot: SlotId, lease?: 'nacre' | 'basalt'): ActionResult {
+    const w = this.world;
+    const why = this.annexBlock(slot);
+    if (why) return { ok: false, reason: why, cost: 0 };
+    if (w.districts.grants <= 0) return { ok: false, reason: 'No land grant', cost: 0 };
+    w.districts.grants--;
+    this.events.emit('grant', { grants: w.districts.grants, why: 'chapter' });
+    this.doAnnex(slot, lease);
+    return { ok: true, cost: 0 };
+  }
+
+  /** Buy a district with credits (§3.8): after an ending only, at districtPrice(owned), never scaled with funds. */
+  buyDistrict(slot: SlotId): ActionResult {
+    const w = this.world;
+    const why = this.annexBlock(slot);
+    if (why) return { ok: false, reason: why, cost: 0 };
+    if (!w.story.ending) return { ok: false, reason: 'Next land grant: finish the story', cost: 0 };
+    const price = districtPrice(w.districts.owned.length);
+    if (w.funds < price) return { ok: false, reason: 'Not enough credits', cost: 0 };
+    w.funds -= price;
+    w.districts.bought++;
+    this.doAnnex(slot);
+    return { ok: true, cost: price };
+  }
+
+  /** Why a slot can't be annexed now, or null. */
+  private annexBlock(slot: SlotId): string | null {
+    const w = this.world;
+    if (!validSlot(w.region, slot) || w.slotOwned[slot]) return 'Not a district to annex';
+    if (!adjacentLocked(w).includes(slot)) return 'Not next to the city yet';
+    const def = DISTRICTS[w.districts.kinds[slot]];
+    if (def?.opensWhen && !evalCond(w, def.opensWhen)) return 'Still flooded: opens later';
+    return null;
+  }
+
+  private doAnnex(slot: SlotId, lease?: 'nacre' | 'basalt'): void {
+    const w = this.world;
+    const kind = w.districts.kinds[slot];
+    const repeat = w.districts.owned.some((s) => w.districts.kinds[s] === kind);
+    const tarmac0 = kind === 'tarmac' && w.variantOf(slot) === 0;
+    if (tarmac0 && (lease === 'nacre' || lease === 'basalt')) w.districts.leases = { ...w.districts.leases, tarmac: lease };
+    const rivals = adjacentLocked(w)
+      .filter((s) => s !== slot)
+      .map((s) => w.districts.kinds[s]);
+    w.annex(slot);
+    this.story.onAnnex(kind, tarmac0 ? lease : undefined, repeat, rivals);
+    this.sim.recomputeAll();
+    this.events.emit('stats');
     this.save();
   }
 
-  /** Write the city to storage. Returns false (writing nothing) while saveBlocked (a newer build's save is stored). */
-  save(): boolean {
+  /**
+   * Write the city to storage (§3.10): the main save plain and synchronous with the quota rule, then the mirror
+   * (plain up to 300 K characters, else a compressed envelope at most every mirrorEverySec, or now with `forceMirror`).
+   * Returns false (writing nothing) while saveBlocked (a newer build's save is stored). A main save that still fails
+   * after the drops toasts once a session with an Export action.
+   */
+  save(forceMirror = false): boolean {
     if (this.saveBlocked) return false;
-    const raw = JSON.stringify(this.world.serialize());
-    const ok = storageSet(SAVE_KEY, raw);
-    if (ok) storageSet(MIRROR_SAVE_KEY, raw);
-    return ok;
+    this.world.story.pace = this.settings.storyPace;
+    const data = this.world.serialize();
+    const raw = JSON.stringify(data);
+    const every = this.lowerDetail ? LOW_DETAIL.mirrorEverySec : REGION[this.world.region].mirrorEverySec || REGION[5].mirrorEverySec;
+    const r = writeMainSave(raw, data, { mirrorEverySec: every, force: forceMirror });
+    if (!r.ok && !this.storageFullShown) {
+      this.storageFullShown = true;
+      this.toast(STORAGE_FULL_TEXT, 'error', { id: 'export', label: 'Export', sec: 12 });
+    }
+    return r.ok;
   }
 
   /** Reload the stored save. Returns false if there is none, it is unreadable or it came from a newer build. */
@@ -1056,6 +1203,7 @@ export class Game {
     }
     this.keepOldSave(raw, this.world);
     this.attachSystems();
+    this.adoptCity();
     this.selected = null;
     this.preview = null;
     this.events.emit('world');
@@ -1072,13 +1220,52 @@ export class Game {
     return storageGet(PREV_SAVE_KEY) !== null;
   }
 
-  /** Name, peak population and save time of the backup city (for the menu row), or null. */
-  previousSaveInfo(): { cityName: string; maxPopulation: number; savedAt: number } | null {
-    const data = this.readSave(PREV_SAVE_KEY);
-    if (!data) return null;
+  /**
+   * Name, peak population, save time and region of the backup city (for the menu row), or null. Read from an envelope's
+   * header without unpacking it (§3.10); a v1–v3 backup shows ×10 numbers and region 3.
+   */
+  previousSaveInfo(): { cityName: string; maxPopulation: number; savedAt: number; region: number } | null {
+    return this.cityInfo(PREV_SAVE_KEY);
+  }
+
+  private cityInfo(key: string): { cityName: string; maxPopulation: number; savedAt: number; region: number } | null {
+    const h = readHeader(storageGet(key));
+    if (!h) return null;
     // A v3 backup counts v3 people: show it in today's units, as loading it would (MEGACITY §4.4).
-    const peak = Math.max(0, Math.floor(Number(data.maxPopulation) || 0)) * savePopScale(data);
-    return { cityName: String(data.cityName ?? ''), maxPopulation: Math.round(peak), savedAt: Number(data.savedAt) || 0 };
+    const peak = Math.max(0, Math.floor(h.maxPopulation)) * savePopScale({ scale: h.scale || undefined });
+    const region = Number.isFinite(h.region) ? h.region : 3;
+    return { cityName: h.cityName, maxPopulation: Math.round(peak), savedAt: h.savedAt, region };
+  }
+
+  /**
+   * The newer city a stale build kept aside in `.future` (§3.10), when this build can read it (an envelope unpacked
+   * at boot, a supported version, not itself a future save): the title offers it back ("A newer city was kept: …").
+   * Null otherwise, or while it is still the stored main save (the block is in force).
+   */
+  keptCityInfo(): { cityName: string; maxPopulation: number; savedAt: number; region: number } | null {
+    if (this.saveBlocked) return null;
+    const plain = readPlain(FUTURE_SAVE_KEY);
+    if (!plain) return null;
+    let data: SaveData | null = null;
+    try {
+      data = JSON.parse(plain) as SaveData;
+    } catch {
+      return null;
+    }
+    if (!data || !SAVE_VERSIONS_SUPPORTED.includes(Number(data.version)) || isFutureSave(data)) return null;
+    return this.cityInfo(FUTURE_SAVE_KEY);
+  }
+
+  /**
+   * Restore the kept newer city (§3.10): the loadPrevious path from `.future`. The current city goes to `.prev`
+   * (unless saveBlocked or untouched), the kept one becomes the city, and `.future` is removed only after it saved.
+   */
+  restoreKept(): boolean {
+    if (!this.keptCityInfo()) return false;
+    const plain = readPlain(FUTURE_SAVE_KEY)!;
+    const ok = this.replaceWith(plain, FUTURE_SAVE_KEY);
+    if (ok && storageGet(SAVE_KEY) !== null && !this.saveBlocked) storageRemove(FUTURE_SAVE_KEY);
+    return ok;
   }
 
   /**
@@ -1087,9 +1274,24 @@ export class Game {
    * Returns false when there is no readable backup.
    */
   loadPrevious(): boolean {
-    const raw = storageGet(PREV_SAVE_KEY);
-    const data = this.readSave(PREV_SAVE_KEY);
-    if (!data || raw === null) return false;
+    const raw = readPlain(PREV_SAVE_KEY);
+    if (raw === null) return false;
+    return this.replaceWith(raw, PREV_SAVE_KEY);
+  }
+
+  /**
+   * Swap the current city for a stored one (Restore previous city, the kept city): the stored city loads, the current
+   * one takes the backup slot (never while saveBlocked: it is a stand-in), the restored city saves first, then the slot
+   * takes the replaced city (or empties). If the save fails the slot keeps the restored city, so a reload loses nothing.
+   */
+  private replaceWith(raw: string, from: string): boolean {
+    let data: SaveData | null = null;
+    try {
+      data = JSON.parse(raw) as SaveData;
+    } catch {
+      return false;
+    }
+    if (!data || isFutureSave(data)) return false;
     let world: World;
     try {
       world = World.deserialize(data, this.events);
@@ -1097,7 +1299,7 @@ export class Game {
       return false;
     }
     this.keepOldSave(raw, world);
-    const current = worthKeeping(this.world) ? JSON.stringify(this.world.serialize()) : null;
+    const current = !this.saveBlocked && worthKeeping(this.world) ? JSON.stringify(this.world.serialize()) : null;
     if (this.saveBlocked) {
       // An explicit replacement, like New City: it lifts the newer-save block (the newer city keeps
       // its copy in FUTURE_SAVE_KEY), so the restored city can be saved.
@@ -1108,20 +1310,32 @@ export class Game {
     }
     this.world = world;
     this.attachSystems();
+    this.adoptCity();
     this.selected = null;
     this.preview = null;
     // Save the restored city first; only then does the backup slot take the city it replaced (or empty).
     // If the save fails the slot keeps the restored city, so a reload loses nothing it held.
-    if (this.save() && (current === null || !storageSet(PREV_SAVE_KEY, current))) storageRemove(PREV_SAVE_KEY);
+    if (this.save(true)) {
+      if (from === PREV_SAVE_KEY && (current === null || !writePrev(current))) storageRemove(PREV_SAVE_KEY);
+      if (from !== PREV_SAVE_KEY && current !== null) writePrev(current);
+    }
     this.events.emit('world');
     this.events.emit('stats');
     return true;
   }
 
-  /** Copy the current city into the backup slot (skipped for an untouched city). */
-  private backupCurrent(): void {
-    if (!worthKeeping(this.world)) return;
-    storageSet(PREV_SAVE_KEY, JSON.stringify(this.world.serialize()));
+  /**
+   * Copy the current city into the backup slot before it is replaced (§3.10): plain and synchronously first, never
+   * while saveBlocked or for an untouched city. False when it doesn't fit even after the drops (and `withoutCopy` is
+   * not set): the caller changes nothing; `keepCopyFailed` names the city and a toast offers Export.
+   */
+  private backupCurrent(withoutCopy = false): boolean {
+    this.keepCopyFailed = null;
+    if (this.saveBlocked || !worthKeeping(this.world) || withoutCopy) return true;
+    if (writePrev(JSON.stringify(this.world.serialize()))) return true;
+    this.keepCopyFailed = this.world.cityName;
+    this.toast(`Couldn't keep a copy of ${this.world.cityName}: storage is full. Export it first.`, 'error', { id: 'export', label: 'Export', sec: 12 });
+    return false;
   }
 
   /** Serialize current state (also used by the artifact hot-reload snapshot). */
@@ -1137,6 +1351,7 @@ export class Game {
       return false;
     }
     this.attachSystems();
+    this.adoptCity();
     this.events.emit('world');
     this.events.emit('stats');
     return true;
@@ -1150,7 +1365,7 @@ export class Game {
    */
   private loadStored(): World | null {
     this.restoreMirror();
-    const raw = storageGet(SAVE_KEY);
+    const raw = readPlain(SAVE_KEY);
     if (raw === null) return null;
     let data: SaveData | null = null;
     try {
@@ -1184,29 +1399,30 @@ export class Game {
    */
   private restoreMirror(): void {
     const raw = storageGet(SAVE_KEY);
-    const mirror = storageGet(MIRROR_SAVE_KEY);
-    if (raw === null || mirror === null || raw === mirror) return;
-    const version = (s: string): number => {
-      try {
-        const v = Number((JSON.parse(s) as { version?: unknown } | null)?.version);
-        return Number.isFinite(v) ? v : NaN;
-      } catch {
-        return NaN;
-      }
-    };
+    const stored = storageGet(MIRROR_SAVE_KEY);
+    if (raw === null || stored === null || raw === stored) return;
+    const version = (s: string): number => Number(readHeader(s)?.version);
     const main = version(raw);
-    if (!(main < 3) || !(version(mirror) >= 3)) return;
+    if (!(main < 3) || !(version(stored) >= 3)) return;
+    // A compressed mirror (§3.10) was unpacked by readStoredSave at boot; one this session couldn't unpack waits.
+    const mirror = readPlain(MIRROR_SAVE_KEY);
+    if (mirror === null) return;
     storageSet(STALE_SAVE_KEY, raw);
     if (storageSet(SAVE_KEY, mirror)) this.notices.push({ text: RESTORED_SAVE_TEXT, kind: 'info' });
   }
 
-  /** The first v1 / v2 save a v3 build loads is kept raw in V2_SAVE_KEY (never overwritten). */
+  /**
+   * Backups by source version (§3.10): the first v1 or v2 save this build loads is kept raw in `.v2`, the first v3
+   * save in `.v3`; each written once and never overwritten.
+   */
   private keepOldSave(raw: string, world: World): void {
-    if (world.loadedVersion < SAVE_VERSION && storageGet(V2_SAVE_KEY) === null) storageSet(V2_SAVE_KEY, raw);
+    const v = world.loadedVersion;
+    if (v <= 2 && storageGet(V2_SAVE_KEY) === null) storageSet(V2_SAVE_KEY, raw);
+    else if (v === 3 && storageGet(V3_SAVE_KEY) === null) storageSet(V3_SAVE_KEY, raw);
   }
 
   private readSave(key = SAVE_KEY): SaveData | null {
-    const raw = storageGet(key);
+    const raw = readPlain(key);
     if (!raw) return null;
     try {
       return JSON.parse(raw) as SaveData;
@@ -1505,11 +1721,6 @@ function regionalLink(world: World, x: number, y: number): number {
 }
 
 /** A save written by a newer build (its version is above every supported one). */
-function isFutureSave(data: unknown): boolean {
-  if (!data || typeof data !== 'object') return false;
-  const v = Number((data as { version?: unknown }).version);
-  return Number.isFinite(v) && v > Math.max(...SAVE_VERSIONS_SUPPORTED);
-}
 
 export function randomSeed(): number {
   return (Math.random() * 0xffffffff) >>> 0;

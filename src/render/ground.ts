@@ -281,9 +281,12 @@ export class TerrainInfo {
   /** Regional-road stubs (§3.10, art only, by seed hash): 0 = none, else 1 + the outward direction (0 N, 1 E, 2 S, 3 W). */
   readonly stub: Uint8Array;
   readonly seed: number;
+  /** Art offset (MEGACITY §3.2 artXY): tile hashes use (x − o, y − o), so the start slot looks the same on either region. */
+  readonly o: number;
 
   constructor(world: World) {
     const N = world.N;
+    const o = (this.o = 64 * ((world.region - 1) >> 1));
     this.tone = new Uint8Array(world.area);
     this.depth = new Uint8Array(world.area);
     this.stub = new Uint8Array(world.area);
@@ -295,9 +298,9 @@ export class TerrainInfo {
         const i = y * N + x;
         // Large-scale variation + a patchwork of old 4×4 lots + per-tile noise.
         const v =
-          fbm(x * 0.09, y * 0.09, this.seed + 3, 3) * 0.62 +
-          hash2(x >> 2, y >> 2, this.seed + 9) * 0.12 +
-          hash2(x, y, this.seed + 5) * 0.26;
+          fbm((x - o) * 0.09, (y - o) * 0.09, this.seed + 3, 3) * 0.62 +
+          hash2((x - o) >> 2, (y - o) >> 2, this.seed + 9) * 0.12 +
+          hash2(x - o, y - o, this.seed + 5) * 0.26;
         this.tone[i] = Math.max(0, Math.min(7, Math.floor(v * 8)));
         if (tiles[i].terrain !== Terrain.Water) continue;
         let shore = false;
@@ -822,7 +825,7 @@ export class GroundPainter {
   }
 
   private h(x: number, y: number, salt: number): number {
-    return hash2(x, y, this.info.seed * 31 + salt);
+    return hash2(x - this.info.o, y - this.info.o, this.info.seed * 31 + salt);
   }
 
   /** Tile-filling rect, overshooting by ~half a device pixel so neighbours leave no AA seam. */
@@ -963,7 +966,7 @@ export class GroundPainter {
 
   /** Old poured-concrete foundations occupy hashed 2×2 blocks of bare land. */
   private isSlab(x: number, y: number): boolean {
-    return hash2(x >> 1, y >> 1, this.info.seed * 31 + 120) < 0.16 && this.isBare(x, y);
+    return hash2((x - this.info.o) >> 1, (y - this.info.o) >> 1, this.info.seed * 31 + 120) < 0.16 && this.isBare(x, y);
   }
 
   private land(x: number, y: number) {
@@ -2215,12 +2218,23 @@ export class GroundCache {
   }
 
   /** Bind the chunk grid to `world`'s frame; a different side drops every chunk. */
+  /**
+   * The minimal render frame (MEGACITY §3.9, Step 0b): the ground paints the owned box only (the overview too), so
+   * a one-district city looks as the 64 map did; WP-3 adds the fogged peek margin around it.
+   */
+  private box = { x0: 0, y0: 0, x1: -1, y1: -1 };
+  private boxKey = '';
+
   private bind(world: World) {
-    if (world.N === this.N) return;
+    const b = world.ownedBox;
+    const key = `${b.x0},${b.y0},${b.x1},${b.y1}`;
+    if (world.N === this.N && key === this.boxKey) return;
     this.reset();
     this.N = world.N;
     this.OX = -world.N * HALF_W - 32;
     this.tileBuf = new Int32Array(world.area);
+    this.box = { x0: b.x0, y0: b.y0, x1: b.x1, y1: b.y1 };
+    this.boxKey = key;
   }
 
   /** Padded world rect a chunk canvas covers. */
@@ -2276,10 +2290,11 @@ export class GroundCache {
     const ay1 = r.y1 + SPILL;
     const tx = (wx: number, wy: number) => (wy / HALF_H + wx / HALF_W) / 2;
     const ty = (wx: number, wy: number) => (wy / HALF_H - wx / HALF_W) / 2;
-    const x0 = Math.max(0, Math.floor(tx(ax0, ay0)));
-    const x1 = Math.min(N - 1, Math.ceil(tx(ax1, ay1)));
-    const y0 = Math.max(0, Math.floor(ty(ax1, ay0)));
-    const y1 = Math.min(N - 1, Math.ceil(ty(ax0, ay1)));
+    const bx = this.box;
+    const x0 = Math.max(0, bx.x0, Math.floor(tx(ax0, ay0)));
+    const x1 = Math.min(N - 1, bx.x1, Math.ceil(tx(ax1, ay1)));
+    const y0 = Math.max(0, bx.y0, Math.floor(ty(ax1, ay0)));
+    const y1 = Math.min(N - 1, bx.y1, Math.ceil(ty(ax0, ay1)));
     let n = 0;
     if (x0 > x1 || y0 > y1) return 0;
     for (let s = x0 + y0; s <= x1 + y1; s++) {
@@ -2423,7 +2438,14 @@ export class GroundCache {
     // The overview is always kept ready as a fallback.
     const ov: Chunk[] = [];
     if (k !== OVERVIEW) {
-      const orr = this.range(OVERVIEW, { x0: -1e9, y0: -1e9, x1: 1e9, y1: 1e9 });
+      // Over the owned box only (MEGACITY §3.9), not the whole region.
+      const b = this.box;
+      const orr = this.range(OVERVIEW, {
+        x0: (b.x0 - b.y1 - 1) * HALF_W - SPILL,
+        y0: (b.x0 + b.y0) * HALF_H - SPILL,
+        x1: (b.x1 - b.y0 + 1) * HALF_W + SPILL,
+        y1: (b.x1 + b.y1 + 2) * HALF_H + SPILL,
+      });
       for (let j = orr.j0; j <= orr.j1; j++)
         for (let i = orr.i0; i <= orr.i1; i++) {
           const c = this.getChunk(OVERVIEW, i, j);
@@ -2546,6 +2568,7 @@ export class GroundCache {
     if (env.zoom < 0.3) return;
     const breath = presence > 0.01 ? 1 + presence * (1.2 + 1.6 * (0.5 + 0.5 * Math.sin((env.time * Math.PI * 2) / 4))) : 1;
     const info = this.terrain(world);
+    const o = info.o;
     const n = env.night;
     const time = env.time;
     const low = env.quality === 'low';
@@ -2569,15 +2592,15 @@ export class GroundCache {
         if (wx + HALF_W < view.x0 || wx - HALF_W > view.x1 || wy + 2 * HALF_H < view.y0 || wy > view.y1) continue;
         const t = tiles[y * N + x];
         if (t.terrain === Terrain.Water && !t.road) {
-          const h = hash2(x, y, info.seed + 11);
+          const h = hash2(x - o, y - o, info.seed + 11);
           if (h > density) continue;
           const ph = time * (0.9 + h * 0.8) + h * 40;
           const wave = Math.sin(ph);
           if (wave <= 0.55) continue;
           const a = (wave - 0.55) * 2.2 * (0.35 + 0.45 * n) * (info.depth[y * N + x] > 1 ? 1 : 0.7);
           const drift = Math.sin(time * 0.4 + h * 9) * 5;
-          const cx = wx + (hash2(x, y, 3) - 0.5) * 30 + drift;
-          const cy = wy + 16 + (hash2(x, y, 4) - 0.5) * 12;
+          const cx = wx + (hash2(x - o, y - o, 3) - 0.5) * 30 + drift;
+          const cy = wy + 16 + (hash2(x - o, y - o, 4) - 0.5) * 12;
           const w = 10 + h * 10;
           ctx.globalAlpha = Math.min(1, a);
           ctx.drawImage(sparkle, cx - w / 2, cy - 1.5, w, 3);
@@ -2586,9 +2609,9 @@ export class GroundCache {
             ctx.drawImage(sparkTint, cx - w * 0.6, cy - 4, w * 1.2, 8);
           }
         } else if (t.road) {
-          if (flicker && t.roadKind === RoadKind.Alley && hash2(x, y, info.seed + 23) < 0.26) {
+          if (flicker && t.roadKind === RoadKind.Alley && hash2(x - o, y - o, info.seed + 23) < 0.26) {
             // A violet sign over the alley, buzzing on and off.
-            const h = hash2(x, y, info.seed + 29);
+            const h = hash2(x - o, y - o, info.seed + 29);
             const on = Math.sin(time * (7 + h * 5) + h * 30) + Math.sin(time * 2.3 + h * 11) > -0.4 ? 1 : 0.15;
             const side = h < 0.5 ? -9 : 9;
             ctx.globalAlpha = Math.min(1, n * 0.55 * on);

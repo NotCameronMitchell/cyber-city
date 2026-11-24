@@ -13,6 +13,7 @@
 // refresh() runs monthly and after rail / link / building changes only.
 // ─────────────────────────────────────────────────────────────────────────────
 
+import { artOffset } from '../districts/slots';
 import { buildingStats, completeStage } from '../buildingStats';
 import { BUILDINGS, CROWNS, RIBBON, SKYBRIDGE, STACK_SHADESIDE, STACK_STAGES, TURF_OWNER } from '../config';
 import { districtName } from '../news';
@@ -502,7 +503,7 @@ export function refresh(world: World, opts?: { quiet?: boolean }): void {
       deadNews = true;
       const i = order[0];
       world.addNews(
-        `Ribbon line dark near ${districtName(i % N, (i / N) | 0, world.seed)}. It needs ${RIBBON.minStations} powered stations.`,
+        `Ribbon line dark near ${districtName(i % N, (i / N) | 0, world.seed, artOffset(world))}. It needs ${RIBBON.minStations} powered stations.`,
         'warn',
       );
     }
@@ -638,7 +639,7 @@ export function onDay(world: World): boolean {
     }
     const stage = b.stage ?? 1;
     world.setStage(b, stage, 0);
-    const where = districtName(b.x + (b.size >> 1), b.y + (b.size >> 1), world.seed);
+    const where = districtName(b.x + (b.size >> 1), b.y + (b.size >> 1), world.seed, artOffset(world));
     world.addNews(`${stageName(stage, b.crown)} complete in ${where}. The skyline steps up.`, 'good');
     done = true;
   }

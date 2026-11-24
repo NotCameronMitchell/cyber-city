@@ -22,14 +22,16 @@ import { emptyStoryView } from '../../src/game/story/state';
 import type { Building, BuildingType, SaveData } from '../../src/game/types';
 import { World } from '../../src/game/world';
 import { act, makeSim } from '../helpers';
+import { LEGACY_REGION } from '../../src/game/types';
+import { toV3 } from '../legacy-save';
 
 const NEW_TYPES: BuildingType[] = ['stack', 'foundry', 'glarewall', 'tidemarket', 'roost', 'commons', 'memorial'];
 
 describe('world story defaults', () => {
   it('a new world carries inert story state', () => {
-    const w = new World(7, 'Default Reach');
+    const w = new World(7, 'Default Reach', undefined, LEGACY_REGION);
     expect(w.cityName).toBe('Default Reach');
-    expect(new World(7).cityName).toBe('Lanthorn Bay');
+    expect(new World(7, undefined, undefined, LEGACY_REGION).cityName).toBe('Lanthorn Bay');
     expect(w.story.chapter).toBe(1);
     expect(w.story.phase).toBe('waiting');
     expect(w.story.favor).toEqual(START_FAVOR);
@@ -46,31 +48,31 @@ describe('world story defaults', () => {
   });
 
   it('story state is JSON-safe', () => {
-    const w = new World(11);
+    const w = new World(11, undefined, undefined, LEGACY_REGION);
     expect(JSON.parse(JSON.stringify(w.story))).toEqual(w.story);
   });
 });
 
 describe('save compatibility', () => {
   it('writes the current version and loads v1 saves with a migrated story', () => {
-    const w = World.generate(4242, 'Old Harbor');
+    const w = World.generate(4242, 'Old Harbor', undefined, LEGACY_REGION);
     act(w, 'road', { x: 20, y: 30 }, { x: 40, y: 30 });
     const v2 = JSON.parse(JSON.stringify(w.serialize())) as SaveData;
     expect(v2.version).toBe(SAVE_VERSION);
-    expect(SAVE_VERSION).toBe(3); // expansion (docs/EXPANSION.md §2.5)
+    expect(SAVE_VERSION).toBe(4); // megacity (docs/MEGACITY.md §3.10)
 
-    const v1 = { ...v2, version: 1 } as SaveData;
+    const v1 = toV3(v2, 1);
     delete v1.story;
     const loaded = World.deserialize(v1);
     expect(loaded.tiles.filter((t) => t.road).length).toBe(w.tiles.filter((t) => t.road).length);
     expect(loaded.story.chapter).toBe(1);
     expect(loaded.story.flags.migrated).toBe(true);
 
-    expect(() => World.deserialize({ ...v2, version: 4 })).toThrow();
+    expect(() => World.deserialize({ ...v2, version: 5 })).toThrow();
   });
 
   it('keeps Stratablock stage fields through a round trip', () => {
-    const w = new World(5);
+    const w = new World(5, undefined, undefined, LEGACY_REGION);
     const b = w.addBuilding('stack', 10, 10)!;
     w.setStage(b, 2, 45);
     const loaded = World.deserialize(JSON.parse(JSON.stringify(w.serialize())));
@@ -83,7 +85,7 @@ describe('save compatibility', () => {
 
 describe('world story mutators', () => {
   it('clearRail unhooks neighbours; clearTile removes rail', () => {
-    const w = new World(1);
+    const w = new World(1, undefined, undefined, LEGACY_REGION);
     w.setRail(10, 10, 2); // east
     w.setRail(11, 10, 8 | 2); // west + east
     w.setRail(12, 10, 8);
@@ -98,7 +100,7 @@ describe('world story mutators', () => {
   });
 
   it('links get ids and drop with their anchors', () => {
-    const w = new World(1);
+    const w = new World(1, undefined, undefined, LEGACY_REGION);
     const a = w.addBuilding('spire', 10, 10)!;
     const l1 = w.addLink({ ax: 11, ay: 11, bx: 16, by: 11 });
     const l2 = w.addLink({ ax: 16, ay: 11, bx: 16, by: 16 });
@@ -110,7 +112,7 @@ describe('world story mutators', () => {
   });
 
   it('addBuilding clears turf except under a Tidemarket or Kite Roost', () => {
-    const w = new World(1);
+    const w = new World(1, undefined, undefined, LEGACY_REGION);
     const i = w.idx(20, 20);
     const j = w.idx(30, 30);
     w.turf.owner[i] = 1;
@@ -125,7 +127,7 @@ describe('world story mutators', () => {
   });
 
   it('pushSignal stays bounded when nothing drains it', () => {
-    const w = new World(1);
+    const w = new World(1, undefined, undefined, LEGACY_REGION);
     for (let k = 0; k < 1000; k++) w.pushSignal({ t: 'milestone', pop: k });
     expect(w.signals.length).toBeLessThanOrEqual(256);
     expect(w.signals[w.signals.length - 1]).toEqual({ t: 'milestone', pop: 999 });
@@ -144,13 +146,13 @@ describe('config', () => {
     expect(BUILDINGS.stack.size).toBe(4);
     expect(BUILDINGS.stack.category).toBe('vertical');
     expect(STACK_STAGES.map((s) => s.cost)).toEqual([12000, 16000, 22000]);
-    expect(Object.keys(CROWNS).sort()).toEqual(['commons', 'foundry', 'glare', 'nest']);
+    expect(Object.keys(CROWNS).sort()).toEqual(['commons', 'foundry', 'glare', 'lamp', 'nest', 'salvage']); // + Megacity's Salvage and Lamp (§6.2)
     // ×10 units (MEGACITY §4.4).
     expect(UNLOCK_FALLBACK_POP).toMatchObject({ factions: 30000, comms: 30000, stack: 80000, crackdown: 60000, skybridge: 90000, crowns: 200_000 });
   });
 
   it('story buildings stay locked in the sandbox until their gate opens', () => {
-    const w = new World(1);
+    const w = new World(1, undefined, undefined, LEGACY_REGION);
     w.maxPopulation = 1e6;
     for (const t of ['foundry', 'glarewall', 'tidemarket', 'roost', 'commons', 'memorial'] as BuildingType[]) {
       expect(lockedReason(w, t)).toMatch(/Locked/);
@@ -250,7 +252,7 @@ describe('game story stubs', () => {
   });
 
   it('the sim still runs headless with story fields present', () => {
-    const w = World.generate(9, 'Quiet Grid');
+    const w = World.generate(9, 'Quiet Grid', undefined, LEGACY_REGION);
     const sim = makeSim(w);
     for (let k = 0; k < 60; k++) sim.step();
     expect(Number.isFinite(w.stats.approval)).toBe(true);

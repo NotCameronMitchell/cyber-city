@@ -18,6 +18,7 @@
 // drops every cache when the world is swapped.
 // ─────────────────────────────────────────────────────────────────────────────
 
+import { ANNEX } from '../game/config';
 import type { Game } from '../game/game';
 import { ZoneType, type Building, type Settings } from '../game/types';
 import type { World } from '../game/world';
@@ -113,9 +114,16 @@ export class Renderer {
     this.quality = game.settings.quality;
     this.worldToken = worldId(game.world);
     camera.setMapSize(game.world.N);
+    this.applyFrame();
     this.backdrop = new Backdrop(game.world.seed % 997);
     const ev = game.events;
     this.unsubs.push(
+      // Megacity: an annex grows the owned box (bounds, minZoom, fit rect, the ground's box).
+      ev.on('annex', () => {
+        this.applyFrame();
+        this.overlay.invalidate();
+        this.access.invalidate();
+      }),
       ev.on('tiles', (r) => {
         this.ground.invalidate(r);
         this.overlay.invalidate();
@@ -150,9 +158,32 @@ export class Renderer {
     this.ground.reset();
   }
 
+  /**
+   * The minimal render frame (MEGACITY §3.9, Step 0b): camera bounds = the owned box ± ANNEX.peek (clipped to the map),
+   * `fitMap` frames the owned box, minZoom 0.25 for one district and 0.22 otherwise. WP-3 adds the view bands.
+   */
+  private applyFrame() {
+    const w = this.game.world;
+    const b = w.ownedBox;
+    const p = ANNEX.peek;
+    const N = w.N;
+    const cam = this.camera;
+    cam.fitRect = { ...b };
+    cam.minZoom = w.districts.owned.length > 1 ? 0.22 : 0.25;
+    if (cam.zoom < cam.minZoom) cam.zoom = cam.minZoom;
+    cam.setBounds({ x0: Math.max(0, b.x0 - p), y0: Math.max(0, b.y0 - p), x1: Math.min(N - 1, b.x1 + p), y1: Math.min(N - 1, b.y1 + p) });
+  }
+
+  /** The visible tile range clipped to the owned box (the sweep and the per-tile passes visit only owned land). */
+  private clipOwned(r: { x0: number; y0: number; x1: number; y1: number }) {
+    const b = this.game.world.ownedBox;
+    return { x0: Math.max(r.x0, b.x0), y0: Math.max(r.y0, b.y0), x1: Math.min(r.x1, b.x1), y1: Math.min(r.y1, b.y1) };
+  }
+
   private onWorldChanged() {
     this.worldToken = worldId(this.game.world);
     this.camera.setMapSize(this.game.world.N);
+    this.applyFrame();
     this.ground.reset();
     this.overlay.reset();
     this.access.invalidate();
@@ -270,8 +301,8 @@ export class Renderer {
     const hw = this.cssW / 2 / zoom;
     const hh = this.cssH / 2 / zoom;
     const view: Rect = { x0: cam.x - hw, y0: cam.y - hh, x1: cam.x + hw, y1: cam.y + hh };
-    const tilesVis = cam.visibleTileBounds(1);
-    const tilesObj = cam.visibleTileBounds(OBJECT_MARGIN);
+    const tilesVis = this.clipOwned(cam.visibleTileBounds(1));
+    const tilesObj = this.clipOwned(cam.visibleTileBounds(OBJECT_MARGIN));
 
     // 1. Backdrop (screen space).
     ctx.setTransform(1, 0, 0, 1, 0, 0);
@@ -286,7 +317,14 @@ export class Renderer {
     const wf = (this.cssH / 2 - cam.y * zoom) * dpr;
     const setWorld = (c: CanvasRenderingContext2D) => c.setTransform(wa, 0, 0, wa, we, wf);
     setWorld(ctx);
-    this.backdrop.drawUnderMap(ctx, night, time, zoom, view, world.N);
+    // The slab under the map and its rim follow the owned box when it is square (one district, MEGACITY §3.9).
+    const ob = world.ownedBox;
+    const square = ob.x1 - ob.x0 === ob.y1 - ob.y0 && ob.x0 === ob.y0;
+    const slabN = square ? ob.x1 - ob.x0 + 1 : world.N;
+    const slabDy = square ? 2 * ob.x0 * HALF_H : 0;
+    if (slabDy) ctx.translate(0, slabDy);
+    this.backdrop.drawUnderMap(ctx, night, time, zoom, slabDy ? { ...view, y0: view.y0 - slabDy, y1: view.y1 - slabDy } : view, slabN);
+    if (slabDy) setWorld(ctx);
 
     // 3. Cached ground.
     this.ground.draw(
@@ -305,7 +343,9 @@ export class Renderer {
 
     // 5. Data overlay.
     if (game.overlay !== 'none') this.overlay.draw(ctx, world, game.overlay, time, tilesVis, zoom);
-    this.backdrop.drawRim(ctx, night, zoom, world.N);
+    if (slabDy) ctx.translate(0, slabDy);
+    this.backdrop.drawRim(ctx, night, zoom, slabN);
+    if (slabDy) setWorld(ctx);
 
     // 6. Ground-level interaction feedback (shore sites while the Seaport tool is active).
     drawToolHints(ctx, game, time, zoom, tilesVis);

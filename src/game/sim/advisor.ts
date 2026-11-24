@@ -151,7 +151,7 @@ export class Advisor {
       if (opens(SKYWAY.unlockPop)) world.addNews(`Unlocked: Skyway (Sky). ${SKYWAY.desc}`, 'info');
       for (const type of BUILDING_ORDER) {
         const def = BUILDINGS[type];
-        if (def.gate) continue;
+        if (def.gate || def.hidden) continue;
         if (opens(def.unlockPop)) world.addNews(`Unlocked: ${def.name} (${trayOf(def, to)}). ${def.desc}`, 'info');
       }
       this.unlockedAt = world.maxPopulation;

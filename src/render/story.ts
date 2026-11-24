@@ -311,15 +311,17 @@ export class StoryRender {
   drawAfter(ctx: CanvasRenderingContext2D, world: World, x: number, y: number, t: Tile, env: ArtEnv): void {
     const N = world.N;
     const i = y * N + x;
+    // Art coordinates (MEGACITY §3.2 artXY): the same tags and candles on the start slot of either region.
+    const ao = 64 * ((world.region - 1) >> 1);
     if (env.zoom < 0.45 || t.buildingId >= 0 || t.zone === ZoneType.None || t.level === 0) return;
     const owner = world.turf.owner[i];
     const v = this.visual;
     const low = v?.palette === 'lowcrown' ? 2 : 1;
-    if (owner && world.turf.str[i] >= 60 && hash2(x, y, 41) < 0.32 * low) {
+    if (owner && world.turf.str[i] >= 60 && hash2(x - ao, y - ao, 41) < 0.32 * low) {
       // Tag on the building's left facade, near the street.
       const spr = tags()[owner - 1];
       const wx = (x - y) * HALF_W - 14;
-      const wy = (x + y) * HALF_H + 17 - (hash2(x, y, 42) * 6) - (owner === 2 && t.level >= 2 ? Math.min(zoneBuildingHeight(t) - 16, 30) : 0);
+      const wy = (x + y) * HALF_H + 17 - (hash2(x - ao, y - ao, 42) * 6) - (owner === 2 && t.level >= 2 ? Math.min(zoneBuildingHeight(t) - 16, 30) : 0);
       ctx.save();
       ctx.globalAlpha = (0.65 + 0.35 * env.night) * (t.abandoned ? 0.75 : 1);
       ctx.transform(1, -0.5, 0, 1, wx, wy);
@@ -333,16 +335,16 @@ export class StoryRender {
     }
     // Tuning candles in Hab windows.
     const candles = v?.candles ?? 0;
-    if (candles > 0.01 && env.night > 0.3 && t.zone === ZoneType.Residential && !t.abandoned && t.powered && hash2(x, y, 51) < candles * 0.65) {
+    if (candles > 0.01 && env.night > 0.3 && t.zone === ZoneType.Residential && !t.abandoned && t.powered && hash2(x - ao, y - ao, 51) < candles * 0.65) {
       const h = Math.max(8, zoneBuildingHeight(t) - 6);
       const g = candleSprite();
       ctx.globalCompositeOperation = 'lighter';
       for (let k = 0; k < 3; k++) {
-        if (hash2(x, y, 60 + k) > 0.4 + candles * 0.6) continue;
-        const u = 0.25 + hash2(x, y, 70 + k) * 0.55;
+        if (hash2(x - ao, y - ao, 60 + k) > 0.4 + candles * 0.6) continue;
+        const u = 0.25 + hash2(x - ao, y - ao, 70 + k) * 0.55;
         const side = k % 2 === 0;
         const wx = (x - y) * HALF_W + (side ? (u - 0.9) * HALF_W : (0.9 - u) * HALF_W);
-        const wy = (x + y) * HALF_H + (u + 0.9) * HALF_H - 6 - hash2(x, y, 80 + k) * (h - 6);
+        const wy = (x + y) * HALF_H + (u + 0.9) * HALF_H - 6 - hash2(x - ao, y - ao, 80 + k) * (h - 6);
         const flick = 0.75 + 0.25 * Math.sin(env.time * (5 + k) + x * 3.1 + y);
         ctx.globalAlpha = env.night * 0.8 * flick;
         ctx.drawImage(g, wx - 4, wy - 4, 8, 8);
@@ -357,6 +359,7 @@ export class StoryRender {
   /** Ground-level mood: Trace flicker, LURE's cold lamps, Undertow green lamps. World transform. */
   drawGroundFx(ctx: CanvasRenderingContext2D, world: World, b: Rect, env: ArtEnv, view: Rect): void {
     const N = world.N;
+    const ao = 64 * ((world.region - 1) >> 1); // art coordinates (MEGACITY §3.2)
     const v = this.visual;
     const n = env.night;
     if (n < 0.2 || env.zoom < 0.35) return;
@@ -380,20 +383,20 @@ export class StoryRender {
         const wy = (x + y) * HALF_H + HALF_H;
         if (wx + HALF_W < view.x0 || wx - HALF_W > view.x1 || wy + HALF_H < view.y0 || wy - HALF_H > view.y1) continue;
         if (t.road) {
-          if (pFlick > 0 && hash2(x * 7 + slot, y, 91) < pFlick) {
+          if (pFlick > 0 && hash2((x - ao) * 7 + slot, y - ao, 91) < pFlick) {
             ctx.globalCompositeOperation = 'source-over';
             ctx.globalAlpha = 0.55 * n;
             ctx.drawImage(dark, wx - 24, wy - 12, 48, 24);
             ctx.globalCompositeOperation = 'lighter';
             ctx.globalAlpha = 0.5 * n;
-            ctx.drawImage(cold, wx - 6 + hash2(x, y, slot) * 12, wy - 10, 8, 8);
+            ctx.drawImage(cold, wx - 6 + hash2(x - ao, y - ao, slot) * 12, wy - 10, 8, 8);
           }
           if (lure && lv[i] >= 0.5 && ((x + y) & 1) === 0) {
             ctx.globalCompositeOperation = 'lighter';
             ctx.globalAlpha = 0.16 * n;
             ctx.drawImage(cold, wx - 30, wy - 15, 60, 30);
           }
-          if (turfOn && world.turf.owner[i] === 1 && hash2(x, y, 33) < 0.5) {
+          if (turfOn && world.turf.owner[i] === 1 && hash2(x - ao, y - ao, 33) < 0.5) {
             // Undertow streets: green-tinted lamps.
             ctx.globalCompositeOperation = 'lighter';
             ctx.globalAlpha = 0.34 * n * (0.4 + 0.6 * (world.turf.str[i] / 100));

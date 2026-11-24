@@ -1,3 +1,4 @@
+import { artOffset } from './districts/slots';
 import { buildingStats } from './buildingStats';
 import {
   BUILDINGS,
@@ -162,6 +163,8 @@ export function lockedReason(world: World, tool: ToolId): string | null {
   }
   if (!isBuildingTool(tool)) return null;
   const def = BUILDINGS[tool];
+  // Megacity types Step 0b added hidden (MEGACITY §6.3) stay locked until their package lifts `hidden`.
+  if (def.hidden) return 'Locked: not yet';
   if (def.gate) return gateReason(world, def.gate);
   if (world.maxPopulation >= def.unlockPop) return null;
   return `Locked: reach ${num(def.unlockPop)} residents`;
@@ -766,7 +769,7 @@ function crownReason(world: World, c: CrownId): string | null {
 
 /** Crown picker rows (§8.8): summary, one-time favor chips, availability. */
 export function crownOptions(world: World): CrownOption[] {
-  return (Object.keys(CROWNS) as CrownId[]).map((id) => {
+  return (Object.keys(CROWNS) as CrownId[]).filter((id) => !CROWNS[id].hidden).map((id) => {
     const c = CROWNS[id];
     const reason = crownReason(world, id);
     return {
@@ -903,7 +906,7 @@ export function crackdown(world: World, precinctId: number): ActionResult {
   }
   s.precinctReady[precinctId] = tick + C.cooldown;
   world.funds -= st.cost;
-  world.addNews(`Wasps over ${districtName(Math.floor(x), Math.floor(y), world.seed)}. Doors kicked, tags scrubbed, nobody sleeps.`, 'info');
+  world.addNews(`Wasps over ${districtName(Math.floor(x), Math.floor(y), world.seed, artOffset(world))}. Doors kicked, tags scrubbed, nobody sleeps.`, 'info');
   world.pushSignal({ t: 'action', tool: 'crackdown', x: Math.floor(x), y: Math.floor(y) });
   turf.refreshStats(world);
   return { ok: true, cost: st.cost };

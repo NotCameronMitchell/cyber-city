@@ -46,7 +46,7 @@ import {
 } from '../../src/game/story/factions';
 import type { Condition, Metric } from '../../src/game/story/types';
 import { ZoneType } from '../../src/game/types';
-import type { World } from '../../src/game/world';
+import { World } from '../../src/game/world';
 import { flatWorld } from '../helpers';
 
 useStoryContent(STORY_CONTENT);
@@ -315,9 +315,43 @@ const CASES: Record<string, () => void> = {
     expect(metric(w, 'power.tuning')).toBe(0);
   },
   'crowns.*': () => {
-    w.vertical.metrics.crowns = { foundry: 1, glare: 2, nest: 0, commons: 1 };
+    w.vertical.metrics.crowns = { foundry: 1, glare: 2, nest: 0, commons: 1, salvage: 3, lamp: 0 };
     expect(metric(w, 'crowns.glare')).toBe(2);
     expect(metric(w, 'crowns.commons')).toBe(1);
+    expect(metric(w, 'crowns.salvage')).toBe(3);
+  },
+  // Megacity (MEGACITY §8.4).
+  districts: () => {
+    const d = new World(5, 'Districts', undefined, 3);
+    expect(metric(d, 'districts')).toBe(1);
+    d.annex(5);
+    expect(metric(d, 'districts')).toBe(2);
+  },
+  grants: () => {
+    w.districts.grants = 2;
+    expect(metric(w, 'grants')).toBe(2);
+  },
+  region: () => {
+    expect(metric(new World(5, 'Five', undefined, 5), 'region')).toBe(5);
+    expect(metric(new World(5, 'Three', undefined, 3), 'region')).toBe(3);
+  },
+  ruins: () => {
+    w.stats.ruins = 7;
+    expect(metric(w, 'ruins')).toBe(7);
+  },
+  'skylobby.*': () => {
+    w.stats.skyLobbies = { count: 2, largest: 5, visitors: 1000 };
+    expect(metric(w, 'skylobby.count')).toBe(2);
+    expect(metric(w, 'skylobby.max')).toBe(5);
+  },
+  'district.*': () => {
+    const d = new World(5, 'Kinds', undefined, 3);
+    const kinds = d.districts.kinds;
+    expect(metric(d, 'district.flats')).toBe(0);
+    const s = kinds.indexOf('flats');
+    d.annex(s);
+    expect(metric(d, 'district.flats')).toBe(1);
+    expect(metric(d, `district.${kinds[s === 0 ? 1 : 0] as 'shoals'}`)).toBe(0);
   },
 };
 

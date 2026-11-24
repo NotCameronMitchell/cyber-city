@@ -12,6 +12,7 @@ import type { EndingId } from '../../src/game/story/types';
 import { DAYS_PER_MONTH, type StoryPace } from '../../src/game/types';
 import { World } from '../../src/game/world';
 import { ScriptedMayor, flatWorld } from '../helpers';
+import { LEGACY_REGION } from '../../src/game/types';
 
 export interface RunLog {
   /** Milliseconds spent inside director.update + onDay (story overhead). */
@@ -74,7 +75,7 @@ export interface RunOptions {
 export function headlessGame(seed = 2091, terrain = false, pace?: StoryPace): Game {
   const g = new Game();
   if (pace) g.settings.storyPace = pace;
-  const w = terrain ? World.generate(seed, 'Harness Bay') : flatWorld(seed, 'Harness Bay');
+  const w = terrain ? World.generate(seed, 'Harness Bay', undefined, LEGACY_REGION) : flatWorld(seed, 'Harness Bay');
   if (!g.restore(JSON.parse(JSON.stringify(w.serialize())))) throw new Error('restore failed');
   return g;
 }

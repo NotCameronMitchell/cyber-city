@@ -3,7 +3,7 @@
 // There is no map-size constant: every World owns its side (`world.N`) and tile count
 // (`world.area`), every system copies them at construction, and module-scope working arrays
 // are per size (`scratchFor`). Every city is still 64×64 at this step; these tests run the
-// sim, the story and the tools on worlds of other sides (128, and 192 / 320 standing in for
+// sim, the story and the tools on worlds of other sides (the legacy 64 frame and the 3×3 / 5×5 regions; formerly
 // the 3×3 and 5×5 regions of part 2) to show nothing still assumes 64.
 
 import { describe, expect, it } from 'vitest';
@@ -18,7 +18,7 @@ import { decodeStory, encodeStory } from '../src/game/story/encode';
 import * as turf from '../src/game/story/turf';
 import * as vertical from '../src/game/story/vertical';
 import * as types from '../src/game/types';
-import { LEGACY_SIZE, MAX_MAP_SIZE, SLOT, Terrain, ZoneType } from '../src/game/types';
+import { LEGACY_REGION, LEGACY_SIZE, MAX_MAP_SIZE, SLOT, Terrain, ZoneType, type FrameRegion } from '../src/game/types';
 import { World } from '../src/game/world';
 import { Camera } from '../src/render/camera';
 import { RoadAccessMap } from '../src/render/overlay';
@@ -61,9 +61,16 @@ function block(w: World, x: number, y: number): void {
   applyAction(w, 'solar', { x: x + 4, y: y + 1 }, { x: x + 4, y: y + 1 });
 }
 
-/** A flat world of side `side` with a few blocks, including one in the far corner. */
-function builtWorld(side: number, seed: number): World {
-  const w = new World(seed, `Frame ${side}`, undefined, side);
+/** Own every slot of a world (structural annexes; Step 0b places no annex content). */
+function ownAll(w: World): World {
+  for (let s = 0; s < w.region * w.region; s++) w.annex(s);
+  return w;
+}
+
+/** A flat world of a region (every slot owned) with a few blocks, including one in the far corner. */
+function builtWorld(region: FrameRegion, seed: number): World {
+  const w = ownAll(new World(seed, `Frame ${region}`, undefined, region));
+  const side = w.N;
   w.funds = 1e7;
   w.maxPopulation = 1e6;
   const c = side >> 1;
@@ -127,25 +134,27 @@ describe('the frame constants (§3.1)', () => {
 });
 
 describe('a World owns its frame', () => {
-  it('every per-tile array of a 128 world holds 128² entries; the default is the legacy 64', () => {
-    const w = new World(5, 'Wide', undefined, 128);
-    expect(w.N).toBe(128);
-    expect(w.area).toBe(128 * 128);
+  it('every per-tile array of a 5×5 world holds 320² entries; the default is a 3×3 region, the legacy frame is 64', () => {
+    const w = new World(5, 'Wide', undefined, 5);
+    expect(w.N).toBe(320);
+    expect(w.area).toBe(320 * 320);
     for (const [name, a] of perTileArrays(w)) expect([name, a.length]).toEqual([name, w.area]);
     const d = new World(5);
-    expect([d.N, d.area]).toEqual([LEGACY_SIZE, LEGACY_SIZE * LEGACY_SIZE]);
-    for (const [name, a] of perTileArrays(d)) expect([name, a.length]).toEqual([name, d.area]);
-    expect(w.inBounds(127, 127) && !w.inBounds(128, 0) && !d.inBounds(64, 0)).toBe(true);
-    expect(w.idx(100, 3)).toBe(3 * 128 + 100);
+    expect([d.region, d.N, d.area]).toEqual([3, 192, 192 * 192]);
+    const l = new World(5, 'Legacy', undefined, LEGACY_REGION);
+    expect([l.N, l.area]).toEqual([LEGACY_SIZE, LEGACY_SIZE * LEGACY_SIZE]);
+    for (const [name, a] of perTileArrays(l)) expect([name, a.length]).toEqual([name, l.area]);
+    expect(w.inBounds(319, 319) && !w.inBounds(320, 0) && !l.inBounds(64, 0)).toBe(true);
+    expect(w.idx(100, 3)).toBe(3 * 320 + 100);
   });
 
-  it('a side that is not a multiple of 64 up to MAX_MAP_SIZE is refused', () => {
-    for (const side of [0, 32, 63, 96, 384, 64.5]) expect(() => new World(1, 'Bad', undefined, side)).toThrow();
-    for (const side of [64, 128, 192, 256, 320]) expect(new World(1, 'Ok', undefined, side).N).toBe(side);
+  it('a region other than 3, 5 or the legacy frame is refused', () => {
+    for (const r of [0, 2, 4, 6, 64, 1.5]) expect(() => new World(1, 'Bad', undefined, r as FrameRegion)).toThrow();
+    for (const r of [1, 3, 5] as FrameRegion[]) expect(new World(1, 'Ok', undefined, r).N).toBe(r * SLOT);
   });
 
   it("SimGrid's tile-index lists are 32-bit and its component ids 32-bit signed (a 320 frame overflows 16 bits)", () => {
-    const g = new SimGrid(new World(1, 'Lists', undefined, 320));
+    const g = new SimGrid(new World(1, 'Lists', undefined, 5));
     for (const k of ['hwList', 'hwReachList', 'skyList', 'skyReachList'] as const) expect(g[k]).toBeInstanceOf(Uint32Array);
     for (const k of ['hwComp', 'hwReach', 'skyComp', 'skyReach'] as const) expect(g[k]).toBeInstanceOf(Int32Array);
     expect(g.hwList.length).toBe(320 * 320);
@@ -153,7 +162,7 @@ describe('a World owns its frame', () => {
   });
 
   it('a 320 world past 65,535 tiles keeps highway and skyway indices (no 16-bit wrap)', () => {
-    const w = new World(3, 'Far', undefined, 320);
+    const w = ownAll(new World(3, 'Far', undefined, 5));
     w.funds = 1e7;
     w.maxPopulation = 1e6;
     // A highway and a skyway along row 300, far past index 65,535 (row 204 at side 320).
@@ -171,9 +180,9 @@ describe('a World owns its frame', () => {
   });
 });
 
-describe('a 128 world through the sim and the story (no regions yet)', () => {
-  it('a scripted city grows across the old 64 border, the story reaches Ch3 and seeds turf, and the story save round-trips', () => {
-    const w = World.generate(2091, 'Wide Bay', undefined, 128);
+describe('a 3×3 world through the sim and the story', () => {
+  it('a scripted city grows past the legacy 64 frame, the story reaches Ch3 and seeds turf, and the story save round-trips', () => {
+    const w = ownAll(World.generate(2091, 'Wide Bay', undefined, 3));
     expect(w.tiles.some((t, i) => t.terrain === Terrain.Water && i > 4096)).toBe(true);
     const sim = new Simulation(w);
     sim.options.events = false;
@@ -227,7 +236,7 @@ describe('a 128 world through the sim and the story (no regions yet)', () => {
     }
     expect(east).toBeGreaterThan(0);
     expect(south).toBeGreaterThan(0);
-    // Turf seeded (Ch3 at the latest) and every turf tile, seam and strongest tile is a 128-frame index.
+    // Turf seeded (Ch3 at the latest) and every turf tile, seam and strongest tile is a 192-frame index.
     const st = w.turf.stats;
     expect(w.turf.seeded.undertow && w.turf.seeded.kites).toBe(true);
     expect(maxTurf).toBeGreaterThan(9);
@@ -236,7 +245,7 @@ describe('a 128 world through the sim and the story (no regions yet)', () => {
     // Fields stay finite everywhere.
     for (const [name, a] of Object.entries(w.fields)) expect([name, (a as Float32Array).every((v) => Number.isFinite(v))]).toEqual([name, true]);
     // The story block round-trips into a fresh world of the same side.
-    const back = new World(2091, 'Back', undefined, 128);
+    const back = new World(2091, 'Back', undefined, 3);
     expect(decodeStory(JSON.parse(JSON.stringify(encodeStory(w))), back)).toBe(true);
     expect(Array.from(back.turf.owner)).toEqual(Array.from(w.turf.owner));
     expect(Array.from(back.turf.str)).toEqual(Array.from(w.turf.str));
@@ -244,15 +253,15 @@ describe('a 128 world through the sim and the story (no regions yet)', () => {
     expect(back.story.chapter).toBe(w.story.chapter);
   }, 120000);
 
-  it("a seam or rail-out index past a 64 frame survives on a 128 world but is dropped on a 64 one", () => {
-    const w = new World(9, 'Seam', undefined, 128);
-    w.story.seam = 100 * 128 + 100;
-    w.story.railOut = [{ i: 120 * 128 + 5, until: 99 }];
+  it("a seam or rail-out index past a 64 frame survives on a 3×3 world but is dropped on a 64 one", () => {
+    const w = new World(9, 'Seam', undefined, 3);
+    w.story.seam = 100 * 192 + 100;
+    w.story.railOut = [{ i: 120 * 192 + 5, until: 99 }];
     const save = JSON.parse(JSON.stringify(encodeStory(w)));
-    const wide = new World(9, 'Wide', undefined, 128);
-    const small = new World(9, 'Small');
+    const wide = new World(9, 'Wide', undefined, 3);
+    const small = new World(9, 'Small', undefined, LEGACY_REGION);
     expect(decodeStory(save, wide) && decodeStory(save, small)).toBe(true);
-    expect(wide.story.seam).toBe(100 * 128 + 100);
+    expect(wide.story.seam).toBe(100 * 192 + 100);
     expect(wide.story.railOut).toHaveLength(1);
     expect(small.story.seam).toBeNull();
     expect(small.story.railOut).toHaveLength(0);
@@ -300,13 +309,13 @@ describe('worlds of different sides side by side (the Showcase case)', () => {
     });
   }
 
-  it('a 64, a 192 and a 320 world stepped in turn match each stepped alone', () => {
-    const sides = [64, 192, 320];
+  it('a legacy 64, a 3×3 and a 5×5 world stepped in turn match each stepped alone', () => {
+    const sides: FrameRegion[] = [1, 3, 5];
     const together = play(sides.map((s) => builtWorld(s, 11)), 75);
     const alone = sides.map((s) => play([builtWorld(s, 11)], 75)[0]);
     for (let k = 0; k < sides.length; k++) expect([sides[k], together[k] === alone[k]]).toEqual([sides[k], true]);
     // And the worlds really did something.
-    const w = builtWorld(320, 11);
+    const w = builtWorld(5, 11);
     const s = new Simulation(w);
     s.options.events = false;
     for (let d = 0; d < 75; d++) s.step();
@@ -330,12 +339,12 @@ describe('the render side reads the frame from the world it shows', () => {
 
   it('the road access map resizes to each world it is asked about', () => {
     const map = new RoadAccessMap();
-    const wide = builtWorld(128, 3);
-    const small = builtWorld(64, 3);
+    const wide = builtWorld(3, 3);
+    const small = builtWorld(1, 3);
     const a = map.get(wide);
-    expect(a.length).toBe(128 * 128);
-    expect(a[wide.idx(119, 123)]).toBe(1); // inside the far block (118..120, 122..124): its ring road gives access
-    expect(a[wide.idx(5, 120)]).toBe(0);
+    expect(a.length).toBe(192 * 192);
+    expect(a[wide.idx(183, 187)]).toBe(1); // inside the far block (182..184, 186..188): its ring road gives access
+    expect(a[wide.idx(5, 184)]).toBe(0);
     map.invalidate();
     expect(map.get(small).length).toBe(64 * 64);
   });

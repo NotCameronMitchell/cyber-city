@@ -4,6 +4,7 @@ import { Rng } from '../src/game/rng';
 import type { ToolId } from '../src/game/types';
 import { World } from '../src/game/world';
 import { makeSim } from './helpers';
+import { LEGACY_REGION } from '../src/game/types';
 
 const TOOLS: ToolId[] = [
   'road', 'road', 'road', 'res', 'res', 'com', 'ind', 'bulldoze',
@@ -14,7 +15,7 @@ const TOOLS: ToolId[] = [
 
 describe('fuzz', () => {
   it('survives random player actions interleaved with simulation', () => {
-    const w = World.generate(777, 'Chaos Quay');
+    const w = World.generate(777, 'Chaos Quay', undefined, LEGACY_REGION);
     w.funds = 5e6;
     w.maxPopulation = 1e6; // unlock everything
     const sim = makeSim(w, true);

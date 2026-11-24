@@ -17,7 +17,8 @@
 //   is the same delay). Ch6 has no goals; Log 6 is granted with the ending, not at
 //   chapter completion.
 // - The chapter's Silt Log (`log`) is shown as the reward card; `reward` holds the
-//   other reward effects.
+//   other reward effects. Megacity (MEGACITY §8.2): every reward Ch1–Ch5 carries `grant 1`
+//   (a land grant); the reward sys lines are unchanged (lint length).
 // ─────────────────────────────────────────────────────────────────────────────
 
 import type { Chapter } from '../types';
@@ -47,7 +48,7 @@ export const CHAPTERS: readonly Chapter[] = [
       },
       { id: 'c1.plaza', label: 'Build a Neon Plaza', cond: m('count.plaza', '>=', 1) },
     ],
-    reward: [funds(3000), unlock('factions'), unlock('comms')],
+    reward: [funds(3000), unlock('factions'), unlock('comms'), { t: 'grant', n: 1 }],
     log: 1,
     rewardSys: '> +3,000 CR · new: factions, comms',
   },
@@ -82,7 +83,7 @@ export const CHAPTERS: readonly Chapter[] = [
         show: { m: 'powerMargin', target: 1.2, fmt: 'pct' },
       },
     ],
-    reward: [funds(5000), unlock('stack'), unlock('deals')],
+    reward: [funds(5000), unlock('stack'), unlock('deals'), { t: 'grant', n: 1 }],
     log: 2,
     rewardSys: '> +5,000 CR · new: stratablock, deals',
   },
@@ -117,7 +118,7 @@ export const CHAPTERS: readonly Chapter[] = [
         show: { m: 'gangActions', target: 1, fmt: 'int' },
       },
     ],
-    reward: [funds(8000), unlock('skybridge'), unlock('rail')],
+    reward: [funds(8000), unlock('skybridge'), unlock('rail'), { t: 'grant', n: 1 }],
     log: 3,
     rewardSys: '> +8,000 CR · new: skybridge, ribbon',
   },
@@ -145,7 +146,7 @@ export const CHAPTERS: readonly Chapter[] = [
       },
       { id: 'c4.link', label: 'Open a skybridge or a live ribbon', cond: any(m('skybridges', '>=', 1), m('rail.maxStations', '>=', 2)) },
     ],
-    reward: [funds(10000), credit('arcology', 1, 0.8)],
+    reward: [funds(10000), credit('arcology', 1, 0.8), { t: 'grant', n: 1 }],
     log: 4,
     rewardSys: '> +10,000 CR · next arcology −20%',
   },
@@ -181,7 +182,7 @@ export const CHAPTERS: readonly Chapter[] = [
         show: { m: 'rail.maxStations', target: 3, fmt: 'int' },
       },
     ],
-    reward: [funds(15000), unlock('crowns')],
+    reward: [funds(15000), unlock('crowns'), { t: 'grant', n: 1 }],
     log: 5,
     rewardSys: '> +15,000 CR · new: crowns',
   },

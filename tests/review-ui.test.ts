@@ -12,6 +12,7 @@ import { Toasts } from '../src/ui/feedback';
 import { holdGame } from '../src/ui/start/startModel';
 import { Tips } from '../src/ui/tips';
 import { flatWorld } from './helpers';
+import { LEGACY_REGION } from '../src/game/types';
 
 const N = 64;
 
@@ -105,7 +106,7 @@ describe('ui-3: the Seaport card on a built-up waterfront', () => {
   it('a street on every waterfront tile leaves no clear site but the shore is still there: "Shore built up"', () => {
     let checked = 0;
     for (let seed = 1; seed <= 12 && checked < 3; seed++) {
-      const w = World.generate(seed * 104729);
+      const w = World.generate(seed * 104729, undefined, undefined, LEGACY_REGION);
       const marks = new Uint8Array(N * N);
       if (shoreSites(w, marks) === 0) continue;
       expect(seaportNote(shoreSites(w, marks), shoreGeometry(w))).toBeNull();

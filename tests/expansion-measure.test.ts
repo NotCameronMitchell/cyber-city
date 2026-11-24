@@ -15,6 +15,7 @@ import { DAYS_PER_MONTH, LEGACY_SIZE, RoadKind, Terrain, ZoneType, type Building
 import { World } from '../src/game/world';
 import { expansionFixture, fabUpShare, playScenario, resComSplit, type ExpansionMayorOptions, type ScenarioResult } from './expansion-fixture';
 import { flatWorld, fullyBuiltWorld } from './helpers';
+import { LEGACY_REGION } from '../src/game/types';
 
 const N = LEGACY_SIZE;
 /** Node's environment (no @types/node in this project). */
@@ -92,7 +93,7 @@ function first(w: World, type: string): Building | null {
 }
 
 const flat = (seed: number) => () => flatWorld(seed);
-const generated = (seed: number) => () => World.generate(seed, 'Measure Bay');
+const generated = (seed: number) => () => World.generate(seed, 'Measure Bay', undefined, LEGACY_REGION);
 const lift = (year: number, pop: number) => [{ year, pop }];
 
 describe.skipIf(!env.MEASURE)('expansion measurement (§10.4)', () => {
@@ -242,7 +243,7 @@ function measureFixture(): string[] {
       `(vs ${Math.round(building.w.budget.history.slice(-3).reduce((a, b) => a + b, 0) / 3)} building)`,
   );
   // B13: alley and skyway terms are capped.
-  const probe = new World(5);
+  const probe = new World(5, undefined, undefined, LEGACY_REGION);
   const base = { u: powerWeight(probe, 'undertow'), k: powerWeight(probe, 'kites') };
   probe.stats.roads.alley = 100_000;
   probe.stats.roads.skyway = 100_000;

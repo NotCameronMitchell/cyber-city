@@ -28,9 +28,13 @@ import {
   roadButton,
   toolMeta,
 } from '../src/ui/tools';
+import { LEGACY_REGION } from '../src/game/types';
 
-/** Every ToolId, as a Record so a new member that is missing here fails to compile. */
-const ALL_TOOLS: Record<ToolId, true> = {
+/**
+ * Every ToolId, as a Record so a new member that is missing here fails to compile. `false`: a Megacity type Step 0b
+ * added hidden (no tray, meta or icon until WP-5 / WP-4 give it one); the catalogue checks skip it.
+ */
+const ALL_TOOLS: Record<ToolId, boolean> = {
   inspect: true,
   bulldoze: true,
   road: true,
@@ -63,8 +67,35 @@ const ALL_TOOLS: Record<ToolId, true> = {
   roost: true,
   commons: true,
   memorial: true,
+  floodwatch: false,
+  pumphouse: false,
+  canopypark: false,
+  medtower: false,
+  reclaim: false,
+  metro: false,
+  markethall: false,
+  tidal: false,
+  geothermal: false,
+  datavault: false,
+  charterhall: false,
+  hexworks: false,
+  pearlatrium: false,
+  hullhouse: false,
+  kitemast: false,
+  lampchoir: false,
+  beacon: false,
+  arena: false,
+  halolookout: false,
+  terminal: false,
+  gantry: false,
+  glasssmile: false,
+  breadpier: false,
+  recordtower: false,
+  stillsquare: false,
+  frame: false,
+  pumphall: false,
 };
-const TOOLS = Object.keys(ALL_TOOLS) as ToolId[];
+const TOOLS = (Object.keys(ALL_TOOLS) as ToolId[]).filter((t) => ALL_TOOLS[t]);
 const ALL_OVERLAYS: Record<OverlayId, true> = {
   none: true,
   power: true,
@@ -78,7 +109,7 @@ const ALL_OVERLAYS: Record<OverlayId, true> = {
   noise: true,
 };
 
-const flat = () => new World(77, 'Catalogue');
+const flat = () => new World(77, 'Catalogue', undefined, LEGACY_REGION);
 const unlockedIn = (w: World) => (t: RoadTool) => !lockedReason(w, t);
 
 describe('tool catalogue', () => {

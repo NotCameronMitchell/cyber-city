@@ -15,6 +15,7 @@
 // hold ends and the game resumes at 1×. Logic without DOM: startModel.ts.
 // ─────────────────────────────────────────────────────────────────────────────
 
+import { defaultRegion } from '../../game/device';
 import './start.css';
 import { DAY_CYCLE_SECONDS } from '../../game/config';
 import { CITY_NAME_MAX, randomCityName, randomSeed, type Game } from '../../game/game';
@@ -454,7 +455,8 @@ export class StartScreen {
     // First launch: found the untouched map waiting under the showcase (the camera is framed on it). Otherwise a fresh map.
     const keepMap = !this.city && !worthKeeping({ tick: game.world.tick, buildingCount: game.world.buildings.size, tiles: game.world.tiles });
     const seed = keepMap ? game.world.seed : randomSeed();
-    game.newCity(name || undefined, seed);
+    // Region (MEGACITY §3.11): the device default until WP-5 adds the New City sheet's Region control.
+    game.newCity(name || undefined, seed, defaultRegion());
     this.nightClock();
     if (!keepMap) this.reframe();
     this.city = true;

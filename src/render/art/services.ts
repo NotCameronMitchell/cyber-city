@@ -37,7 +37,7 @@ function pal(neon: RGB, neon2: RGB, up: RGB, warm = 0.4, cool = 0.4): ArtPal {
   return { neon, neon2, up, warm, cool };
 }
 
-export const SERVICE_PALS: Record<BuildingType, ArtPal> = {
+const SERVICE_PAL_BASE = {
   solar: pal(NEON.green, NEON.cyan, [40, 200, 120]),
   reactor: pal(NEON.violet, [170, 130, 255], [110, 80, 255], 0.3, 0.5),
   plaza: pal(NEON.green, NEON.magenta, [60, 220, 140]),
@@ -61,6 +61,38 @@ export const SERVICE_PALS: Record<BuildingType, ArtPal> = {
   seaport: PORT_PALS.seaport!,
   airport: PORT_PALS.airport!,
   spaceport: PORT_PALS.spaceport!,
+};
+
+export const SERVICE_PALS: Record<BuildingType, ArtPal> = {
+  ...SERVICE_PAL_BASE,
+  // Megacity (MEGACITY §6.3, §9.2): placeholders reusing existing palettes until WP-4 draws each type.
+  floodwatch: SERVICE_PAL_BASE.precinct,
+  pumphouse: SERVICE_PAL_BASE.plaza,
+  canopypark: SERVICE_PAL_BASE.plaza,
+  medtower: SERVICE_PAL_BASE.clinic,
+  reclaim: SERVICE_PAL_BASE.solar,
+  metro: SERVICE_PAL_BASE.maglev,
+  markethall: SERVICE_PAL_BASE.clinic,
+  tidal: SERVICE_PAL_BASE.solar,
+  geothermal: SERVICE_PAL_BASE.reactor,
+  datavault: SERVICE_PAL_BASE.datahub,
+  charterhall: SERVICE_PAL_BASE.commons,
+  hexworks: SERVICE_PAL_BASE.foundry,
+  pearlatrium: SERVICE_PAL_BASE.glarewall,
+  hullhouse: SERVICE_PAL_BASE.tidemarket,
+  kitemast: SERVICE_PAL_BASE.roost,
+  lampchoir: SERVICE_PAL_BASE.memorial,
+  beacon: SERVICE_PAL_BASE.glarewall,
+  arena: SERVICE_PAL_BASE.arcology,
+  halolookout: SERVICE_PAL_BASE.spire,
+  terminal: SERVICE_PAL_BASE.maglev,
+  gantry: SERVICE_PAL_BASE.foundry,
+  glasssmile: SERVICE_PAL_BASE.glarewall,
+  breadpier: SERVICE_PAL_BASE.tidemarket,
+  recordtower: SERVICE_PAL_BASE.commons,
+  stillsquare: SERVICE_PAL_BASE.memorial,
+  frame: SERVICE_PAL_BASE.stack,
+  pumphall: SERVICE_PAL_BASE.memorial,
 };
 
 /** Red warning light that blinks when the building is offline / unpowered. */
@@ -535,5 +567,33 @@ export const SERVICE_RECIPES: Record<BuildingType, Recipe> = {
   seaport: portRecipe('seaport', 2)!,
   airport: portRecipe('airport', 0)!,
   spaceport: portRecipe('spaceport', 3)!,
+  // Megacity (MEGACITY §6.3, §9.2): placeholders reusing existing recipes until WP-4 draws each type.
+  floodwatch: precinct,
+  pumphouse: plaza,
+  canopypark: plaza,
+  medtower: clinic,
+  reclaim: solar,
+  metro: maglev,
+  markethall: clinic,
+  tidal: solar,
+  geothermal: reactor,
+  datavault: datahub,
+  charterhall: clinic,
+  hexworks: reactor,
+  pearlatrium: spire,
+  hullhouse: clinic,
+  kitemast: datahub,
+  lampchoir: plaza,
+  beacon: plaza,
+  arena: arcology,
+  halolookout: spire,
+  terminal: maglev,
+  gantry: reactor,
+  glasssmile: spire,
+  breadpier: clinic,
+  recordtower: datahub,
+  stillsquare: plaza,
+  frame: arcology,
+  pumphall: clinic,
 };
 

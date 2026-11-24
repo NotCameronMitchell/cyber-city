@@ -5,10 +5,12 @@ import { newStoryState } from '../src/game/story/state';
 import { LEGACY_SIZE, type SaveData } from '../src/game/types';
 import { World } from '../src/game/world';
 import { ScriptedMayor, makeSim } from './helpers';
+import { LEGACY_REGION } from '../src/game/types';
+import { toV3 } from './legacy-save';
 
 describe('save / load', () => {
   it('serialize → deserialize → recomputeAll reproduces population and power', () => {
-    const w = World.generate(4242, 'Roundtrip Reach');
+    const w = World.generate(4242, 'Roundtrip Reach', undefined, LEGACY_REGION);
     const sim = makeSim(w, true);
     const mayor = new ScriptedMayor(w, sim);
     mayor.opening();
@@ -48,7 +50,7 @@ describe('save / load', () => {
   });
 
   it('a loaded save does not replay milestones or highlights', () => {
-    const w = World.generate(99, 'Replay Point');
+    const w = World.generate(99, 'Replay Point', undefined, LEGACY_REGION);
     const sim = makeSim(w, false);
     const mayor = new ScriptedMayor(w, sim);
     mayor.opening();
@@ -78,7 +80,7 @@ describe('save / load', () => {
 describe('story save (v2)', () => {
   /** A world with every saved story structure populated. */
   function storied(): World {
-    const w = World.generate(777, 'Charter Point');
+    const w = World.generate(777, 'Charter Point', undefined, LEGACY_REGION);
     for (let x = 18; x <= 44; x++) w.setRoad(x, 30);
     w.addBuilding('solar', 16, 29);
     const stack = w.addBuilding('stack', 24, 31)!;
@@ -139,7 +141,7 @@ describe('story save (v2)', () => {
   it('round trip keeps turf, turfMeta, rail, railOut, links, stages and story exactly', () => {
     const w = storied();
     const data = w.serialize();
-    expect(data.version).toBe(3); // v3 = expansion; the story block is unchanged
+    expect(data.version).toBe(4); // v4 = megacity; the story block is unchanged
     expect(data.story).toBeDefined();
     const l = roundTrip(w);
 
@@ -171,7 +173,7 @@ describe('story save (v2)', () => {
     const save = w.serialize().story!;
     expect(save.rail.length).toBeLessThan(60);
     expect(save.turf.length).toBeLessThan(200);
-    const empty = new World(1).serialize().story!;
+    const empty = new World(1, undefined, undefined, LEGACY_REGION).serialize().story!;
     expect(empty.turf).toEqual([0, 4096]);
     expect(empty.rail).toEqual([0, 4096]);
     expect(JSON.stringify(empty).length).toBeLessThan(2000);
@@ -179,9 +181,8 @@ describe('story save (v2)', () => {
 
   it('migrates a v1 save: fresh story, flag migrated, empty turf, rail and links', () => {
     const w = storied();
-    const v1 = JSON.parse(JSON.stringify(w.serialize())) as SaveData;
-    v1.version = 1;
-    const l = World.deserialize(v1); // a v1 save never decodes a story block
+    const v1 = toV3(JSON.parse(JSON.stringify(w.serialize())) as SaveData, 1);
+    const l = World.deserialize(v1); // a v1 save never decodes a story block (and migrates to a 3×3 region)
     expect(l.story.chapter).toBe(1);
     expect(l.story.phase).toBe('waiting');
     expect(l.story.flags.migrated).toBe(true);
@@ -286,7 +287,7 @@ describe('story save (v2)', () => {
   });
 
   it('keeps stage fields only on well-formed Stratablocks', () => {
-    const w = new World(3);
+    const w = new World(3, undefined, undefined, LEGACY_REGION);
     const a = w.addBuilding('plaza', 5, 5)!;
     const b = w.addBuilding('stack', 10, 10)!;
     const data = JSON.parse(JSON.stringify(w.serialize())) as SaveData;

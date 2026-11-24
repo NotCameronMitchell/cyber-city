@@ -14,6 +14,7 @@
 // hooks) go through the EffectHost the director implements.
 // ─────────────────────────────────────────────────────────────────────────────
 
+import { artOffset } from '../districts/slots';
 import { BUILDINGS, FACTION_IDS, FACTION_LABELS, GANG_IDS, GANG_NEWS_NAME, STANDING, TRACE, TURF, TURF_OWNER } from '../config';
 import { capitalizeFirst, districtName } from '../news';
 import type { Rng } from '../rng';
@@ -791,7 +792,21 @@ export function applyEffect(host: EffectHost, e: Effect, ctx: EffectCtx): void {
     case 'if':
       applyEffects(host, evalCond(world, e.c) ? e.then : e.else, ctx);
       return;
+    case 'grant':
+      grantLand(world, e.n, 'chapter');
+      return;
   }
+}
+
+/**
+ * Add n land grants (MEGACITY §8.2): `districts.grants` += n (never below 0) and emit `grant`. The chapter
+ * rewards' `grant 1` effect uses why 'chapter'; the director's ending grant 'ending'; Game's epilogue clock 'epilogue'.
+ */
+export function grantLand(world: World, n: number, why: 'chapter' | 'ending' | 'epilogue' | 'migrated'): void {
+  const add = Math.max(0, Math.floor(Number(n) || 0));
+  if (add <= 0) return;
+  world.districts.grants = Math.max(0, world.districts.grants + add);
+  world.events.emit('grant', { grants: world.districts.grants, why });
 }
 
 /** Pact (§3.6): extends an active one; gangActions +1; news. Skipped under a lockPacts ending. */
@@ -820,7 +835,7 @@ export function districtOf(world: World, i: number): string {
   const N = world.N;
   const area = world.area;
   const c = i >= 0 && i < area ? i : idxOf(world, N >> 1, N >> 1);
-  return districtName(xOf(world, c), yOf(world, c), world.seed);
+  return districtName(xOf(world, c), yOf(world, c), world.seed, artOffset(world));
 }
 
 /** Fill {city} {district} {patron} {rival} {year} {coherence} (plus `extra`). Unknown tokens stay. */
@@ -994,6 +1009,16 @@ const TARGET_TEXT: Record<Target, string> = {
   'strongestTurf:kites': 'on Kites turf',
   largestAbandoned: 'in the dark lots',
   rail: 'along the ribbon',
+  // Megacity (MEGACITY §8.4): the turf target `slot:<kind>` (WP-7 resolves it).
+  'slot:shore': 'in Charter Shore',
+  'slot:shoals': 'in the Shoals',
+  'slot:sunk': 'in the Sunk',
+  'slot:flats': 'in Kessel Flats',
+  'slot:terraces': 'in the Terraces',
+  'slot:reedmere': 'in Reedmere',
+  'slot:skeleton': 'in Skeleton Row',
+  'slot:tarmac': 'in Tarmac Reach',
+  'slot:bazaar': 'in Verdigris',
 };
 
 const short = (f: FactionId) => FACTION_LABELS[f]?.short ?? f;
@@ -1082,6 +1107,8 @@ export function effectText(world: World, e: Effect): string {
       return 'An ending';
     case 'if':
       return 'depends on the city';
+    case 'grant':
+      return `+${e.n} land grant${e.n === 1 ? '' : 's'}`;
   }
   return '';
 }

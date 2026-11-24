@@ -250,7 +250,42 @@ export function decodeStoryState(raw: unknown, seed: number, area: number): Stor
   else delete def.met;
   // Saved clocks are never negative (a hand-edited save can't stall the floors).
   for (const k of ['chapterSec', 'sinceStartSec', 'deckSec', 'frontSec'] as const) def[k] = Math.max(0, def[k] ?? 0);
+  // Megacity (MEGACITY §9.6, §3.10): ending history, review callbacks, the city's story pace. Optional; missing →
+  // the default (a save with an ending reads as one history entry; no callbacks; the device's pace is kept).
+  decodeMegacity(raw, def);
   return def;
+}
+
+const ENDING_IDS = ['ironwork', 'pearl', 'lowcrown', 'ledger', 'quiet'];
+const PACES = ['relaxed', 'normal', 'brisk'];
+
+function decodeMegacity(raw: Json, def: StoryState): void {
+  const hist = raw.endingHistory;
+  if (Array.isArray(hist)) {
+    const ok = hist
+      .filter(
+        (h): h is Json =>
+          isObj(h) &&
+          ENDING_IDS.includes(h.id as string) &&
+          (h.variant === null || h.variant === undefined || h.variant === 'lamplight') &&
+          isNum(h.from) &&
+          (h.to === null || h.to === undefined || isNum(h.to)),
+      )
+      .slice(-32)
+      .map((h) => ({
+        id: h.id as StoryState['ending'] & string,
+        variant: h.variant === 'lamplight' ? ('lamplight' as const) : null,
+        from: h.from as number,
+        to: isNum(h.to) ? (h.to as number) : null,
+      }));
+    def.endingHistory = ok;
+  } else if (def.ending) {
+    def.endingHistory = [{ id: def.ending, variant: def.endingVariant, from: def.endingTick ?? 0, to: null }];
+  } else delete def.endingHistory;
+  if (Array.isArray(raw.callbacks)) def.callbacks = [...new Set(raw.callbacks.filter(isStr))].slice(-64);
+  else delete def.callbacks;
+  if (typeof raw.pace === 'string' && PACES.includes(raw.pace)) def.pace = raw.pace as StoryState['pace'];
+  else delete def.pace;
 }
 
 /**

@@ -246,20 +246,20 @@ describe('Game story API', () => {
     g.newCity('First Light', 1234); // the untouched boot city is not worth a backup
     expect(g.hasPreviousSave()).toBe(false);
     g.setTool('road');
-    expect(g.apply({ x: 10, y: 10 }, { x: 20, y: 10 }).valid).toBe(true);
+    expect(g.apply({ x: 74, y: 74 }, { x: 84, y: 74 }).valid).toBe(true); // the start slot of a 3×3 region (64..127)
     g.newCity('Second Wind', 5678);
     expect(g.world.cityName).toBe('Second Wind');
     expect(g.hasPreviousSave()).toBe(true);
     expect(g.previousSaveInfo()?.cityName).toBe('First Light');
     expect(g.loadPrevious()).toBe(true);
     expect(g.world.cityName).toBe('First Light');
-    expect(g.world.isRoad(15, 10)).toBe(true);
+    expect(g.world.isRoad(79, 74)).toBe(true);
     expect(JSON.parse(store!.get(SAVE_KEY)!).cityName).toBe('First Light');
     expect(g.hasPreviousSave()).toBe(false); // Second Wind had no progress
     // With progress on both sides the slots swap.
     g.newCity('Third Rail', 91011);
     g.setTool('road');
-    g.apply({ x: 5, y: 5 }, { x: 9, y: 5 });
+    g.apply({ x: 69, y: 69 }, { x: 73, y: 69 });
     expect(g.loadPrevious()).toBe(true);
     expect(g.world.cityName).toBe('First Light');
     expect(JSON.parse(store!.get(PREV_SAVE_KEY)!).cityName).toBe('Third Rail');

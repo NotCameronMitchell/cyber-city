@@ -14,6 +14,7 @@ import { SHAPE_RAMP, SHAPE_SLOPE, computeShapes } from '../src/render/art/skyway
 import { StreetTraffic } from '../src/render/art/traffic';
 import { KIND_HALF, TerrainInfo, kindHalf } from '../src/render/ground';
 import { RoadAccessMap } from '../src/render/overlay';
+import { LEGACY_REGION } from '../src/game/types';
 
 const N = LEGACY_SIZE;
 const AREA = N * N;
@@ -22,7 +23,7 @@ const KINDS = [S, A, H, L, R];
 
 /** A random map of road segments of every kind, with some water (alleys and ramps there become streets). */
 function randomRoads(seed: number): World {
-  const w = new World(seed);
+  const w = new World(seed, undefined, undefined, LEGACY_REGION);
   const rng = new Rng(seed * 7 + 1);
   for (let k = 0; k < 6; k++) {
     const x = rng.int(0, N - 1);
@@ -68,7 +69,7 @@ describe('RoadAccessMap (§3.3, §10.2 #6)', () => {
   });
 
   it('sees a highway alone as no access, an alley only 1 tile out, and rebuilds after invalidate()', () => {
-    const w = new World(9);
+    const w = new World(9, undefined, undefined, LEGACY_REGION);
     for (let x = 10; x < 30; x++) w.setRoad(x, 20, H);
     const m = new RoadAccessMap();
     expect(m.get(w)[w.idx(15, 21)]).toBe(0);
@@ -108,7 +109,7 @@ describe('skyway deck shapes (§3.7)', () => {
   }
 
   it('a ramp on a street beside a straight piece is a two-tile slope (52 → 30 → 6)', () => {
-    const w = new World(1);
+    const w = new World(1, undefined, undefined, LEGACY_REGION);
     for (let x = 10; x <= 13; x++) w.setRoad(x, 20, S);
     // Deck x = 10..14 along y = 20, ramp at x = 10 (one link, east).
     w.setSky(10, 20, SKY_E | SKY_RAMP);
@@ -126,7 +127,7 @@ describe('skyway deck shapes (§3.7)', () => {
   });
 
   it('a closed ramp (no street below) keeps its shape and is flagged closed; a corner neighbour makes a one-tile ramp', () => {
-    const w = new World(2);
+    const w = new World(2, undefined, undefined, LEGACY_REGION);
     // Ramp at (20, 10) over bare land: closed.
     w.setSky(20, 10, SKY_S | SKY_RAMP);
     w.setSky(20, 11, SKY_N | SKY_E);
@@ -143,7 +144,7 @@ describe('skyway deck shapes (§3.7)', () => {
   });
 
   it('two ramps facing across one straight piece both stay one-tile (no shared slope)', () => {
-    const w = new World(3);
+    const w = new World(3, undefined, undefined, LEGACY_REGION);
     for (const x of [5, 7]) w.setRoad(x, 5, S);
     w.setSky(5, 5, SKY_E | SKY_RAMP);
     w.setSky(6, 5, SKY_E | SKY_W);
@@ -158,7 +159,7 @@ describe('skyway deck shapes (§3.7)', () => {
 describe('regional road stubs (§3.10)', () => {
   it('places EDGE_LINKS.stubs deterministic stubs on land border tiles with a land tile inward', () => {
     for (const seed of [11, 2091, 77777]) {
-      const w = World.generate(seed);
+      const w = World.generate(seed, undefined, undefined, LEGACY_REGION);
       const a = new TerrainInfo(w);
       const b = new TerrainInfo(w);
       expect(Array.from(a.stub)).toEqual(Array.from(b.stub));
@@ -193,7 +194,7 @@ describe('street traffic kinds (§3.11)', () => {
   }
 
   it('alleys carry only bikes; highways carry 35% trucks', () => {
-    const w = new World(5);
+    const w = new World(5, undefined, undefined, LEGACY_REGION);
     for (let x = 2; x < 60; x++) {
       w.setRoad(x, 10, L);
       w.setRoad(x, 30, H);
@@ -225,7 +226,7 @@ describe('street traffic kinds (§3.11)', () => {
   });
 
   it('cars never turn from a street into an alley (bikes may)', () => {
-    const w = new World(6);
+    const w = new World(6, undefined, undefined, LEGACY_REGION);
     // A street with alley side branches every few tiles.
     for (let x = 2; x < 60; x++) w.setRoad(x, 32, S);
     for (let x = 4; x < 60; x += 4) for (let y = 33; y < 40; y++) w.setRoad(x, y, L);

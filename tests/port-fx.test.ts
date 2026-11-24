@@ -10,6 +10,7 @@ import { LEGACY_SIZE, Terrain, type Building } from '../src/game/types';
 import { World } from '../src/game/world';
 import { flatWorld } from './helpers';
 import { installCanvasMock, mockContext, mockStats, resetMockStats } from './canvas-mock';
+import { LEGACY_REGION } from '../src/game/types';
 
 const uninstall = installCanvasMock();
 afterAll(() => uninstall());
@@ -28,7 +29,7 @@ const openWater = (w: World, x: number, y: number) => {
 
 /** A live seaport on a generated map's shore site (k-th valid site), or null. */
 function seaportWorld(seed: number, k = 0): { w: World; b: Building } | null {
-  const w = World.generate(seed);
+  const w = World.generate(seed, undefined, undefined, LEGACY_REGION);
   const marks = new Uint8Array(N * N);
   if (shoreSites(w, marks) === 0) return null;
   let n = 0;

@@ -12,6 +12,7 @@ import { SKY_E, SKY_N, SKY_RAMP, SKY_S, SKY_W, skyRampActive } from '../src/game
 import { RoadKind, Terrain, ZoneType, type ToolId } from '../src/game/types';
 import { World } from '../src/game/world';
 import { flatWorld } from './helpers';
+import { LEGACY_REGION } from '../src/game/types';
 
 const S = RoadKind.Street;
 const A = RoadKind.Avenue;
@@ -480,7 +481,7 @@ describe('bulldoze layers (§3.6)', () => {
 
 describe('planner notes and reasons stay short (§7.5)', () => {
   it('fuzzes every new tool over a mixed city: every note and reason ≤ 32 characters', () => {
-    const w = World.generate(2091, 'Fuzz Harbor');
+    const w = World.generate(2091, 'Fuzz Harbor', undefined, LEGACY_REGION);
     w.funds = 1e9;
     w.maxPopulation = 1e6;
     const rng = new Rng(9);

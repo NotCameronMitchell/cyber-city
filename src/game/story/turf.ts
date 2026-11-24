@@ -13,6 +13,7 @@
 // refresh ≤ 2 ms on a full map; every buffer here is reused.
 // ─────────────────────────────────────────────────────────────────────────────
 
+import { artOffset } from '../districts/slots';
 import { completeStage } from '../buildingStats';
 import { CROWNS, GANG_IDS, GANG_NEWS_NAME, RIBBON, STANDING, TURF, TURF_OWNER } from '../config';
 import { capitalizeFirst, districtName } from '../news';
@@ -439,7 +440,7 @@ const SEED_NEWS: Record<GangId, string> = {
 
 function seedNews(world: World, gang: GangId, i: number, tagback: boolean): void {
   const N = world.N;
-  const d = districtName(i % N, (i / N) | 0, world.seed);
+  const d = districtName(i % N, (i / N) | 0, world.seed, artOffset(world));
   const text = tagback
     ? `Tagback in ${d}: ${GANG_NEWS_NAME[gang]} paint over the wasps' work.`
     : SEED_NEWS[gang].replace('{d}', d);

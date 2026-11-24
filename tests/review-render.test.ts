@@ -13,6 +13,7 @@ import { World } from '../src/game/world';
 import { installCanvasMock, mockContext, mockStats } from './canvas-mock';
 import { expansionFixture } from './expansion-fixture';
 import { flatWorld, fullyBuiltWorld } from './helpers';
+import { LEGACY_REGION } from '../src/game/types';
 
 const uninstall = installCanvasMock();
 afterAll(() => uninstall());
@@ -75,7 +76,7 @@ describe('render-1: glow sprites stay bounded through a day/night transition', (
   });
 
   it('the water sparkle tint adds a bounded number of sprites over a dawn', () => {
-    const w = new World(4242);
+    const w = new World(4242, undefined, undefined, LEGACY_REGION);
     const cache = new M.ground.GroundCache();
     const ctx = mockContext();
     const before = mockStats.canvases;
@@ -115,7 +116,7 @@ describe('render-2: a still frame after the camera moves', () => {
 
 describe('render-3: Wealth lens pips follow the sim step rule (hysteresis band shows none)', () => {
   it('a $$$ block in the band holds (no ▼); below the down threshold it slips; a lift shows ▲', () => {
-    const w = new World(77);
+    const w = new World(77, undefined, undefined, LEGACY_REGION);
     const proto = Object.getPrototypeOf(mockContext()) as Record<string, unknown>;
     proto.createImageData ??= (cw: number, ch: number) => ({ data: new Uint8ClampedArray(cw * ch * 4), width: cw, height: ch });
     const set = (x: number, y: number, tier: 0 | 1 | 2, score: number) => {
@@ -153,7 +154,7 @@ describe('render-4: an E or S Seaport keeps its ship on screen while the port it
   /** A live seaport whose quay faces `face` on a generated map's shore, or null. */
   function seaportFacing(face: number): { w: World; b: Building } | null {
     for (let seed = 1; seed <= 60; seed++) {
-      const w = World.generate(seed * 7919);
+      const w = World.generate(seed * 7919, undefined, undefined, LEGACY_REGION);
       const marks = new Uint8Array(N * N);
       if (shoreSites(w, marks) === 0) continue;
       for (let i = 0; i < N * N; i++) {

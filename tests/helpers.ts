@@ -7,10 +7,11 @@ import { BUILDINGS } from '../src/game/config';
 import { Simulation } from '../src/game/sim';
 import { Terrain, type BuildingType, type ToolId } from '../src/game/types';
 import { World } from '../src/game/world';
+import { LEGACY_REGION } from '../src/game/types';
 
 /** A flat, all-land world (no generated water) for deterministic tests. */
 export function flatWorld(seed = 1234, name = 'Testopolis'): World {
-  return new World(seed, name);
+  return new World(seed, name, undefined, LEGACY_REGION);
 }
 
 /** A simulation with random events off unless asked. */
@@ -211,7 +212,7 @@ export class ScriptedMayor {
  * block zoned and developed to high density, with plants and services sprinkled in.
  */
 export function fullyBuiltWorld(seed = 99): World {
-  const w = new World(seed, 'Perf City');
+  const w = new World(seed, 'Perf City', undefined, LEGACY_REGION);
   w.funds = 1e9;
   w.maxPopulation = 1e9;
   const N = w.N;

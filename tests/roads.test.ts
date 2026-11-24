@@ -22,6 +22,7 @@ import { SimGrid } from '../src/game/sim/grid';
 import { LEGACY_SIZE, RoadKind, Terrain, ZoneType } from '../src/game/types';
 import { World } from '../src/game/world';
 import { RoadAccessMap } from '../src/render/overlay';
+import { LEGACY_REGION } from '../src/game/types';
 
 const N = LEGACY_SIZE;
 const AREA = N * N;
@@ -38,7 +39,7 @@ function access(world: World) {
 
 /** A random map of road segments; `mixed` picks every kind, otherwise streets only. Some water too. */
 function randomRoads(seed: number, mixed: boolean): World {
-  const w = new World(seed);
+  const w = new World(seed, undefined, undefined, LEGACY_REGION);
   const rng = new Rng(seed * 7 + 1);
   for (let k = 0; k < 6; k++) {
     const x = rng.int(0, N - 1);
@@ -72,7 +73,7 @@ describe('roadLinks (§3.2)', () => {
   });
 
   it('roadMask follows links on road tiles; roadAdjMask and non-road tiles see any road', () => {
-    const w = new World(1);
+    const w = new World(1, undefined, undefined, LEGACY_REGION);
     // Street at (10,10) with a highway to its east, a ramp to its north (joined to a highway further north).
     w.setRoad(10, 10, S);
     w.setRoad(11, 10, H);
@@ -159,21 +160,21 @@ describe('access (§3.3)', () => {
   });
 
   it('seeds avenues before streets; highways never give access; alleys only fill gaps', () => {
-    const w = new World(2);
+    const w = new World(2, undefined, undefined, LEGACY_REGION);
     // A lot equally close (2) to an avenue (west) and a street (east): its trips go to the avenue.
     w.setRoad(8, 10, A);
     w.setRoad(12, 10, S);
     let a = access(w);
     expect(a.near[w.idx(10, 10)]).toBe(w.idx(8, 10));
     // A lot 2 from a street and 1 from an alley sends its trips to the street (WP-1 acceptance shape).
-    const v = new World(3);
+    const v = new World(3, undefined, undefined, LEGACY_REGION);
     v.setRoad(20, 20, S);
     v.setRoad(23, 20, L);
     a = access(v);
     expect(a.near[v.idx(22, 20)]).toBe(v.idx(20, 20));
     expect(a.dist[v.idx(22, 20)]).toBe(2);
     // Alley-only lots: 1 tile reaches, 2 doesn't.
-    const u = new World(4);
+    const u = new World(4, undefined, undefined, LEGACY_REGION);
     u.setRoad(30, 30, L);
     a = access(u);
     expect(a.near[u.idx(31, 31)]).toBe(u.idx(30, 30));
@@ -182,7 +183,7 @@ describe('access (§3.3)', () => {
     expect(u.hasRoadAccess(31, 31)).toBe(true);
     expect(u.hasRoadAccess(32, 30)).toBe(false);
     // Highway only: no access, no claim, not even on its own tile.
-    const h = new World(5);
+    const h = new World(5, undefined, undefined, LEGACY_REGION);
     for (let x = 0; x < 20; x++) h.setRoad(x, 40, H);
     a = access(h);
     expect(a.kinds[h.idx(3, 40)]).toBe(H);
@@ -198,7 +199,7 @@ describe('access (§3.3)', () => {
 describe('lostAccess (§3.4)', () => {
   /** A street along y=20 from x=10..30 with developed Hab Blocks on both sides (rows 19 and 21). */
   function strip(): World {
-    const w = new World(9);
+    const w = new World(9, undefined, undefined, LEGACY_REGION);
     for (let x = 10; x <= 30; x++) {
       w.setRoad(x, 20);
       for (const y of [19, 21]) {
@@ -237,7 +238,7 @@ describe('lostAccess (§3.4)', () => {
   });
 
   it('a needsRoad building counts once and lists its footprint', () => {
-    const w = new World(10);
+    const w = new World(10, undefined, undefined, LEGACY_REGION);
     for (let x = 0; x <= 20; x++) w.setRoad(x, 10);
     const b = w.addBuilding('stack', 6, 11)!; // 4×4, needsRoad, only road is y=10
     const out: number[] = [];
@@ -245,14 +246,14 @@ describe('lostAccess (§3.4)', () => {
     expect(out.length).toBe(16);
     expect(out).toContain(w.idx(b.x + 3, b.y + 3));
     // A plaza (no needsRoad) never counts.
-    const v = new World(11);
+    const v = new World(11, undefined, undefined, LEGACY_REGION);
     for (let x = 0; x <= 20; x++) v.setRoad(x, 10);
     v.addBuilding('plaza', 6, 11);
     expect(lostAccess(v, row(v, 10, 0, 20), [])).toBe(0);
   });
 
   it('a cross street the highway cuts loses nothing when every lot keeps a road', () => {
-    const w = new World(12);
+    const w = new World(12, undefined, undefined, LEGACY_REGION);
     for (let x = 0; x < 40; x++) {
       w.setRoad(x, 10);
       w.setRoad(x, 14);

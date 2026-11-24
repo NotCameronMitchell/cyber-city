@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { DAYS_PER_MONTH, MONTHS_PER_YEAR, ZoneType } from '../src/game/types';
 import { World } from '../src/game/world';
 import { ScriptedMayor, act, flatWorld, makeSim, run } from './helpers';
+import { LEGACY_REGION } from '../src/game/types';
 
 /** Play `years` with the scripted mayor; funds are sampled every tick. */
 function playthrough(world: World, years: number, events: boolean) {
@@ -59,7 +60,7 @@ describe('balance', () => {
 
   it('five scripted years on generated terrain, events on, no exceptions', () => {
     for (const seed of [42, 1337]) {
-      const w = World.generate(seed, 'Balance Bay');
+      const w = World.generate(seed, 'Balance Bay', undefined, LEGACY_REGION);
       const { mayor } = playthrough(w, 5, true);
       expect(w.stats.population).toBeGreaterThan(10000);
       expect(mayor.lowestFunds).toBeGreaterThan(-2000);

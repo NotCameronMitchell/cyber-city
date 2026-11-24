@@ -1,4 +1,4 @@
-import type { MomentId, NewsItem, Selection, ToolId, OverlayId } from './types';
+import type { CityEventId, DistrictKind, DistrictVariant, MomentId, NewsItem, Selection, SlotId, ToolId, OverlayId } from './types';
 import type { EndingId, FactionId, Unlockable } from './story/types';
 
 /** Typed event map for the game-wide bus. */
@@ -69,11 +69,23 @@ export interface GameEventMap {
   hint: { id: HintId };
   /** Once-per-city banner (§5.4): ports opening and the first launch. Recorded in world.moments. */
   moment: { id: MomentId; title: string; sub: string };
+  // ── Megacity (docs/MEGACITY.md §3.2) ──
+  /** World: a slot was annexed (after its content is placed and the one 'tiles' touch for its rect). */
+  annex: { slot: SlotId; kind: DistrictKind; variant: DistrictVariant };
+  /** Game / director: unspent land grants changed. */
+  grant: { grants: number; why: 'chapter' | 'ending' | 'epilogue' | 'migrated' };
+  /** World.setTerrain (Pump House reclamation): the tile rect whose terrain changed. */
+  terrain: { x0: number; y0: number; x1: number; y1: number };
+  /** A district goal was completed (WP-2). */
+  districtGoal: { slot: SlotId; id: string };
+  /** City life (WP-6): a happening starts or ends. */
+  cityEvent: { id: CityEventId; phase: 'start' | 'end'; slot?: SlotId };
 }
 
 /** Button on a toast (EXPANSION §2.9): label shown for `sec` seconds. */
 export interface ToastAction {
-  id: 'undo' | 'watch';
+  /** Megacity: 'map' opens the City map on the locked slot (§3.4); 'export' the Export sheet (the storage-full toast, §3.10; WP-9). */
+  id: 'undo' | 'watch' | 'map' | 'export';
   label: string;
   sec: number;
 }

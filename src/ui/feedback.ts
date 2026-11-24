@@ -22,7 +22,7 @@ type ActionId = ToastAction['id'];
 const TOAST_ICON: Record<ToastKind, IconName> = { info: 'info', error: 'warn', good: 'check' };
 const TOAST_MS: Record<ToastKind, number> = { info: 3200, error: 2600, good: 3000 };
 const TOAST_MAX = 3;
-const ACTION_ICON: Record<ActionId, IconName> = { undo: 'undo', watch: 'eye' };
+const ACTION_ICON: Record<ActionId, IconName> = { undo: 'undo', watch: 'eye', map: 'layers', export: 'save' };
 
 /** What a toast's button does (Undo, Watch; EXPANSION §2.9), wired by the UI root. */
 export interface ToastActionHooks {
@@ -340,7 +340,7 @@ export function bannerUnlocks(prevPop: number, pop: number): string[] {
   const out: string[] = [];
   for (const t of BUILDING_ORDER) {
     const def = BUILDINGS[t];
-    if (def.gate) continue;
+    if (def.gate || def.hidden) continue;
     if (opens(def.unlockPop)) out.push(`${def.name} (${trayName(def, pop)})`);
   }
   for (const k of ROAD_KINDS) if (k.tool && opens(k.unlockPop)) out.push(`${k.name} (Road)`);

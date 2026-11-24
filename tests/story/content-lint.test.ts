@@ -275,7 +275,8 @@ describe('story content lint (§13)', () => {
   });
 
   it('token worst cases cover the real values', () => {
-    const longestBuilding = Math.max(...Object.values(BUILDINGS).map((b) => b.name.length));
+    // Megacity types Step 0b added hidden never reach a line until their package shows them (WP-7 raises the token max then).
+    const longestBuilding = Math.max(...Object.values(BUILDINGS).filter((b) => !b.hidden).map((b) => b.name.length));
     const longestFaction = Math.max(...Object.values(FACTION_LABELS).map((f) => f.name.length));
     const longestCorp = Math.max(FACTION_LABELS.basalt.name.length, FACTION_LABELS.nacre.name.length);
     expect(LINE_TOKEN_MAX.building).toBeGreaterThanOrEqual(longestBuilding);

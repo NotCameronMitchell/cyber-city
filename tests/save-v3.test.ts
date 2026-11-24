@@ -7,11 +7,18 @@ import { Simulation } from '../src/game/sim';
 import { LEGACY_SIZE, RoadKind, Terrain, ZoneType, type SaveData, type WealthTier } from '../src/game/types';
 import { World } from '../src/game/world';
 import { ScriptedMayor, fullyBuiltWorld, makeSim } from './helpers';
+import { LEGACY_REGION } from '../src/game/types';
+import { V3_OFFSET, toV3 } from './legacy-save';
 
 const N = LEGACY_SIZE;
 const { Street: S, Avenue: A, Highway: H, Alley: L, Ramp: R } = RoadKind;
 
 const json = (w: World) => JSON.parse(JSON.stringify(w.serialize())) as SaveData;
+/** A legacy-frame city as a v3-shaped save (the real old-save path: it migrates to a 3×3 region, map at +64). */
+const v3json = (w: World) => toV3(json(w));
+const O = V3_OFFSET;
+/** The 64×64 tile numbers of a legacy-frame (v4, region 1) save. */
+const tilesOf = (d: SaveData) => toV3(d).tiles!;
 const roundTrip = (w: World) => World.deserialize(json(w));
 
 function memStorage(init: Record<string, string> = {}) {
@@ -29,7 +36,7 @@ afterEach(() => {
 
 /** A small streets-only city with developed lots, as a v1 / v2 build would have saved it. */
 function oldCity(): World {
-  const w = World.generate(4242, 'Old Harbor');
+  const w = World.generate(4242, 'Old Harbor', undefined, LEGACY_REGION);
   const sim = makeSim(w);
   const mayor = new ScriptedMayor(w, sim);
   mayor.opening();
@@ -44,7 +51,7 @@ function oldCity(): World {
 
 /** Every expansion structure populated, built with World mutators only. */
 function expansionCity(): World {
-  const w = new World(31, 'Glass Shore');
+  const w = new World(31, 'Glass Shore', undefined, LEGACY_REGION);
   // Water: a bay along the south edge (y ≥ 56) and a channel at x = 40..41.
   for (let y = 0; y < N; y++)
     for (let x = 0; x < N; x++) if (y >= 56 || x === 40 || x === 41) w.tiles[y * N + x].terrain = Terrain.Water;
@@ -90,17 +97,18 @@ function expansionCity(): World {
 describe('old saves (§10.2 #1)', () => {
   it('a v2 save loads all-Street, all-$, no skyways, loadedVersion 2, story unchanged', () => {
     const w = oldCity();
-    const data = json(w);
+    const data = v3json(w);
     data.version = 2;
     delete data.sky;
     delete data.moments;
     const l = World.deserialize(data);
     expect(l.loadedVersion).toBe(2);
+    expect([l.region, l.N]).toEqual([3, 192]);
     expect(l.tiles.filter((t) => t.road).length).toBeGreaterThan(20);
     expect(l.tiles.every((t) => t.roadKind === S && t.wealth === 0)).toBe(true);
     expect(l.sky.every((v) => v === 0)).toBe(true);
     expect(l.moments.size).toBe(0);
-    expect(l.story).toEqual(w.story);
+    expect({ ...l.story, endingHistory: undefined }).toEqual({ ...w.story, endingHistory: undefined });
     expect(l.story.flags.migrated).toBeUndefined();
     // Same city: same simulation results.
     const a = new Simulation(w);
@@ -112,7 +120,7 @@ describe('old saves (§10.2 #1)', () => {
 
   it('a v1 save loads all-Street, all-$, loadedVersion 1, with a migrated story', () => {
     const w = oldCity();
-    const data = json(w);
+    const data = v3json(w);
     data.version = 1;
     delete data.story;
     delete data.sky;
@@ -125,19 +133,19 @@ describe('old saves (§10.2 #1)', () => {
   });
 
   it('a new world reports the current version', () => {
-    expect(new World(1).loadedVersion).toBe(SAVE_VERSION);
-    expect(SAVE_VERSION).toBe(3);
-    expect([...SAVE_VERSIONS_SUPPORTED]).toEqual([1, 2, 3]);
+    expect(new World(1, undefined, undefined, LEGACY_REGION).loadedVersion).toBe(SAVE_VERSION);
+    expect(SAVE_VERSION).toBe(4);
+    expect([...SAVE_VERSIONS_SUPPORTED]).toEqual([1, 2, 3, 4]);
   });
 });
 
 describe('v3 round trip (§10.2 #2)', () => {
   it('keeps road kinds, bridge kinds, tiers, sky masks and ramps, port fields and moments', () => {
     const w = expansionCity();
-    const data = json(w);
-    expect(data.version).toBe(3);
+    const data = json(w); // a legacy-frame v4 save: same coordinates, tile blocks instead of `tiles`
+    expect(data.version).toBe(4);
     const l = World.deserialize(data);
-    expect(l.loadedVersion).toBe(3);
+    expect(l.loadedVersion).toBe(4);
     for (let i = 0; i < N * N; i++) {
       const a = w.tiles[i];
       const b = l.tiles[i];
@@ -168,7 +176,7 @@ describe('v3 round trip (§10.2 #2)', () => {
     expect([...l.moments].sort()).toEqual(['launch', 'seaport']);
     // Saving the loaded world again gives the same data.
     const again = JSON.parse(JSON.stringify(l.serialize())) as SaveData;
-    expect(again.tiles).toEqual(data.tiles);
+    expect(again.tileBlocks).toEqual(data.tileBlocks);
     expect(again.sky).toEqual(data.sky);
     expect(again.buildings).toEqual(data.buildings);
   });
@@ -176,14 +184,14 @@ describe('v3 round trip (§10.2 #2)', () => {
   it('round-trips the tile bits for every road kind × tier (§10.2 #9)', () => {
     for (const k of [S, A, H, L, R])
       for (const tier of [0, 1, 2] as WealthTier[]) {
-        const w = new World(5);
+        const w = new World(5, undefined, undefined, LEGACY_REGION);
         w.setRoad(10, 10, k);
         w.setZone(11, 10, ZoneType.Commercial);
         w.setLevel(11, 10, 3, false, tier);
         const l = roundTrip(w);
         expect(l.tileAt(10, 10)!.roadKind).toBe(k);
         expect(l.tileAt(11, 10)!.wealth).toBe(tier);
-        const p = json(w).tiles;
+        const p = tilesOf(json(w));
         expect(p.every((v) => v >= 0 && v < 1 << 20)).toBe(true);
         expect((p[w.idx(10, 10)] >> 15) & 7).toBe(k);
         expect((p[w.idx(11, 10)] >> 18) & 3).toBe(tier);
@@ -197,20 +205,20 @@ describe('corrupt input never throws (§10.2 #3)', () => {
     (o.water ? 1 : 0) | ((o.road ? 1 : 0) << 1) | ((o.zone ?? 0) << 2) | ((o.level ?? 0) << 4) | ((o.kind ?? 0) << 15) | ((o.tier ?? 0) << 18);
 
   it('sanitises tile bits', () => {
-    const data = json(new World(7));
+    const data = v3json(new World(7, undefined, undefined, LEGACY_REGION));
     const at = (x: number, y: number) => y * N + x;
-    data.tiles[at(1, 1)] = tile({ road: true, kind: 7 });
-    data.tiles[at(2, 1)] = tile({ road: true, kind: 5 });
-    data.tiles[at(3, 1)] = tile({ water: true, road: true, kind: L });
-    data.tiles[at(4, 1)] = tile({ water: true, road: true, kind: R });
-    data.tiles[at(5, 1)] = tile({ water: true, road: true, kind: H });
-    data.tiles[at(6, 1)] = tile({ zone: 1, level: 2, tier: 3 });
-    data.tiles[at(7, 1)] = tile({ zone: 2, level: 0, tier: 2 });
-    data.tiles[at(8, 1)] = tile({ zone: 0, level: 0, tier: 2 });
-    data.tiles[at(9, 1)] = tile({ road: false, kind: 2 });
-    data.tiles[at(10, 1)] = tile({ road: true, kind: L }) | (1 << 25); // reserved bits ignored
+    data.tiles![at(1, 1)] = tile({ road: true, kind: 7 });
+    data.tiles![at(2, 1)] = tile({ road: true, kind: 5 });
+    data.tiles![at(3, 1)] = tile({ water: true, road: true, kind: L });
+    data.tiles![at(4, 1)] = tile({ water: true, road: true, kind: R });
+    data.tiles![at(5, 1)] = tile({ water: true, road: true, kind: H });
+    data.tiles![at(6, 1)] = tile({ zone: 1, level: 2, tier: 3 });
+    data.tiles![at(7, 1)] = tile({ zone: 2, level: 0, tier: 2 });
+    data.tiles![at(8, 1)] = tile({ zone: 0, level: 0, tier: 2 });
+    data.tiles![at(9, 1)] = tile({ road: false, kind: 2 });
+    data.tiles![at(10, 1)] = tile({ road: true, kind: L }) | (1 << 25); // reserved bits ignored
     const l = World.deserialize(data);
-    const t = (x: number) => l.tileAt(x, 1)!;
+    const t = (x: number) => l.tileAt(x + O, 1 + O)!;
     expect(t(1).roadKind).toBe(S);
     expect(t(2).roadKind).toBe(S);
     expect(t(3).roadKind).toBe(S);
@@ -235,7 +243,7 @@ describe('corrupt input never throws (§10.2 #3)', () => {
   });
 
   it('sanitises sky links and ramp bits (§2.5)', () => {
-    const w = new World(8);
+    const w = new World(8, undefined, undefined, LEGACY_REGION);
     w.setRoad(20, 20);
     const s = w.sky;
     const i = (x: number, y: number) => w.idx(x, y);
@@ -267,7 +275,7 @@ describe('corrupt input never throws (§10.2 #3)', () => {
   });
 
   it('sanitises port fields and moments', () => {
-    const w = new World(9);
+    const w = new World(9, undefined, undefined, LEGACY_REGION);
     // East shore: x ≥ 30 is water.
     for (let y = 0; y < N; y++) for (let x = 30; x < N; x++) w.tiles[y * N + x].terrain = Terrain.Water;
     const sea = w.addBuilding('seaport', 26, 20)!; // east side x = 30, 31: open water
@@ -304,13 +312,13 @@ describe('corrupt input never throws (§10.2 #3)', () => {
 });
 
 describe('save safety (§2.5, §10.2 #4)', () => {
-  it('World.deserialize throws for a v4 save', () => {
-    const data = json(new World(1));
-    expect(() => World.deserialize({ ...data, version: 4 })).toThrow('Incompatible save');
+  it('World.deserialize throws for a v5 save', () => {
+    const data = json(new World(1, undefined, undefined, LEGACY_REGION));
+    expect(() => World.deserialize({ ...data, version: 5 })).toThrow('Incompatible save');
   });
 
   it('a newer save is left untouched, copied to .future, and blocks saving until New City', () => {
-    const v4 = JSON.stringify({ ...json(World.generate(3, 'Future Reach')), version: 4, novel: [1, 2, 3] });
+    const v4 = JSON.stringify({ ...json(World.generate(3, 'Future Reach', undefined, LEGACY_REGION)), version: 5, novel: [1, 2, 3] });
     const m = memStorage({ [SAVE_KEY]: v4 });
     const g = new Game();
     expect(g.saveBlocked).toBe(true);
@@ -334,7 +342,7 @@ describe('save safety (§2.5, §10.2 #4)', () => {
     // Only an explicit New City clears the block.
     g.newCity('Fresh Start');
     expect(g.saveBlocked).toBe(false);
-    expect(JSON.parse(m.get(SAVE_KEY)!).version).toBe(3);
+    expect(JSON.parse(m.get(SAVE_KEY)!).version).toBe(4);
     expect(g.save()).toBe(true);
     expect(m.get(FUTURE_SAVE_KEY)).toBe('first copy');
   });
@@ -356,7 +364,7 @@ describe('save safety (§2.5, §10.2 #4)', () => {
 
   it('the first v2 load writes .v2 once and never overwrites it', () => {
     const w = oldCity();
-    const data = json(w);
+    const data = v3json(w);
     data.version = 2;
     delete data.sky;
     delete data.moments;
@@ -367,9 +375,9 @@ describe('save safety (§2.5, §10.2 #4)', () => {
     expect(g.world.loadedVersion).toBe(2);
     expect(m.get(V2_SAVE_KEY)).toBe(v2);
     expect(g.save()).toBe(true);
-    expect(JSON.parse(m.get(SAVE_KEY)!).version).toBe(3);
-    // The v3 save loads without touching the backup; another v2 save never replaces it.
-    expect(new Game().world.loadedVersion).toBe(3);
+    expect(JSON.parse(m.get(SAVE_KEY)!).version).toBe(4);
+    // The v4 save loads without touching the backup; another v2 save never replaces it.
+    expect(new Game().world.loadedVersion).toBe(4);
     expect(m.get(V2_SAVE_KEY)).toBe(v2);
     // (Without the v3 mirror: with it, a v2 main is an older build's overwrite, restored below.)
     m.delete(MIRROR_SAVE_KEY);
@@ -388,7 +396,7 @@ describe('save safety (§2.5, §10.2 #4)', () => {
     const v3 = m.get(SAVE_KEY)!;
     expect(m.get(MIRROR_SAVE_KEY)).toBe(v3);
     // A stale v2 build could not read it, started a fresh city and autosaved over the main key.
-    const stale = json(World.generate(4242, 'Lanthorn Bay'));
+    const stale = v3json(World.generate(4242, 'Lanthorn Bay', undefined, LEGACY_REGION));
     stale.version = 2;
     delete stale.sky;
     delete stale.moments;
@@ -397,7 +405,7 @@ describe('save safety (§2.5, §10.2 #4)', () => {
     // The next v3 load restores the mirror, keeps the overwrite aside and says so once.
     const g2 = new Game();
     expect(g2.world.cityName).toBe('Glass Shore');
-    expect(g2.world.loadedVersion).toBe(3);
+    expect(g2.world.loadedVersion).toBe(4);
     expect(m.get(SAVE_KEY)).toBe(v3);
     expect(m.get(STALE_SAVE_KEY)).toBe(staleRaw);
     expect(m.get(V2_SAVE_KEY)).toBeUndefined();
@@ -410,15 +418,15 @@ describe('save safety (§2.5, §10.2 #4)', () => {
     const m2 = memStorage({ [SAVE_KEY]: staleRaw });
     expect(new Game().world.cityName).toBe('Lanthorn Bay');
     expect(m2.get(STALE_SAVE_KEY)).toBeUndefined();
-    const v4 = JSON.stringify({ ...JSON.parse(v3), version: 4 });
+    const v4 = JSON.stringify({ ...JSON.parse(v3), version: 5 });
     const m3 = memStorage({ [SAVE_KEY]: v4, [MIRROR_SAVE_KEY]: v3 });
     expect(new Game().saveBlocked).toBe(true);
     expect(m3.get(SAVE_KEY)).toBe(v4);
   });
 
   it('Previous city in a save-blocked session lifts the block and saves before it drops the backup (review game-2)', () => {
-    const v4 = JSON.stringify({ ...json(World.generate(3, 'Future Reach')), version: 4 });
-    const old = JSON.stringify(json(World.generate(9, 'Old Town')));
+    const v4 = JSON.stringify({ ...json(World.generate(3, 'Future Reach', undefined, LEGACY_REGION)), version: 5 });
+    const old = JSON.stringify(v3json(World.generate(9, 'Old Town', undefined, LEGACY_REGION)));
     const m = memStorage({ [SAVE_KEY]: v4, [PREV_SAVE_KEY]: old });
     const g = new Game();
     expect(g.saveBlocked).toBe(true);

@@ -13,6 +13,7 @@ import { powerWeight } from '../src/game/story/factions';
 import { World } from '../src/game/world';
 import { fabUpShare, playScenario, resComSplit, type ScenarioResult } from './expansion-fixture';
 import { flatWorld } from './helpers';
+import { LEGACY_REGION } from '../src/game/types';
 
 const SEED = 2091;
 const YEARS = 8;
@@ -63,7 +64,7 @@ describe(`expansion balance, flat seed ${SEED}, ${YEARS} years (§10.3)`, () => 
   });
 
   it('B13: alleys never add more than 60 Undertow weight, skyways never more than 100 Kites weight', () => {
-    const w = new World(5);
+    const w = new World(5, undefined, undefined, LEGACY_REGION);
     const u0 = powerWeight(w, 'undertow');
     const k0 = powerWeight(w, 'kites');
     w.stats.roads.alley = 100_000;

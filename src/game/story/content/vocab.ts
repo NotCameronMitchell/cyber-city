@@ -71,6 +71,21 @@ const PLAIN_METRICS = [
   'roads.highway',
   'roads.alley',
   'skyway.tiles',
+  // Megacity (docs/MEGACITY.md §8.4).
+  'districts',
+  'grants',
+  'district.shoals',
+  'district.sunk',
+  'district.flats',
+  'district.terraces',
+  'district.reedmere',
+  'district.skeleton',
+  'district.tarmac',
+  'district.bazaar',
+  'region',
+  'ruins',
+  'skylobby.count',
+  'skylobby.max',
 ] as const satisfies readonly PlainMetric[];
 /** Compile-time: every non-templated Metric is listed. */
 export type PlainMetricsComplete = Complete<Exclude<PlainMetric, (typeof PLAIN_METRICS)[number]>>;
@@ -120,6 +135,8 @@ const EFFECT_KIND_LIST = [
   'charterNight',
   'ending',
   'if',
+  // Megacity (docs/MEGACITY.md §8.2).
+  'grant',
 ] as const satisfies readonly Effect['t'][];
 export type EffectKindsComplete = Complete<Exclude<Effect['t'], (typeof EFFECT_KIND_LIST)[number]>>;
 export const EFFECT_KINDS_COMPLETE: EffectKindsComplete = true;
@@ -136,6 +153,16 @@ const TARGET_LIST = [
   'strongestTurf:kites',
   'largestAbandoned',
   'rail',
+  // Megacity (docs/MEGACITY.md §8.4; WP-7 resolves them in story/effects.ts).
+  'slot:shore',
+  'slot:shoals',
+  'slot:sunk',
+  'slot:flats',
+  'slot:terraces',
+  'slot:reedmere',
+  'slot:skeleton',
+  'slot:tarmac',
+  'slot:bazaar',
 ] as const satisfies readonly Target[];
 export type TargetsComplete = Complete<Exclude<Target, (typeof TARGET_LIST)[number]>>;
 export const TARGETS_COMPLETE: TargetsComplete = true;

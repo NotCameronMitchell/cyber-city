@@ -198,8 +198,12 @@ const STAT_METRICS = new Set<string>([
   'chapter', 'daysInChapter', 'gangActions', 'daysSinceCrackdown',
   // Expansion (docs/EXPANSION.md §2.2).
   'wealth.high', 'wealth.low', 'roads.highway', 'roads.alley', 'skyway.tiles',
+  // Megacity (docs/MEGACITY.md §8.4).
+  'districts', 'grants', 'region', 'ruins', 'skylobby.count', 'skylobby.max',
+  'district.shoals', 'district.sunk', 'district.flats', 'district.terraces', 'district.reedmere', 'district.skeleton',
+  'district.tarmac', 'district.bazaar',
 ]);
-const CROWN_KEYS: readonly CrownId[] = ['foundry', 'glare', 'nest', 'commons'];
+const CROWN_KEYS: readonly CrownId[] = ['foundry', 'glare', 'nest', 'commons', 'salvage', 'lamp'];
 
 /** True if `m` is a member of the closed Metric vocabulary (lint and tests). */
 export function isMetric(m: string): m is Metric {
@@ -364,6 +368,33 @@ export function metric(world: World, m: Metric | string): number {
       return s.roads.alley;
     case 'skyway.tiles':
       return s.roads.skyway;
+    // Megacity (MEGACITY §8.4).
+    case 'districts':
+      return world.districts.owned.length;
+    case 'grants':
+      return world.districts.grants;
+    case 'region':
+      return world.region;
+    case 'ruins':
+      return s.ruins;
+    case 'skylobby.count':
+      return s.skyLobbies.count;
+    case 'skylobby.max':
+      return s.skyLobbies.largest;
+    case 'district.shoals':
+    case 'district.sunk':
+    case 'district.flats':
+    case 'district.terraces':
+    case 'district.reedmere':
+    case 'district.skeleton':
+    case 'district.tarmac':
+    case 'district.bazaar': {
+      const kind = m.slice(9);
+      const d = world.districts;
+      let n = 0;
+      for (const slot of d.owned) if (d.kinds[slot] === kind) n++;
+      return n;
+    }
   }
   const dot = m.indexOf('.');
   if (dot < 0) return 0;

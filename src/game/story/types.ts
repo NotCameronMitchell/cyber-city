@@ -6,7 +6,7 @@
 // additive and announced to every work package (docs/STORY-CONTRACT.md).
 // ─────────────────────────────────────────────────────────────────────────────
 
-import type { BuildingType, BudgetLine, NewsItem, ServiceEffect } from '../types';
+import type { BuildingType, BudgetLine, DistrictKind, NewsItem, ServiceEffect, StoryPace } from '../types';
 
 // ── Ids and small unions (§10.1) ────────────────────────────────────────────
 
@@ -19,7 +19,7 @@ export type CorpId = 'basalt' | 'nacre';
 /** The five endings (§6). Lamplight is a variant of `quiet`, not an id. */
 export type EndingId = 'ironwork' | 'pearl' | 'lowcrown' | 'ledger' | 'quiet';
 /** Stratablock crowns, picked when stage 3 starts (§4.2). */
-export type CrownId = 'foundry' | 'glare' | 'nest' | 'commons';
+export type CrownId = 'foundry' | 'glare' | 'nest' | 'commons' | 'salvage' | 'lamp';
 /** Standing tiers: hostile ≤ −60, cold −59..−20, neutral −19..19, friendly 20..59, allied ≥ 60 (§2.1). */
 export type Tier = 'hostile' | 'cold' | 'neutral' | 'friendly' | 'allied';
 /** Comparison operators for metric conditions. */
@@ -62,7 +62,9 @@ export type Target =
   | 'strongestTurf:undertow'
   | 'strongestTurf:kites'
   | 'largestAbandoned'
-  | 'rail';
+  | 'rail'
+  /** Megacity (MEGACITY §8.4, WP-7): every tile of the turf effect's gang inside the owned slots of that kind. */
+  | `slot:${DistrictKind}`;
 /** A faction, or a reference resolved at apply time. `gangs` / `corps` fan out to both members. */
 export type FactionRef = FactionId | 'patron' | 'rival' | 'gangs' | 'corps';
 /** Values a story flag may hold. */
@@ -143,7 +145,21 @@ export type Metric =
   | 'roads.highway'
   | 'roads.alley'
   /** Skyway tiles. */
-  | 'skyway.tiles';
+  | 'skyway.tiles'
+  // Megacity (docs/MEGACITY.md §8.4):
+  /** Owned districts. */
+  | 'districts'
+  /** Unspent land grants. */
+  | 'grants'
+  /** Districts of that kind owned (0/1 on a 3×3 region, 0..4 on a 5×5). */
+  | `district.${Exclude<DistrictKind, 'shore'>}`
+  /** The city's region side in slots (3 or 5). */
+  | 'region'
+  /** Ruins standing (stats.ruins). */
+  | 'ruins'
+  /** Sky Lobbies and the largest one's anchors (§5.5). */
+  | 'skylobby.count'
+  | 'skylobby.max';
 
 /**
  * Condition tree. Text syntax in STORY.md maps 1:1: `a & b` → all, `a | b` → any,
@@ -215,6 +231,8 @@ export type Effect =
   /** Open the Charter Night screen (§6.1). */
   | { t: 'charterNight' }
   | { t: 'ending'; id: EndingId }
+  /** Megacity (MEGACITY §8.2): add n land grants (districts.grants), emit `grant`. */
+  | { t: 'grant'; n: number }
   | { t: 'if'; c: Condition; then: Effect[]; else?: Effect[] };
 
 // ── Modifiers (§10.4) ───────────────────────────────────────────────────────
@@ -516,6 +534,17 @@ export interface BuildingGate {
   /** Footprint tiles that must sit on `turf` (default 1). */
   minTurfTiles?: number;
   fallbackPop?: number;
+  // Megacity (MEGACITY §6.3, §9.2): further AND terms of the gate (WP-2 evaluates them).
+  /** That district kind owned, and the footprint inside it. */
+  district?: DistrictKind;
+  /** A Sky Lobby of at least n towers. */
+  lobby?: number;
+  /** Districts owned. */
+  districts?: number;
+  /** Chapters completed. */
+  chapter?: number;
+  /** The current ending (§9.2). */
+  ending?: EndingId;
 }
 
 // ── Saved state (§10.8) ─────────────────────────────────────────────────────
@@ -631,6 +660,16 @@ export interface StoryState {
   met?: FactionId[];
   /** Tick goal waivers started counting in this chapter (720 d in AND the floor met), null before. */
   waiveFrom?: number | null;
+  // ── Megacity (MEGACITY §9.6, §3.10). Optional; missing reads as the default. ──
+  /**
+   * Each ending the city has held and for how long (≤ 32 entries; a review that keeps the ending adds nothing).
+   * Missing: a save with an ending reads as one entry `{ id: ending, variant: endingVariant, from: endingTick, to: null }`.
+   */
+  endingHistory?: { id: EndingId; variant: 'lamplight' | null; from: number; to: number | null }[];
+  /** Charter Review callback line ids used (≤ 64). Missing → []. */
+  callbacks?: string[];
+  /** The story pace this city was last played at (§3.10, §13.2). Missing → the device's pace is kept. */
+  pace?: StoryPace;
 }
 
 /** Cached turf counts, derived (not saved). Written by story/turf.ts after every update. */
@@ -720,6 +759,10 @@ export interface VerticalCache {
   /** Building ids of stations on a live network. */
   liveStations: Set<number>;
   metrics: VerticalMetrics;
+  /** Sky Lobbies (MEGACITY §5.5, WP-2): clusters of ≥ 3 anchors, each its anchor keys (tile indices) and visitors. Empty until WP-2. */
+  lobbies: { anchors: number[]; visitors: number }[];
+  /** Visitors a month all Sky Lobbies draw (PortSystem adds them to raw visitors, WP-1). */
+  lobbyVisitors: number;
 }
 
 // ── Building stats (src/game/buildingStats.ts) ──────────────────────────────
@@ -770,7 +813,7 @@ export interface CrownOption {
 /** A button in the inspect panel, from `game.inspectActions(x, y)` (§8.8). */
 export interface InspectAction {
   /** Expansion: 'rights' (Spaceport: open the launch-rights card), 'skyway' (skyway sheet: demolish this segment). */
-  id: 'crackdown' | 'raise' | 'crown' | 'rights' | 'skyway';
+  id: 'crackdown' | 'raise' | 'crown' | 'rights' | 'skyway' | 'frame' | 'bridgeRemove' | 'map';
   label: string;
   cost: number;
   enabled: boolean;
@@ -958,6 +1001,30 @@ export interface StoryView {
   titleCard: { numeral: string; title: string; epigraph: string; question: string; coherence: number; summary?: string } | null;
 }
 
+/**
+ * One mark a story choice left on the map (MEGACITY §9.3): a named place, a plaque line and the decal
+ * that draws it. Derived by `marks.ts` `deriveMarks(world)` on load and after story changes; never saved.
+ */
+export interface Mark {
+  /** Stable id, e.g. 'truceWall' (the §9.3 row). */
+  id: string;
+  /** Tile rect the mark covers (world coordinates). */
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  /** Plaque line shown in inspect and the Keepsakes list (≤ 90 chars). */
+  plaque: string;
+  /** Decal id `art/marks.ts` draws (WP-8). */
+  decal: string;
+}
+
+/** The derived set of marks (`VisualState.marks`). `version` bumps when the set changes. */
+export interface Marks {
+  list: Mark[];
+  version: number;
+}
+
 /** Everything story-specific the renderer reads, once per frame (§9). */
 export interface VisualState {
   /** 0..1, eases to 1 while a MOTH-speaker card is open. */
@@ -975,4 +1042,6 @@ export interface VisualState {
   mural: boolean;
   /** Active crackdown zones, for searchlights. */
   crackdowns: { x: number; y: number; r: number }[];
+  /** The derived marks of choices that last (MEGACITY §9, marks.ts deriveMarks; empty until WP-8). */
+  marks: Marks;
 }

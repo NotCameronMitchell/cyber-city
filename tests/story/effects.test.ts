@@ -332,6 +332,14 @@ const CASES: Record<Effect['t'], () => void> = {
     run([{ t: 'ending', id: 'quiet' }]);
     expect(calls.ending).toEqual(['quiet']);
   },
+  grant: () => {
+    const seen: number[] = [];
+    w.events.on('grant', (g) => seen.push(g.grants));
+    w.districts.grants = 0;
+    run([{ t: 'grant', n: 1 }, { t: 'grant', n: 2 }]);
+    expect(w.districts.grants).toBe(3);
+    expect(seen).toEqual([1, 3]);
+  },
   if: () => {
     w.story.flags.leashed = true;
     const fx: Effect[] = [{ t: 'if', c: { flag: 'leashed' }, then: [{ t: 'favor', f: 'board', v: -20 }], else: [{ t: 'favor', f: 'board', v: 20 }] }];
