@@ -18,7 +18,7 @@ import type { Building } from '../types';
 import type { World } from '../world';
 import type { Census } from './census';
 import type { FieldSystem } from './fields';
-import { N, type SimGrid } from './grid';
+import type { SimGrid } from './grid';
 import * as T from './tuning';
 
 type IncidentKind = 'gridHack' | 'gangSurge' | 'corpGrant' | 'smog' | 'blackMarket';
@@ -100,7 +100,7 @@ export class IncidentSystem {
         world.addNews(
           pickLine(rng, EVENT_COPY.blackMarket, {
             city: world.cityName,
-            district: at >= 0 ? districtName(at % N, (at / N) | 0, world.seed) : 'the arcades',
+            district: at >= 0 ? districtName(at % world.N, (at / world.N) | 0, world.seed) : 'the arcades',
           }),
           'good',
         );
@@ -111,6 +111,7 @@ export class IncidentSystem {
 
   private gridHack(world: World, plant: Building): void {
     const rng = world.rng;
+    const N = world.N;
     const cx = Math.min(N - 1, plant.x + (plant.size >> 1));
     const cy = Math.min(N - 1, plant.y + (plant.size >> 1));
     const security = world.fields.security[cy * N + cx];
@@ -141,8 +142,8 @@ export class IncidentSystem {
       }
     }
     if (best < 0) return;
-    const x = best % N;
-    const y = (best / N) | 0;
+    const x = best % world.N;
+    const y = (best / world.N) | 0;
     const strength = (0.32 + rng.next() * 0.16) * (1 - 0.6 * sec[best]);
     fields.addCrimeHotspot(x, y, 6, strength);
     const gang = surgeGang(world, x, y);
@@ -177,6 +178,7 @@ export function surgeGang(world: World, x: number, y: number): GangId | null {
   for (const gid of GANG_IDS) if (turf.seeded[gid]) seeded++;
   if (seeded === 0) return null;
   const owner = turf.owner;
+  const N = world.N;
   const R = TURF.surge.searchRadius;
   for (let r = 0; r <= R; r++) {
     const y0 = y - r;

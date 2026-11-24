@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { Simulation } from '../src/game/sim';
 import { decodeRle, decodeStoryState, decodeTurf, encodeRle, encodeTurf, pruneUnknownCards } from '../src/game/story/encode';
 import { newStoryState } from '../src/game/story/state';
-import type { SaveData } from '../src/game/types';
+import { LEGACY_SIZE, type SaveData } from '../src/game/types';
 import { World } from '../src/game/world';
 import { ScriptedMayor, makeSim } from './helpers';
 
@@ -336,13 +336,13 @@ describe('RLE codec', () => {
   });
 
   it('decodeStoryState returns null only for a non-object', () => {
-    expect(decodeStoryState(null, 1)).toBeNull();
-    expect(decodeStoryState([1, 2], 1)).toBeNull();
+    expect(decodeStoryState(null, 1, LEGACY_SIZE * LEGACY_SIZE)).toBeNull();
+    expect(decodeStoryState([1, 2], 1, LEGACY_SIZE * LEGACY_SIZE)).toBeNull();
     // `met` missing = a save from before it existed: left unset for the director to work out.
     const { met: _met, ...rest } = newStoryState(1);
-    const back = decodeStoryState({}, 1)!;
+    const back = decodeStoryState({}, 1, LEGACY_SIZE * LEGACY_SIZE)!;
     expect(back).toEqual(rest);
     expect('met' in back).toBe(false);
-    expect(decodeStoryState({ met: ['board', 'nope', 'board'] }, 1)!.met).toEqual(['board']);
+    expect(decodeStoryState({ met: ['board', 'nope', 'board'] }, 1, LEGACY_SIZE * LEGACY_SIZE)!.met).toEqual(['board']);
   });
 });

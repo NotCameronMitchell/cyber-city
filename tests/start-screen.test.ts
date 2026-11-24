@@ -8,7 +8,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { FUTURE_SAVE_TEXT, Game } from '../src/game/game';
 import { SAVE_KEY } from '../src/game/config';
-import { MAP_SIZE, Terrain, ZoneType } from '../src/game/types';
+import { Terrain, ZoneType } from '../src/game/types';
 import { buildShowcase } from '../src/ui/start/showcase';
 import {
   HeldTimer,
@@ -386,9 +386,10 @@ describe('hold contract with a real Game', () => {
   /** A horizontal run of land tiles near the middle of the map. */
   function landRun(g: Game, len: number): { x: number; y: number } | null {
     const w = g.world;
-    for (let d = 0; d < MAP_SIZE / 2; d++)
-      for (const y of [MAP_SIZE / 2 + d, MAP_SIZE / 2 - d]) {
-        for (let x = 4; x + len < MAP_SIZE - 4; x++) {
+    const N = w.N;
+    for (let d = 0; d < N / 2; d++)
+      for (const y of [N / 2 + d, N / 2 - d]) {
+        for (let x = 4; x + len < N - 4; x++) {
           let ok = true;
           for (let i = 0; i < len && ok; i++) ok = w.tileAt(x + i, y)?.terrain === Terrain.Land;
           if (ok) return { x, y };

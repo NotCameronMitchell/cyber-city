@@ -6,12 +6,10 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { BUILDINGS, SKYWAY } from './config';
-import { MAP_SIZE, RoadKind, type ActionPlan, type Building, type Tile } from './types';
+import { scratchFor } from './frame';
+import { RoadKind, type ActionPlan, type Building, type Tile } from './types';
 import type { Point } from './actions';
 import type { World } from './world';
-
-const N = MAP_SIZE;
-const AREA = N * N;
 
 /** Link bits (N1 E2 S4 W8) and the ramp bit. */
 export const SKY_N = 1;
@@ -26,8 +24,8 @@ export function skyOpposite(dir: number): number {
   return dir === SKY_N ? SKY_S : dir === SKY_S ? SKY_N : dir === SKY_E ? SKY_W : dir === SKY_W ? SKY_E : 0;
 }
 
-/** Neighbour index of tile `i` in direction `dir` (a link bit), or −1 off the map. */
-export function skyNeighbour(i: number, dir: number): number {
+/** Neighbour index of tile `i` in direction `dir` (a link bit) on a world of side `N`, or −1 off the map. */
+export function skyNeighbour(i: number, dir: number, N: number): number {
   const x = i % N;
   const y = (i / N) | 0;
   switch (dir) {
@@ -62,17 +60,31 @@ export function skyRampActive(world: World, i: number): boolean {
 
 /**
  * Does the neighbour of tile `i` in direction `dir` (a link bit, 1/2/4/8) link back to it
- * (in bounds and carrying the opposite bit)? Tile i's own bit is not checked.
+ * (in bounds and carrying the opposite bit)? Tile i's own bit is not checked. `N` is the side.
  */
-export function skyLinksBack(sky: Uint8Array, i: number, dir: number): boolean {
-  const j = skyNeighbour(i, dir);
+export function skyLinksBack(sky: Uint8Array, i: number, dir: number, N: number): boolean {
+  const j = skyNeighbour(i, dir, N);
   return j >= 0 && (sky[j] & skyOpposite(dir)) !== 0;
 }
 
-// Scratch for skywayDocks (stamped, no allocation per call).
-const stamp = new Uint32Array(AREA);
-const queue = new Int32Array(AREA);
-let gen = 0;
+// Scratch for skywayDocks and landsNowhere (stamped, no allocation per call), one set per frame size.
+const scratch = scratchFor((area) => ({
+  stamp: new Uint32Array(area),
+  queue: new Int32Array(area),
+  /** Overlay of world.sky with a plan's masks (the "lands nowhere" check). */
+  overlay: new Uint8Array(area),
+  gen: 0,
+}));
+
+/** The next stamp generation of a scratch set (clears the stamps on wrap). */
+function nextGen(s: ReturnType<typeof scratch>): number {
+  s.gen = (s.gen + 1) >>> 0;
+  if (s.gen === 0) {
+    s.stamp.fill(0);
+    s.gen = 1;
+  }
+  return s.gen;
+}
 
 /**
  * Is building `b` docked by a skyway, and how many active ramps does that network have?
@@ -83,11 +95,10 @@ export function skywayDocks(world: World, b: Building): { docked: boolean; ramps
   const res = { docked: false, ramps: 0 };
   if (!BUILDINGS[b.type]?.skyAnchor) return res;
   const sky = world.sky;
-  gen = (gen + 1) >>> 0;
-  if (gen === 0) {
-    stamp.fill(0);
-    gen = 1;
-  }
+  const N = world.N;
+  const sc = scratch(world.area);
+  const { stamp, queue } = sc;
+  const gen = nextGen(sc);
   let head = 0;
   let tail = 0;
   for (let dy = 0; dy < b.size; dy++)
@@ -108,7 +119,7 @@ export function skywayDocks(world: World, b: Building): { docked: boolean; ramps
     if ((m & SKY_RAMP) !== 0 && skyRampGround(world.tiles[i])) res.ramps++;
     for (let d = 1; d <= 8; d <<= 1) {
       if ((m & d) === 0) continue;
-      const j = skyNeighbour(i, d);
+      const j = skyNeighbour(i, d, N);
       if (j < 0 || stamp[j] === gen || (sky[j] & skyOpposite(d)) === 0) continue;
       stamp[j] = gen;
       queue[tail++] = j;
@@ -129,21 +140,17 @@ function skybridgeGapAt(world: World, x: number, y: number): boolean {
   return false;
 }
 
-/** Overlay of world.sky with a plan's masks (the "lands nowhere" check). */
-const overlay = new Uint8Array(AREA);
-
 /**
  * Would the network through `pts` (with `masks` written over world.sky) have neither an
  * active ramp nor a dock? A BFS over mutual links in the overlay.
  */
 function landsNowhere(world: World, pts: readonly Point[], masks: readonly number[]): boolean {
+  const N = world.N;
+  const sc = scratch(world.area);
+  const { stamp, queue, overlay } = sc;
   overlay.set(world.sky);
   for (let k = 0; k < pts.length; k++) overlay[pts[k].y * N + pts[k].x] = masks[k];
-  gen = (gen + 1) >>> 0;
-  if (gen === 0) {
-    stamp.fill(0);
-    gen = 1;
-  }
+  const gen = nextGen(sc);
   let head = 0;
   let tail = 0;
   const s0 = pts[0].y * N + pts[0].x;
@@ -156,7 +163,7 @@ function landsNowhere(world: World, pts: readonly Point[], masks: readonly numbe
     if (world.tiles[i].buildingId >= 0 && isSkyAnchorAt(world, i % N, (i / N) | 0)) return false;
     for (let d = 1; d <= 8; d <<= 1) {
       if ((m & d) === 0) continue;
-      const j = skyNeighbour(i, d);
+      const j = skyNeighbour(i, d, N);
       if (j < 0 || stamp[j] === gen || (overlay[j] & skyOpposite(d)) === 0) continue;
       stamp[j] = gen;
       queue[tail++] = j;
@@ -183,6 +190,7 @@ function landsNowhere(world: World, pts: readonly Point[], masks: readonly numbe
  */
 export function planSkyway(world: World, path: readonly Point[], plan: ActionPlan): number {
   const SW = SKYWAY;
+  const N = world.N;
   let pts = path.filter((p) => world.inBounds(p.x, p.y));
   let truncated = false;
   if (pts.length > SW.maxDrag) {

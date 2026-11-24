@@ -6,12 +6,12 @@ import { describe, expect, it } from 'vitest';
 import { AIRPORT, BUILDINGS, SEAPORT, SPACEPORT, TOURISM } from '../src/game/config';
 import type { GameEventMap } from '../src/game/events';
 import type { Census } from '../src/game/sim/census';
-import { DAYS_PER_MONTH, MAP_SIZE, ZoneType } from '../src/game/types';
+import { DAYS_PER_MONTH, LEGACY_SIZE, ZoneType } from '../src/game/types';
 import { World } from '../src/game/world';
 import { flatWorld, fullyBuiltWorld, makeSim, run } from './helpers';
 import { expansionFixture, playExpansion } from './expansion-fixture';
 
-const N = MAP_SIZE;
+const N = LEGACY_SIZE;
 
 /** A powered town with jobs and homes, plus whichever ports `add` places (all touching the grid). */
 function town(add: (w: World) => void = () => {}) {

@@ -14,16 +14,15 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { blankStats, buildingStats } from '../buildingStats';
-import { MAP_SIZE, type Building } from '../types';
+import type { Building } from '../types';
 import type { World } from '../world';
 import type { SimGrid } from './grid';
 import * as Tiers from './tiers';
 
 // Imported bindings are copied into module locals: under Vite's SSR/test
 // transform every imported identifier becomes a getter call, which is very
-// slow inside hot per-tile loops.
-const N = MAP_SIZE;
-const AREA = N * N;
+// slow inside hot per-tile loops. The frame (N, area) is per world (MEGACITY
+// §3.1), copied at construction and into locals per call.
 
 /** Power draw per zone × level × tier (sim/tiers.ts, index z * 12 + l * 3 + t). */
 const DRAW_T = Tiers.DRAW_T;
@@ -34,15 +33,18 @@ export function zoneDraw(zone: number, level: number, abandoned: number, tier = 
 }
 
 export class PowerGrid {
+  /** The frame (MEGACITY §3.1): side and tile count of the world this grid serves. */
+  readonly N: number;
+  readonly area: number;
   /** Component label per tile, -1 = not a conductor. */
-  readonly comp = new Int32Array(AREA);
+  readonly comp: Int32Array;
   /** 1 = energised this tick. */
-  readonly powered = new Uint8Array(AREA);
+  readonly powered: Uint8Array;
   /** Per-component totals (indexed by label). */
-  readonly compSupply = new Float64Array(AREA);
-  readonly compDemand = new Float64Array(AREA);
+  readonly compSupply: Float64Array;
+  readonly compDemand: Float64Array;
   /** 1 = the component's demand exceeds its supply. */
-  readonly compDeficit = new Uint8Array(AREA);
+  readonly compDeficit: Uint8Array;
   compCount = 0;
 
   /** City-wide totals from the last compute(). */
@@ -59,17 +61,33 @@ export class PowerGrid {
   /** mods.powerDemandMul at the last compute(): growth reservations scale by it too. */
   demandMul = 1;
 
-  private readonly queue = new Int32Array(AREA);
-  private readonly visited = new Uint8Array(AREA);
-  private readonly remain = new Float64Array(AREA);
-  private readonly brown = new Uint8Array(AREA);
+  private readonly queue: Int32Array;
+  private readonly visited: Uint8Array;
+  private readonly remain: Float64Array;
+  private readonly brown: Uint8Array;
   private readonly allocated = new Set<number>();
   /** Scratch for buildingStats() (no per-tick allocation). */
   private readonly st = blankStats();
 
+  constructor(world: Pick<World, 'N' | 'area'>) {
+    const area = world.area;
+    this.N = world.N;
+    this.area = area;
+    this.comp = new Int32Array(area);
+    this.powered = new Uint8Array(area);
+    this.compSupply = new Float64Array(area);
+    this.compDemand = new Float64Array(area);
+    this.compDeficit = new Uint8Array(area);
+    this.queue = new Int32Array(area);
+    this.visited = new Uint8Array(area);
+    this.remain = new Float64Array(area);
+    this.brown = new Uint8Array(area);
+  }
+
   /** Recompute the grid, write tile.powered / building.powered. Returns true if any tile flipped. */
   compute(world: World, g: SimGrid): boolean {
-    const { comp, powered, compSupply, compDemand, compDeficit, queue, visited, remain, brown, st } = this;
+    const { comp, powered, compSupply, compDemand, compDeficit, queue, visited, remain, brown, st, N } = this;
+    const AREA = this.area;
     const { zone, level, abandoned, road, wealth, bld } = g;
     const supplyMul = world.mods.powerSupplyMul;
     const demandMul = world.mods.powerDemandMul;

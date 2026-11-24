@@ -307,7 +307,7 @@ export type ModPatch = Partial<Omit<SimMods, KeyedModKey>> & {
 
 // ── Per-tile layers (§10.5) ─────────────────────────────────────────────────
 
-/** Per-tile modifier layers, each Float32Array(MAP_SIZE²). The sim reads `world.layers`. */
+/** Per-tile modifier layers, each Float32Array(world.area). The sim reads `world.layers`. */
 export interface SimLayers {
   /** Additive crime (identity 0). */
   crimeAdd: Float32Array;
@@ -647,11 +647,11 @@ export interface TurfStats {
 
 /** Gang turf on World (`world.turf`). Plain data so the sim can read it without story imports (§3.1). */
 export interface TurfMap {
-  /** Uint8Array(4096): 0 = none, 1 = Undertow, 2 = Kites. */
+  /** Uint8Array(world.area): 0 = none, 1 = Undertow, 2 = Kites. */
   owner: Uint8Array;
-  /** Uint8Array(4096): strength 0..100. */
+  /** Uint8Array(world.area): strength 0..100. */
   str: Uint8Array;
-  /** Uint8Array(4096): days left on a contested flag (not saved). */
+  /** Uint8Array(world.area): days left on a contested flag (not saved). */
   contested: Uint8Array;
   /** Seam Truce: rules 1 and 2 are skipped while frozenUntil > tick. */
   frozenUntil: number;
@@ -715,7 +715,7 @@ export interface VerticalCache {
   version: number;
   /** Ids of links whose anchors are both tall and powered. Others are sealed (drawn dark). */
   activeLinks: Set<number>;
-  /** Uint8Array(4096): 1 = rail tile on a live network. */
+  /** Uint8Array(world.area): 1 = rail tile on a live network. */
   railLive: Uint8Array;
   /** Building ids of stations on a live network. */
   liveStations: Set<number>;

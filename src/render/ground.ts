@@ -36,13 +36,12 @@ import { BUILDINGS, EDGE_LINKS, ZONES } from '../game/config';
 import { shoreFacing } from '../game/ports';
 import { fbm, hash2 } from '../game/rng';
 import { skyRampGround } from '../game/skyway';
-import { MAP_SIZE, RoadKind, Terrain, ZoneType, type Building, type Tile } from '../game/types';
+import { RoadKind, Terrain, ZoneType, type Building, type Tile } from '../game/types';
 import type { World } from '../game/world';
 import type { ArtEnv } from './buildings';
 import { HALF_H, HALF_W } from './camera';
 import { MATERIAL, NEON, css, glowSprite, hexToRgb, lit, mix, shade, type RGB } from './palette';
 
-const N = MAP_SIZE;
 const TAU = Math.PI * 2;
 const HP = Math.PI / 2;
 
@@ -76,8 +75,7 @@ const PAD = 2;
 const CANVAS_PX = CHUNK_PX + PAD * 2;
 const CHUNK_BYTES = CANVAS_PX * CANVAS_PX * 4;
 const MEMORY_BUDGET = 24 * 1024 * 1024;
-/** Chunk grid origin in world px (just outside the map's bounding box). */
-const OX = -N * HALF_W - 32;
+/** Chunk grid origin in world px, just outside the map's bounding box: x is per world (GroundCache.OX = −N·HALF_W − 32). */
 const OY = -32;
 /** Special bucket id: whole map at a tiny fixed scale, always kept. */
 const OVERVIEW = -100;
@@ -277,14 +275,18 @@ export function roadOutlinePath(path: CanvasPath, x: number, y: number, mask: nu
 /** Derived, immutable-per-world terrain data (terrain never changes after generation). */
 export class TerrainInfo {
   /** 0..7 brightness / tint level of bare land. */
-  readonly tone = new Uint8Array(N * N);
+  readonly tone: Uint8Array;
   /** Water: 1..6 distance to land (1 = shoreline). Land: 0. */
-  readonly depth = new Uint8Array(N * N);
+  readonly depth: Uint8Array;
   /** Regional-road stubs (§3.10, art only, by seed hash): 0 = none, else 1 + the outward direction (0 N, 1 E, 2 S, 3 W). */
-  readonly stub = new Uint8Array(N * N);
+  readonly stub: Uint8Array;
   readonly seed: number;
 
   constructor(world: World) {
+    const N = world.N;
+    this.tone = new Uint8Array(world.area);
+    this.depth = new Uint8Array(world.area);
+    this.stub = new Uint8Array(world.area);
     this.seed = world.seed % 100000;
     const tiles = world.tiles;
     const queue: number[] = [];
@@ -340,6 +342,7 @@ export class TerrainInfo {
    * hashed position along the side. Deterministic per seed; never stored in the save.
    */
   private placeStubs(world: World) {
+    const N = world.N;
     const land = (x: number, y: number) => world.tileAt(x, y)?.terrain === Terrain.Land;
     const at = (side: number, p: number): [number, number] =>
       side === 0 ? [p, 0] : side === 1 ? [N - 1, p] : side === 2 ? [p, N - 1] : [0, p];
@@ -780,10 +783,13 @@ export class GroundPainter {
   private b4 = new Batch();
   private gl = new Batch();
   private bridges: number[] = [];
+  /** Side of the world being painted (its N, MEGACITY §3.1); set by begin(). */
+  private N = 0;
 
   begin(ctx: CanvasRenderingContext2D, world: World, info: TerrainInfo, nightBucket: number, scale: number) {
     this.ctx = ctx;
     this.world = world;
+    this.N = world.N;
     this.info = info;
     let pal = this.palCache.get(nightBucket);
     if (!pal) {
@@ -838,6 +844,7 @@ export class GroundPainter {
   // ── Base pass ─────────────────────────────────────────────────────────────
 
   base(x: number, y: number) {
+    const { N } = this;
     const i = y * N + x;
     const t = this.world.tiles[i];
     const sky = this.world.sky[i];
@@ -865,6 +872,7 @@ export class GroundPainter {
 
   /** Draw all queued base geometry, then bridges (which need strict per-tile order), then the top layer. */
   flushBase() {
+    const { N } = this;
     const ctx = this.ctx;
     this.b0.flush(ctx);
     this.b1.flush(ctx);
@@ -880,6 +888,7 @@ export class GroundPainter {
    * end on the map border that points inward (a regional road runs off the edge, §3.10).
    */
   private mask(x: number, y: number): number {
+    const { N } = this;
     const m = this.world.roadMask(x, y);
     if (BITS[m] !== 1) return m;
     if (x === 0 && m === 2) return m | 8;
@@ -958,6 +967,7 @@ export class GroundPainter {
   }
 
   private land(x: number, y: number) {
+    const { N } = this;
     const P = this.pal;
     const slab = this.isSlab(x, y);
     this.tileRect(this.b0.f(slab ? P.slab : P.land[this.info.tone[y * N + x]]), x, y);
@@ -1641,6 +1651,7 @@ export class GroundPainter {
   }
 
   private water(x: number, y: number) {
+    const { N } = this;
     const P = this.pal;
     this.tileRect(this.b0.f(P.water[this.info.depth[y * N + x]]), x, y);
     if (this.detail) {
@@ -1702,6 +1713,7 @@ export class GroundPainter {
    * directly (after the batched layers), in tile order.
    */
   private bridge(x: number, y: number) {
+    const { N } = this;
     const ctx = this.ctx;
     const P = this.pal;
     const t = this.world.tiles[y * N + x];
@@ -1800,6 +1812,7 @@ export class GroundPainter {
   // ── Additive glow pass (tile space) ───────────────────────────────────────
 
   glowTile(x: number, y: number) {
+    const { N } = this;
     const t = this.world.tiles[y * N + x];
     const P = this.pal;
     const g = this.gl;
@@ -2003,6 +2016,7 @@ export class GroundPainter {
   }
 
   private bridgeGlow(x: number, y: number) {
+    const { N } = this;
     const P = this.pal;
     const t = this.world.tiles[y * N + x];
     const full = this.mask(x, y);
@@ -2035,6 +2049,7 @@ export class GroundPainter {
 
   /** Vertical reflections of lit neighbours on water / wet asphalt and bridge lamp halos. */
   glowWorld(x: number, y: number) {
+    const { N } = this;
     const t = this.world.tiles[y * N + x];
     if (!t.road && t.terrain !== Terrain.Water) return;
     if (!this.detail) return;
@@ -2164,7 +2179,10 @@ export class GroundCache {
   private frame = 0;
   private bucket = 0;
   private prevBucket = 0;
-  private tileBuf = new Int32Array(N * N);
+  /** The frame of the world the chunks show (MEGACITY §3.1): side, chunk-grid x origin, tile buffer. Set by bind(). */
+  private N = 0;
+  private OX = 0;
+  private tileBuf = new Int32Array(0);
   private sparkle: HTMLCanvasElement | null = null;
   private lastZoom = 0;
   private zoomMovedAt = -1e9;
@@ -2196,12 +2214,21 @@ export class GroundCache {
     return this.info;
   }
 
+  /** Bind the chunk grid to `world`'s frame; a different side drops every chunk. */
+  private bind(world: World) {
+    if (world.N === this.N) return;
+    this.reset();
+    this.N = world.N;
+    this.OX = -world.N * HALF_W - 32;
+    this.tileBuf = new Int32Array(world.area);
+  }
+
   /** Padded world rect a chunk canvas covers. */
   private chunkRect(c: Chunk): Rect {
     const s = scaleOf(c.k);
     const W = CHUNK_PX / s;
     const p = PAD / s;
-    const x0 = OX + c.i * W;
+    const x0 = this.OX + c.i * W;
     const y0 = OY + c.j * W;
     return { x0: x0 - p, y0: y0 - p, x1: x0 + W + p, y1: y0 + W + p };
   }
@@ -2242,6 +2269,7 @@ export class GroundCache {
 
   /** Fill tileBuf with tile indices (draw order) whose ground art may touch `r`. Returns count. */
   private collectTiles(r: Rect): number {
+    const { N } = this;
     const ax0 = r.x0 - HALF_W - SPILL;
     const ax1 = r.x1 + HALF_W + SPILL;
     const ay0 = r.y0 - 2 * HALF_H - SPILL;
@@ -2271,6 +2299,7 @@ export class GroundCache {
 
   /** Paint a chunk (fully, or only `clip` in world px). */
   private renderChunk(c: Chunk, world: World, nightBucket: number, clip: Rect | null) {
+    const N = world.N;
     const t0 = now();
     if (!c.canvas) {
       c.canvas = this.pool.pop() ?? document.createElement('canvas');
@@ -2283,7 +2312,7 @@ export class GroundCache {
     if (!ctx) return;
     const s = scaleOf(c.k);
     const W = CHUNK_PX / s;
-    const ox = OX + c.i * W;
+    const ox = this.OX + c.i * W;
     const oy = OY + c.j * W;
     const full = this.chunkRect(c);
     let r = full;
@@ -2345,12 +2374,13 @@ export class GroundCache {
 
   /** Visible chunk index range of bucket k for a world rect. */
   private range(k: number, v: Rect) {
+    const { N } = this;
     const W = CHUNK_PX / scaleOf(k);
-    const maxI = Math.floor((N * HALF_W + SPILL - OX) / W);
+    const maxI = Math.floor((N * HALF_W + SPILL - this.OX) / W);
     const maxJ = Math.floor((N * 2 * HALF_H + SPILL - OY) / W);
     return {
-      i0: Math.max(0, Math.floor((v.x0 - OX) / W)),
-      i1: Math.min(maxI, Math.floor((v.x1 - OX) / W)),
+      i0: Math.max(0, Math.floor((v.x0 - this.OX) / W)),
+      i1: Math.min(maxI, Math.floor((v.x1 - this.OX) / W)),
       j0: Math.max(0, Math.floor((v.y0 - OY) / W)),
       j1: Math.min(maxJ, Math.floor((v.y1 - OY) / W)),
     };
@@ -2361,6 +2391,7 @@ export class GroundCache {
    * in an unspecified state (caller resets it).
    */
   draw(ctx: CanvasRenderingContext2D, world: World, view: GroundView, night: number, budgetMs: number) {
+    this.bind(world);
     this.frame++;
     const frame = this.frame;
     const nightBucket = Math.round(Math.max(0, Math.min(1, night)) * NIGHT_STEPS);
@@ -2416,7 +2447,7 @@ export class GroundCache {
     const ccx = view.camX;
     const ccy = view.camY;
     const W = CHUNK_PX / scaleOf(k);
-    const dist = (c: Chunk) => Math.abs(OX + (c.i + 0.5) * W - ccx) + Math.abs(OY + (c.j + 0.5) * W - ccy);
+    const dist = (c: Chunk) => Math.abs(this.OX + (c.i + 0.5) * W - ccx) + Math.abs(OY + (c.j + 0.5) * W - ccy);
     const pending = vis.filter((c) => !c.rendered || c.night !== nightBucket);
     if (pending.length > 1) pending.sort((a, b) => (a.rendered ? 1 : 0) - (b.rendered ? 1 : 0) || dist(a) - dist(b));
     // 2) missing chunks, then 3) night-stale chunks (the stale copy keeps drawing meanwhile)
@@ -2466,7 +2497,7 @@ export class GroundCache {
     const s = scaleOf(k);
     const f = (view.zoom * view.dpr) / s;
     // Shared transform for every chunk of the bucket: cache px → device px.
-    const tx = Math.round(((OX - view.camX) * view.zoom + view.width / 2) * view.dpr);
+    const tx = Math.round(((this.OX - view.camX) * view.zoom + view.width / 2) * view.dpr);
     const ty = Math.round(((OY - view.camY) * view.zoom + view.height / 2) * view.dpr);
     ctx.setTransform(f, 0, 0, f, tx, ty);
     ctx.imageSmoothingEnabled = true;
@@ -2511,6 +2542,7 @@ export class GroundCache {
    */
   /** `presence` (0..1, VisualState): while a MOTH card is open the street glow breathes on a slow 4 s cycle. */
   drawAnimated(ctx: CanvasRenderingContext2D, world: World, b: Rect, env: ArtEnv, view: Rect, presence = 0) {
+    const N = world.N;
     if (env.zoom < 0.3) return;
     const breath = presence > 0.01 ? 1 + presence * (1.2 + 1.6 * (0.5 + 0.5 * Math.sin((env.time * Math.PI * 2) / 4))) : 1;
     const info = this.terrain(world);

@@ -19,7 +19,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import type { Game } from '../game/game';
-import { MAP_SIZE, ZoneType, type Building, type Settings } from '../game/types';
+import { ZoneType, type Building, type Settings } from '../game/types';
 import type { World } from '../game/world';
 import { drawServiceBuilding, drawZoneBuilding, resetFrame, serviceBuildingHeight, zoneBuildingHeight, type ArtEnv } from './buildings';
 import { HALF_H, HALF_W, type Camera } from './camera';
@@ -42,7 +42,6 @@ import {
 import { Backdrop } from './sky';
 import { StoryRender } from './story';
 
-const N = MAP_SIZE;
 /** Tiles of margin so tall buildings whose base is off-screen still draw. */
 const OBJECT_MARGIN = 10;
 /** Alpha of buildings while a data overlay is shown. */
@@ -113,6 +112,7 @@ export class Renderer {
     this.touch = typeof matchMedia === 'function' && matchMedia('(hover: none), (pointer: coarse)').matches;
     this.quality = game.settings.quality;
     this.worldToken = worldId(game.world);
+    camera.setMapSize(game.world.N);
     this.backdrop = new Backdrop(game.world.seed % 997);
     const ev = game.events;
     this.unsubs.push(
@@ -126,7 +126,8 @@ export class Renderer {
       ev.on('overlay', () => this.overlay.invalidate()),
       // Turf changed (monthly / crackdown): the colour wash is baked into the ground chunks.
       ev.on('turf', () => {
-        this.ground.invalidate({ x0: 0, y0: 0, x1: N - 1, y1: N - 1 });
+        const n = this.game.world.N;
+        this.ground.invalidate({ x0: 0, y0: 0, x1: n - 1, y1: n - 1 });
         this.overlay.invalidate();
       }),
       ev.on('vertical', () => this.overlay.invalidate()),
@@ -151,6 +152,7 @@ export class Renderer {
 
   private onWorldChanged() {
     this.worldToken = worldId(this.game.world);
+    this.camera.setMapSize(this.game.world.N);
     this.ground.reset();
     this.overlay.reset();
     this.access.invalidate();
@@ -191,9 +193,10 @@ export class Renderer {
   /** First layout: if the camera is untouched, frame the developed area (or map centre) at a tappable zoom. */
   private frameInitialView() {
     const cam = this.camera;
-    const isDefault = cam.x === 0 && cam.y === N * HALF_H && cam.zoom === 1;
-    if (!isDefault) return;
     const world = this.game.world;
+    const N = world.N;
+    const isDefault = cam.x === 0 && cam.y === cam.mapSize * HALF_H && cam.zoom === 1;
+    if (!isDefault) return;
     let x0 = N;
     let y0 = N;
     let x1 = -1;
@@ -283,7 +286,7 @@ export class Renderer {
     const wf = (this.cssH / 2 - cam.y * zoom) * dpr;
     const setWorld = (c: CanvasRenderingContext2D) => c.setTransform(wa, 0, 0, wa, we, wf);
     setWorld(ctx);
-    this.backdrop.drawUnderMap(ctx, night, time, zoom, view);
+    this.backdrop.drawUnderMap(ctx, night, time, zoom, view, world.N);
 
     // 3. Cached ground.
     this.ground.draw(
@@ -302,7 +305,7 @@ export class Renderer {
 
     // 5. Data overlay.
     if (game.overlay !== 'none') this.overlay.draw(ctx, world, game.overlay, time, tilesVis, zoom);
-    this.backdrop.drawRim(ctx, night, zoom);
+    this.backdrop.drawRim(ctx, night, zoom, world.N);
 
     // 6. Ground-level interaction feedback (shore sites while the Seaport tool is active).
     drawToolHints(ctx, game, time, zoom, tilesVis);
@@ -403,6 +406,7 @@ export class Renderer {
    * (SkywayLayer.afterBuilding), which also lights the dock portals (§3.7).
    */
   private drawObjects(ctx: CanvasRenderingContext2D, world: World, b: Rect, view: Rect, env: ArtEnv) {
+    const N = world.N;
     const tiles = world.tiles;
     const rail = world.rail;
     const sky = world.sky;

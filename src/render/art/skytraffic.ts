@@ -6,7 +6,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { hash2 } from '../../game/rng';
-import { MAP_SIZE, ZoneType } from '../../game/types';
+import { ZoneType } from '../../game/types';
 import type { World } from '../../game/world';
 import { serviceBuildingHeight, zoneBuildingHeight } from '../buildings';
 import { HALF_H, HALF_W } from '../camera';
@@ -14,7 +14,6 @@ import { css, glowSprite, mix, type RGB } from '../palette';
 import { GLYPHS } from './painter';
 import type { Bounds } from './traffic';
 
-const N = MAP_SIZE;
 
 interface Lane {
   /** 0: runs along u at v = c; 1: runs along v at u = c. */
@@ -173,6 +172,7 @@ export class SkyTraffic {
   }
 
   update(dt: number, world: World, quality: 'low' | 'high', b: Bounds | null, night: number) {
+    const N = world.N;
     if (world !== this.worldRef) this.setup(world);
     const pop = world.stats.population;
     const popK = Math.pow(Math.min(1, pop / 30000), 0.8); // ×10 units (MEGACITY §4.4)
@@ -237,6 +237,7 @@ export class SkyTraffic {
   }
 
   private findLights(world: World, b: Bounds, quality: 'low' | 'high', night: number) {
+    const N = world.N;
     this.lights.length = 0;
     if (quality === 'low' || night < 0.3) return;
     const cx = (b.x0 + b.x1) / 2;

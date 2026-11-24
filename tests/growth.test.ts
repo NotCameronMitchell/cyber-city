@@ -151,9 +151,9 @@ describe('zone growth', () => {
     }
     // Growth driven by hand with a score inside the $$ band, so only power decides.
     const g = new SimGrid(w);
-    const power = new PowerGrid();
-    const growth = new GrowthSystem();
-    const fields = new FieldSystem();
+    const power = new PowerGrid(w);
+    const growth = new GrowthSystem(w);
+    const fields = new FieldSystem(w);
     w.buildingAt(8, 20)!.offline = 9999;
     for (let d = 0; d < 200; d++) {
       w.tick++;

@@ -933,10 +933,10 @@ export class InputController {
   /** Keep the finger tile on the map (and building footprints fully on it); the Seaport snaps to a shore site. */
   private clampTile(t: Vec): Vec {
     const tool = this.game.tool;
-    clampToolTile(t, this.game.world.size, isBuildingTool(tool) ? BUILDINGS[tool].size : 1);
+    clampToolTile(t, this.game.world.N, isBuildingTool(tool) ? BUILDINGS[tool].size : 1);
     if (tool === 'seaport') {
       // EXPANSION §5.1: slide toward a highlighted shore instead of hunting for it (snapRadius tiles).
-      const s = snapSeaport(t, this.shores());
+      const s = snapSeaport(t, this.shores(), this.game.world.N);
       t.x = s.x;
       t.y = s.y;
     }
@@ -946,8 +946,8 @@ export class InputController {
   /** Valid Seaport top-lefts, recounted when the tool is picked and after tile edits (< 1 ms). */
   private shores(): Uint8Array {
     const w = this.game.world;
-    if (!this.shoreMarks || this.shoreMarks.length !== w.size * w.size) {
-      this.shoreMarks = new Uint8Array(w.size * w.size);
+    if (!this.shoreMarks || this.shoreMarks.length !== w.area) {
+      this.shoreMarks = new Uint8Array(w.area);
       this.shoreDirty = true;
     }
     if (this.shoreDirty) {

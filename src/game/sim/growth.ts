@@ -16,7 +16,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { WEALTH, ZONES } from '../config';
-import { MAP_SIZE, ZoneType, type Demand, type WealthTier } from '../types';
+import { ZoneType, type Demand, type WealthTier } from '../types';
 import * as Wealth from '../wealth';
 import type { World } from '../world';
 import type { SimGrid } from './grid';
@@ -30,8 +30,6 @@ import * as Tuning from './tuning';
 const T = { ...Tuning };
 const W = { ...Wealth };
 const STREAK = WEALTH.streak;
-const N = MAP_SIZE;
-const AREA = N * N;
 const RES = ZoneType.Residential;
 const COM = ZoneType.Commercial;
 
@@ -44,8 +42,8 @@ const LEVEL_LV: readonly (readonly [number, number])[] = [
 ];
 
 export class GrowthSystem {
-  /** Consecutive days each developed tile has gone without power. */
-  readonly unpoweredDays = new Uint16Array(AREA);
+  /** Consecutive days each developed tile has gone without power (Uint16Array(world.area)). */
+  readonly unpoweredDays: Uint16Array;
   /** Flags set this tick when a tile reached (zone * 4 + level). Cleared by run(). */
   readonly reached = new Uint8Array(16);
   /** Flags set this tick when a tile stepped up to (zone * 3 + tier). Cleared by run(). */
@@ -54,6 +52,11 @@ export class GrowthSystem {
   tierSteps = 0;
   /** Level changes during the last run (for debugging / tests). */
   changes = 0;
+
+  /** The per-world frame (MEGACITY §3.1): one counter per tile of `world`. */
+  constructor(world: Pick<World, 'area'>) {
+    this.unpoweredDays = new Uint16Array(world.area);
+  }
 
   /** Advance per-tile counters. Call once per tick after the power pass. */
   countDays(g: SimGrid, power: PowerGrid): void {
@@ -144,7 +147,7 @@ export class GrowthSystem {
           // Otherwise (a cheaper down-step) it steps at once. Waiting keeps the streak: it retries next sample.
           const extra = zoneDraw(z, l, 0, to) - zoneDraw(z, l, 0, tier);
           if ((dir < 0 && extra <= 0) || (power.canFeed(i) && power.tryReserve(i, extra))) {
-            world.setWealth(i % N, (i / N) | 0, to as WealthTier);
+            world.setWealth(i % world.N, (i / world.N) | 0, to as WealthTier);
             gw[i] = to;
             streak[i] = 0;
             this.tierSteps++;
@@ -217,7 +220,7 @@ export class GrowthSystem {
         steps++;
       }
       if (t !== gw[i]) {
-        world.setWealth(i % N, (i / N) | 0, t as WealthTier);
+        world.setWealth(i % world.N, (i / world.N) | 0, t as WealthTier);
         gw[i] = t;
         world.wealthStreak[i] = 0;
       }
@@ -226,7 +229,7 @@ export class GrowthSystem {
   }
 
   private set(world: World, g: SimGrid, i: number, level: number, abandoned: boolean, tier?: WealthTier): void {
-    world.setLevel(i % N, (i / N) | 0, level, abandoned, tier);
+    world.setLevel(i % world.N, (i / world.N) | 0, level, abandoned, tier);
     g.level[i] = level;
     g.abandoned[i] = abandoned && level > 0 ? 1 : 0;
     g.wealth[i] = world.tiles[i].wealth;

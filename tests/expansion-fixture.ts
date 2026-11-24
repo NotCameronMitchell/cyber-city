@@ -18,11 +18,11 @@ import { BUILDINGS, ROAD_KINDS } from '../src/game/config';
 import { shoreFacing, shoreSites } from '../src/game/ports';
 import { Simulation } from '../src/game/sim';
 import { SKY_E, SKY_N, SKY_RAMP, SKY_S, SKY_W, skyRampGround } from '../src/game/skyway';
-import { DAYS_PER_MONTH, MAP_SIZE, MONTHS_PER_YEAR, RoadKind, Terrain, ZoneType, type Building, type BuildingType } from '../src/game/types';
+import { DAYS_PER_MONTH, LEGACY_SIZE, MONTHS_PER_YEAR, RoadKind, Terrain, ZoneType, type Building, type BuildingType } from '../src/game/types';
 import type { World } from '../src/game/world';
 import { ScriptedMayor } from './helpers';
 
-const N = MAP_SIZE;
+const N = LEGACY_SIZE;
 
 // ── Mutator helpers ─────────────────────────────────────────────────────────
 
@@ -234,7 +234,7 @@ export class ExpansionMayor {
   private port = false;
   private air = false;
   /** Grid geometry of ScriptedMayor (span 11, centred): roads every 4 tiles from `o`. */
-  private readonly o = Math.floor((MAP_SIZE - 44) / 2);
+  private readonly o = Math.floor((LEGACY_SIZE - 44) / 2);
 
   constructor(
     readonly world: World,

@@ -13,7 +13,6 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { Rng, hash2 } from '../game/rng';
-import { MAP_SIZE } from '../game/types';
 import { HALF_H, HALF_W } from './camera';
 import { MATERIAL, NEON, css, glowSprite, lit, mix, shade, type RGB } from './palette';
 
@@ -267,10 +266,17 @@ export class Backdrop {
 
   // ── World space ───────────────────────────────────────────────────────────
 
-  /** City glow under the map and the map slab. World transform expected. */
-  drawUnderMap(ctx: CanvasRenderingContext2D, night: number, time: number, zoom: number, view: { x0: number; y0: number; x1: number; y1: number }) {
+  /** City glow under the map and the map slab, for a map `mapSize` tiles a side (the world's N). World transform expected. */
+  drawUnderMap(
+    ctx: CanvasRenderingContext2D,
+    night: number,
+    time: number,
+    zoom: number,
+    view: { x0: number; y0: number; x1: number; y1: number },
+    mapSize: number,
+  ) {
     const n = night;
-    const S = MAP_SIZE;
+    const S = mapSize;
     const L = { x: -S * HALF_W, y: S * HALF_H };
     const B = { x: 0, y: S * 2 * HALF_H };
     const R = { x: S * HALF_W, y: S * HALF_H };
@@ -365,9 +371,9 @@ export class Backdrop {
     }
   }
 
-  /** Neon rim along the map edge (drawn over the ground). World transform expected. */
-  drawRim(ctx: CanvasRenderingContext2D, night: number, zoom: number) {
-    const S = MAP_SIZE;
+  /** Neon rim along the edge of a map `mapSize` tiles a side (drawn over the ground). World transform expected. */
+  drawRim(ctx: CanvasRenderingContext2D, night: number, zoom: number, mapSize: number) {
+    const S = mapSize;
     const L = { x: -S * HALF_W, y: S * HALF_H };
     const B = { x: 0, y: S * 2 * HALF_H };
     const R = { x: S * HALF_W, y: S * HALF_H };

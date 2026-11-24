@@ -59,7 +59,7 @@ function start(data?: unknown): void {
     if (!restored) console.warn('[boot] hot-reload snapshot could not be restored');
   }
 
-  const camera = new Camera();
+  const camera = new Camera(game.world.N);
   const renderer = new Renderer(canvas, game, camera);
   const input = new InputController(canvas, game, camera);
   const ui = new UI(root, game, camera);

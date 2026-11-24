@@ -28,7 +28,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { EDGE_LINKS, MAX_TAX, TOURISM } from './config';
-import { DAYS_PER_MONTH, MAP_SIZE, type Demand } from './types';
+import { DAYS_PER_MONTH, type Demand } from './types';
 import type { World } from './world';
 import { Advisor } from './sim/advisor';
 import { projectBudget, settleMonth } from './sim/budget';
@@ -41,8 +41,6 @@ import { PortSystem, type PortView } from './sim/ports';
 import { PowerGrid } from './sim/power';
 import { DEMAND_SMOOTH, FIELD_STAGGER } from './sim/tuning';
 
-const AREA = MAP_SIZE * MAP_SIZE;
-
 export interface SimOptions {
   /** Random city events (grid hacks, gang surges, corp investments). */
   events: boolean;
@@ -53,10 +51,10 @@ export class Simulation {
   readonly world: World;
 
   private readonly grid: SimGrid;
-  private readonly power = new PowerGrid();
-  private readonly fields = new FieldSystem();
+  private readonly power: PowerGrid;
+  private readonly fields: FieldSystem;
   private readonly census = new Census();
-  private readonly growth = new GrowthSystem();
+  private readonly growth: GrowthSystem;
   private readonly incidents = new IncidentSystem();
   private readonly advisor = new Advisor();
   /** Ports (EXPANSION §5). Read through `ports`. */
@@ -69,7 +67,11 @@ export class Simulation {
 
   constructor(world: World) {
     this.world = world;
+    // The frame is the world's (MEGACITY §3.1): every system sizes its arrays from world.area.
     this.grid = new SimGrid(world);
+    this.power = new PowerGrid(world);
+    this.fields = new FieldSystem(world);
+    this.growth = new GrowthSystem(world);
     this.portSystem = new PortSystem(world);
   }
 
@@ -101,7 +103,8 @@ export class Simulation {
     const g = this.grid;
     w.tick++;
     const tiles = w.tiles;
-    for (let i = 0; i < AREA; i++) {
+    const area = w.area;
+    for (let i = 0; i < area; i++) {
       const t = tiles[i];
       if (t.age < 9999) t.age++;
     }

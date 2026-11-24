@@ -16,13 +16,11 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { CROWNS, FACTION_IDS, GANG_IDS, STORY_PACING } from '../config';
-import { MAP_SIZE } from '../types';
+import { scratchFor } from '../frame';
 import type { World } from '../world';
 import { emptyTurf, newStoryState } from './state';
 import type { FlagValue, GangId, SkyLink, StorySave, StoryState, TurfMap } from './types';
 
-const N = MAP_SIZE;
-const AREA = N * N;
 /** Turf value packing: owner × TURF_PACK + str (str ≤ 100 < 128). */
 const TURF_PACK = 128;
 const MAX_OWNER = 2;
@@ -35,7 +33,8 @@ const isNum = (v: unknown): v is number => typeof v === 'number' && Number.isFin
 const isInt = (v: unknown): v is number => isNum(v) && Math.floor(v) === v;
 const isStr = (v: unknown): v is string => typeof v === 'string';
 const isFlag = (v: unknown): v is FlagValue => isStr(v) || isNum(v) || typeof v === 'boolean';
-const inMap = (v: unknown): v is number => isInt(v) && v >= 0 && v < AREA;
+/** A tile index on a world of `area` tiles. */
+const inMap = (area: number) => (v: unknown): v is number => isInt(v) && v >= 0 && v < area;
 
 // ── Run-length encoding ─────────────────────────────────────────────────────
 
@@ -82,9 +81,10 @@ export function decodeRle(pairs: unknown, out: Uint8Array | Uint16Array, maxValu
 
 /** Turf owner + strength as RLE pairs of owner × 128 + str. */
 export function encodeTurf(turf: Pick<TurfMap, 'owner' | 'str'>): number[] {
-  const packed = new Uint16Array(AREA);
+  const area = turf.owner.length;
+  const packed = new Uint16Array(area);
   const { owner, str } = turf;
-  for (let i = 0; i < AREA; i++) {
+  for (let i = 0; i < area; i++) {
     const o = owner[i];
     packed[i] = o > 0 && o <= MAX_OWNER ? o * TURF_PACK + Math.min(MAX_STR, str[i]) : 0;
   }
@@ -93,12 +93,13 @@ export function encodeTurf(turf: Pick<TurfMap, 'owner' | 'str'>): number[] {
 
 /** Decode turf pairs into `turf.owner` / `turf.str` (contested resets to 0). False (and empty turf) if malformed. */
 export function decodeTurf(pairs: unknown, turf: Pick<TurfMap, 'owner' | 'str' | 'contested'>): boolean {
-  const packed = new Uint16Array(AREA);
+  const area = turf.owner.length;
+  const packed = new Uint16Array(area);
   turf.owner.fill(0);
   turf.str.fill(0);
   turf.contested.fill(0);
   if (!decodeRle(pairs, packed, MAX_OWNER * TURF_PACK + MAX_STR)) return false;
-  for (let i = 0; i < AREA; i++) {
+  for (let i = 0; i < area; i++) {
     const v = packed[i];
     const o = (v / TURF_PACK) | 0;
     const s = v % TURF_PACK;
@@ -129,8 +130,10 @@ export function encodeStory(world: Pick<World, 'story' | 'turf' | 'rail' | 'link
 
 // ── Decode: StoryState deep merge ───────────────────────────────────────────
 
-/** Element checks for StoryState arrays; arrays not listed keep every element. */
-const ARRAY_ITEM: Partial<Record<keyof StoryState, (v: unknown) => boolean>> = {
+type Checks = Partial<Record<keyof StoryState, (v: unknown) => boolean>>;
+
+/** Element checks for StoryState arrays on a world of `area` tiles; arrays not listed keep every element. */
+const arrayItemChecks = (area: number, inArea = inMap(area)): Checks => ({
   beatsShown: isStr,
   goalsDone: isStr,
   goalsWaived: isStr,
@@ -143,13 +146,13 @@ const ARRAY_ITEM: Partial<Record<keyof StoryState, (v: unknown) => boolean>> = {
   credits: (v) => isObj(v) && isStr(v.what) && isNum(v.n) && isNum(v.mul),
   pacts: (v) => isObj(v) && isStr(v.gang) && GANG_IDS.includes(v.gang as GangId) && isNum(v.until),
   crackdowns: (v) => isObj(v) && isNum(v.x) && isNum(v.y) && isNum(v.r) && isNum(v.until) && Array.isArray(v.hit),
-  railOut: (v) => isObj(v) && inMap(v.i) && isNum(v.until),
+  railOut: (v) => isObj(v) && inArea(v.i) && isNum(v.until),
   log: (v) => isObj(v) && isNum(v.tick) && isStr(v.card),
   met: (v) => FACTION_IDS.includes(v as never),
-};
+});
 
 /** Value checks for StoryState records; records not listed accept any JSON value. */
-const RECORD_VALUE: Partial<Record<keyof StoryState, (v: unknown) => boolean>> = {
+const RECORD_VALUE: Checks = {
   holds: isNum,
   favor: isNum,
   mood: isNum,
@@ -172,8 +175,8 @@ const nullOr =
   (v: unknown): boolean =>
     v === null || check(v);
 
-/** Checks for fields whose default is null (or a closed set); anything else falls back to the default. */
-const FIELD_CHECK: Partial<Record<keyof StoryState, (v: unknown) => boolean>> = {
+/** Checks for fields whose default is null (or a closed set) on a world of `area` tiles; anything else falls back to the default. */
+const fieldChecks = (area: number): Checks => ({
   chapter: (v) => isInt(v) && v >= 1 && v <= 7,
   phase: (v) => v === 'waiting' || v === 'active' || v === 'countdown' || v === 'ended',
   pending: nullOr((v) => isObj(v) && isStr(v.card) && isNum(v.tick) && isNum(v.spot)),
@@ -186,9 +189,12 @@ const FIELD_CHECK: Partial<Record<keyof StoryState, (v: unknown) => boolean>> = 
   endingVariant: nullOr((v) => v === 'lamplight'),
   endingTick: nullOr(isNum),
   nextReview: nullOr(isNum),
-  seam: nullOr(inMap),
+  seam: nullOr(inMap(area)),
   rng: (v) => isInt(v) && v > 0 && v <= 0xffffffff,
-};
+});
+
+/** The tables for one frame size (MEGACITY §3.1), built once per size. */
+const checksFor = scratchFor((area) => ({ arrayItem: arrayItemChecks(area), field: fieldChecks(area) }));
 
 /** Generic merge of one saved value over its default (types must match; records merge per key). */
 function mergeValue(def: unknown, saved: unknown, item?: (v: unknown) => boolean): unknown {
@@ -214,21 +220,23 @@ function mergeValue(def: unknown, saved: unknown, item?: (v: unknown) => boolean
 
 /**
  * Deep-merge a saved StoryState over newStoryState(seed) (§10.8). Unknown keys
- * are dropped, malformed fields fall back to their defaults. Returns null only
+ * are dropped, malformed fields fall back to their defaults. Tile indices
+ * (`seam`, `railOut[].i`) must lie on a world of `area` tiles. Returns null only
  * when `raw` is not an object at all.
  */
-export function decodeStoryState(raw: unknown, seed: number): StoryState | null {
+export function decodeStoryState(raw: unknown, seed: number, area: number): StoryState | null {
   if (!isObj(raw)) return null;
   const def = newStoryState(seed);
   const out = def as unknown as Json;
+  const { arrayItem, field } = checksFor(area);
   for (const key of Object.keys(def) as (keyof StoryState)[]) {
     const saved = raw[key];
-    const check = FIELD_CHECK[key];
+    const check = field[key];
     if (check) {
       if (saved !== undefined && check(saved)) out[key] = saved;
       continue;
     }
-    out[key] = mergeValue(def[key], saved, ARRAY_ITEM[key] ?? RECORD_VALUE[key]);
+    out[key] = mergeValue(def[key], saved, arrayItem[key] ?? RECORD_VALUE[key]);
   }
   // Migrations go here when StoryState.v changes meaning (§10.8). Only v1 exists.
   def.v = 1;
@@ -283,7 +291,7 @@ function decodeTurfMeta(raw: unknown, turf: TurfMap): void {
   }
 }
 
-function decodeLinks(raw: unknown): SkyLink[] {
+function decodeLinks(raw: unknown, N: number): SkyLink[] {
   if (!Array.isArray(raw)) return [];
   const out: SkyLink[] = [];
   const ids = new Set<number>();
@@ -311,22 +319,22 @@ export interface DecodeOptions {
  */
 export function decodeStory(
   save: unknown,
-  world: Pick<World, 'seed' | 'story' | 'turf' | 'rail' | 'links' | 'nextLinkId'>,
+  world: Pick<World, 'N' | 'area' | 'seed' | 'story' | 'turf' | 'rail' | 'links' | 'nextLinkId'>,
   opts: DecodeOptions = {},
 ): boolean {
   if (!isObj(save)) return false;
-  const story = decodeStoryState(save.story, world.seed);
+  const story = decodeStoryState(save.story, world.seed, world.area);
   if (!story) return false;
   if (opts.knownCard) pruneUnknownCards(story, opts.knownCard);
 
-  const turf = emptyTurf();
+  const turf = emptyTurf(world.area);
   decodeTurf(save.turf, turf);
   decodeTurfMeta(save.turfMeta, turf);
 
-  const rail = new Uint8Array(AREA);
+  const rail = new Uint8Array(world.area);
   decodeRle(save.rail, rail, 15);
 
-  const links = decodeLinks(save.links);
+  const links = decodeLinks(save.links, world.N);
   let next = 1;
   for (const l of links) if (l.id >= next) next = l.id + 1;
 

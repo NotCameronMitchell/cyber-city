@@ -13,7 +13,7 @@ import { BUILDINGS, CURRENCY, WEALTH, isBuildingTool } from '../game/config';
 import type { Game } from '../game/game';
 import { berthTiles, noiseDef, shoreFacing, shoreSites } from '../game/ports';
 import { computeAccess, fillKinds, isRoadTool, roadLinks } from '../game/roads';
-import { MAP_SIZE, RoadKind, ZoneType, type ActionPlan, type BuildingType, type OverlayId, type ServiceEffect, type Tile } from '../game/types';
+import { RoadKind, ZoneType, type ActionPlan, type BuildingType, type OverlayId, type ServiceEffect, type Tile } from '../game/types';
 import { potentialTier, stepTarget, tierCapAt } from '../game/wealth';
 import type { World } from '../game/world';
 import { SHAPE_SLOPE, SKY_Z, deckPieceTransform, deckShapeAt, drawSkywayGhost } from './art/skyway';
@@ -25,7 +25,6 @@ import { highlight } from './highlight';
 import { anchorHeight } from './story';
 import { NEON, css, glowSprite, heat, hexToRgb, type RGB } from './palette';
 
-const N = MAP_SIZE;
 const PERP = (2 * HALF_W * HALF_H) / Math.hypot(HALF_W, HALF_H);
 const SQRT2 = Math.SQRT2;
 
@@ -59,7 +58,9 @@ export class OverlayLayer {
   private builtFor: OverlayId = 'none';
   private lut: Uint8ClampedArray;
   /** Wealth lens pips per tile (rebuilt with the overlay): stepTarget, 1 ▲ will step up, −1 ▼ will step down, 0 none. */
-  private pips = new Int8Array(N * N);
+  private pips = new Int8Array(0);
+  /** Side of the data image (the shown world's N; MEGACITY §3.1). */
+  private size = 0;
   private pipsFor: World | null = null;
 
   constructor() {
@@ -83,19 +84,25 @@ export class OverlayLayer {
     this.builtFor = 'none';
   }
 
-  private ensure(): boolean {
-    if (this.canvas) return true;
+  /** The data image for a world of side N (one pixel per tile), resized when the side changes. */
+  private ensure(N: number): boolean {
+    if (this.canvas && this.g && this.size === N) return true;
     if (typeof document === 'undefined') return false;
-    this.canvas = document.createElement('canvas');
+    this.canvas ??= document.createElement('canvas');
     this.canvas.width = N;
     this.canvas.height = N;
     this.g = this.canvas.getContext('2d');
     if (!this.g) return false;
     this.img = this.g.createImageData(N, N);
+    this.pips = new Int8Array(N * N);
+    this.pipsFor = null;
+    this.size = N;
+    this.builtFor = 'none';
     return true;
   }
 
   private build(world: World, overlay: OverlayId) {
+    const N = world.N;
     const d = this.img!.data;
     const tiles = world.tiles;
     const f = world.fields;
@@ -212,7 +219,8 @@ export class OverlayLayer {
 
   /** Draw the active data overlay. World transform expected. */
   draw(ctx: CanvasRenderingContext2D, world: World, overlay: OverlayId, time: number, bounds: Rect, zoom: number) {
-    if (overlay === 'none' || !this.ensure()) return;
+    const N = world.N;
+    if (overlay === 'none' || !this.ensure(world.N)) return;
     const t = now();
     if (overlay !== this.builtFor || (this.dirty && t - this.lastBuild > 120)) {
       this.build(world, overlay);
@@ -245,6 +253,7 @@ export class OverlayLayer {
    * centre of developed tiles, over the faded buildings, at zoom ≥ 0.6. World transform.
    */
   drawTop(ctx: CanvasRenderingContext2D, world: World, overlay: OverlayId, bounds: Rect, zoom: number, view: Rect) {
+    const N = world.N;
     if (overlay !== 'wealth' || zoom < 0.6 || this.pipsFor !== world || this.builtFor !== 'wealth') return;
     const pips = this.pips;
     const s = 6 / zoom;
@@ -285,6 +294,7 @@ export class OverlayLayer {
    * diagonal hatching, Kites lilac dots; contested tiles flicker red. Tile space.
    */
   private turfPatterns(ctx: CanvasRenderingContext2D, world: World, time: number, b: Rect, zoom: number) {
+    const N = world.N;
     const own = world.turf.owner;
     const con = world.turf.contested;
     const px = 1 / (zoom * PERP);
@@ -329,6 +339,7 @@ export class OverlayLayer {
 
   /** Animated energy flow along powered roads (tile space, additive). */
   private conduits(ctx: CanvasRenderingContext2D, world: World, time: number, b: Rect, zoom: number) {
+    const N = world.N;
     ctx.globalCompositeOperation = 'lighter';
     const px = 1 / (zoom * PERP);
     for (let y = b.y0; y <= b.y1; y++)
@@ -377,7 +388,7 @@ function powerColor(world: World, t: Tile): [number, number, number, number] | n
 // ── Shared outline helpers ─────────────────────────────────────────────────
 
 /** Path of the outer boundary of a set of tiles (tile space). */
-function boundaryPath(ctx: CanvasRenderingContext2D, tiles: { x: number; y: number }[], set: Set<number>) {
+function boundaryPath(ctx: CanvasRenderingContext2D, N: number, tiles: { x: number; y: number }[], set: Set<number>) {
   ctx.beginPath();
   const has = (x: number, y: number) => x >= 0 && y >= 0 && x < N && y < N && set.has(y * N + x);
   for (const { x, y } of tiles) {
@@ -468,6 +479,7 @@ function tileTop(world: World, x: number, y: number): number {
 
 /** Ground-level part of the tool preview (before buildings). World transform expected. */
 export function drawPreviewGround(ctx: CanvasRenderingContext2D, game: Game, time: number, zoom: number) {
+  const N = game.world.N;
   const plan = game.preview;
   if (!plan || !plan.tiles.length) return;
   const world = game.world;
@@ -525,7 +537,7 @@ export function drawPreviewGround(ctx: CanvasRenderingContext2D, game: Game, tim
     for (const [list, c] of groups) {
       if (!list.length) continue;
       const set = new Set(list.map((t) => t.y * N + t.x));
-      boundaryPath(ctx, list, set);
+      boundaryPath(ctx, N, list, set);
       glowStroke(ctx, c, zoom, bulldoze && c !== okColor ? 0.35 : skyLayer ? 0.5 : 1);
     }
     if (isBuild && plan.footprint) {
@@ -533,11 +545,11 @@ export function drawPreviewGround(ctx: CanvasRenderingContext2D, game: Game, tim
       const def = BUILDINGS[type];
       const fp = plan.footprint;
       // Homes the building would make loud (§5.4), amber.
-      if (plan.loudTiles?.length) tintTiles(ctx, plan.loudTiles, NEON.amber, 0.3 * pulse);
+      if (plan.loudTiles?.length) tintTiles(ctx, N, plan.loudTiles, NEON.amber, 0.3 * pulse);
       // The seaport's berth: the 4×2 water beyond its shore side, blue (ok) or red.
       if (type === 'seaport') {
         const f = shoreFacing(world, fp.x, fp.y, fp.size);
-        if (f >= 0) tintTiles(ctx, berthTiles({ type, x: fp.x, y: fp.y, size: fp.size, facing: f as 0 | 1 | 2 | 3 }), plan.valid ? BERTH : BAD, 0.34 * pulse, true);
+        if (f >= 0) tintTiles(ctx, N, berthTiles({ type, x: fp.x, y: fp.y, size: fp.size, facing: f as 0 | 1 | 2 | 3 }, N), plan.valid ? BERTH : BAD, 0.34 * pulse, true);
       }
       ctx.restore();
       ctx.save();
@@ -550,7 +562,7 @@ export function drawPreviewGround(ctx: CanvasRenderingContext2D, game: Game, tim
 }
 
 /** Translucent tile tints (tile space), optionally with a glowing outline. */
-function tintTiles(ctx: CanvasRenderingContext2D, list: readonly number[], c: RGB, a: number, outline = false) {
+function tintTiles(ctx: CanvasRenderingContext2D, N: number, list: readonly number[], c: RGB, a: number, outline = false) {
   if (!list.length) return;
   ctx.beginPath();
   for (const i of list) ctx.rect((i % N) + 0.04, ((i / N) | 0) + 0.04, 0.92, 0.92);
@@ -594,6 +606,7 @@ function noiseRing(ctx: CanvasRenderingContext2D, x: number, y: number, size: nu
  * lose road access tint red. Tile space inside.
  */
 function roadGhost(ctx: CanvasRenderingContext2D, world: World, plan: ActionPlan, time: number, zoom: number) {
+  const N = world.N;
   toTileSpace(ctx);
   const planned = new Map<number, number>();
   const tool = plan.tool;
@@ -613,7 +626,7 @@ function roadGhost(ctx: CanvasRenderingContext2D, world: World, plan: ActionPlan
   const flow = time * 2;
   const pulse = 0.5 + 0.5 * Math.sin(time * 6);
   // Lots a highway drag would strand: red underneath everything.
-  if (plan.lostTiles?.length) tintTiles(ctx, plan.lostTiles, BAD, 0.22 + 0.16 * pulse, true);
+  if (plan.lostTiles?.length) tintTiles(ctx, N, plan.lostTiles, BAD, 0.22 + 0.16 * pulse, true);
   for (const t of plan.tiles) {
     if (!world.inBounds(t.x, t.y)) continue;
     if (!t.ok) {
@@ -671,7 +684,7 @@ function mixRGB(a: RGB, b: RGB, t: number): RGB {
 
 // ── Tool hints (no drag needed) ────────────────────────────────────────────
 
-const shore = { world: null as World | null, version: -1, marks: new Uint8Array(N * N), cover: new Uint8Array(N * N), count: 0 };
+const shore = { world: null as World | null, version: -1, marks: new Uint8Array(0), cover: new Uint8Array(0), count: 0 };
 
 /**
  * While the Seaport tool is active, every valid shore site is outlined in faint
@@ -679,9 +692,14 @@ const shore = { world: null as World | null, version: -1, marks: new Uint8Array(
  * change (shoreSites, < 1 ms). World transform expected.
  */
 export function drawToolHints(ctx: CanvasRenderingContext2D, game: Game, time: number, zoom: number, bounds: Rect) {
+  const N = game.world.N;
   if (game.tool !== 'seaport') return;
   const world = game.world;
   if (shore.world !== world || shore.version !== world.version) {
+    if (shore.marks.length !== world.area) {
+      shore.marks = new Uint8Array(world.area);
+      shore.cover = new Uint8Array(world.area);
+    }
     shore.world = world;
     shore.version = world.version;
     shore.count = shoreSites(world, shore.marks);
@@ -740,6 +758,7 @@ export function drawToolHints(ctx: CanvasRenderingContext2D, game: Game, time: n
 
 /** Raised part of the preview (after buildings): building ghost, skybridge span, ribbon. World transform expected. */
 export function drawPreviewTop(ctx: CanvasRenderingContext2D, game: Game, env: ArtEnv) {
+  const N = game.world.N;
   const plan = game.preview;
   if (!plan) return;
   if (plan.tool === 'skybridge' || plan.tool === 'rail') {
@@ -804,6 +823,7 @@ export function drawPreviewTop(ctx: CanvasRenderingContext2D, game: Game, env: A
 
 /** Skybridge span tube / Ribbon Rail ghost along the planned tiles (§8.9). */
 function drawStoryPreview(ctx: CanvasRenderingContext2D, game: Game, plan: ActionPlan, env: ArtEnv) {
+  const N = game.world.N;
   const world = game.world;
   const e = previewEnv;
   e.time = env.time;
@@ -955,6 +975,7 @@ interface SelectionShape {
 }
 
 function selectionShape(game: Game): SelectionShape | null {
+  const N = game.world.N;
   const sel = game.selected;
   if (!sel) return null;
   const world = game.world;
@@ -986,6 +1007,7 @@ const DECK_M = [0, 0, 0, 0, 0, 0];
 
 /** The selected skyway deck: its tile at deck height (a ramp or slope along its incline), glowing magenta. World transform. */
 function drawDeckSelection(ctx: CanvasRenderingContext2D, game: Game, s: SelectionShape, time: number, zoom: number, top: boolean) {
+  const N = game.world.N;
   const pulse = 0.7 + 0.3 * Math.sin(time * 4);
   const mask = game.world.sky[s.y * N + s.x] & 15;
   const shape = top ? deckShapeAt(game.world, s.x, s.y) : 255;
@@ -1150,13 +1172,15 @@ interface DarkState {
   since: Int32Array;
   buildings: Map<number, number>;
 }
-const dark: DarkState = { world: null, tick: -1, since: new Int32Array(N * N).fill(-1), buildings: new Map() };
+const dark: DarkState = { world: null, tick: -1, since: new Int32Array(0), buildings: new Map() };
 
 /** Track how long each developed tile / service building has been dark (once per sim tick). */
 function darkState(world: World): DarkState {
+  const N = world.N;
   if (dark.world !== world) {
     dark.world = world;
     dark.tick = -1;
+    if (dark.since.length !== world.area) dark.since = new Int32Array(world.area);
     dark.since.fill(-1);
     dark.buildings.clear();
   }
@@ -1187,6 +1211,7 @@ function darkState(world: World): DarkState {
  * World transform expected.
  */
 export function drawUnpowered(ctx: CanvasRenderingContext2D, world: World, b: Rect, time: number, zoom: number, view: Rect) {
+  const N = world.N;
   const st = darkState(world);
   const tick = world.tick;
   const blink = 0.62 + 0.22 * Math.sin(time * 2.2);
@@ -1312,11 +1337,12 @@ function getNoRoad(): HTMLCanvasElement {
  * the map, scratch arrays reused).
  */
 export class RoadAccessMap {
-  private data = new Uint8Array(N * N);
-  private kinds = new Uint8Array(N * N);
-  private dist = new Uint8Array(N * N);
-  private near = new Int32Array(N * N);
-  private queue = new Int32Array(N * N);
+  /** Per-tile arrays, sized from the world's frame on first use and when its side changes. */
+  private data = new Uint8Array(0);
+  private kinds = new Uint8Array(0);
+  private dist = new Uint8Array(0);
+  private near = new Int32Array(0);
+  private queue = new Int32Array(0);
   private dirty = true;
 
   invalidate() {
@@ -1324,10 +1350,20 @@ export class RoadAccessMap {
   }
 
   get(world: World): Uint8Array {
+    const N = world.N;
+    const area = world.area;
+    if (this.data.length !== area) {
+      this.data = new Uint8Array(area);
+      this.kinds = new Uint8Array(area);
+      this.dist = new Uint8Array(area);
+      this.near = new Int32Array(area);
+      this.queue = new Int32Array(area);
+      this.dirty = true;
+    }
     if (!this.dirty) return this.data;
     this.dirty = false;
     fillKinds(world, this.kinds);
-    computeAccess(this.kinds, this.dist, this.near, this.queue);
+    computeAccess(this.kinds, this.dist, this.near, this.queue, world.N);
     const dist = this.dist;
     const out = this.data;
     for (let i = 0; i < N * N; i++) out[i] = dist[i] !== 255 ? 1 : 0;
@@ -1337,6 +1373,7 @@ export class RoadAccessMap {
 
 /** Small amber "no road" badges over zoned tiles that cannot develop for lack of road access. */
 export function drawNoRoad(ctx: CanvasRenderingContext2D, world: World, access: Uint8Array, b: Rect, time: number, zoom: number, view: Rect) {
+  const N = world.N;
   if (zoom < 0.45) return;
   // Mid zoom: a checkerboard of badges is enough to flag the area.
   const sparse = zoom < 0.7;

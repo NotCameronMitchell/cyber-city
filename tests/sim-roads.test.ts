@@ -8,7 +8,7 @@ import type { FieldSystem } from '../src/game/sim/fields';
 import { SimGrid } from '../src/game/sim/grid';
 import * as Tuning from '../src/game/sim/tuning';
 import { SKY_E, SKY_RAMP, SKY_W } from '../src/game/skyway';
-import { MAP_SIZE, RoadKind, ZoneType } from '../src/game/types';
+import { LEGACY_SIZE, RoadKind, ZoneType } from '../src/game/types';
 import { World } from '../src/game/world';
 import { Advisor } from '../src/game/sim/advisor';
 import { Census } from '../src/game/sim/census';
@@ -16,7 +16,7 @@ import { PowerGrid } from '../src/game/sim/power';
 import { ScriptedMayor, flatWorld, makeSim } from './helpers';
 import { run as tiles, skyPath } from './expansion-fixture';
 
-const N = MAP_SIZE;
+const N = LEGACY_SIZE;
 const AREA = N * N;
 const { Street: S, Avenue: A, Highway: H, Alley: L, Ramp: R } = RoadKind;
 
@@ -566,7 +566,7 @@ describe('advisor (§7.1, §7.6, Appendix B)', () => {
     census.developed[ZoneType.Residential] = 20;
     census.avgNoiseRes = 0.5;
     census.avgTraffic = 0.7;
-    const power = new PowerGrid();
+    const power = new PowerGrid(w);
     const adv = new Advisor();
     const demand = { res: 0, com: 0, ind: 0 };
     w.tick = 0;

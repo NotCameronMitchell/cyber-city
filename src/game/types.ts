@@ -12,8 +12,23 @@
 
 import type { CrownId, StorySave } from './story/types';
 
-/** Map is MAP_SIZE × MAP_SIZE tiles. Index = y * MAP_SIZE + x. */
-export const MAP_SIZE = 64;
+/**
+ * The per-world frame (MEGACITY §3.1). There is no map-size constant: every World has its own
+ * side `world.N` and tile count `world.area` (= N²), index = y * N + x, and every system reads
+ * them from its world (copied at construction). Module-scope working arrays are per-size
+ * (`scratchFor`, src/game/frame.ts), never sized from a constant.
+ */
+/** A district slot is SLOT × SLOT tiles (MEGACITY §3.1). */
+export const SLOT = 64;
+/** Map side of v1–v3 saves (and of every city until regions land, Step 0b part 2). */
+export const LEGACY_SIZE = 64;
+/**
+ * The largest world side (a 5×5 region). Feeds the index-width assertions only.
+ * SimGrid keeps tile indices in Uint32 / Int32 lists, and every index must stay a small
+ * integer: MAX_MAP_SIZE² < 2³¹ (MEGACITY §3.1; Appendix C rejects larger frames).
+ */
+export const MAX_MAP_SIZE = SLOT * 5; // 320
+if (!(MAX_MAP_SIZE ** 2 < 2 ** 31)) throw new Error('MAX_MAP_SIZE² must stay below 2³¹ (MEGACITY §3.1)');
 
 /** Sim time: 1 tick = 1 day. */
 export const DAYS_PER_MONTH = 30;
@@ -167,7 +182,7 @@ export interface Building {
 }
 
 /**
- * Per-tile scalar fields, all Float32Array(MAP_SIZE*MAP_SIZE) with values in 0..1.
+ * Per-tile scalar fields, all Float32Array(world.area) with values in 0..1.
  * Recomputed by the simulation; NOT saved (rebuilt after load via Simulation.recomputeAll()).
  */
 export interface Fields {

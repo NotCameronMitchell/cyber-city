@@ -33,7 +33,7 @@ import { isMetric, metric, storyContent, useStoryContent } from '../src/game/sto
 import { STORY_CONTENT } from '../src/game/story/content';
 import { METRIC_LIST, SPOT_RULES } from '../src/game/story/content/vocab';
 import type { Card, InspectAction, Metric } from '../src/game/story/types';
-import { MAP_SIZE, RoadKind, Terrain, ZoneType, type ActionPlan, type Building, type BuildingType, type WealthTier } from '../src/game/types';
+import { LEGACY_SIZE, RoadKind, Terrain, ZoneType, type ActionPlan, type Building, type BuildingType, type WealthTier } from '../src/game/types';
 import {
   TIER_LABEL,
   potentialTier,
@@ -50,7 +50,7 @@ import {
 import { World } from '../src/game/world';
 import { headlessGame } from './story/harness';
 
-const N = MAP_SIZE;
+const N = LEGACY_SIZE;
 const { Street: S, Avenue: A, Highway: H, Alley: L, Ramp: R } = RoadKind;
 const NEW_TYPES: BuildingType[] = ['academy', 'seaport', 'airport', 'spaceport'];
 const STORY_TYPES: BuildingType[] = ['stack', 'foundry', 'glarewall', 'tidemarket', 'roost', 'commons', 'memorial'];
@@ -469,14 +469,14 @@ describe('port helpers (§5.1, §5.4)', () => {
     const w = shore();
     const b = w.addBuilding('seaport', 10, 36)!;
     b.facing = 2;
-    const berth = berthTiles(b);
+    const berth = berthTiles(b, w.N);
     expect(berth.length).toBe(8);
     expect(berth).toContain(w.idx(10, 40));
     expect(berth).toContain(w.idx(13, 41));
     expect(isBerthTile(w, 12, 41)).toBe(true);
     expect(isBerthTile(w, 12, 42)).toBe(false);
     expect(isBerthTile(w, 14, 40)).toBe(false);
-    expect(berthTiles({ ...b, type: 'plaza' } as Building)).toEqual([]);
+    expect(berthTiles({ ...b, type: 'plaza' } as Building, w.N)).toEqual([]);
     const marks = new Uint8Array(N * N);
     const n = shoreSites(w, marks);
     expect(n).toBeGreaterThan(10);
@@ -545,9 +545,9 @@ describe('skyway helpers (§3.7)', () => {
     expect(skyRampActive(w, i)).toBe(false);
     expect(skyRampGround({ road: true, roadKind: A })).toBe(true);
     expect(skyRampGround({ road: false, roadKind: S })).toBe(false);
-    expect(skyLinksBack(w.sky, i, 2)).toBe(true);
-    expect(skyLinksBack(w.sky, i, 4)).toBe(false);
-    expect(skyLinksBack(w.sky, w.idx(63, 5), 2)).toBe(false); // off the map
+    expect(skyLinksBack(w.sky, i, 2, w.N)).toBe(true);
+    expect(skyLinksBack(w.sky, i, 4, w.N)).toBe(false);
+    expect(skyLinksBack(w.sky, w.idx(63, 5), 2, w.N)).toBe(false); // off the map
   });
 
   it('skywayDocks: a BFS over mutual links from an anchor footprint', () => {

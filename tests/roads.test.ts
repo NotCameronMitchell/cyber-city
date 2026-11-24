@@ -19,11 +19,11 @@ import {
   roadUpkeep,
 } from '../src/game/roads';
 import { SimGrid } from '../src/game/sim/grid';
-import { MAP_SIZE, RoadKind, Terrain, ZoneType } from '../src/game/types';
+import { LEGACY_SIZE, RoadKind, Terrain, ZoneType } from '../src/game/types';
 import { World } from '../src/game/world';
 import { RoadAccessMap } from '../src/render/overlay';
 
-const N = MAP_SIZE;
+const N = LEGACY_SIZE;
 const AREA = N * N;
 const { Street: S, Avenue: A, Highway: H, Alley: L, Ramp: R } = RoadKind;
 const KINDS = [S, A, H, L, R];
@@ -32,7 +32,7 @@ function access(world: World) {
   const kinds = fillKinds(world, new Uint8Array(AREA));
   const dist = new Uint8Array(AREA);
   const near = new Int32Array(AREA);
-  computeAccess(kinds, dist, near, new Int32Array(AREA));
+  computeAccess(kinds, dist, near, new Int32Array(AREA), world.N);
   return { kinds, dist, near };
 }
 

@@ -5,10 +5,8 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { BUILDINGS, SEAPORT, type BuildingDef } from './config';
-import { MAP_SIZE, Terrain, ZoneType, type Building, type BuildingType } from './types';
+import { Terrain, ZoneType, type Building, type BuildingType } from './types';
 import type { World } from './world';
-
-const N = MAP_SIZE;
 
 /** Facing → unit step out of the footprint: 0 = N (y−1), 1 = E (x+1), 2 = S (y+1), 3 = W (x−1). */
 const FACE_DX = [0, 1, 0, -1] as const;
@@ -18,6 +16,7 @@ const FACE_ORDER = [2, 1, 0, 3] as const;
 
 /** Open water: in bounds, water, no road (bridge) and no rail. */
 function openWater(world: World, x: number, y: number): boolean {
+  const N = world.N;
   if (x < 0 || y < 0 || x >= N || y >= N) return false;
   const i = y * N + x;
   const t = world.tiles[i];
@@ -62,6 +61,7 @@ export function shoreFacing(world: World, x: number, y: number, size: number): 0
 
 /** Can a building of this def stand on every footprint tile (clear land, no developed zone, no rail or skyway)? */
 function siteClear(world: World, def: BuildingDef, x: number, y: number): boolean {
+  const N = world.N;
   if (x < 0 || y < 0 || x + def.size > N || y + def.size > N) return false;
   for (let dy = 0; dy < def.size; dy++)
     for (let dx = 0; dx < def.size; dx++) {
@@ -75,13 +75,14 @@ function siteClear(world: World, def: BuildingDef, x: number, y: number): boolea
 }
 
 /**
- * Mark every valid Seaport top-left in `out` (Uint8Array(4096), 1 = valid; cleared first)
+ * Mark every valid Seaport top-left in `out` (Uint8Array(world.area), 1 = valid; cleared first)
  * and return how many (§5.1): the 4×4 footprint is clear land (no road, building, developed
  * lot, rail or skyway) and one side faces open water. Road access is not required here (the
  * player can lay a street after); planAction checks it. A few thousand cheap checks (< 1 ms).
  */
 export function shoreSites(world: World, out: Uint8Array): number {
   out.fill(0);
+  const N = world.N;
   const def = BUILDINGS.seaport;
   const s = def.size;
   let n = 0;
@@ -101,6 +102,7 @@ export function shoreSites(world: World, out: Uint8Array): number {
  * built-up waterfront still has shore here while shoreSites finds no clear site.
  */
 export function shoreGeometry(world: World): number {
+  const N = world.N;
   const s = BUILDINGS.seaport.size;
   let n = 0;
   for (let y = 0; y + s <= N; y++)
@@ -119,9 +121,10 @@ export function shoreGeometry(world: World): number {
 
 /**
  * The berth of a Seaport: the size × SEAPORT.berthDepth water tiles beyond its `facing`
- * side (tile indices, in-bounds only). Empty for other buildings or a seaport without facing.
+ * side (tile indices on a world of side `N`, in-bounds only). Empty for other buildings or a
+ * seaport without facing.
  */
-export function berthTiles(b: Pick<Building, 'type' | 'x' | 'y' | 'size' | 'facing'>): number[] {
+export function berthTiles(b: Pick<Building, 'type' | 'x' | 'y' | 'size' | 'facing'>, N: number): number[] {
   const out: number[] = [];
   if (b.type !== 'seaport' || b.facing === undefined) return out;
   for (let k = 0; k < b.size; k++)
@@ -134,6 +137,7 @@ export function berthTiles(b: Pick<Building, 'type' | 'x' | 'y' | 'size' | 'faci
 
 /** Is (x, y) on any Seaport's berth (no bridges there, §5.1)? */
 export function isBerthTile(world: World, x: number, y: number): boolean {
+  const N = world.N;
   if (x < 0 || y < 0 || x >= N || y >= N) return false;
   for (const b of world.buildings.values()) {
     if (b.type !== 'seaport' || b.facing === undefined) continue;
@@ -180,6 +184,7 @@ export function noiseReach(world: World, type: BuildingType, x: number, y: numbe
   const def = BUILDINGS[type];
   if (!nd || !def) return 0;
   const r = nd.r;
+  const N = world.N;
   const x0 = Math.max(0, x - r);
   const x1 = Math.min(N - 1, x + def.size - 1 + r);
   const y0 = Math.max(0, y - r);

@@ -1,5 +1,3 @@
-import { MAP_SIZE } from '../game/types';
-
 // ─────────────────────────────────────────────────────────────────────────────
 // Isometric projection + camera. Shared by renderer and input.
 //
@@ -38,15 +36,33 @@ export function worldToTileF(wx: number, wy: number): Vec {
 }
 
 export class Camera {
+  /**
+   * Side in tiles of the map this camera frames: the shown world's `N` (MEGACITY §3.1, the frame is
+   * per world). Set at construction and by `setMapSize` when the shown world changes.
+   */
+  mapSize: number;
   /** World point shown at the centre of the viewport. */
   x = 0;
-  y = MAP_SIZE * HALF_H;
+  y: number;
   zoom = 1;
   minZoom = 0.25;
   maxZoom = 3;
   /** Viewport size in CSS px. */
   width = 1;
   height = 1;
+
+  /** A camera on a map of `mapSize` tiles a side, centred on the map at zoom 1. */
+  constructor(mapSize: number) {
+    this.mapSize = mapSize;
+    this.y = mapSize * HALF_H;
+  }
+
+  /** The shown world changed side: keep the view, clamped to the new map. */
+  setMapSize(mapSize: number) {
+    if (mapSize === this.mapSize) return;
+    this.mapSize = mapSize;
+    this.clamp();
+  }
 
   setViewport(width: number, height: number) {
     this.width = Math.max(1, width);
@@ -109,8 +125,9 @@ export class Camera {
   clamp() {
     const t = worldToTileF(this.x, this.y);
     const slack = 2;
-    const cx = Math.max(-slack, Math.min(MAP_SIZE + slack, t.x));
-    const cy = Math.max(-slack, Math.min(MAP_SIZE + slack, t.y));
+    const n = this.mapSize;
+    const cx = Math.max(-slack, Math.min(n + slack, t.x));
+    const cy = Math.max(-slack, Math.min(n + slack, t.y));
     if (cx !== t.x || cy !== t.y) {
       this.x = (cx - cy) * HALF_W;
       this.y = (cx + cy) * HALF_H;
@@ -134,17 +151,18 @@ export class Camera {
     return {
       x0: Math.max(0, Math.floor(Math.min(...xs)) - marginTiles),
       y0: Math.max(0, Math.floor(Math.min(...ys)) - marginTiles),
-      x1: Math.min(MAP_SIZE - 1, Math.ceil(Math.max(...xs)) + marginTiles),
-      y1: Math.min(MAP_SIZE - 1, Math.ceil(Math.max(...ys)) + marginTiles),
+      x1: Math.min(this.mapSize - 1, Math.ceil(Math.max(...xs)) + marginTiles),
+      y1: Math.min(this.mapSize - 1, Math.ceil(Math.max(...ys)) + marginTiles),
     };
   }
 
   /** Zoom so the whole map fits the viewport. */
   fitMap() {
-    const mapW = MAP_SIZE * TILE_W;
-    const mapH = MAP_SIZE * TILE_H;
+    const n = this.mapSize;
+    const mapW = n * TILE_W;
+    const mapH = n * TILE_H;
     this.zoom = Math.max(this.minZoom, Math.min(this.maxZoom, Math.min(this.width / mapW, this.height / mapH) * 1.1));
     this.x = 0;
-    this.y = MAP_SIZE * HALF_H;
+    this.y = n * HALF_H;
   }
 }

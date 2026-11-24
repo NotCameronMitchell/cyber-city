@@ -1,5 +1,4 @@
 import { describe, expect, it } from 'vitest';
-import { MAP_SIZE } from '../src/game/types';
 import { fullyBuiltWorld, makeSim } from './helpers';
 import { expansionFixture } from './expansion-fixture';
 
@@ -47,7 +46,7 @@ describe('performance', () => {
     // An old save settling: every tier back to $, then one batch.
     let settleMs = Infinity;
     for (let k = 0; k < 5; k++) {
-      for (let i = 0; i < MAP_SIZE * MAP_SIZE; i++) w.setWealth(i % MAP_SIZE, (i / MAP_SIZE) | 0, 0);
+      for (let i = 0; i < w.area; i++) w.setWealth(i % w.N, (i / w.N) | 0, 0);
       sim.recomputeAll();
       const t0 = performance.now();
       sim.settleWealth();

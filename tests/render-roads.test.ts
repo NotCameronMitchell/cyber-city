@@ -8,14 +8,14 @@ import { EDGE_LINKS } from '../src/game/config';
 import { Rng } from '../src/game/rng';
 import { computeAccess, fillKinds } from '../src/game/roads';
 import { SKY_E, SKY_N, SKY_RAMP, SKY_S, SKY_W } from '../src/game/skyway';
-import { MAP_SIZE, RoadKind, Terrain } from '../src/game/types';
+import { LEGACY_SIZE, RoadKind, Terrain } from '../src/game/types';
 import { World } from '../src/game/world';
 import { SHAPE_RAMP, SHAPE_SLOPE, computeShapes } from '../src/render/art/skyway';
 import { StreetTraffic } from '../src/render/art/traffic';
 import { KIND_HALF, TerrainInfo, kindHalf } from '../src/render/ground';
 import { RoadAccessMap } from '../src/render/overlay';
 
-const N = MAP_SIZE;
+const N = LEGACY_SIZE;
 const AREA = N * N;
 const { Street: S, Avenue: A, Highway: H, Alley: L, Ramp: R } = RoadKind;
 const KINDS = [S, A, H, L, R];
@@ -53,7 +53,7 @@ describe('RoadAccessMap (§3.3, §10.2 #6)', () => {
     let highwayOnly = 0;
     for (let seed = 300; seed < 320; seed++) {
       const w = randomRoads(seed);
-      computeAccess(fillKinds(w, new Uint8Array(AREA)), dist, near, queue);
+      computeAccess(fillKinds(w, new Uint8Array(AREA)), dist, near, queue, w.N);
       const map = new RoadAccessMap().get(w);
       for (let i = 0; i < AREA; i++) {
         const x = i % N;

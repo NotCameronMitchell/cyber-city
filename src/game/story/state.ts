@@ -6,10 +6,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { COHERENCE, START_FAVOR } from '../config';
-import { MAP_SIZE } from '../types';
 import type { StoryLedger, StoryState, StoryView, TurfMap, TurfStats, VerticalCache, VerticalMetrics } from './types';
-
-const AREA = MAP_SIZE * MAP_SIZE;
 
 /** Sentinel for "never happened" ticks: `tick − NEVER_TICK` is always ≥ 99,999. */
 export const NEVER_TICK = -100000;
@@ -98,12 +95,12 @@ export function emptyTurfStats(): TurfStats {
   };
 }
 
-/** No turf, nobody seeded. */
-export function emptyTurf(): TurfMap {
+/** No turf, nobody seeded, for a world of `area` tiles (MEGACITY §3.1: the frame is per world). */
+export function emptyTurf(area: number): TurfMap {
   return {
-    owner: new Uint8Array(AREA),
-    str: new Uint8Array(AREA),
-    contested: new Uint8Array(AREA),
+    owner: new Uint8Array(area),
+    str: new Uint8Array(area),
+    contested: new Uint8Array(area),
     frozenUntil: 0,
     seeded: { undertow: false, kites: false },
     lowSince: { undertow: -1, kites: -1 },
@@ -123,12 +120,12 @@ export function emptyVerticalMetrics(): VerticalMetrics {
   };
 }
 
-/** No live rail, no active links. */
-export function emptyVertical(): VerticalCache {
+/** No live rail, no active links, for a world of `area` tiles. */
+export function emptyVertical(area: number): VerticalCache {
   return {
     version: 0,
     activeLinks: new Set(),
-    railLive: new Uint8Array(AREA),
+    railLive: new Uint8Array(area),
     liveStations: new Set(),
     metrics: emptyVerticalMetrics(),
   };

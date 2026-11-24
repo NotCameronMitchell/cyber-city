@@ -14,9 +14,9 @@ import {
   resetMods,
 } from '../../src/game/story/mods';
 import type { SimMods } from '../../src/game/story/types';
-import { MAP_SIZE } from '../../src/game/types';
+import { LEGACY_SIZE } from '../../src/game/types';
 
-const AREA = MAP_SIZE * MAP_SIZE;
+const AREA = LEGACY_SIZE * LEGACY_SIZE;
 
 describe('DEFAULT_MODS', () => {
   it('holds identities for every key', () => {
@@ -188,7 +188,7 @@ describe('clampMods', () => {
 
 describe('layers', () => {
   it('makeLayers starts at identities and resetLayers restores them', () => {
-    const l = makeLayers();
+    const l = makeLayers(AREA);
     for (const a of [l.crimeAdd, l.lvAdd, l.transitAdd]) {
       expect(a.length).toBe(AREA);
       expect(a.every((v) => v === 0)).toBe(true);
@@ -202,7 +202,7 @@ describe('layers', () => {
   });
 
   it('composeLayers adds, maxes and multiplies the three parts', () => {
-    const world = { layers: makeLayers(), layerParts: makeLayerParts() };
+    const world = { layers: makeLayers(AREA), layerParts: makeLayerParts(AREA) };
     const { turf, vertical, local } = world.layerParts;
     turf.crimeAdd[10] = 0.1;
     vertical.crimeAdd[10] = -0.05;
@@ -232,7 +232,7 @@ describe('layers', () => {
   });
 
   it('composeLayers is idempotent and re-running after a part changes overwrites', () => {
-    const world = { layers: makeLayers(), layerParts: makeLayerParts() };
+    const world = { layers: makeLayers(AREA), layerParts: makeLayerParts(AREA) };
     world.layerParts.turf.crimeAdd[3] = 0.2;
     composeLayers(world);
     composeLayers(world);
@@ -243,7 +243,7 @@ describe('layers', () => {
   });
 
   it('composeLayers keeps results sane', () => {
-    const world = { layers: makeLayers(), layerParts: makeLayerParts() };
+    const world = { layers: makeLayers(AREA), layerParts: makeLayerParts(AREA) };
     const p = world.layerParts;
     p.turf.crimeAdd[0] = 0.9;
     p.local.crimeAdd[0] = 0.9;
@@ -256,7 +256,7 @@ describe('layers', () => {
   });
 
   it('composeLayers is fast enough for per-month use', () => {
-    const world = { layers: makeLayers(), layerParts: makeLayerParts() };
+    const world = { layers: makeLayers(AREA), layerParts: makeLayerParts(AREA) };
     const t0 = performance.now();
     for (let i = 0; i < 50; i++) composeLayers(world);
     expect((performance.now() - t0) / 50).toBeLessThan(2);

@@ -17,7 +17,7 @@
 
 import { blankStats, buildingStats } from '../buildingStats';
 import { AIRPORT, BUILDINGS, NOISE, ROAD_FLOW, SEAPORT, SKYWAY, WEALTH } from '../config';
-import { MAP_SIZE, ZoneType, type Building, type ServiceEffect } from '../types';
+import { ZoneType, type Building, type ServiceEffect } from '../types';
 import type { World } from '../world';
 import { KIND_CAPACITY, KIND_POLLUTION, type SimGrid } from './grid';
 import * as Tiers from './tiers';
@@ -25,10 +25,9 @@ import * as Tuning from './tuning';
 
 // Imported bindings are copied into module locals: under Vite's SSR/test
 // transform every imported identifier becomes a getter call, which is very
-// slow inside hot per-tile loops.
+// slow inside hot per-tile loops. The frame (N, area) is per world (MEGACITY
+// §3.1): copied at construction and into locals per pass.
 const T = { ...Tuning };
-const N = MAP_SIZE;
-const AREA = N * N;
 const RES = ZoneType.Residential;
 const COM = ZoneType.Commercial;
 const IND = ZoneType.Industrial;
@@ -80,10 +79,11 @@ function footDist(b: Building, x: number, y: number): number {
 }
 
 /**
- * In-place separable 3×3 box blur (edges average only in-bounds samples).
+ * In-place separable 3×3 box blur (edges average only in-bounds samples) of an N×N field.
  * `tmp` must be a different buffer from `field`.
  */
-export function blur3(field: Float32Array, tmp: Float32Array): void {
+export function blur3(field: Float32Array, tmp: Float32Array, N: number): void {
+  const AREA = N * N;
   for (let y = 0; y < N; y++) {
     const row = y * N;
     tmp[row] = (field[row] + field[row + 1]) * 0.5;
@@ -102,27 +102,45 @@ export function blur3(field: Float32Array, tmp: Float32Array): void {
 }
 
 export class FieldSystem {
+  /** The frame (MEGACITY §3.1): side and tile count of the world these fields belong to. */
+  readonly N: number;
+  readonly area: number;
   /** Traffic each tile "feels": its nearest road's congestion (0 when no road in range). */
-  readonly localTraffic = new Float32Array(AREA);
+  readonly localTraffic: Float32Array;
   /** Blurred development density (0..1). */
-  readonly density = new Float32Array(AREA);
+  readonly density: Float32Array;
   /** Blurred abandonment around each tile (0..1). */
-  readonly blight = new Float32Array(AREA);
+  readonly blight: Float32Array;
   /** Temporary crime from events (decays each tick). */
-  readonly crimeBoost = new Float32Array(AREA);
+  readonly crimeBoost: Float32Array;
   /** Temporary city-wide smog intensity from events (0..1). */
   smog = 0;
 
   /** Road traffic volume against Street capacity (pollution source, §3.8 step 7). */
-  readonly volume = new Float32Array(AREA);
+  readonly volume: Float32Array;
   /** Trips moved onto each highway / skyway component during the last traffic pass. */
-  readonly hwPool = new Float64Array(AREA >> 1);
-  readonly skyPool = new Float64Array(AREA >> 1);
+  readonly hwPool: Float64Array;
+  readonly skyPool: Float64Array;
 
-  private readonly tmpA = new Float32Array(AREA);
-  private readonly tmpB = new Float32Array(AREA);
+  private readonly tmpA: Float32Array;
+  private readonly tmpB: Float32Array;
   /** Scratch for buildingStats() (no per-tick allocation). */
   private readonly st = blankStats();
+
+  constructor(world: Pick<World, 'N' | 'area'>) {
+    const area = world.area;
+    this.N = world.N;
+    this.area = area;
+    this.localTraffic = new Float32Array(area);
+    this.density = new Float32Array(area);
+    this.blight = new Float32Array(area);
+    this.crimeBoost = new Float32Array(area);
+    this.volume = new Float32Array(area);
+    this.hwPool = new Float64Array(area >> 1);
+    this.skyPool = new Float64Array(area >> 1);
+    this.tmpA = new Float32Array(area);
+    this.tmpB = new Float32Array(area);
+  }
 
   // ── Coverage ──────────────────────────────────────────────────────────────
   /**
@@ -130,6 +148,7 @@ export class FieldSystem {
    * Then security × mods.securityMul (clamped to 1) and transit = max(transit, layers.transitAdd).
    */
   coverage(world: World, g: SimGrid): void {
+    const { N, area } = this;
     const f = world.fields;
     const st = this.st;
     for (const e of EFFECTS) f[e].fill(0);
@@ -159,7 +178,7 @@ export class FieldSystem {
     const sm = world.mods.securityMul;
     if (sm !== 1) {
       const sec = f.security;
-      for (let i = 0; i < AREA; i++) {
+      for (let i = 0; i < area; i++) {
         const v = sec[i] * sm;
         sec[i] = v > 1 ? 1 : v;
       }
@@ -167,7 +186,7 @@ export class FieldSystem {
     // Ribbon Rail (live track and station discs) raises transit: max-combined.
     const ta = world.layers.transitAdd;
     const tr = f.transit;
-    for (let i = 0; i < AREA; i++) if (ta[i] > tr[i]) tr[i] = ta[i];
+    for (let i = 0; i < area; i++) if (ta[i] > tr[i]) tr[i] = ta[i];
   }
 
   // ── Traffic ───────────────────────────────────────────────────────────────
@@ -180,6 +199,7 @@ export class FieldSystem {
    * Each trip source × mods.trafficMul × layers.tripMul[source tile].
    */
   traffic(world: World, g: SimGrid): void {
+    const { N, area } = this;
     const f = world.fields;
     const tm = world.mods.trafficMul;
     const tripMul = world.layers.tripMul;
@@ -253,11 +273,11 @@ export class FieldSystem {
     }
 
     // 5. Utilisation against each kind's capacity (in street units; ×1 on a street).
-    for (let i = 0; i < AREA; i++) if (road[i]) raw[i] *= STREET_EQ[kind[i]];
+    for (let i = 0; i < area; i++) if (road[i]) raw[i] *= STREET_EQ[kind[i]];
 
     // 6. Spread congestion along linked roads (roadLinks: a highway only joins highways and ramps).
     for (let pass = 0; pass < T.TRAFFIC_SMOOTH_PASSES; pass++) {
-      for (let i = 0; i < AREA; i++) {
+      for (let i = 0; i < area; i++) {
         if (!road[i]) {
           tmp[i] = 0;
           continue;
@@ -287,7 +307,7 @@ export class FieldSystem {
     }
 
     // 7. Congestion 1 − e^−u, and volume against a street (the pollution source).
-    for (let i = 0; i < AREA; i++) {
+    for (let i = 0; i < area; i++) {
       if (road[i]) {
         const us = raw[i];
         const k = kind[i];
@@ -309,7 +329,7 @@ export class FieldSystem {
 
     // 8. Non-road tiles: a faint spill for the overlay, and the "felt" traffic for land value.
     const local = this.localTraffic;
-    for (let i = 0; i < AREA; i++) {
+    for (let i = 0; i < area; i++) {
       const r = nearestRoad[i];
       const v = r >= 0 ? out[r] : 0;
       local[i] = v;
@@ -323,6 +343,7 @@ export class FieldSystem {
   // ── Pollution ─────────────────────────────────────────────────────────────
   /** Sources diffuse, parks filter, smog thickens; the final value × mods.pollutionMul before the clamp. Call after traffic(). */
   pollution(world: World, g: SimGrid): void {
+    const { N, area } = this;
     const f = world.fields;
     const st = this.st;
     const out = f.pollution;
@@ -343,17 +364,17 @@ export class FieldSystem {
     }
     // Road source: volume × ROAD_POLLUTION × the kind's multiplier (§3.8; a street is unchanged).
     const volume = this.volume;
-    for (let i = 0; i < AREA; i++) if (road[i]) src[i] += volume[i] * T.ROAD_POLLUTION * KPOL[kind[i]];
+    for (let i = 0; i < area; i++) if (road[i]) src[i] += volume[i] * T.ROAD_POLLUTION * KPOL[kind[i]];
 
     out.set(src);
-    for (let p = 0; p < T.POLLUTION_BLUR_PASSES; p++) blur3(out, this.tmpB);
+    for (let p = 0; p < T.POLLUTION_BLUR_PASSES; p++) blur3(out, this.tmpB, this.N);
 
     const park = f.park;
     const pm = world.mods.pollutionMul;
     const smog = this.smog;
     const smogMul = 1 + 0.8 * smog;
     const smogAdd = 0.05 * smog;
-    for (let i = 0; i < AREA; i++) {
+    for (let i = 0; i < area; i++) {
       let v = out[i] * T.POLLUTION_GAIN + src[i] * T.POLLUTION_SOURCE_KEEP;
       v *= 1 - T.PARK_FILTER * park[i];
       if (smog > 0.01 && v > 0.01) v = v * smogMul + smogAdd;
@@ -390,6 +411,7 @@ export class FieldSystem {
    * inside). mode 0: noise v·(1 − d/(r + 1)); 1: the airport business district; 2: seaport proximity.
    */
   private stamp(b: Building, r: number, mode: 0 | 1 | 2, v: number, out: Float32Array): void {
+    const { N } = this;
     const x0 = Math.max(0, b.x - r);
     const x1 = Math.min(N - 1, b.x + b.size - 1 + r);
     const y0 = Math.max(0, b.y - r);
@@ -432,6 +454,7 @@ export class FieldSystem {
 
   // ── Neighbourhood (density + blight), used by land value and crime ───────
   neighbourhood(g: SimGrid): void {
+    const { N, area } = this;
     const dens = this.density;
     const blight = this.blight;
     const { zone, level, abandoned } = g;
@@ -442,10 +465,10 @@ export class FieldSystem {
       if (abandoned[i]) blight[i] = 1;
       else if (level[i] > 0) dens[i] = (level[i] / 3) * (zone[i] === 3 ? 0.6 : 1);
     }
-    blur3(dens, this.tmpB);
-    blur3(blight, this.tmpB);
-    blur3(blight, this.tmpB);
-    for (let i = 0; i < AREA; i++) {
+    blur3(dens, this.tmpB, N);
+    blur3(blight, this.tmpB, N);
+    blur3(blight, this.tmpB, N);
+    for (let i = 0; i < area; i++) {
       const b = blight[i] * 2.5;
       blight[i] = b > 1 ? 1 : b;
     }
@@ -457,6 +480,7 @@ export class FieldSystem {
    * + the static road terms (g.roadLv) − NOISE.lv × noise (§3.8).
    */
   landValue(world: World, g: SimGrid): void {
+    const { area } = this;
     const f = world.fields;
     const lvAdd = world.mods.landValueAdd;
     const lvLayer = world.layers.lvAdd;
@@ -468,7 +492,7 @@ export class FieldSystem {
     const local = this.localTraffic;
     const roadLv = g.roadLv;
     const noise = f.noise;
-    for (let i = 0; i < AREA; i++) {
+    for (let i = 0; i < area; i++) {
       if (water[i]) {
         out[i] = 0;
         continue;
@@ -496,6 +520,7 @@ export class FieldSystem {
    * empty-land factor, then + event boost.
    */
   crime(world: World, g: SimGrid, jobless: number, population: number): void {
+    const { area } = this;
     const f = world.fields;
     const crimeMul = world.mods.crimeMul;
     const crimeAdd = world.mods.crimeAdd;
@@ -510,7 +535,7 @@ export class FieldSystem {
     const city = T.CRIME_CITY * Math.min(1, population / T.CRIME_CITY_POP);
     const shared = T.CRIME_BASE + jobless * T.CRIME_UNEMPLOYMENT + city;
     const town = T.CRIME_TOWN_SCALE + (1 - T.CRIME_TOWN_SCALE) * Math.min(1, population / T.CRIME_TOWN_POP);
-    for (let i = 0; i < AREA; i++) {
+    for (let i = 0; i < area; i++) {
       if (water[i] && !road[i]) {
         out[i] = 0;
         continue;
@@ -529,9 +554,10 @@ export class FieldSystem {
 
   /** Per-tick decay of event effects. */
   decay(): void {
+    const { area } = this;
     const b = this.crimeBoost;
     if (this.smog > 0) this.smog = this.smog < 0.01 ? 0 : this.smog * T.SMOG_DECAY;
-    for (let i = 0; i < AREA; i++) {
+    for (let i = 0; i < area; i++) {
       const v = b[i];
       if (v !== 0) b[i] = v < 0.005 ? 0 : v * T.CRIME_BOOST_DECAY;
     }
@@ -539,6 +565,7 @@ export class FieldSystem {
 
   /** Add a temporary crime hotspot (gang surge). */
   addCrimeHotspot(cx: number, cy: number, radius: number, strength: number): void {
+    const { N } = this;
     const b = this.crimeBoost;
     for (let y = Math.max(0, cy - radius); y <= Math.min(N - 1, cy + radius); y++)
       for (let x = Math.max(0, cx - radius); x <= Math.min(N - 1, cx + radius); x++) {

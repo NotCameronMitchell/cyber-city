@@ -11,12 +11,12 @@ import { describe, expect, it } from 'vitest';
 import { BUILDINGS, POWER_WEIGHTS } from '../src/game/config';
 import { Simulation } from '../src/game/sim';
 import { powerWeight } from '../src/game/story/factions';
-import { DAYS_PER_MONTH, MAP_SIZE, RoadKind, Terrain, ZoneType, type Building } from '../src/game/types';
+import { DAYS_PER_MONTH, LEGACY_SIZE, RoadKind, Terrain, ZoneType, type Building } from '../src/game/types';
 import { World } from '../src/game/world';
 import { expansionFixture, fabUpShare, playScenario, resComSplit, type ExpansionMayorOptions, type ScenarioResult } from './expansion-fixture';
 import { flatWorld, fullyBuiltWorld } from './helpers';
 
-const N = MAP_SIZE;
+const N = LEGACY_SIZE;
 /** Node's environment (no @types/node in this project). */
 const env: Record<string, string | undefined> = (globalThis as { process?: { env: Record<string, string | undefined> } }).process?.env ?? {};
 const SEEDS = (env.SEEDS ?? '2091,7,31').split(',').map(Number);

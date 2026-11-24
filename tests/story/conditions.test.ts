@@ -45,7 +45,7 @@ import {
   updateMoods,
 } from '../../src/game/story/factions';
 import type { Condition, Metric } from '../../src/game/story/types';
-import { MAP_SIZE, ZoneType } from '../../src/game/types';
+import { ZoneType } from '../../src/game/types';
 import type { World } from '../../src/game/world';
 import { flatWorld } from '../helpers';
 
@@ -181,7 +181,7 @@ const CASES: Record<string, () => void> = {
   },
   'turf.share': () => {
     w.turf.stats.tiles = { undertow: 100, kites: 60 };
-    expect(metric(w, 'turf.share')).toBeCloseTo(160 / (MAP_SIZE * MAP_SIZE), 6);
+    expect(metric(w, 'turf.share')).toBeCloseTo(160 / w.area, 6);
   },
   'standing.patron': () => {
     w.story.favor.nacre = 30;

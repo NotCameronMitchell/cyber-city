@@ -15,11 +15,11 @@ import { powerWeight } from '../../src/game/story/factions';
 import { cardEligible, cardWeight, drawCard } from '../../src/game/story/pacing';
 import * as turf from '../../src/game/story/turf';
 import type { Card } from '../../src/game/story/types';
-import { MAP_SIZE, RoadKind, Terrain, ZoneType } from '../../src/game/types';
+import { LEGACY_SIZE, RoadKind, Terrain, ZoneType } from '../../src/game/types';
 import type { World } from '../../src/game/world';
 import { headlessGame } from './harness';
 
-const N = MAP_SIZE;
+const N = LEGACY_SIZE;
 
 afterEach(() => {
   useStoryContent(STORY_CONTENT);

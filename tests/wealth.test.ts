@@ -9,23 +9,23 @@ import { FieldSystem } from '../src/game/sim/fields';
 import { SimGrid } from '../src/game/sim/grid';
 import { GrowthSystem } from '../src/game/sim/growth';
 import { PowerGrid } from '../src/game/sim/power';
-import { DAYS_PER_MONTH, MAP_SIZE, RoadKind, ZoneType, type SaveData, type WealthTier } from '../src/game/types';
+import { DAYS_PER_MONTH, LEGACY_SIZE, RoadKind, ZoneType, type SaveData, type WealthTier } from '../src/game/types';
 import { potentialTier, tierCap, tierCapAt, wealthScoreAt, zoneCapacity } from '../src/game/wealth';
 import { World } from '../src/game/world';
 import { ScriptedMayor, act, flatWorld, fullyBuiltWorld, makeSim, run } from './helpers';
 import { expansionFixture } from './expansion-fixture';
 
-const N = MAP_SIZE;
+const N = LEGACY_SIZE;
 const RES = ZoneType.Residential;
 
 /** Growth driven by hand: no field passes, so a test can set fields.wealth itself. */
 function rig(w: World) {
   const g = new SimGrid(w);
   g.scan(w, true);
-  const power = new PowerGrid();
+  const power = new PowerGrid(w);
   power.compute(w, g);
-  const growth = new GrowthSystem();
-  const fields = new FieldSystem();
+  const growth = new GrowthSystem(w);
+  const fields = new FieldSystem(w);
   const tick = (demand = { res: 0, com: 0, ind: 0 }) => {
     w.tick++;
     g.scan(w);

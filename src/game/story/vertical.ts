@@ -16,13 +16,12 @@
 import { buildingStats, completeStage } from '../buildingStats';
 import { BUILDINGS, CROWNS, RIBBON, SKYBRIDGE, STACK_SHADESIDE, STACK_STAGES, TURF_OWNER } from '../config';
 import { districtName } from '../news';
-import { MAP_SIZE, Terrain, ZoneType, type ActionPlan, type Building, type Tile } from '../types';
+import { scratchFor } from '../frame';
+import { Terrain, ZoneType, type ActionPlan, type Building, type Tile } from '../types';
 import type { World } from '../world';
 import { composeLayers, resetLayers } from './mods';
 import type { BuildingStats, CrownId, GangId, ModPatch, SimLayers, SkyLink } from './types';
 
-const N = MAP_SIZE;
-const AREA = N * N;
 const RES = ZoneType.Residential;
 const COM = ZoneType.Commercial;
 
@@ -41,10 +40,13 @@ const S: BuildingStats = {
   tall: false,
   station: false,
 };
-const comp = new Int32Array(AREA);
-const order = new Int32Array(AREA);
-const prevLive = new Uint8Array(AREA);
-const mark = new Uint8Array(AREA);
+/** Per-tile scratch, one set per frame size (MEGACITY §3.1). */
+const scratch = scratchFor((area) => ({
+  comp: new Int32Array(area),
+  order: new Int32Array(area),
+  prevLive: new Uint8Array(area),
+  mark: new Uint8Array(area),
+}));
 const compStations: number[] = [];
 
 // ── Anchors ─────────────────────────────────────────────────────────────────
@@ -87,6 +89,7 @@ export function anchorPowered(world: World, x: number, y: number): boolean {
  * SKYBRIDGE.maxPerAnchor bridges.
  */
 export function anchorKey(world: World, x: number, y: number): number {
+  const N = world.N;
   const t = world.tileAt(x, y);
   if (!t) return 0;
   return t.buildingId >= 0 ? t.buildingId : -(y * N + x + 1);
@@ -134,21 +137,24 @@ export function linksOnAnchor(world: World, key: number): number {
 
 /** Fill `out` with 1 on every tall anchor tile (zone tiles and building footprints). */
 export function tallMask(world: World, out: Uint8Array): Uint8Array {
+  const N = world.N;
+  const area = world.area;
   out.fill(0);
   const tiles = world.tiles;
-  for (let i = 0; i < AREA; i++) {
+  for (let i = 0; i < area; i++) {
     const t = tiles[i];
     if (t.buildingId < 0 && isTallZoneTile(t)) out[i] = 1;
   }
   for (const b of world.buildings.values()) {
     if (!isTallBuilding(b)) continue;
-    fillRect(out, b.x, b.y, b.x + b.size - 1, b.y + b.size - 1, 1);
+    fillRect(out, b.x, b.y, b.x + b.size - 1, b.y + b.size - 1, 1, N);
   }
   return out;
 }
 
 /** Fill `out` with 1 on the anchor and gap tiles of every active skybridge. */
 export function spanMask(world: World, out: Uint8Array): Uint8Array {
+  const N = world.N;
   out.fill(0);
   const active = world.vertical.activeLinks;
   for (const l of world.links) {
@@ -170,13 +176,14 @@ export function isLiveStation(b: Building): boolean {
 }
 
 /** Track bits (N1 E2 S4 W8) actually joined to a neighbour that links back. */
-function linkedNeighbours(rail: Uint8Array, i: number, out: Int32Array): number {
+function linkedNeighbours(rail: Uint8Array, i: number, out: Int32Array, N: number): number {
+  const area = rail.length;
   const m = rail[i];
   const x = i % N;
   let n = 0;
   if (m & 1 && i >= N && rail[i - N] & 4) out[n++] = i - N;
   if (m & 2 && x < N - 1 && rail[i + 1] & 8) out[n++] = i + 1;
-  if (m & 4 && i < AREA - N && rail[i + N] & 1) out[n++] = i + N;
+  if (m & 4 && i < area - N && rail[i + N] & 1) out[n++] = i + N;
   if (m & 8 && x > 0 && rail[i - 1] & 2) out[n++] = i - 1;
   return n;
 }
@@ -184,6 +191,8 @@ const nb = new Int32Array(4);
 
 /** Distinct powered stations touching rail tile i (under it or 4-adjacent), appended to compStations. */
 function collectStations(world: World, i: number): void {
+  const N = world.N;
+  const area = world.area;
   const x = i % N;
   const tiles = world.tiles;
   for (let k = 0; k < 5; k++) {
@@ -195,7 +204,7 @@ function collectStations(world: World, i: number): void {
       if (x >= N - 1) continue;
       j = i + 1;
     } else if (k === 3) {
-      if (i >= AREA - N) continue;
+      if (i >= area - N) continue;
       j = i + N;
     } else if (k === 4) {
       if (x <= 0) continue;
@@ -227,6 +236,8 @@ export interface RailNetwork {
 
 /** The network containing tile (x, y), or null when there is no rail there. For inspect and story effects. */
 export function railNetworkAt(world: World, x: number, y: number): RailNetwork | null {
+  const N = world.N;
+  const { comp } = scratch(world.area);
   if (!world.inBounds(x, y)) return null;
   const start = y * N + x;
   const rail = world.rail;
@@ -236,6 +247,7 @@ export function railNetworkAt(world: World, x: number, y: number): RailNetwork |
 }
 
 function bfsNetwork(world: World, start: number, id: number, seen: Int32Array): RailNetwork {
+  const { order } = scratch(world.area);
   const rail = world.rail;
   let head = 0;
   let tail = 0;
@@ -247,7 +259,7 @@ function bfsNetwork(world: World, start: number, id: number, seen: Int32Array): 
     const i = order[head++];
     collectStations(world, i);
     if (!out && railOutActive(world, i)) out = true;
-    const n = linkedNeighbours(rail, i, nb);
+    const n = linkedNeighbours(rail, i, nb, world.N);
     for (let k = 0; k < n; k++) {
       const j = nb[k];
       if (seen[j] !== -1) continue;
@@ -262,10 +274,12 @@ function bfsNetwork(world: World, start: number, id: number, seen: Int32Array): 
 
 /** Every connected network (one BFS pass). Allocates per network: for effects and tests, not per tick. */
 export function railNetworks(world: World): RailNetwork[] {
+  const area = world.area;
+  const { comp } = scratch(world.area);
   const rail = world.rail;
   comp.fill(-1);
   const nets: RailNetwork[] = [];
-  for (let i = 0; i < AREA; i++) {
+  for (let i = 0; i < area; i++) {
     if (!rail[i] || comp[i] !== -1) continue;
     nets.push(bfsNetwork(world, i, nets.length, comp));
   }
@@ -279,6 +293,7 @@ export function railNetworks(world: World): RailNetwork[] {
  * calls refresh().
  */
 export function railOutTarget(world: World, gang?: GangId): number {
+  const area = world.area;
   const code = gang ? TURF_OWNER[gang] : 0;
   const owner = world.turf.owner;
   let best = -1;
@@ -287,7 +302,7 @@ export function railOutTarget(world: World, gang?: GangId): number {
     if (!net.live) continue;
     let onTurf = 0;
     if (code) for (const i of net.tiles) if (owner[i] === code) onTurf++;
-    const score = onTurf * AREA + net.tiles.length;
+    const score = onTurf * area + net.tiles.length;
     if (score > bestScore) {
       bestScore = score;
       best = net.tiles[0];
@@ -298,23 +313,26 @@ export function railOutTarget(world: World, gang?: GangId): number {
 
 /** Tile indices for the `rail` effect target: every rail tile, widened by Chebyshev r (r1 = plus neighbours). */
 export function railArea(world: World, r = 0): number[] {
+  const N = world.N;
+  const area = world.area;
+  const { mark } = scratch(world.area);
   const rail = world.rail;
   mark.fill(0);
   const rr = Math.max(0, Math.floor(r));
-  for (let i = 0; i < AREA; i++) {
+  for (let i = 0; i < area; i++) {
     if (!rail[i]) continue;
     const x = i % N;
     const y = (i / N) | 0;
-    fillRect(mark, x - rr, y - rr, x + rr, y + rr, 1);
+    fillRect(mark, x - rr, y - rr, x + rr, y + rr, 1, N);
   }
   const out: number[] = [];
-  for (let i = 0; i < AREA; i++) if (mark[i]) out.push(i);
+  for (let i = 0; i < area; i++) if (mark[i]) out.push(i);
   return out;
 }
 
 // ── Refresh ─────────────────────────────────────────────────────────────────
 
-function fillRect(a: Uint8Array, x0: number, y0: number, x1: number, y1: number, bit: number): void {
+function fillRect(a: Uint8Array, x0: number, y0: number, x1: number, y1: number, bit: number, N: number): void {
   if (x0 < 0) x0 = 0;
   if (y0 < 0) y0 = 0;
   if (x1 > N - 1) x1 = N - 1;
@@ -326,7 +344,7 @@ function fillRect(a: Uint8Array, x0: number, y0: number, x1: number, y1: number,
 }
 
 /** Flat disc (Euclidean from (cx, cy), tile centres) marked with `bit`. */
-function markDisc(a: Uint8Array, cx: number, cy: number, r: number, bit: number): void {
+function markDisc(a: Uint8Array, cx: number, cy: number, r: number, bit: number, N: number): void {
   const xa = Math.max(0, Math.floor(cx - r));
   const xb = Math.min(N - 1, Math.ceil(cx + r));
   const ya = Math.max(0, Math.floor(cy - r));
@@ -342,7 +360,7 @@ function markDisc(a: Uint8Array, cx: number, cy: number, r: number, bit: number)
 }
 
 /** Add `v` inside a flat disc. */
-function addDisc(layer: Float32Array, cx: number, cy: number, r: number, v: number): void {
+function addDisc(layer: Float32Array, cx: number, cy: number, r: number, v: number, N: number): void {
   const xa = Math.max(0, Math.floor(cx - r));
   const xb = Math.min(N - 1, Math.ceil(cx + r));
   const ya = Math.max(0, Math.floor(cy - r));
@@ -358,7 +376,7 @@ function addDisc(layer: Float32Array, cx: number, cy: number, r: number, v: numb
 }
 
 /** Max-combine a coverage-style disc (1 at the centre, 0 at the edge). */
-function maxDisc(layer: Float32Array, cx: number, cy: number, r: number): void {
+function maxDisc(layer: Float32Array, cx: number, cy: number, r: number, N: number): void {
   const xa = Math.max(0, Math.floor(cx - r));
   const xb = Math.min(N - 1, Math.ceil(cx + r));
   const ya = Math.max(0, Math.floor(cy - r));
@@ -385,6 +403,9 @@ const centreY = (b: Building) => b.y + b.size / 2;
  * The first refresh of a world (load) is quiet: no news; `quiet` forces that.
  */
 export function refresh(world: World, opts?: { quiet?: boolean }): void {
+  const N = world.N;
+  const area = world.area;
+  const { comp, order, prevLive } = scratch(world.area);
   const v = world.vertical;
   const quiet = v.version === 0 || !!opts?.quiet;
   const m = v.metrics;
@@ -437,7 +458,7 @@ export function refresh(world: World, opts?: { quiet?: boolean }): void {
   m.railOnTurf.undertow = 0;
   m.railOnTurf.kites = 0;
   let compId = 0;
-  for (let s = 0; s < AREA; s++) {
+  for (let s = 0; s < area; s++) {
     if (!rail[s] || comp[s] !== -1) continue;
     // Inline BFS (bfsNetwork without the per-network allocation).
     let head = 0;
@@ -450,7 +471,7 @@ export function refresh(world: World, opts?: { quiet?: boolean }): void {
       const i = order[head++];
       collectStations(world, i);
       if (!out && railOutActive(world, i)) out = true;
-      const n = linkedNeighbours(rail, i, nb);
+      const n = linkedNeighbours(rail, i, nb, world.N);
       for (let k = 0; k < n; k++) {
         const j = nb[k];
         if (comp[j] !== -1) continue;
@@ -497,6 +518,9 @@ export function refresh(world: World, opts?: { quiet?: boolean }): void {
 
 /** Rewrite world.layerParts.vertical from the caches refresh() just built. */
 function writeLayers(world: World, L: SimLayers): void {
+  const N = world.N;
+  const area = world.area;
+  const { mark } = scratch(world.area);
   resetLayers(L);
   const v = world.vertical;
   const tiles = world.tiles;
@@ -511,14 +535,14 @@ function writeLayers(world: World, L: SimLayers): void {
       for (let e = 0; e < 2; e++) {
         const x = e ? l.bx : l.ax;
         const y = e ? l.by : l.ay;
-        markDisc(mark, x + 0.5, y + 0.5, SB.lvRadius, 1);
+        markDisc(mark, x + 0.5, y + 0.5, SB.lvRadius, 1, N);
         const t = tiles[y * N + x];
         const b = t.buildingId >= 0 ? world.buildings.get(t.buildingId) : undefined;
-        if (b) fillRect(mark, b.x, b.y, b.x + b.size - 1, b.y + b.size - 1, 2);
+        if (b) fillRect(mark, b.x, b.y, b.x + b.size - 1, b.y + b.size - 1, 2, N);
         else mark[y * N + x] |= 2;
       }
     }
-    for (let i = 0; i < AREA; i++) {
+    for (let i = 0; i < area; i++) {
       const k = mark[i];
       if (!k) continue;
       if (k & 1) L.lvAdd[i] += SB.lv;
@@ -530,12 +554,12 @@ function writeLayers(world: World, L: SimLayers): void {
   const live = v.railLive;
   if (v.liveStations.size) {
     mark.fill(0);
-    for (let i = 0; i < AREA; i++) {
+    for (let i = 0; i < area; i++) {
       if (!live[i]) continue;
       const x = i % N;
       const y = (i / N) | 0;
-      fillRect(mark, x - 1, y - 1, x + 1, y + 1, 1);
-      fillRect(mark, x - RB.tripRadius, y - RB.tripRadius, x + RB.tripRadius, y + RB.tripRadius, 2);
+      fillRect(mark, x - 1, y - 1, x + 1, y + 1, 1, N);
+      fillRect(mark, x - RB.tripRadius, y - RB.tripRadius, x + RB.tripRadius, y + RB.tripRadius, 2, N);
       const t = tiles[i];
       if (t.zone === RES && t.buildingId < 0) L.lvAdd[i] += RB.underResLv;
     }
@@ -543,11 +567,11 @@ function writeLayers(world: World, L: SimLayers): void {
       const b = world.buildings.get(id);
       if (!b) continue;
       const r = b.type === 'stack' ? RB.stackStationRadius : buildingStats(b, S).radius + RB.stationRadiusAdd;
-      if (r > 0) maxDisc(L.transitAdd, centreX(b), centreY(b), r);
-      markDisc(mark, centreX(b), centreY(b), RB.stationLvRadius, 4);
+      if (r > 0) maxDisc(L.transitAdd, centreX(b), centreY(b), r, N);
+      markDisc(mark, centreX(b), centreY(b), RB.stationLvRadius, 4, N);
     }
     const ta = L.transitAdd;
-    for (let i = 0; i < AREA; i++) {
+    for (let i = 0; i < area; i++) {
       const k = mark[i];
       if (!k) continue;
       if (k & 1 && ta[i] < RB.transit) ta[i] = RB.transit;
@@ -561,7 +585,7 @@ function writeLayers(world: World, L: SimLayers): void {
   for (const b of world.buildings.values()) {
     const on = b.powered && b.offline <= 0;
     if (b.type === 'glarewall') {
-      if (on) addDisc(L.crimeAdd, centreX(b), centreY(b), 4, -0.05);
+      if (on) addDisc(L.crimeAdd, centreX(b), centreY(b), 4, -0.05, N);
     } else if (b.type === 'stack') {
       const s = completeStage(b);
       if (s >= 2) {
@@ -570,16 +594,16 @@ function writeLayers(world: World, L: SimLayers): void {
           mark.fill(0);
         }
         const r = STACK_SHADESIDE.radius;
-        fillRect(mark, b.x - r, b.y - r, b.x + b.size - 1 + r, b.y + b.size - 1 + r, 1);
+        fillRect(mark, b.x - r, b.y - r, b.x + b.size - 1 + r, b.y + b.size - 1 + r, 1, N);
       }
       if (s >= 3 && b.crown === 'glare' && on) {
         const c = CROWNS.glare;
-        addDisc(L.lvAdd, centreX(b), centreY(b), c.lvRadius ?? 8, c.lvAdd ?? 0);
+        addDisc(L.lvAdd, centreX(b), centreY(b), c.lvRadius ?? 8, c.lvAdd ?? 0, N);
       }
     }
   }
   if (shade) {
-    for (let i = 0; i < AREA; i++) {
+    for (let i = 0; i < area; i++) {
       if (!mark[i]) continue;
       const t = tiles[i];
       if (t.buildingId >= 0 || t.level === 0) continue;
@@ -631,7 +655,8 @@ export function upkeep(world: World): { skybridges: number; rail: number } {
   }
   let n = 0;
   const rail = world.rail;
-  for (let i = 0; i < AREA; i++) if (rail[i]) n++;
+  const area = world.area;
+  for (let i = 0; i < area; i++) if (rail[i]) n++;
   return { skybridges: sky, rail: n * RIBBON.upkeep };
 }
 
@@ -747,6 +772,7 @@ function gapUsed(world: World, x: number, y: number): boolean {
  * The caller applies cost multipliers and the funds check.
  */
 export function planSkybridge(world: World, from: Pt, to: Pt, plan: ActionPlan): number {
+  const N = world.N;
   const SB = SKYBRIDGE;
   const fail = (reason: string, pts: Pt[]) => {
     for (const p of pts) if (world.inBounds(p.x, p.y)) plan.tiles.push({ x: p.x, y: p.y, ok: false });
@@ -825,6 +851,7 @@ export function planSkybridge(world: World, from: Pt, to: Pt, plan: ActionPlan):
  * (tiles, railMasks, base cost, reason) and returns the number of changed tiles.
  */
 export function planRail(world: World, path: readonly Pt[], plan: ActionPlan): number {
+  const N = world.N;
   const RB = RIBBON;
   let pts = path.filter((p) => world.inBounds(p.x, p.y));
   let truncated = false;

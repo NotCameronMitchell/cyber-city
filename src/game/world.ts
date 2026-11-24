@@ -19,7 +19,8 @@ import type {
   VerticalCache,
 } from './story/types';
 import {
-  MAP_SIZE,
+  LEGACY_SIZE,
+  MAX_MAP_SIZE,
   MOMENT_IDS,
   RoadKind,
   Terrain,
@@ -40,7 +41,6 @@ import {
   type Tile,
 } from './types';
 
-const N = MAP_SIZE;
 /** world.signals keeps at most this many (oldest dropped) when nothing drains it, e.g. headless sim tests. */
 const MAX_SIGNALS = 256;
 /** Building types whose footprint keeps the turf under it (§3.1). */
@@ -67,8 +67,8 @@ function saneSky(bits: number): number {
   return (bits & SKY_RAMP) !== 0 && popcount4(m) === 1 ? m | SKY_RAMP : m;
 }
 
-function makeFields(): Fields {
-  const f = () => new Float32Array(N * N);
+function makeFields(area: number): Fields {
+  const f = () => new Float32Array(area);
   return {
     landValue: f(),
     pollution: f(),
@@ -86,7 +86,7 @@ function makeFields(): Fields {
     wealth: f(),
     hub: f(),
     sea: f(),
-    alleyNear: new Uint8Array(N * N),
+    alleyNear: new Uint8Array(area),
   };
 }
 
@@ -159,7 +159,12 @@ export function savePopScale(data: { scale?: unknown }): number {
  * the player-facing rules and costs.
  */
 export class World {
-  readonly size = N;
+  /**
+   * The per-world frame (MEGACITY §3.1): side in tiles and tile count, fixed for this World.
+   * Index = y * N + x. Every system copies these at construction instead of a module constant.
+   */
+  readonly N: number;
+  readonly area: number;
   readonly events: Emitter<GameEventMap>;
   cityName: string;
   seed: number;
@@ -172,7 +177,7 @@ export class World {
   tiles: Tile[];
   buildings = new Map<number, Building>();
   nextBuildingId = 1;
-  fields: Fields = makeFields();
+  fields: Fields;
   stats: CityStats = emptyStats();
   budget: BudgetReport = emptyBudget();
   news: NewsItem[] = [];
@@ -186,62 +191,80 @@ export class World {
   /** Director state (saved in SaveData.story). Written by the director only. */
   story: StoryState;
   /** Gang turf (plain data; the sim may read it). Written by story/turf.ts. */
-  turf: TurfMap = emptyTurf();
-  /** Ribbon Rail connection bitmask per tile (N1 E2 S4 W8), Uint8Array(4096). Mutate via setRail/clearRail. */
-  rail = new Uint8Array(N * N);
+  turf: TurfMap;
+  /** Ribbon Rail connection bitmask per tile (N1 E2 S4 W8), Uint8Array(area). Mutate via setRail/clearRail. */
+  rail: Uint8Array;
   /** Skybridges. Mutate via addLink/removeLinksAt. */
   links: SkyLink[] = [];
   nextLinkId = 1;
   /** Resolved city-wide modifiers the sim reads (resolveMods → world.mods). Identities by default. */
   mods: SimMods = cloneMods();
   /** Composed per-tile layers the sim reads (composeLayers). Identities by default. */
-  layers: SimLayers = makeLayers();
+  layers: SimLayers;
   /** Partial layer sets, one per owner (turf.ts, vertical.ts, director), merged by composeLayers. */
-  layerParts: LayerParts = makeLayerParts();
+  layerParts: LayerParts;
   /** Story budget lines the monthly budget appends (amounts positive). Written by the director. */
   ledger: StoryLedger = emptyLedger();
   /** Reports from sim and actions to the director; drained by director.onDay(). Push via pushSignal(). */
   signals: StorySignal[] = [];
   /** Derived vertical caches (active links, live rail, metrics). Written by story/vertical.ts. */
-  vertical: VerticalCache = emptyVertical();
+  vertical: VerticalCache;
 
   // ── Expansion (docs/EXPANSION.md §2.1, §2.4). ──
-  /** Skyway bits per tile: 0-3 link mask (N1 E2 S4 W8), bit 4 = ramp. Uint8Array(4096). Mutate via setSky/clearSky. Saved (v3). */
-  sky = new Uint8Array(N * N);
+  /** Skyway bits per tile: 0-3 link mask (N1 E2 S4 W8), bit 4 = ramp. Uint8Array(area). Mutate via setSky/clearSky. Saved (v3). */
+  sky: Uint8Array;
   /** ++ on every sky mutation (not saved). SimGrid compares it to rebuild its sky caches. */
   skyVersion = 0;
   /** Wealth hysteresis streak per tile (GrowthSystem writes, wealthInfo reads the sign for ▲/▼). Not saved. */
-  wealthStreak = new Int8Array(N * N);
+  wealthStreak: Int8Array;
   /** Save version this world was decoded from (SAVE_VERSION for a new world). Game reads it once (settleWealth, §4.3). */
   loadedVersion = SAVE_VERSION;
   /** Once-per-city moments already shown (§5.4). Saved as SaveData.moments. */
   moments = new Set<MomentId>();
 
-  constructor(seed: number, cityName = 'Lanthorn Bay', events?: Emitter<GameEventMap>) {
+  /**
+   * `side` is the world's side in tiles (MEGACITY §3.1): LEGACY_SIZE (64) for every city until
+   * regions land (Step 0b part 2), any multiple of 64 up to MAX_MAP_SIZE for frame tests.
+   */
+  constructor(seed: number, cityName = 'Lanthorn Bay', events?: Emitter<GameEventMap>, side: number = LEGACY_SIZE) {
+    if (!(Number.isInteger(side) && side >= LEGACY_SIZE && side <= MAX_MAP_SIZE && side % LEGACY_SIZE === 0))
+      throw new Error(`World side ${side} is not a multiple of ${LEGACY_SIZE} up to ${MAX_MAP_SIZE}`);
+    const area = side * side;
+    this.N = side;
+    this.area = area;
     this.seed = seed >>> 0;
     this.cityName = cityName;
     this.events = events ?? new Emitter<GameEventMap>();
     this.rng = new Rng(this.seed ^ 0xa5a5a5a5);
-    this.tiles = Array.from({ length: N * N }, blankTile);
+    this.tiles = Array.from({ length: area }, blankTile);
+    this.fields = makeFields(area);
+    this.turf = emptyTurf(area);
+    this.rail = new Uint8Array(area);
+    this.layers = makeLayers(area);
+    this.layerParts = makeLayerParts(area);
+    this.vertical = emptyVertical(area);
+    this.sky = new Uint8Array(area);
+    this.wealthStreak = new Int8Array(area);
     this.story = newStoryState(this.seed);
   }
 
-  /** Create a fresh world with generated terrain. */
-  static generate(seed: number, cityName?: string, events?: Emitter<GameEventMap>): World {
-    const w = new World(seed, cityName, events);
+  /** Create a fresh world with generated terrain (`side` as in the constructor). */
+  static generate(seed: number, cityName?: string, events?: Emitter<GameEventMap>, side: number = LEGACY_SIZE): World {
+    const w = new World(seed, cityName, events, side);
     w.generateTerrain();
     return w;
   }
 
   // ── Indexing ──────────────────────────────────────────────────────────────
   idx(x: number, y: number): number {
-    return y * N + x;
+    return y * this.N + x;
   }
   inBounds(x: number, y: number): boolean {
+    const N = this.N;
     return x >= 0 && y >= 0 && x < N && y < N;
   }
   tileAt(x: number, y: number): Tile | null {
-    return this.inBounds(x, y) ? this.tiles[y * N + x] : null;
+    return this.inBounds(x, y) ? this.tiles[y * this.N + x] : null;
   }
   buildingAt(x: number, y: number): Building | null {
     const t = this.tileAt(x, y);
@@ -321,8 +344,8 @@ export class World {
     this.events.emit('tiles', {
       x0: Math.max(0, x0 - 1),
       y0: Math.max(0, y0 - 1),
-      x1: Math.min(N - 1, x1 + 1),
-      y1: Math.min(N - 1, y1 + 1),
+      x1: Math.min(this.N - 1, x1 + 1),
+      y1: Math.min(this.N - 1, y1 + 1),
     });
   }
 
@@ -442,7 +465,8 @@ export class World {
    * a non-road tile is Street, Alley / Ramp never on water.
    */
   restoreTile(i: number, snap: TileSnap) {
-    if (!(i >= 0 && i < N * N)) return;
+    const N = this.N;
+    if (!(i >= 0 && i < this.area)) return;
     const t = this.tiles[i];
     const x = i % N;
     const y = (i / N) | 0;
@@ -470,7 +494,7 @@ export class World {
   /** Set a tile's skyway bits (mask | ramp << 4; 0 removes). Callers keep neighbours consistent (like setRail). */
   setSky(x: number, y: number, bits: number) {
     if (!this.inBounds(x, y)) return;
-    const i = y * N + x;
+    const i = y * this.N + x;
     const v = bits & 31;
     if (this.sky[i] === v) return;
     this.sky[i] = v;
@@ -485,6 +509,7 @@ export class World {
    */
   clearSky(x: number, y: number) {
     if (!this.inBounds(x, y)) return;
+    const N = this.N;
     const s = this.sky;
     const i = y * N + x;
     if (!s[i]) return;
@@ -566,7 +591,7 @@ export class World {
   /** Set the rail connection mask (N1 E2 S4 W8) of a tile; 0 removes it. Callers keep neighbours consistent. */
   setRail(x: number, y: number, mask: number) {
     if (!this.inBounds(x, y)) return;
-    const i = y * N + x;
+    const i = y * this.N + x;
     const m = mask & 15;
     if (this.rail[i] === m) return;
     this.rail[i] = m;
@@ -576,6 +601,7 @@ export class World {
   /** Remove rail from a tile and unhook the neighbours that pointed at it. */
   clearRail(x: number, y: number) {
     if (!this.inBounds(x, y)) return;
+    const N = this.N;
     const r = this.rail;
     const i = y * N + x;
     if (!r[i]) return;
@@ -644,6 +670,7 @@ export class World {
     const riverPhase = rng.next() * Math.PI * 2;
     const riverOffset = rng.int(18, 46);
     const s = this.seed % 10000;
+    const N = this.N;
 
     for (let y = 0; y < N; y++) {
       for (let x = 0; x < N; x++) {
@@ -670,9 +697,11 @@ export class World {
       }
     }
 
-    // Keep a generous buildable core near the map centre (lakes there are drained).
-    for (let y = 22; y < 42; y++)
-      for (let x = 22; x < 42; x++) {
+    // Keep a generous buildable core near the map centre (lakes there are drained): 22..41 on 64.
+    const c0 = (N >> 1) - 10;
+    const c1 = (N >> 1) + 10;
+    for (let y = c0; y < c1; y++)
+      for (let x = c0; x < c1; x++) {
         const t = this.tiles[y * N + x];
         const lake = fbm(x * 0.07, y * 0.07, s + 51, 3);
         if (t.terrain === Terrain.Water && lake > 0.76) t.terrain = Terrain.Land;
@@ -736,10 +765,11 @@ export class World {
       !data ||
       !SAVE_VERSIONS_SUPPORTED.includes(data.version) ||
       !Array.isArray(data.tiles) ||
-      data.tiles.length !== N * N
+      data.tiles.length !== LEGACY_SIZE * LEGACY_SIZE
     ) {
       throw new Error('Incompatible save');
     }
+    // Every save today is a LEGACY_SIZE map (v1–v3); regions and v4 come with Step 0b part 2.
     const w = new World(data.seed, data.cityName, events);
     w.tick = data.tick | 0;
     w.funds = Number(data.funds) || 0;
@@ -749,7 +779,7 @@ export class World {
     w.maxPopulation = Math.round(wholeCount(data.maxPopulation) * popMul);
     w.nextBuildingId = data.nextBuildingId | 0 || 1;
     w.loadedVersion = data.version;
-    for (let i = 0; i < N * N; i++) {
+    for (let i = 0; i < w.area; i++) {
       const p = data.tiles[i] | 0;
       const t = w.tiles[i];
       t.terrain = (p & 1) as Terrain;
@@ -846,8 +876,9 @@ export class World {
    */
   private sanitizeSky() {
     const s = this.sky;
+    const N = this.N;
     // Links first (judged against the decoded bits), then the ramp / empty rule.
-    const linked = new Uint8Array(N * N);
+    const linked = new Uint8Array(this.area);
     for (let y = 0; y < N; y++)
       for (let x = 0; x < N; x++) {
         const i = y * N + x;
@@ -863,7 +894,7 @@ export class World {
         }
         linked[i] = m | (v & SKY_RAMP);
       }
-    for (let i = 0; i < N * N; i++) s[i] = saneSky(linked[i]);
+    for (let i = 0; i < this.area; i++) s[i] = saneSky(linked[i]);
     this.skyVersion++;
   }
 }

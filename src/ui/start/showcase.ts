@@ -11,12 +11,11 @@
 import { hash2 } from '../../game/rng';
 import type { Game } from '../../game/game';
 import { Simulation } from '../../game/sim';
-import { MAP_SIZE, Terrain, ZoneType, type BuildingType } from '../../game/types';
+import { Terrain, ZoneType, type BuildingType } from '../../game/types';
 import { World } from '../../game/world';
 import { Camera, HALF_H, HALF_W } from '../../render/camera';
 import { Renderer } from '../../render/renderer';
 
-const N = MAP_SIZE;
 /** A seed whose coast and river frame the centre well (bay to one side, a river crossing). */
 export const SHOWCASE_SEED = 20931;
 /** Road grid pitch (tiles): 3 × 3 blocks between roads, as players build. */
@@ -31,6 +30,7 @@ const AGE = 400;
  */
 export function buildShowcase(seed = SHOWCASE_SEED): World {
   const w = World.generate(seed, 'Showcase');
+  const N = w.N;
   w.funds = 1e9;
   const c = N / 2;
   const R = 4.8; // radius in blocks
@@ -128,12 +128,13 @@ export function buildShowcase(seed = SHOWCASE_SEED): World {
 /** The showcase's camera and renderer (main.ts renders it while the first-launch title is up). */
 export class Showcase {
   readonly world: World;
-  readonly camera = new Camera();
+  readonly camera: Camera;
   readonly renderer: Renderer;
   private readonly off: () => void;
 
   constructor(game: Game, canvas: HTMLCanvasElement) {
     this.world = buildShowcase();
+    this.camera = new Camera(this.world.N);
     // Quality changed in Settings over the title: the showcase renderer resizes like the game's.
     this.off = game.events.on('settings', () => this.world.events.emit('settings'));
     // The renderer reads world, events, story visuals, overlay, tool, preview and selection
@@ -157,8 +158,8 @@ export class Showcase {
     const phone = Math.min(cam.width, cam.height) < 640;
     const land = cam.width > cam.height * 1.2;
     cam.zoom = phone ? (land ? 0.6 : 0.64) : 0.85;
-    const cx = N / 2;
-    const cy = N / 2;
+    const cx = this.world.N / 2;
+    const cy = this.world.N / 2;
     cam.x = (cx - cy) * HALF_W;
     cam.y = (cx + cy) * HALF_H - (land ? 0 : 30);
     cam.clamp();

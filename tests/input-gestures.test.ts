@@ -22,9 +22,10 @@ import {
 } from '../src/input/gestures';
 import { SKYWAY } from '../src/game/config';
 import { Camera, tileCenterWorld } from '../src/render/camera';
+import { LEGACY_SIZE } from '../src/game/types';
 
 function camera(w = 390, h = 844, zoom = 1.3): Camera {
-  const c = new Camera();
+  const c = new Camera(LEGACY_SIZE);
   c.setViewport(w, h);
   c.zoom = zoom;
   c.centerOnTile(20, 30);

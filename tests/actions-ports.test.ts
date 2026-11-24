@@ -73,7 +73,7 @@ describe('seaport (§5.1)', () => {
     w.clearTile(22, 42);
     expect(place(w, 'seaport', 20, 36).valid).toBe(true);
     const b = w.buildingAt(20, 36)!;
-    expect(berthTiles(b)).toHaveLength(8);
+    expect(berthTiles(b, w.N)).toHaveLength(8);
     const bridge = planAction(w, 'road', { x: 22, y: 40 }, { x: 22, y: 45 });
     expect(bridge.reason).toBe('Keep the berth clear');
     expect(bridge.tiles.filter((t) => !t.ok).map((t) => t.y)).toEqual([40, 41]); // the 2-deep berth
@@ -118,11 +118,11 @@ describe('seaport (§5.1)', () => {
     shoreSites(w, marks);
     // Valid top-lefts sit on row 36 (the south side faces the water).
     const finger = at('seaport', 20, 36);
-    expect(snapSeaport(finger, marks)).toEqual(finger); // already valid
-    const snapped = snapSeaport({ x: finger.x, y: finger.y - 2 }, marks);
+    expect(snapSeaport(finger, marks, w.N)).toEqual(finger); // already valid
+    const snapped = snapSeaport({ x: finger.x, y: finger.y - 2 }, marks, w.N);
     expect(footprintOrigin(snapped, 4)).toEqual({ x: 20, y: 36 });
     // Too far: unchanged.
-    expect(snapSeaport({ x: finger.x, y: finger.y - 5 }, marks)).toEqual({ x: finger.x, y: finger.y - 5 });
+    expect(snapSeaport({ x: finger.x, y: finger.y - 5 }, marks, w.N)).toEqual({ x: finger.x, y: finger.y - 5 });
     expect(SEAPORT.snapRadius).toBe(2);
   });
 });

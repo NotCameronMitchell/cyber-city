@@ -4,11 +4,11 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { BUILDINGS, SAVE_KEY, SAVE_VERSION, SAVE_VERSIONS_SUPPORTED, SPACEPORT } from '../src/game/config';
 import { FUTURE_SAVE_KEY, FUTURE_SAVE_TEXT, Game, MIRROR_SAVE_KEY, PREV_SAVE_KEY, RESTORED_SAVE_TEXT, STALE_SAVE_KEY, UNREADABLE_SAVE_KEY, V2_SAVE_KEY } from '../src/game/game';
 import { Simulation } from '../src/game/sim';
-import { MAP_SIZE, RoadKind, Terrain, ZoneType, type SaveData, type WealthTier } from '../src/game/types';
+import { LEGACY_SIZE, RoadKind, Terrain, ZoneType, type SaveData, type WealthTier } from '../src/game/types';
 import { World } from '../src/game/world';
 import { ScriptedMayor, fullyBuiltWorld, makeSim } from './helpers';
 
-const N = MAP_SIZE;
+const N = LEGACY_SIZE;
 const { Street: S, Avenue: A, Highway: H, Alley: L, Ramp: R } = RoadKind;
 
 const json = (w: World) => JSON.parse(JSON.stringify(w.serialize())) as SaveData;

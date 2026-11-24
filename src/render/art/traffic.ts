@@ -23,12 +23,11 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { ROAD_KINDS } from '../../game/config';
-import { MAP_SIZE, RoadKind, ZoneType } from '../../game/types';
+import { RoadKind, ZoneType } from '../../game/types';
 import type { World } from '../../game/world';
 import { HALF_H, HALF_W } from '../camera';
 import { css, glowSprite, mix, type RGB } from '../palette';
 
-const N = MAP_SIZE;
 const WALK = 0.41;
 /** Lateral lane offsets per RoadKind: [inner, outer] (a street has one lane each way). */
 const LANES: readonly (readonly [number, number])[] = [
@@ -119,8 +118,10 @@ export class StreetTraffic {
   private cars: Agent[] = [];
   private walkers: Agent[] = [];
   private roads: number[] = [];
-  /** Road kind per tile (valid where a road is). */
-  private kinds = new Uint8Array(N * N);
+  /** Side of the world the agents walk (its N, MEGACITY §3.1); set by rebuild(). */
+  private N = 0;
+  /** Road kind per tile (valid where a road is), sized from the world's frame. */
+  private kinds = new Uint8Array(0);
   /** Road tiles next to dense commercial lots (pedestrian spawn points). */
   private walkRoads: number[] = [];
   private dirty = true;
@@ -165,6 +166,14 @@ export class StreetTraffic {
 
   private rebuild(world: World) {
     this.dirty = false;
+    if (this.N !== world.N) {
+      // A world of another side: nothing carries over.
+      this.N = world.N;
+      this.kinds = new Uint8Array(world.area);
+      this.cars.length = 0;
+      this.walkers.length = 0;
+    }
+    const N = this.N;
     this.roads.length = 0;
     this.walkRoads.length = 0;
     const tiles = world.tiles;
@@ -191,6 +200,7 @@ export class StreetTraffic {
 
   /** Recompute the visible road subset and target populations. */
   private count(world: World, b: Bounds) {
+    const { N } = this;
     const m = 2;
     this.visRoads.length = 0;
     this.visWalk.length = 0;
@@ -221,7 +231,7 @@ export class StreetTraffic {
 
   update(dt: number, world: World, quality: 'low' | 'high') {
     this.quality = quality;
-    if (this.dirty) this.rebuild(world);
+    if (this.dirty || this.N !== world.N) this.rebuild(world);
     const b = this.bounds;
     if (!b) return;
     this.recount -= dt;
@@ -256,6 +266,7 @@ export class StreetTraffic {
   }
 
   private step(list: Agent[], dt: number, world: World, b: Bounds, walk: boolean) {
+    const { N } = this;
     const m = 3;
     const traffic = world.fields.traffic;
     for (let i = list.length - 1; i >= 0; i--) {
@@ -294,6 +305,7 @@ export class StreetTraffic {
   }
 
   private chooseExit(world: World, x: number, y: number, din: number, walk: boolean, bike = false): number {
+    const { N } = this;
     const mask = world.roadMask(x, y);
     const back = (din + 2) & 3;
     let total = 0;
@@ -332,6 +344,7 @@ export class StreetTraffic {
 
   /** Set the in-tile Bézier path for the agent's (din → dout). */
   private path(a: Agent, walk: boolean) {
+    const { N } = this;
     const exit = walk ? WALK : this.laneOff(a, a.y * N + a.x);
     const off = walk ? WALK : (a.loff || exit);
     a.loff = exit;
@@ -372,6 +385,7 @@ export class StreetTraffic {
   }
 
   private spawn(world: World, pool: number[], walk: boolean) {
+    const { N } = this;
     const traffic = world.fields.traffic;
     const kinds = this.kinds;
     let i: number;

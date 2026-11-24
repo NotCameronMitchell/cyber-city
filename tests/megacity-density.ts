@@ -26,7 +26,7 @@ import type { Simulation } from '../src/game/sim';
 import { CAP_T } from '../src/game/sim/tiers';
 import { powerShare } from '../src/game/story/factions';
 import type { FactionId } from '../src/game/story/types';
-import { DAYS_PER_MONTH, MAP_SIZE, MONTHS_PER_YEAR, ZoneType, type BuildingType } from '../src/game/types';
+import { DAYS_PER_MONTH, MONTHS_PER_YEAR, ZoneType, type BuildingType } from '../src/game/types';
 import { zoneCapacity } from '../src/game/wealth';
 import type { World } from '../src/game/world';
 import { ScriptedMayor, act, flatWorld, makeSim } from './helpers';
@@ -44,7 +44,6 @@ interface Block {
 }
 
 const SPAN = 15;
-const ORIGIN = Math.floor((MAP_SIZE - SPAN * 4) / 2);
 
 /** Grows a district on demand alone (see the file header). */
 export class DemandMayor {
@@ -58,13 +57,15 @@ export class DemandMayor {
     readonly world: World,
     readonly sim: Simulation,
   ) {
+    const N = world.N;
+    const ORIGIN = Math.floor((N - SPAN * 4) / 2);
     const c = Math.floor((SPAN - 1) / 2);
     this.hub = { x: ORIGIN + c * 4, y: ORIGIN + c * 4 };
     for (let by = 0; by < SPAN; by++)
       for (let bx = 0; bx < SPAN; bx++) {
         const x = ORIGIN + bx * 4 + 1;
         const y = ORIGIN + by * 4 + 1;
-        if (x + 3 >= MAP_SIZE || y + 3 >= MAP_SIZE) continue;
+        if (x + 3 >= N || y + 3 >= N) continue;
         this.blocks.push({ bx, by, x, y, util: bx % 3 === 1 && by % 3 === 1, used: false });
       }
     // Nearest the centre first (power and services take the nearest free utility block).

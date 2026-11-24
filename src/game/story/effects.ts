@@ -17,7 +17,8 @@
 import { BUILDINGS, FACTION_IDS, FACTION_LABELS, GANG_IDS, GANG_NEWS_NAME, STANDING, TRACE, TURF, TURF_OWNER } from '../config';
 import { capitalizeFirst, districtName } from '../news';
 import type { Rng } from '../rng';
-import { DAYS_PER_MONTH, MAP_SIZE, RoadKind, Terrain, ZoneType, type Building, type BuildingType } from '../types';
+import { scratchFor } from '../frame';
+import { DAYS_PER_MONTH, RoadKind, Terrain, ZoneType, type Building, type BuildingType } from '../types';
 import type { World } from '../world';
 import { evalCond, storyContent } from './conditions';
 import { changeFavor, endingRules, isVisible, patronOf, resolveRef, rivalOf } from './factions';
@@ -39,8 +40,6 @@ import type {
 } from './types';
 import * as vertical from './vertical';
 
-const N = MAP_SIZE;
-const AREA = N * N;
 const MAX_OFFLINE = 30;
 
 /** What the director provides to effects that touch its scheduling. */
@@ -73,9 +72,11 @@ export interface EffectCtx {
 
 // ── Small helpers ───────────────────────────────────────────────────────────
 
-const idxOf = (x: number, y: number) => y * N + x;
-const xOf = (i: number) => i % N;
-const yOf = (i: number) => (i / N) | 0;
+// Tile index ↔ (x, y) on the world's own frame (MEGACITY §3.1).
+type Frame = Pick<World, 'N' | 'area'>;
+const idxOf = (w: Frame, x: number, y: number) => y * w.N + x;
+const xOf = (w: Frame, i: number) => i % w.N;
+const yOf = (w: Frame, i: number) => (i / w.N) | 0;
 const cloneJson = <T>(v: T): T => JSON.parse(JSON.stringify(v)) as T;
 
 function shuffleInPlace<T>(arr: T[], rng: Rng): T[] {
@@ -89,7 +90,8 @@ function shuffleInPlace<T>(arr: T[], rng: Rng): T[] {
 }
 
 /** Calls fn(i) for every tile within Euclidean r of tile (cx, cy) (integer tile distance). */
-function forDisc(cx: number, cy: number, r: number, fn: (i: number) => void): void {
+function forDisc(world: Frame, cx: number, cy: number, r: number, fn: (i: number) => void): void {
+  const N = world.N;
   const rr = Math.max(0, r);
   const xa = Math.max(0, Math.floor(cx - rr));
   const xb = Math.min(N - 1, Math.ceil(cx + rr));
@@ -169,15 +171,19 @@ export function unlockStory(world: World, what: Unlockable): boolean {
 
 // ── Targets and spots (§10.1, §7.1) ─────────────────────────────────────────
 
+/** largestAbandoned's BFS scratch, one set per frame size (MEGACITY §3.1). */
+const abandonedScratch = scratchFor((area) => ({ seenBuf: new Uint8Array(area), queueBuf: new Int32Array(area) }));
+
 /** Tile index of the centre of the largest 4-connected abandoned cluster, or −1. */
-const seenBuf = new Uint8Array(AREA);
-const queueBuf = new Int32Array(AREA);
 export function largestAbandoned(world: World): number {
+  const N = world.N;
+  const area = world.area;
+  const { seenBuf, queueBuf } = abandonedScratch(area);
   const tiles = world.tiles;
   seenBuf.fill(0);
   let best = -1;
   let bestN = 0;
-  for (let s = 0; s < AREA; s++) {
+  for (let s = 0; s < area; s++) {
     if (seenBuf[s] || !tiles[s].abandoned) continue;
     let head = 0;
     let tail = 0;
@@ -187,8 +193,8 @@ export function largestAbandoned(world: World): number {
     let sy = 0;
     while (head < tail) {
       const i = queueBuf[head++];
-      const x = xOf(i);
-      const y = yOf(i);
+      const x = xOf(world, i);
+      const y = yOf(world, i);
       sx += x;
       sy += y;
       for (let k = 0; k < 4; k++) {
@@ -208,7 +214,7 @@ export function largestAbandoned(world: World): number {
       let bd = Infinity;
       for (let k = 0; k < tail; k++) {
         const i = queueBuf[k];
-        const d = (xOf(i) - cx) ** 2 + (yOf(i) - cy) ** 2;
+        const d = (xOf(world, i) - cx) ** 2 + (yOf(world, i) - cy) ** 2;
         if (d < bd) {
           bd = d;
           best = i;
@@ -220,23 +226,25 @@ export function largestAbandoned(world: World): number {
 }
 
 function randomTile(world: World, rng: Rng, ok: (i: number) => boolean): number {
+  const area = world.area;
   let n = 0;
-  for (let i = 0; i < AREA; i++) if (ok(i)) n++;
+  for (let i = 0; i < area; i++) if (ok(i)) n++;
   if (!n) return -1;
   let k = Math.floor(rng.next() * n);
-  for (let i = 0; i < AREA; i++) if (ok(i) && k-- === 0) return i;
+  for (let i = 0; i < area; i++) if (ok(i) && k-- === 0) return i;
   return -1;
 }
 
 function nearWater(world: World, i: number, r: number): boolean {
-  const x = xOf(i);
-  const y = yOf(i);
+  const N = world.N;
+  const x = xOf(world, i);
+  const y = yOf(world, i);
   for (let dy = -r; dy <= r; dy++)
     for (let dx = -r; dx <= r; dx++) {
       const xx = x + dx;
       const yy = y + dy;
       if (xx < 0 || yy < 0 || xx >= N || yy >= N) continue;
-      if (world.tiles[idxOf(xx, yy)].terrain === Terrain.Water) return true;
+      if (world.tiles[idxOf(world, xx, yy)].terrain === Terrain.Water) return true;
     }
   return false;
 }
@@ -256,11 +264,13 @@ function strongestOf(world: World, gang: GangId | 'all'): number {
 // Deterministic (no RNG), so spotAvailable and findSpot always agree and {district}
 // names a real place. Each is one or two passes over the map with reused scratch.
 
-const nearMask = new Uint8Array(AREA);
-const nearTmp = new Uint8Array(AREA);
+/** The spot rules' masks, one set per frame size (MEGACITY §3.1). */
+const nearScratch = scratchFor((area) => ({ nearMask: new Uint8Array(area), nearTmp: new Uint8Array(area) }));
 
 /** Chebyshev dilation of `nearMask` by r, in place (separable: rows into nearTmp, then columns). */
-function dilateNear(r: number): void {
+function dilateNear(world: Frame, r: number): void {
+  const { nearMask, nearTmp } = nearScratch(world.area);
+  const N = world.N;
   for (let y = 0; y < N; y++) {
     const row = y * N;
     for (let x = 0; x < N; x++) {
@@ -287,19 +297,21 @@ const isHabBlock = (world: World, i: number) => world.tiles[i].zone === ZoneType
 
 /** 'highway': the developed Hab Block within 3 of a Highway tile with the highest noise (ties: lowest index), −1 if none. */
 function highwaySpot(world: World): number {
+  const { nearMask } = nearScratch(world.area);
+  const area = world.area;
   const tiles = world.tiles;
   let any = false;
-  for (let i = 0; i < AREA; i++) {
+  for (let i = 0; i < area; i++) {
     const t = tiles[i];
     const hw = t.road && t.roadKind === RoadKind.Highway;
     nearMask[i] = hw ? 1 : 0;
     if (hw) any = true;
   }
   if (!any) return -1;
-  dilateNear(3);
+  dilateNear(world, 3);
   const noise = world.fields.noise;
   let best = -1;
-  for (let i = 0; i < AREA; i++) {
+  for (let i = 0; i < area; i++) {
     if (!nearMask[i] || !isHabBlock(world, i)) continue;
     if (best < 0 || noise[i] > noise[best]) best = i;
   }
@@ -308,13 +320,14 @@ function highwaySpot(world: World): number {
 
 /** 'alley': the Alley tile with the highest Undertow turf strength, else the lowest-index Alley tile, −1 if none. */
 function alleySpot(world: World): number {
+  const area = world.area;
   const tiles = world.tiles;
   const owner = world.turf.owner;
   const str = world.turf.str;
   const U = TURF_OWNER.undertow;
   let first = -1;
   let best = -1;
-  for (let i = 0; i < AREA; i++) {
+  for (let i = 0; i < area; i++) {
     const t = tiles[i];
     if (!t.road || t.roadKind !== RoadKind.Alley) continue;
     if (first < 0) first = i;
@@ -325,9 +338,10 @@ function alleySpot(world: World): number {
 
 /** 'shore': the developed Hab Block within 2 of water with the highest land value (ties: lowest index), −1 if none. */
 function shoreSpot(world: World): number {
+  const area = world.area;
   const lv = world.fields.landValue;
   let best = -1;
-  for (let i = 0; i < AREA; i++) {
+  for (let i = 0; i < area; i++) {
     if (!isHabBlock(world, i)) continue;
     if (best >= 0 && lv[i] <= lv[best]) continue;
     if (nearWater(world, i, 2)) best = i;
@@ -366,6 +380,7 @@ export function spotAvailable(world: World, rule: SpotRule): boolean {
 
 /** Pick a tile for a spot rule (§7.1), −1 if none. */
 export function findSpot(world: World, rule: SpotRule, rng: Rng): number {
+  const area = world.area;
   const tiles = world.tiles;
   switch (rule) {
     case 'industrial':
@@ -380,7 +395,7 @@ export function findSpot(world: World, rule: SpotRule, rng: Rng): number {
       const owner = world.turf.owner;
       const str = world.turf.str;
       let best = -1;
-      for (let i = 0; i < AREA; i++) {
+      for (let i = 0; i < area; i++) {
         if (owner[i] !== 1) continue;
         if (best >= 0 && str[i] <= str[best]) continue;
         if (nearWater(world, i, 4)) best = i;
@@ -393,7 +408,7 @@ export function findSpot(world: World, rule: SpotRule, rng: Rng): number {
       const act = world.links.filter((l) => world.vertical.activeLinks.has(l.id));
       if (!act.length) return -1;
       const l = act[Math.floor(rng.next() * act.length)];
-      return idxOf(Math.round((l.ax + l.bx) / 2), Math.round((l.ay + l.by) / 2));
+      return idxOf(world, Math.round((l.ax + l.bx) / 2), Math.round((l.ay + l.by) / 2));
     }
     case 'random':
       return randomTile(world, rng, (i) => isDeveloped(world, i));
@@ -409,9 +424,11 @@ export function findSpot(world: World, rule: SpotRule, rng: Rng): number {
 
 /** Centre tile of a target (−1 = unresolved). 'city' and 'rail' have no single centre. */
 export function targetCenter(world: World, at: Target, spot: number, gang?: GangId | 'all'): number {
+  const N = world.N;
+  const area = world.area;
   switch (at) {
     case 'spot':
-      return spot >= 0 && spot < AREA ? spot : -1;
+      return spot >= 0 && spot < area ? spot : -1;
     case 'seam':
       return world.story.seam ?? -1;
     case 'strongestTurf':
@@ -423,9 +440,9 @@ export function targetCenter(world: World, at: Target, spot: number, gang?: Gang
     case 'largestAbandoned':
       return largestAbandoned(world);
     case 'city':
-      return idxOf(N >> 1, N >> 1);
+      return idxOf(world, N >> 1, N >> 1);
     case 'rail': {
-      for (let i = 0; i < AREA; i++) if (world.rail[i]) return i;
+      for (let i = 0; i < area; i++) if (world.rail[i]) return i;
       return -1;
     }
   }
@@ -441,7 +458,7 @@ export function targetArea(world: World, at: Target, r: number, spot: number, ga
   }
   const c = targetCenter(world, at, spot, gang);
   if (c < 0) return null;
-  return { x: xOf(c), y: yOf(c), r: Math.max(0, r) };
+  return { x: xOf(world, c), y: yOf(world, c), r: Math.max(0, r) };
 }
 
 // ── Local layers (§10.5 localLayers) ────────────────────────────────────────
@@ -451,6 +468,7 @@ export function targetArea(world: World, at: Target, r: number, spot: number, ga
  * value discs, Euclidean from their centre point), then composeLayers.
  */
 export function writeLocals(world: World): void {
+  const N = world.N;
   const L = world.layerParts.local;
   resetLayers(L);
   const tick = world.tick;
@@ -481,7 +499,7 @@ function setOffline(world: World, b: Building, days: number, ctx: EffectCtx): vo
   if (!d) return;
   b.offline = Math.max(b.offline, d);
   ctx.lastName = BUILDINGS[b.type]?.name ?? b.type;
-  ctx.lastAt = idxOf(b.x, b.y);
+  ctx.lastAt = idxOf(world, b.x, b.y);
   world.markChanged(b.x, b.y, b.x + b.size - 1, b.y + b.size - 1);
 }
 
@@ -491,10 +509,11 @@ function pickN<T>(list: T[], n: number | 'all', rng: Rng): T[] {
 }
 
 function footprintNear(world: World, b: Building, mask: (i: number) => boolean, r: number): boolean {
+  const N = world.N;
   for (let y = b.y - r; y < b.y + b.size + r; y++)
     for (let x = b.x - r; x < b.x + b.size + r; x++) {
       if (x < 0 || y < 0 || x >= N || y >= N) continue;
-      if (mask(idxOf(x, y))) return true;
+      if (mask(idxOf(world, x, y))) return true;
     }
   return false;
 }
@@ -518,8 +537,8 @@ function applyOffline(host: EffectHost, e: Extract<Effect, { t: 'offline' }>, ct
   } else if (e.what === 'district') {
     const c = targetCenter(world, e.at ?? 'spot', ctx.spot, e.gang);
     if (c < 0) return;
-    const cx = xOf(c);
-    const cy = yOf(c);
+    const cx = xOf(world, c);
+    const cy = yOf(world, c);
     const r = e.r ?? 6;
     const r2 = r * r;
     picked = all.filter((b) => {
@@ -553,21 +572,21 @@ function applyAbandon(host: EffectHost, e: Extract<Effect, { t: 'abandon' }>, ct
   if (c < 0) return;
   const zone = e.zone === 'res' ? ZoneType.Residential : e.zone === 'com' ? ZoneType.Commercial : e.zone === 'ind' ? ZoneType.Industrial : 0;
   const cand: number[] = [];
-  forDisc(xOf(c), yOf(c), e.r, (i) => {
+  forDisc(world, xOf(world, c), yOf(world, c), e.r, (i) => {
     if (!isDeveloped(world, i)) return;
     if (zone && world.tiles[i].zone !== zone) return;
     cand.push(i);
   });
-  for (const i of pickN(cand, e.n, host.rng)) world.setLevel(xOf(i), yOf(i), world.tiles[i].level, true);
+  for (const i of pickN(cand, e.n, host.rng)) world.setLevel(xOf(world, i), yOf(world, i), world.tiles[i].level, true);
 }
 
 function applyRenew(host: EffectHost, e: Extract<Effect, { t: 'renew' }>, ctx: EffectCtx): void {
   const world = host.world;
   const c = targetCenter(world, e.at, ctx.spot);
   if (c < 0) return;
-  forDisc(xOf(c), yOf(c), e.r, (i) => {
+  forDisc(world, xOf(world, c), yOf(world, c), e.r, (i) => {
     const t = world.tiles[i];
-    if (t.abandoned && t.zone !== ZoneType.None) world.setLevel(xOf(i), yOf(i), 0, false);
+    if (t.abandoned && t.zone !== ZoneType.None) world.setLevel(xOf(world, i), yOf(world, i), 0, false);
   });
 }
 
@@ -587,7 +606,7 @@ function applyTurf(host: EffectHost, e: Extract<Effect, { t: 'turf' }>, ctx: Eff
         let c = targetCenter(world, e.at, ctx.spot, g);
         if (c < 0 && e.at === 'city') c = turf.bestTile(world, g);
         if (c < 0) continue;
-        turf.seedGang(world, g, xOf(c), yOf(c), e.v ?? TURF.seedStr);
+        turf.seedGang(world, g, xOf(world, c), yOf(world, c), e.v ?? TURF.seedStr);
       }
       return;
     }
@@ -624,7 +643,7 @@ export function applySurge(world: World, gang: GangId, x: number, y: number): nu
       const xx = x + dx;
       const yy = y + dy;
       if (!world.inBounds(xx, yy)) continue;
-      const i = idxOf(xx, yy);
+      const i = idxOf(world, xx, yy);
       if (tk.owner[i] === code) own.push(i);
       else if (tk.owner[i] === 0 && turf.isEligible(world, xx, yy)) claim.push(i);
     }
@@ -688,8 +707,8 @@ export function applyEffect(host: EffectHost, e: Effect, ctx: EffectCtx): void {
       if (c < 0 || e.at === 'city' || e.at === 'rail') return;
       s.locals.push({
         id: e.id,
-        x: xOf(c) + 0.5,
-        y: yOf(c) + 0.5,
+        x: xOf(world, c) + 0.5,
+        y: yOf(world, c) + 0.5,
         r: e.r,
         until: tick + Math.max(0, Math.round(e.days)),
         crimeAdd: e.crimeAdd ?? 0,
@@ -798,8 +817,10 @@ function newsTokens(ctx: EffectCtx): Record<string, string> {
 
 /** District name of a tile (map centre when −1). */
 export function districtOf(world: World, i: number): string {
-  const c = i >= 0 && i < AREA ? i : idxOf(N >> 1, N >> 1);
-  return districtName(xOf(c), yOf(c), world.seed);
+  const N = world.N;
+  const area = world.area;
+  const c = i >= 0 && i < area ? i : idxOf(world, N >> 1, N >> 1);
+  return districtName(xOf(world, c), yOf(world, c), world.seed);
 }
 
 /** Fill {city} {district} {patron} {rival} {year} {coherence} (plus `extra`). Unknown tokens stay. */

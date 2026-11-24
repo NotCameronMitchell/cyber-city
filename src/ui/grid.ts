@@ -6,13 +6,13 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { BUILDINGS } from '../game/config';
-import { MAP_SIZE, ZoneType, type Tile } from '../game/types';
+import { scratchFor } from '../game/frame';
+import { ZoneType, type Tile } from '../game/types';
 import type { World } from '../game/world';
 
-const N = MAP_SIZE;
-const AREA = N * N;
-const queue = new Int32Array(AREA);
-const seen = new Uint8Array(AREA);
+/** Flood-fill scratch, one set per frame size (MEGACITY §3.1). */
+const scratch = scratchFor((area) => ({ queue: new Int32Array(area), seen: new Uint8Array(area) }));
+type Scratch = ReturnType<typeof scratch>;
 
 function conducts(t: Tile): boolean {
   return t.road || t.zone !== ZoneType.None || t.buildingId >= 0;
@@ -32,6 +32,10 @@ export interface GridLink {
 /** Does any plant reach a zoned tile? Cheap: one flood fill from the plants, early exit. */
 export function gridLink(w: World): GridLink {
   const tiles = w.tiles;
+  const N = w.N;
+  const AREA = w.area;
+  const sc = scratch(AREA);
+  const { queue, seen } = sc;
   let zoned = false;
   for (let i = 0; i < AREA; i++) {
     const t = tiles[i];
@@ -65,15 +69,16 @@ export function gridLink(w: World): GridLink {
     const i = queue[head++];
     if (tiles[i].zone !== ZoneType.None) return { plants, plantName, zoned, linked: true };
     const x = i % N;
-    if (x > 0) tail = visit(tiles, i - 1, tail);
-    if (x < N - 1) tail = visit(tiles, i + 1, tail);
-    if (i >= N) tail = visit(tiles, i - N, tail);
-    if (i < AREA - N) tail = visit(tiles, i + N, tail);
+    if (x > 0) tail = visit(sc, tiles, i - 1, tail);
+    if (x < N - 1) tail = visit(sc, tiles, i + 1, tail);
+    if (i >= N) tail = visit(sc, tiles, i - N, tail);
+    if (i < AREA - N) tail = visit(sc, tiles, i + N, tail);
   }
   return { plants, plantName, zoned, linked: false };
 }
 
-function visit(tiles: Tile[], i: number, tail: number): number {
+function visit(sc: Scratch, tiles: Tile[], i: number, tail: number): number {
+  const { seen, queue } = sc;
   if (seen[i] || !conducts(tiles[i])) return tail;
   seen[i] = 1;
   queue[tail] = i;

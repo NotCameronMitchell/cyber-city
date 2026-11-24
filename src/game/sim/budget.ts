@@ -19,7 +19,7 @@ import { BUILDINGS, BUILDING_ORDER, ROAD_KINDS, SKYWAY, SPACEPORT, TOURISM, ZONE
 import { ZoneType, type BudgetLine, type BudgetReport, type BuildingType } from '../types';
 import type { World } from '../world';
 import type { Census } from './census';
-import { N, type SimGrid } from './grid';
+import type { SimGrid } from './grid';
 import { portLive, type PortSystem } from './ports';
 import * as Tiers from './tiers';
 import * as Tuning from './tuning';
@@ -72,7 +72,7 @@ export function projectBudget(world: World, g: SimGrid, census: Census, out: Bud
     upkeepByType.set(b.type, (upkeepByType.get(b.type) ?? 0) + st.upkeep);
     // Landmark (and Stratablock) residents / jobs pay tax like zones (at a flat land-value multiplier).
     // Service and faction jobs (a Tidemarket's stalls included) stay untaxed.
-    const c = b.y * N + b.x;
+    const c = b.y * world.N + b.x;
     const mul = (T.LV_TAX_BASE + T.LV_TAX_SLOPE * lvField[c]) * (b.powered ? 1 : T.UNPOWERED_TAX) * taxMul[c];
     if (st.residents) base[ZoneType.Residential] += st.residents * mul;
     if (def.category === 'landmarks' || def.category === 'vertical' || def.category === 'transport') {

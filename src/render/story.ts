@@ -22,7 +22,7 @@ import { buildingStats } from '../game/buildingStats';
 import type { Game } from '../game/game';
 import { hash2 } from '../game/rng';
 import type { BuildingStats, VisualState } from '../game/story/types';
-import { MAP_SIZE, Terrain, ZoneType, type Tile } from '../game/types';
+import { Terrain, ZoneType, type Tile } from '../game/types';
 import type { World } from '../game/world';
 import { MOTH_COLOR, sigilSprite } from './art/sigils';
 import { drawRailTile, drawSkybridgeTile, type RailEnv } from './art/vertical';
@@ -31,7 +31,6 @@ import { HALF_H, HALF_W } from './camera';
 import type { Rect } from './ground';
 import { css, glowSprite, type RGB } from './palette';
 
-const N = MAP_SIZE;
 const LIME: RGB = [182, 255, 46];
 const LILAC: RGB = [201, 162, 255];
 const CANDLE: RGB = [255, 222, 150];
@@ -60,6 +59,7 @@ const candleSprite = () => (candleGlow ??= glowSprite(CANDLE, 32));
 
 /** Is the tile a tall skybridge anchor (§4.3)? Mirrors the vertical rules for drawing only. */
 function tallAt(world: World, x: number, y: number): boolean {
+  const N = world.N;
   const t = world.tiles[y * N + x];
   if (t.buildingId >= 0) {
     const b = world.buildings.get(t.buildingId);
@@ -72,6 +72,7 @@ function tallAt(world: World, x: number, y: number): boolean {
 
 /** How far a tower's wall sits inside its footprint edge (tiles), so the tube meets the facade. */
 function anchorInset(world: World, x: number, y: number): number {
+  const N = world.N;
   const t = world.tiles[y * N + x];
   if (t.buildingId < 0) return 0.12;
   const b = world.buildings.get(t.buildingId);
@@ -92,6 +93,7 @@ function anchorInset(world: World, x: number, y: number): number {
 
 /** Sweep key at which a footprint's building is drawn (its front corner). */
 function frontKey(world: World, x: number, y: number): number {
+  const N = world.N;
   const t = world.tiles[y * N + x];
   if (t.buildingId >= 0) {
     const b = world.buildings.get(t.buildingId);
@@ -103,6 +105,7 @@ function frontKey(world: World, x: number, y: number): number {
 /** Structural roof height of a skybridge anchor (no antennas, halos or flames). */
 const ROOF_Z: Partial<Record<string, number>> = { spire: 222, arcology: 150, glarewall: 120 };
 export function anchorHeight(world: World, x: number, y: number): number {
+  const N = world.N;
   const t = world.tiles[y * N + x];
   if (t.buildingId >= 0) {
     const b = world.buildings.get(t.buildingId);
@@ -193,7 +196,8 @@ export class StoryRender {
   private segs = new Map<number, Seg[]>();
   private readonly segKey = [-1, -1, -1, -1];
   private segDirty = true;
-  private tall = new Uint8Array(N * N);
+  /** Tall-anchor flags per tile of the shown world (sized from its frame on first use). */
+  private tall = new Uint8Array(0);
   private tallDirty = true;
   private readonly railEnv: RailEnv = { time: 0, night: 0, zoom: 1, lod: false, quality: 'high' };
   private unsubs: (() => void)[] = [];
@@ -296,6 +300,7 @@ export class StoryRender {
 
   /** Rail segment of tile (x, y) (call inside the sweep). */
   drawRail(ctx: CanvasRenderingContext2D, world: World, x: number, y: number, mask: number): void {
+    const N = world.N;
     const i = y * N + x;
     const live = world.vertical.railLive[i] === 1;
     const land = world.tiles[i].terrain === Terrain.Land;
@@ -304,6 +309,7 @@ export class StoryRender {
 
   /** Depth-sorted extras after the tile's own building: skybridge piece, turf tag, candles. */
   drawAfter(ctx: CanvasRenderingContext2D, world: World, x: number, y: number, t: Tile, env: ArtEnv): void {
+    const N = world.N;
     const i = y * N + x;
     if (env.zoom < 0.45 || t.buildingId >= 0 || t.zone === ZoneType.None || t.level === 0) return;
     const owner = world.turf.owner[i];
@@ -350,6 +356,7 @@ export class StoryRender {
 
   /** Ground-level mood: Trace flicker, LURE's cold lamps, Undertow green lamps. World transform. */
   drawGroundFx(ctx: CanvasRenderingContext2D, world: World, b: Rect, env: ArtEnv, view: Rect): void {
+    const N = world.N;
     const v = this.visual;
     const n = env.night;
     if (n < 0.2 || env.zoom < 0.35) return;
@@ -474,6 +481,7 @@ export class StoryRender {
   }
 
   private kiteDrones(ctx: CanvasRenderingContext2D, world: World, t: number, night: number): void {
+    const N = world.N;
     const s = world.turf.stats.strongest.kites;
     if (s < 0) return;
     const sx = s % N;
@@ -516,6 +524,11 @@ export class StoryRender {
 
   /** While the skybridge tool is active: every valid tall anchor glows. World transform. */
   drawAnchors(ctx: CanvasRenderingContext2D, world: World, b: Rect, env: ArtEnv): void {
+    const N = world.N;
+    if (this.tall.length !== world.area) {
+      this.tall = new Uint8Array(world.area);
+      this.tallDirty = true;
+    }
     if (this.tallDirty) {
       this.tallDirty = false;
       for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) this.tall[y * N + x] = tallAt(world, x, y) ? 1 : 0;

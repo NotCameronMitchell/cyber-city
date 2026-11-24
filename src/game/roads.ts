@@ -11,11 +11,9 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { BUILDINGS, ROAD_ACCESS_RANGE, ROAD_KINDS, type RoadKindDef } from './config';
-import { MAP_SIZE, RoadKind, Terrain, ZoneType, type ToolId } from './types';
+import { scratchFor } from './frame';
+import { RoadKind, Terrain, ZoneType, type ToolId } from './types';
 import type { World } from './world';
-
-const N = MAP_SIZE;
-const AREA = N * N;
 
 /** The four ground road tools. 'road' stays the Street tool id. */
 export type RoadTool = 'road' | 'avenue' | 'highway' | 'alley';
@@ -108,7 +106,8 @@ export function dragResult(toolKind: RoadKind | number, current: RoadKind | numb
 /** kinds[i] = the road kind of tile i, or KIND_NONE where there is no ground road. */
 export function fillKinds(world: World, out: Uint8Array): Uint8Array {
   const tiles = world.tiles;
-  for (let i = 0; i < AREA; i++) {
+  const area = world.area;
+  for (let i = 0; i < area; i++) {
     const t = tiles[i];
     out[i] = t.road ? t.roadKind : KIND_NONE;
   }
@@ -118,7 +117,8 @@ export function fillKinds(world: World, out: Uint8Array): Uint8Array {
 /**
  * The access rule (§3.3), the only implementation. Writes `dist` (Chebyshev
  * steps to the claiming road, 255 = no access) and `near` (that road's tile
- * index, −1 = none). `queue` is scratch (Int32Array(4096)).
+ * index, −1 = none) for a world of side `N` (every array holds N² entries; MEGACITY
+ * §3.1: the frame is per world). `queue` is scratch (Int32Array(N²)).
  *
  * Pass A (range ROAD_ACCESS_RANGE): seed every Avenue, then every Ramp, then
  * every Street tile (each group in ascending index) at dist 0; multi-source
@@ -128,8 +128,9 @@ export function fillKinds(world: World, out: Uint8Array): Uint8Array {
  *
  * With streets only, `near` is exactly the pre-expansion SimGrid result.
  */
-export function computeAccess(kinds: Uint8Array, dist: Uint8Array, near: Int32Array, queue: Int32Array): void {
+export function computeAccess(kinds: Uint8Array, dist: Uint8Array, near: Int32Array, queue: Int32Array, N: number): void {
   const RANGE = ROAD_ACCESS_RANGE;
+  const AREA = N * N;
   dist.fill(255);
   near.fill(-1);
   let head = 0;
@@ -194,28 +195,29 @@ export function computeAccess(kinds: Uint8Array, dist: Uint8Array, near: Int32Ar
 
 // ── Lost access (highway drags, §3.4) ───────────────────────────────────────
 
-/** Scratch marks with a generation stamp (no clearing, no allocation per call). */
-const convStamp = new Uint32Array(AREA);
-const seenStamp = new Uint32Array(AREA);
-let gen = 0;
+/** Scratch marks with a generation stamp (no clearing, no allocation per call), one set per frame size. */
+const stamps = scratchFor((area) => ({ conv: new Uint32Array(area), seen: new Uint32Array(area), gen: 0 }));
 const bldSeen = new Set<number>();
 
-function nextGen(): number {
-  gen = (gen + 1) >>> 0;
-  if (gen === 0) {
-    convStamp.fill(0);
-    seenStamp.fill(0);
-    gen = 1;
+type Stamps = ReturnType<typeof stamps>;
+
+function nextGen(st: Stamps): number {
+  st.gen = (st.gen + 1) >>> 0;
+  if (st.gen === 0) {
+    st.conv.fill(0);
+    st.seen.fill(0);
+    st.gen = 1;
   }
-  return gen;
+  return st.gen;
 }
 
 /**
  * Local access test with the stamped tiles read as Highway (`g` = the current
  * stamp, or 0 to read the map as it is). The same rule as World.hasRoadAccess.
  */
-function accessAt(world: World, x: number, y: number, g: number): boolean {
+function accessAt(world: World, x: number, y: number, g: number, convStamp: Uint32Array): boolean {
   const tiles = world.tiles;
+  const N = world.N;
   const R = ROAD_ACCESS_RANGE;
   const x0 = x - R < 0 ? 0 : x - R;
   const x1 = x + R >= N ? N - 1 : x + R;
@@ -248,7 +250,11 @@ function accessAt(world: World, x: number, y: number, g: number): boolean {
 export function lostAccess(world: World, converted: readonly number[], out: number[]): number {
   out.length = 0;
   if (!converted.length) return 0;
-  const g = nextGen();
+  const N = world.N;
+  const AREA = world.area;
+  const st = stamps(AREA);
+  const { conv: convStamp, seen: seenStamp } = st;
+  const g = nextGen(st);
   for (const i of converted) if (i >= 0 && i < AREA) convStamp[i] = g;
   const tiles = world.tiles;
   const R = ROAD_ACCESS_RANGE;
@@ -269,7 +275,7 @@ export function lostAccess(world: World, converted: readonly number[], out: numb
           continue;
         }
         if (t.zone === ZoneType.None || t.level < 1 || t.abandoned || t.road) continue;
-        if (accessAt(world, x, y, 0) && !accessAt(world, x, y, g)) {
+        if (accessAt(world, x, y, 0, convStamp) && !accessAt(world, x, y, g, convStamp)) {
           lost++;
           out.push(j);
         }
@@ -285,8 +291,8 @@ export function lostAccess(world: World, converted: readonly number[], out: numb
         const x = b.x + dx;
         const y = b.y + dy;
         if (!world.inBounds(x, y)) continue;
-        if (!before && accessAt(world, x, y, 0)) before = true;
-        if (accessAt(world, x, y, g)) {
+        if (!before && accessAt(world, x, y, 0, convStamp)) before = true;
+        if (accessAt(world, x, y, g, convStamp)) {
           after = true;
           break;
         }

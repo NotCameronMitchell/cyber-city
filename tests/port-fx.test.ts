@@ -6,7 +6,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { AIRPORT, BUILDINGS, SEAPORT, SPACEPORT } from '../src/game/config';
 import { Game } from '../src/game/game';
 import { shoreFacing, shoreSites } from '../src/game/ports';
-import { MAP_SIZE, Terrain, type Building } from '../src/game/types';
+import { LEGACY_SIZE, Terrain, type Building } from '../src/game/types';
 import { World } from '../src/game/world';
 import { flatWorld } from './helpers';
 import { installCanvasMock, mockContext, mockStats, resetMockStats } from './canvas-mock';
@@ -19,7 +19,7 @@ beforeAll(async () => {
   P = await import('../src/render/art/ports');
 });
 
-const N = MAP_SIZE;
+const N = LEGACY_SIZE;
 const openWater = (w: World, x: number, y: number) => {
   if (x < 0 || y < 0 || x >= N || y >= N) return false;
   const t = w.tiles[y * N + x];
@@ -168,8 +168,8 @@ describe('planes (§5.2)', () => {
 
   it('the plane path keeps the runway centre line while on the ground', () => {
     const out = { x: 0, y: 0, z: 0, hx: 1, hy: 0, alpha: 1, t: 0 };
-    for (let t = P.planePose(0, 0, 0, out) ? 9 : 9; t < 13; t += 0.25) {
-      const p = P.planePose(10, 10, t, out)!;
+    for (let t = P.planePose(0, 0, 0, out, N) ? 9 : 9; t < 13; t += 0.25) {
+      const p = P.planePose(10, 10, t, out, N)!;
       expect(p.z).toBe(0);
       expect(p.y).toBe(10 + P.RUNWAY_V);
       expect(p.x).toBeGreaterThanOrEqual(10 + P.TOUCH_U - 1e-9);

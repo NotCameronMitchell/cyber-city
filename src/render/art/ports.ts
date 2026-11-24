@@ -27,14 +27,13 @@
 
 import { AIRPORT, BUILDINGS, SEAPORT, SPACEPORT } from '../../game/config';
 import { hash2 } from '../../game/rng';
-import { MAP_SIZE, Terrain, type Building, type BuildingType } from '../../game/types';
+import { Terrain, type Building, type BuildingType } from '../../game/types';
 import type { World } from '../../game/world';
 import { HALF_H, HALF_W } from '../camera';
 import { NEON, css, glowSprite, mix, shade, type RGB } from '../palette';
 import { K_LEFT, K_RIGHT, K_TOP, mat, type ArtPal, type Mat, type Painter, type WinSpec } from './painter';
 import type { Recipe } from './zones';
 
-const N = MAP_SIZE;
 
 // ── Palettes and materials ────────────────────────────────────────────────
 
@@ -712,6 +711,7 @@ const HH = HALF_H;
 
 /** Open water a hull may cross: in bounds, water, no road (a bridge counts as land) and no rail. */
 function openWater(world: World, x: number, y: number): boolean {
+  const N = world.N;
   if (x < 0 || y < 0 || x >= N || y >= N) return false;
   const i = y * N + x;
   const t = world.tiles[i];
@@ -874,8 +874,11 @@ function shipPose(s: Ship, out: ShipPose): ShipPose {
   return out;
 }
 
-/** Plane pose at cycle time t, or null while it is at the gate. Airport footprint at (bx, by). */
-export function planePose(bx: number, by: number, t: number, out: PlanePose): PlanePose | null {
+/**
+ * Plane pose at cycle time t, or null while it is at the gate. Airport footprint at (bx, by) on a
+ * map `mapSize` tiles a side (the departure fades out at its edge).
+ */
+export function planePose(bx: number, by: number, t: number, out: PlanePose, mapSize: number): PlanePose | null {
   const v = by + RUNWAY_V;
   out.t = t;
   out.hx = 1;
@@ -916,7 +919,7 @@ export function planePose(bx: number, by: number, t: number, out: PlanePose): Pl
     const k = tau / 10;
     out.z = 3 + 217 * (1 - (1 - k) * (1 - k));
     // Fade at the map edge and at the end of the cycle.
-    out.alpha = Math.max(0, Math.min(1, (N + 2 - out.x) / 5, (AIRPORT.planeCycleSec - t) / 1.5));
+    out.alpha = Math.max(0, Math.min(1, (mapSize + 2 - out.x) / 5, (AIRPORT.planeCycleSec - t) / 1.5));
   }
   return out;
 }
@@ -1519,7 +1522,7 @@ export class PortFx {
           continue;
         }
       }
-      pl.pose = planePose(pl.b.x, pl.b.y, pl.t, pl.pose ?? { x: 0, y: 0, z: 0, hx: 1, hy: 0, alpha: 1, t: 0 });
+      pl.pose = planePose(pl.b.x, pl.b.y, pl.t, pl.pose ?? { x: 0, y: 0, z: 0, hx: 1, hy: 0, alpha: 1, t: 0 }, world.N);
     }
     // Launches are a cut-scene in real seconds, but they freeze while the game is paused.
     if (rate > 0) {

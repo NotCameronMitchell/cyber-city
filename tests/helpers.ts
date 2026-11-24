@@ -5,7 +5,7 @@
 import { applyAction, lockedReason, type Point } from '../src/game/actions';
 import { BUILDINGS } from '../src/game/config';
 import { Simulation } from '../src/game/sim';
-import { MAP_SIZE, Terrain, type BuildingType, type ToolId } from '../src/game/types';
+import { Terrain, type BuildingType, type ToolId } from '../src/game/types';
 import { World } from '../src/game/world';
 
 /** A flat, all-land world (no generated water) for deterministic tests. */
@@ -72,15 +72,16 @@ export class ScriptedMayor {
   ) {
     this.services = opts.services ?? true;
     const span = opts.span ?? 11;
-    this.ox = opts.ox ?? Math.floor((MAP_SIZE - span * 4) / 2);
-    this.oy = opts.oy ?? Math.floor((MAP_SIZE - span * 4) / 2);
+    const N = world.N;
+    this.ox = opts.ox ?? Math.floor((N - span * 4) / 2);
+    this.oy = opts.oy ?? Math.floor((N - span * 4) / 2);
     const c = Math.floor((span - 1) / 2);
     this.hub = { x: this.ox + c * 4, y: this.oy + c * 4 };
     for (let by = 0; by < span; by++)
       for (let bx = 0; bx < span; bx++) {
         const x = this.ox + bx * 4 + 1;
         const y = this.oy + by * 4 + 1;
-        if (x + 3 >= MAP_SIZE || y + 3 >= MAP_SIZE) continue;
+        if (x + 3 >= N || y + 3 >= N) continue;
         let role: Role;
         if (by >= span - 2) role = (bx % 4 === 1 ? 'util' : 'ind');
         else if (by === span - 3 && bx % 3 === 0) role = 'util';
@@ -213,8 +214,9 @@ export function fullyBuiltWorld(seed = 99): World {
   const w = new World(seed, 'Perf City');
   w.funds = 1e9;
   w.maxPopulation = 1e9;
-  for (let y = 0; y < MAP_SIZE; y++)
-    for (let x = 0; x < MAP_SIZE; x++) {
+  const N = w.N;
+  for (let y = 0; y < N; y++)
+    for (let x = 0; x < N; x++) {
       if (x % 4 === 0 || y % 4 === 0) w.setRoad(x, y);
     }
   const services: BuildingType[] = ['precinct', 'clinic', 'datahub', 'maglev', 'plaza', 'spire'];
@@ -223,7 +225,7 @@ export function fullyBuiltWorld(seed = 99): World {
     for (let bx = 0; bx < 16; bx++) {
       const x = bx * 4 + 1;
       const y = by * 4 + 1;
-      if (x + 2 >= MAP_SIZE || y + 2 >= MAP_SIZE) continue;
+      if (x + 2 >= N || y + 2 >= N) continue;
       k++;
       if (k % 9 === 0) {
         w.addBuilding('reactor', x, y);

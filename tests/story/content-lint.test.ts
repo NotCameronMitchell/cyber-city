@@ -20,7 +20,7 @@ import { findSpot, spotAvailable } from '../../src/game/story/effects';
 import { powerWeight } from '../../src/game/story/factions';
 import { DEFAULT_MODS } from '../../src/game/story/mods';
 import type { Card, Condition, Effect, FactionId, FlagValue, ModPatch, SpotRule } from '../../src/game/story/types';
-import { MAP_SIZE, RoadKind, Terrain, ZoneType } from '../../src/game/types';
+import { RoadKind, Terrain, ZoneType } from '../../src/game/types';
 import type { World } from '../../src/game/world';
 import { flatWorld } from '../helpers';
 
@@ -1156,7 +1156,7 @@ describe('expansion story content (EXPANSION §8)', () => {
     w = flatWorld(7);
     home(w, 42, 10);
     expect(pick(w, 'shore')).toEqual([false, -1]); // no water on a flat map
-    for (let y = 0; y < MAP_SIZE; y++) w.tiles[w.idx(40, y)].terrain = Terrain.Water;
+    for (let y = 0; y < w.N; y++) w.tiles[w.idx(40, y)].terrain = Terrain.Water;
     home(w, 41, 20);
     home(w, 43, 30); // 3 tiles out
     home(w, 41, 40, true); // abandoned

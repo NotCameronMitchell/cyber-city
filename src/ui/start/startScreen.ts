@@ -18,7 +18,7 @@
 import './start.css';
 import { DAY_CYCLE_SECONDS } from '../../game/config';
 import { CITY_NAME_MAX, randomCityName, randomSeed, type Game } from '../../game/game';
-import { MAP_SIZE, STORY_PACES, ZoneType, type StoryPace } from '../../game/types';
+import { STORY_PACES, ZoneType, type StoryPace } from '../../game/types';
 import type { World } from '../../game/world';
 import { HALF_H, HALF_W, type Camera } from '../../render/camera';
 import type { Renderer } from '../../render/renderer';
@@ -741,7 +741,8 @@ function readEnv(returning: boolean): Parameters<typeof a2hsHint>[0] {
 
 /** Frame the developed area (or the map centre) at a tappable zoom, as the renderer does on first layout. */
 function frameCity(cam: Camera, w: World): void {
-  const N = MAP_SIZE;
+  const N = w.N;
+  cam.setMapSize(N);
   let x0 = N;
   let y0 = N;
   let x1 = -1;

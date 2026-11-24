@@ -39,10 +39,10 @@ import { standing, tier } from './story/factions';
 import * as turf from './story/turf';
 import type { ActionResult, BuildingGate, CrownId, CrownOption, FactionId, GangId, Tier, Unlockable } from './story/types';
 import * as vertical from './story/vertical';
-import { MAP_SIZE, RoadKind, Terrain, ZoneType, type ActionPlan, type Building, type BuildingType, type ToolId } from './types';
+import { scratchFor } from './frame';
+import { RoadKind, Terrain, ZoneType, type ActionPlan, type Building, type BuildingType, type ToolId } from './types';
 import type { World } from './world';
 
-const N = MAP_SIZE;
 
 export interface Point {
   x: number;
@@ -90,9 +90,9 @@ export function roadPath(a: Point, b: Point): Point[] {
 export function rectTiles(world: World, a: Point, b: Point): Point[] {
   const out: Point[] = [];
   const x0 = Math.max(0, Math.min(a.x, b.x));
-  const x1 = Math.min(world.size - 1, Math.max(a.x, b.x));
+  const x1 = Math.min(world.N - 1, Math.max(a.x, b.x));
   const y0 = Math.max(0, Math.min(a.y, b.y));
-  const y1 = Math.min(world.size - 1, Math.max(a.y, b.y));
+  const y1 = Math.min(world.N - 1, Math.max(a.y, b.y));
   for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) out.push({ x, y });
   return out;
 }
@@ -245,6 +245,7 @@ function maxCountReason(type: BuildingType): string {
 function planRoad(world: World, tool: RoadTool, from: Point, to: Point, plan: ActionPlan): number {
   const toolKind = ROAD_TOOL_KIND[tool];
   const tiles = world.tiles;
+  const N = world.N;
   const path = roadPath(from, to).filter((p) => world.inBounds(p.x, p.y));
   const highwayAt = (p: Point | undefined, q: Point): boolean => {
     if (!p || Math.abs(p.x - q.x) + Math.abs(p.y - q.y) !== 1) return false;
@@ -333,7 +334,7 @@ function planRoad(world: World, tool: RoadTool, from: Point, to: Point, plan: Ac
     for (const i of converted) {
       if (skyRampActive(world, i)) rampsClosed++;
       for (let d = 1; d <= 8; d <<= 1) {
-        const j = skyNeighbour(i, d);
+        const j = skyNeighbour(i, d, N);
         if (j < 0 || onPath.has(j)) continue;
         const nt = tiles[j];
         if (nt.road && (nt.roadKind === RoadKind.Street || nt.roadKind === RoadKind.Avenue || nt.roadKind === RoadKind.Alley)) cuts.add(j);
@@ -354,9 +355,9 @@ function planRoad(world: World, tool: RoadTool, from: Point, to: Point, plan: Ac
  * Seaport snap (§5.1): the finger tile whose footprint is the nearest valid shore site within
  * SEAPORT.snapRadius tiles (Chebyshev, nearest by distance, then lowest index) of the natural
  * footprint at `at`, or `at` itself when it is already valid or nothing is near. `marks` comes
- * from ports.shoreSites (1 = a valid top-left).
+ * from ports.shoreSites (1 = a valid top-left) on a world of side `N`.
  */
-export function snapSeaport(at: Point, marks: Uint8Array): Point {
+export function snapSeaport(at: Point, marks: Uint8Array, N: number): Point {
   const size = BUILDINGS.seaport.size;
   const off = Math.floor((size - 1) / 2);
   const o = footprintOrigin(at, size);
@@ -388,9 +389,8 @@ export interface SkywayNetwork {
   docks: number;
 }
 
-const netStamp = new Uint32Array(N * N);
-const netQueue = new Int32Array(N * N);
-let netGen = 0;
+/** skywayNetwork's BFS scratch (stamped, no clearing per call), one set per frame size. */
+const netScratch = scratchFor((area) => ({ stamp: new Uint32Array(area), queue: new Int32Array(area), gen: 0 }));
 
 /**
  * The skyway network through tile `i` (mutual links only; §3.7), for the skyway inspect sheet
@@ -399,12 +399,16 @@ let netGen = 0;
 export function skywayNetwork(world: World, i: number): SkywayNetwork {
   const out: SkywayNetwork = { tiles: 0, ramps: 0, closed: 0, docks: 0 };
   const sky = world.sky;
-  if (!(i >= 0 && i < N * N) || (sky[i] & SKY_MASK) === 0) return out;
-  netGen = (netGen + 1) >>> 0;
-  if (netGen === 0) {
+  const N = world.N;
+  if (!(i >= 0 && i < world.area) || (sky[i] & SKY_MASK) === 0) return out;
+  const sc = netScratch(world.area);
+  const { stamp: netStamp, queue: netQueue } = sc;
+  sc.gen = (sc.gen + 1) >>> 0;
+  if (sc.gen === 0) {
     netStamp.fill(0);
-    netGen = 1;
+    sc.gen = 1;
   }
+  const netGen = sc.gen;
   const docks = new Set<number>();
   let head = 0;
   let tail = 0;
@@ -422,7 +426,7 @@ export function skywayNetwork(world: World, i: number): SkywayNetwork {
     if (bid >= 0 && isSkyAnchorAt(world, j % N, (j / N) | 0)) docks.add(bid);
     for (let d = 1; d <= 8; d <<= 1) {
       if ((m & d) === 0) continue;
-      const n = skyNeighbour(j, d);
+      const n = skyNeighbour(j, d, N);
       if (n < 0 || netStamp[n] === netGen || (sky[n] & skyOpposite(d)) === 0) continue;
       netStamp[n] = netGen;
       netQueue[tail++] = n;

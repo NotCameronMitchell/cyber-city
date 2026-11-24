@@ -1487,7 +1487,7 @@ export class StoryDirector implements EffectHost {
       w.markChanged(b.x, b.y, b.x + b.size - 1, b.y + b.size - 1);
       if (!news) {
         news = true;
-        w.addNews(`Lamps stutter in ${districtOf(w, b.y * 64 + b.x)}. Something else is in the wires.`, 'bad');
+        w.addNews(`Lamps stutter in ${districtOf(w, b.y * w.N + b.x)}. Something else is in the wires.`, 'bad');
       }
     }
   }

@@ -8,7 +8,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { SEAPORT, SKYWAY, WEALTH } from '../src/game/config';
 import { shoreFacing, shoreSites } from '../src/game/ports';
 import { SKY_RAMP } from '../src/game/skyway';
-import { MAP_SIZE, ZoneType, type Building } from '../src/game/types';
+import { LEGACY_SIZE, ZoneType, type Building } from '../src/game/types';
 import { World } from '../src/game/world';
 import { installCanvasMock, mockContext, mockStats } from './canvas-mock';
 import { expansionFixture } from './expansion-fixture';
@@ -17,7 +17,7 @@ import { flatWorld, fullyBuiltWorld } from './helpers';
 const uninstall = installCanvasMock();
 afterAll(() => uninstall());
 
-const N = MAP_SIZE;
+const N = LEGACY_SIZE;
 const HW = 32;
 const HH = 16;
 
@@ -69,7 +69,7 @@ describe('render-1: glow sprites stay bounded through a day/night transition', (
     const view = { x0: -1e5, y0: -1e5, x1: 1e5, y1: 1e5 };
     const before = mockStats.canvases;
     // 2400 frames of a dusk (night 0.1 → 0.5): every frame a new float night value.
-    for (let k = 0; k < 2400; k++) back.drawUnderMap(ctx, 0.1 + k * 0.000167 + 1e-7 * Math.sqrt(k), k / 60, 0.8, view);
+    for (let k = 0; k < 2400; k++) back.drawUnderMap(ctx, 0.1 + k * 0.000167 + 1e-7 * Math.sqrt(k), k / 60, 0.8, view, N);
     // 1/32 steps: at most 14 hues for each of the two glows (was two new 128 px canvases a frame).
     expect(mockStats.canvases - before).toBeLessThanOrEqual(40);
   });
@@ -90,7 +90,7 @@ describe('render-2: a still frame after the camera moves', () => {
   it('Renderer.render re-reads the world transform even when the time has not moved (the still title)', () => {
     const g = fixtureGame();
     const ctx = mockContext(390, 844);
-    const cam = new M.camera.Camera();
+    const cam = new M.camera.Camera(g.world.N);
     const r = new M.renderer.Renderer(ctx.canvas as unknown as HTMLCanvasElement, g, cam);
     // The still title: every frame at one time.
     for (let k = 0; k < 3; k++) r.render(0, 5);

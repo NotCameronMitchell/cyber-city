@@ -29,7 +29,8 @@
 
 import { BUILDINGS, SKYWAY } from '../../game/config';
 import { skyRampGround } from '../../game/skyway';
-import { MAP_SIZE, ZoneType, type Building } from '../../game/types';
+import { scratchFor } from '../../game/frame';
+import { ZoneType, type Building } from '../../game/types';
 import type { World } from '../../game/world';
 import { serviceBuildingHeight, zoneBuildingHeight, LOD_ZOOM, type ArtEnv } from '../buildings';
 import { HALF_H, HALF_W } from '../camera';
@@ -37,7 +38,6 @@ import { roadOutlinePath, roadShapePath } from '../ground';
 import { css, glowSprite, mix, type RGB } from '../palette';
 import { NIGHT_STEPS, SpriteCache, nightBucket, nightOfBucket, scaleBucket, scaleOfBucket, type Sprite } from './sprites';
 
-const N = MAP_SIZE;
 /** Model ids of skyway pieces start here (above every building model id, §10.1). */
 export const SKY_BASE = 4000;
 /** Deck height (world px) and the half-width of the deck (tile units, "about half a tile wide"). */
@@ -392,6 +392,7 @@ function isRampBits(bits: number): boolean {
  * other ramp claims. Writes `shapes` (255 = no deck) for the given tile indices.
  */
 export function computeShapes(world: World, sky: Uint8Array, list: ArrayLike<number>, count: number, shapes: Uint8Array): void {
+  const N = world.N;
   for (let n = 0; n < count; n++) {
     const i = list[n];
     const bits = sky[i];
@@ -430,15 +431,18 @@ export function computeShapes(world: World, sky: Uint8Array, list: ArrayLike<num
 }
 
 const pickList = new Int32Array(5);
-const pickShapes = new Uint8Array(N * N).fill(255);
+/** deckShapeAt's shape scratch, one per frame size (MEGACITY §3.1). */
+const pickScratch = scratchFor((area) => new Uint8Array(area).fill(255));
 
 /**
  * Shape of the deck on tile (x, y) as the layer draws it (255 = no deck): a ramp or the upper
  * half of a two-tile slope resolved from its neighbours, for overlays drawn over one piece.
  */
 export function deckShapeAt(world: World, x: number, y: number): number {
+  const N = world.N;
   if (!world.inBounds(x, y)) return 255;
   const sky = world.sky;
+  const pickShapes = pickScratch(world.area);
   let n = 0;
   pickList[n++] = y * N + x;
   for (let k = 0; k < 4; k++) {
@@ -464,6 +468,7 @@ export function deckPieceTransform(shape: number, x: number, y: number, out: num
 
 /** Pillar rule (§3.7): straight pieces on even tiles and every junction, over open ground, water or a road. */
 function wantsPillar(world: World, x: number, y: number, shape: number, rampTile: boolean): boolean {
+  const N = world.N;
   if (rampTile) return false;
   const mask = shapeMask(shape);
   const straight = mask === 5 || mask === 10;
@@ -485,10 +490,11 @@ function lowBuildingAt(b: Building, x: number, y: number): boolean {
 // ── The layer ───────────────────────────────────────────────────────────────
 
 export class SkywayLayer {
-  private shapes = new Uint8Array(N * N).fill(255);
-  private pillars = new Uint8Array(N * N);
+  /** Per-tile layout of the shown world, sized from its frame (MEGACITY §3.1) on rebuild. */
+  private shapes = new Uint8Array(0);
+  private pillars = new Uint8Array(0);
   /** Building id a tile's piece is deferred to (drawn right after it), or −1. */
-  private deferTo = new Int32Array(N * N).fill(-1);
+  private deferTo = new Int32Array(0);
   private deferred = new Map<number, number[]>();
   /** Docked megastructures: building id → portal positions [u, v, face (1 = +x, 2 = +y)]. */
   private portals = new Map<number, number[]>();
@@ -529,16 +535,22 @@ export class SkywayLayer {
   }
 
   private rebuild(world: World) {
+    const N = world.N;
     this.builtWorld = world;
     this.builtVersion = world.version;
     this.builtSky = world.skyVersion;
     const sky = world.sky;
     const list = this.list;
-    for (const i of list) {
-      this.shapes[i] = 255;
-      this.pillars[i] = 0;
-      this.deferTo[i] = -1;
-    }
+    if (this.shapes.length !== world.area) {
+      this.shapes = new Uint8Array(world.area).fill(255);
+      this.pillars = new Uint8Array(world.area);
+      this.deferTo = new Int32Array(world.area).fill(-1);
+    } else
+      for (const i of list) {
+        this.shapes[i] = 255;
+        this.pillars[i] = 0;
+        this.deferTo[i] = -1;
+      }
     list.length = 0;
     for (let i = 0; i < N * N; i++) if (sky[i] & 15) list.push(i);
     this.deferred.clear();
@@ -608,6 +620,7 @@ export class SkywayLayer {
 
   /** Draw the piece on tile (x, y), plus its cars. World transform expected. */
   drawTile(ctx: CanvasRenderingContext2D, world: World, x: number, y: number): void {
+    const N = world.N;
     const i = y * N + x;
     const shape = this.shapes[i];
     if (shape === 255) return;
@@ -623,6 +636,7 @@ export class SkywayLayer {
 
   /** Pieces deferred to building `b` and its dock portals; call right after drawing it. */
   afterBuilding(ctx: CanvasRenderingContext2D, world: World, b: Building, visibleX: (wx: number) => boolean): void {
+    const N = world.N;
     const l = this.deferred.get(b.id);
     if (l) {
       for (const i of l) {
@@ -843,9 +857,12 @@ export class SkywayLayer {
 
 // ── Ghost (planning preview) ────────────────────────────────────────────────
 
-const ghostSky = new Uint8Array(N * N);
-const ghostShapes = new Uint8Array(N * N);
-const ghostList = new Int32Array(N * N);
+/** The ghost's overlay, shapes and tile list, one set per frame size (MEGACITY §3.1). */
+const ghostScratch = scratchFor((area) => ({
+  ghostSky: new Uint8Array(area),
+  ghostShapes: new Uint8Array(area),
+  ghostList: new Int32Array(area),
+}));
 
 /**
  * Skyway drag preview (§7.5): raised translucent pieces at deck height along the
@@ -862,6 +879,8 @@ export function drawSkywayGhost(
   env: ArtEnv,
 ): void {
   if (!tiles.length) return;
+  const N = world.N;
+  const { ghostSky, ghostShapes, ghostList } = ghostScratch(world.area);
   ghostSky.set(world.sky);
   let count = 0;
   for (let k = 0; k < tiles.length; k++) {

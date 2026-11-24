@@ -9,7 +9,6 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { MAX_TAX } from '../config';
-import { MAP_SIZE } from '../types';
 import type { World } from '../world';
 import type {
   AdditiveModKey,
@@ -19,8 +18,6 @@ import type {
   SimLayers,
   SimMods,
 } from './types';
-
-const AREA = MAP_SIZE * MAP_SIZE;
 
 /** Keys combined by addition (identity 0). */
 export const ADDITIVE_MOD_KEYS: readonly AdditiveModKey[] = [
@@ -193,15 +190,15 @@ export function clampMods(m: SimMods): void {
 
 // ── Layers ──────────────────────────────────────────────────────────────────
 
-/** A layer set at identities: additive layers 0, multiplicative layers 1. */
-export function makeLayers(): SimLayers {
+/** A layer set at identities (additive layers 0, multiplicative layers 1) for a world of `area` tiles. */
+export function makeLayers(area: number): SimLayers {
   return {
-    crimeAdd: new Float32Array(AREA),
-    lvAdd: new Float32Array(AREA),
-    transitAdd: new Float32Array(AREA),
-    tripMul: new Float32Array(AREA).fill(1),
-    abandonMul: new Float32Array(AREA).fill(1),
-    taxMul: new Float32Array(AREA).fill(1),
+    crimeAdd: new Float32Array(area),
+    lvAdd: new Float32Array(area),
+    transitAdd: new Float32Array(area),
+    tripMul: new Float32Array(area).fill(1),
+    abandonMul: new Float32Array(area).fill(1),
+    taxMul: new Float32Array(area).fill(1),
   };
 }
 
@@ -215,9 +212,9 @@ export function resetLayers(l: SimLayers): void {
   l.taxMul.fill(1);
 }
 
-/** Fresh `world.layerParts`. */
-export function makeLayerParts(): LayerParts {
-  return { turf: makeLayers(), vertical: makeLayers(), local: makeLayers() };
+/** Fresh `world.layerParts` for a world of `area` tiles. */
+export function makeLayerParts(area: number): LayerParts {
+  return { turf: makeLayers(area), vertical: makeLayers(area), local: makeLayers(area) };
 }
 
 /**

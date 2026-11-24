@@ -31,13 +31,13 @@ import { resolveMods } from '../../src/game/story/resolve';
 import * as turf from '../../src/game/story/turf';
 import type { Effect, EndingId, FlagValue, SpotRule } from '../../src/game/story/types';
 import * as vertical from '../../src/game/story/vertical';
-import { MAP_SIZE, ZoneType, type Building } from '../../src/game/types';
+import { LEGACY_SIZE, ZoneType, type Building } from '../../src/game/types';
 import type { World } from '../../src/game/world';
 import { flatWorld } from '../helpers';
 
 useStoryContent(STORY_CONTENT);
 
-const N = MAP_SIZE;
+const N = LEGACY_SIZE;
 let w: World;
 let calls: {
   queue: [string, number][];

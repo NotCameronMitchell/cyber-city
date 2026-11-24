@@ -325,7 +325,7 @@ export class Dock {
     if (cat.items?.includes('seaport')) {
       // Counted once per open (< 1 ms): a map with no straight shore says so on the card (§5.1).
       const w = this.ctx.game.world;
-      if (!this.shoreMarks || this.shoreMarks.length !== w.size * w.size) this.shoreMarks = new Uint8Array(w.size * w.size);
+      if (!this.shoreMarks || this.shoreMarks.length !== w.area) this.shoreMarks = new Uint8Array(w.area);
       const sites = shoreSites(w, this.shoreMarks);
       this.shoreNote = seaportNote(sites, sites > 0 ? 0 : shoreGeometry(w));
     }

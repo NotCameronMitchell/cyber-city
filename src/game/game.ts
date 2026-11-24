@@ -52,7 +52,6 @@ import * as turf from './story/turf';
 import type { ActionResult, CrownId, EndingId, FactionId, GangId, InspectAction } from './story/types';
 import * as vertical from './story/vertical';
 import {
-  MAP_SIZE,
   RoadKind,
   Terrain,
   ZoneType,
@@ -1460,7 +1459,7 @@ function highwayNear(world: World, x: number, y: number): boolean {
 
 /** On-ramps joined to the highway network through tile `i` (4-neighbour Highway tiles; distinct Ramp tiles). */
 function highwayRamps(world: World, i: number): number {
-  const N = MAP_SIZE;
+  const N = world.N;
   const tiles = world.tiles;
   const seen = new Set<number>([i]);
   const ramps = new Set<number>();
@@ -1490,7 +1489,7 @@ function highwayRamps(world: World, i: number): number {
  * Street 1, Avenue 2, Highway 3; 0 otherwise.
  */
 function regionalLink(world: World, x: number, y: number): number {
-  const N = MAP_SIZE;
+  const N = world.N;
   const t = world.tileAt(x, y);
   if (!t || !t.road || t.terrain !== Terrain.Land) return 0;
   const inward: [number, number][] = [];
