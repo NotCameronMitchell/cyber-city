@@ -60,8 +60,92 @@ events, the director API and who writes what. In short:
   turf, rail, skybridges and Stratablock stages.
 * UI and render read `game.story.view()` (cached, rebuilt on change), the
   `story` event, `game.story.visual`, `game.inspectActions(x, y)` and world data.
-* Saves are version 2 with an optional `story` block (`story/encode.ts`);
-  version 1 saves load with a fresh story at Chapter I (`flags.migrated`).
+* Saves are version 3 (see "Expansion layer" below) with an optional `story`
+  block (`story/encode.ts`); version 1 saves load with a fresh story at
+  Chapter I (`flags.migrated`), version 2 saves keep theirs.
+
+## Expansion layer
+
+Road kinds, skyways, wealth tiers and ports (`docs/EXPANSION.md`, the binding
+spec; numbers in `config.ts` §2.8 are tuning knobs, names and shapes are
+contract). Everything is additive: a streets-only city plays exactly as before.
+
+**Save v3 and save safety** (`game.ts`, `world.ts`, EXPANSION §2.3-§2.5).
+
+* `SAVE_VERSION = 3`, `SAVE_VERSIONS_SUPPORTED = [1, 2, 3]`, `SAVE_KEY` unchanged.
+  v3 adds tile bits (`roadKind`, `wealth`), `sky` (RLE of `world.sky`),
+  `moments`, and the seaport `facing`, spaceport `buildDays` / `waitSec` /
+  `launches` on buildings. Every field is sanitised on load and never throws;
+  a v1 / v2 save loads all-Street, all-$, no skyways (`world.loadedVersion`).
+* Game runs `sim.settleWealth()` once after loading a world with
+  `loadedVersion < 3`, then `recomputeAll()`: an old city takes its tiers in one batch.
+* Keys beside `SAVE_KEY`: `.future` (a newer build's save, copied once; while
+  it is the stored save `game.saveBlocked` is true and `save()` writes nothing
+  until an explicit New City; the start screen shows `FUTURE_SAVE_TEXT` instead
+  of Continue), `.unreadable` (any other load failure), `.v2` (the first v1 / v2
+  save a v3 build loads, never overwritten), `.prev` (the city New City
+  replaced), `.mirror` (every v3+ `save()` also writes here; a pre-expansion
+  build never touches it) and `.stale` (an older-version main found next to a
+  v3+ mirror: the mirror is restored and the overwrite kept here, with one toast).
+* `public/sw.js` `VERSION` is bumped with each release that changes the save.
+
+**Invariants.** `recomputeAll()` never changes the structural tile fields
+(`terrain, road, roadKind, zone, level, wealth, abandoned, variant, buildingId,
+age`). Tiers move only inside `step()` (5-sample hysteresis, §4.3) and in
+`settleWealth()`. `world.setWealth` emits no `tiles` event (tier art lives in
+the zone sprite). `computeAccess` (`roads.ts`) is the one access rule: SimGrid,
+`RoadAccessMap` and `World.hasRoadAccess` agree on mixed maps. Every new cadence
+runs in unpaused real seconds or on `game.clockRate`; nothing sped up by speed 3
+is meant to be read moment to moment except launches, which are real-time.
+
+**New modules.**
+
+| Module | What |
+|---|---|
+| `game/roads.ts` | `RoadKind` helpers: `ROAD_TOOLS`, `roadLinks`, `frontable`, `roadPrice`, `dragResult`, `fillKinds`, `computeAccess`, `lostAccess` |
+| `game/wealth.ts` | tier tables (`zoneCapacity`, `zoneTaxMul`, `zonePowerMul`, `zonePollution`), `wealthScoreAt`, `wealthTerms`, `tierCap`, `potentialTier`, `stepTarget`, `wealthInfo` |
+| `game/ports.ts` | `shoreFacing`, `shoreSites`, `berthTiles`, `noiseDef`, `noiseReach` |
+| `game/skyway.ts` | sky bits (`SKY_N/E/S/W`, `SKY_RAMP`), `skyRampActive`, `skywayDocks`, `planSkyway` |
+| `game/sim/ports.ts` | `PortSystem` behind the `PortView` interface (`sim.ports`, `game.ports`): visitors, trade, demand adds, `buildProgress` |
+| `game/sim/tiers.ts` | flat tier tables for the hot loops |
+| `game/story/content/cards/expansion.ts` | the eleven expansion deck cards (`EXPANSION_CARDS`), incl. on-demand `ex.rights` |
+| `render/art/skyway.ts` | `SkywayLayer` (deck sprites from `SKY_BASE` 4000, own 6 MB `SpriteCache`), `drawSkywayGhost` |
+| `render/art/ports.ts` | academy and port sprites, `PortFx` (ships, planes, launches; owned by `Effects` as `effects.ports`) |
+| `ui/tips.ts` | first-use and sim-hint tips, one at a time (`Tips`) |
+
+**World and fields.** `Tile.roadKind` (Street when `!road`), `Tile.wealth`
+(0..2); `world.sky` (`Uint8Array`, link bits + ramp bit) and `skyVersion` (not
+saved), `wealthStreak`, `loadedVersion`, `moments`. Mutators: `setRoad(x, y,
+kind = Street)`, `setRoadKind`, `setLevel(x, y, level, abandoned, wealth?)`,
+`setWealth`, `setSky`, `clearSky`, `clearTile(x, y, withSky = false)`,
+`restoreTile(i, snap)`. `roadMask` is kind-aware, `roadAdjMask` raw.
+`world.fields` gains `noise`, `education`, `skyTraffic`, `wealth` (score),
+`hub`, `sea`, `alleyNear`; `world.stats` gains `wealth [$, $$, $$$]`,
+`tierEffect`, `avgNoise`, `roads` (per kind + skyway), `edgeLinks`, `visitors`.
+
+**Game additions.** `commit(from, to)` (confirm-aware: a plan with `confirm`
+waits in `pendingConfirm` for `confirmPending()` / `cancelPending()`; `apply`
+still applies directly), `undo()` / `undoLeft()` (one step, 10 s, road /
+skyway / zone drags), `refundLeft(id)` (buildings, 30 s), `clockRate`,
+`launchLead`, `launchStatus(id)`, `readyLaunches()` (test hook), `ports`,
+`getTileInfo(x, y, sky?)` (rows plus `notes` and `meter`),
+`inspectActions(x, y, sky?)` (adds `'rights'`, `'skyway'`),
+`openLaunchRights(buildingId)`, `demolishSkySegment(x, y)`,
+`toast(text, kind, action?)`. `select()` keeps `{x, y, sky: true}` apart from
+`{x, y}`. `actions.ts` adds `snapSeaport` and `skywayNetwork`.
+
+**Events.** `liftoff {id, first}` (a visible launch: at night, ≥ 180 unpaused
+seconds apart; Effects and audio listen), `hint {id: 'wealth' | 'ramps' |
+'noise'}` (advisor → tips), `moment {id, title, sub}` (once per city per port
+and the first launch; the banner shows it), and `toast.action {id: 'undo' |
+'watch', label, sec}`.
+
+**Story.** `director.openOnDemand(id)` opens an `onDemand` card outside the
+deck with no Later and no pacing-clock change (the Spaceport's "Launch
+rights"). New metrics `wealth.high`, `wealth.low`, `roads.highway`,
+`roads.alley`, `skyway.tiles`; spot rules `highway`, `alley`, `shore`; mood
+drivers and capped power terms for alleys (≤ 60 Undertow) and skyways
+(≤ 100 Kites). The deck gains 11 cards; there are no new chapter beats.
 
 ## Coordinates
 

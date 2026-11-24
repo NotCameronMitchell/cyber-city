@@ -91,8 +91,18 @@ export const FUTURE_SAVE_KEY = `${SAVE_KEY}.future`;
 export const UNREADABLE_SAVE_KEY = `${SAVE_KEY}.unreadable`;
 /** Raw copy of the first v1 / v2 save loaded by a v3 build (once; never overwritten), so a downgrade can recover it. */
 export const V2_SAVE_KEY = `${SAVE_KEY}.v2`;
+/**
+ * Mirror of the last save a v3+ build wrote (same string as SAVE_KEY). A pre-expansion build cannot read a
+ * v3 save, starts a fresh city and autosaves it over SAVE_KEY; it never touches this key, so the next v3+
+ * load finds an older-version main next to a v3+ mirror and restores the mirror (Step 7, §2.5).
+ */
+export const MIRROR_SAVE_KEY = `${SAVE_KEY}.mirror`;
+/** Raw copy of the older-version save that replaced the city, kept when the mirror is restored. */
+export const STALE_SAVE_KEY = `${SAVE_KEY}.stale`;
 /** Shown once when the stored city came from a newer build. */
 export const FUTURE_SAVE_TEXT = 'This city was saved by a newer version. Reload to update.';
+/** Shown once when an older version had saved over the city and the mirror brought it back. */
+export const RESTORED_SAVE_TEXT = 'An older version saved over your city. It is back as you left it.';
 
 /** Visual clock rate by speed (index 0..3): frozen while paused, ×1 / ×1.6 / ×2.4 (EXPANSION §1.3, §2.7). */
 const CLOCK_RATE = [0, 1, 1.6, 2.4] as const;
@@ -978,7 +988,9 @@ export class Game {
   /** Write the city to storage. Returns false (writing nothing) while saveBlocked (a newer build's save is stored). */
   save(): boolean {
     if (this.saveBlocked) return false;
-    const ok = storageSet(SAVE_KEY, JSON.stringify(this.world.serialize()));
+    const raw = JSON.stringify(this.world.serialize());
+    const ok = storageSet(SAVE_KEY, raw);
+    if (ok) storageSet(MIRROR_SAVE_KEY, raw);
     return ok;
   }
 
@@ -1077,6 +1089,7 @@ export class Game {
    * Returns null (start a fresh city) unless the save loaded.
    */
   private loadStored(): World | null {
+    this.restoreMirror();
     const raw = storageGet(SAVE_KEY);
     if (raw === null) return null;
     let data: SaveData | null = null;
@@ -1101,6 +1114,30 @@ export class Game {
       storageSet(UNREADABLE_SAVE_KEY, raw);
       return null;
     }
+  }
+
+  /**
+   * An older build (SAVE_VERSION < 3) saved over a city a v3+ build had saved: only v3+ builds write
+   * MIRROR_SAVE_KEY, so an older-version main beside a v3+ mirror means the main was overwritten
+   * (a pre-expansion tab, or a stale cached page). The mirror goes back into SAVE_KEY and the
+   * overwriting save is kept raw in STALE_SAVE_KEY. A plain v1 / v2 save (no mirror yet) loads as before.
+   */
+  private restoreMirror(): void {
+    const raw = storageGet(SAVE_KEY);
+    const mirror = storageGet(MIRROR_SAVE_KEY);
+    if (raw === null || mirror === null || raw === mirror) return;
+    const version = (s: string): number => {
+      try {
+        const v = Number((JSON.parse(s) as { version?: unknown } | null)?.version);
+        return Number.isFinite(v) ? v : NaN;
+      } catch {
+        return NaN;
+      }
+    };
+    const main = version(raw);
+    if (!(main < 3) || !(version(mirror) >= 3)) return;
+    storageSet(STALE_SAVE_KEY, raw);
+    if (storageSet(SAVE_KEY, mirror)) this.notices.push({ text: RESTORED_SAVE_TEXT, kind: 'info' });
   }
 
   /** The first v1 / v2 save a v3 build loads is kept raw in V2_SAVE_KEY (never overwritten). */

@@ -86,7 +86,7 @@ describe('config (§2.8, §10.2 #9)', () => {
     expect(row('academy')).toEqual(['services', 2, 3200, 140, 8, 'education', 12, 30, 0, 0, null, 1500, '2×2 · schools']);
     expect(row('seaport')).toEqual(['transport', 4, 18000, 280, 30, null, 0, 240, 240, 0.3, { v: 0.5, r: 6 }, 5000, '4×4 · shore only']);
     expect(row('airport')).toEqual(['transport', 6, 45000, 650, 80, null, 0, 320, 0, 0.15, { v: 0.9, r: 10 }, 12000, '6×6 · loud']);
-    expect(row('spaceport')).toEqual(['transport', 6, 150000, 1800, 300, 'prestige', 20, 550, 250, 0.2, { v: 0.7, r: 12 }, 30000, '6×6 · slow build']);
+    expect(row('spaceport')).toEqual(['transport', 6, 150000, 1800, 300, 'prestige', 20, 550, 250, 0.2, { v: 0.5, r: 8 }, 30000, '6×6 · slow build']);
     expect(BUILDINGS.academy.plural).toBe('Academies');
     expect([BUILDINGS.seaport.site, BUILDINGS.seaport.maxCount, BUILDINGS.airport.maxCount, BUILDINGS.spaceport.maxCount]).toEqual(['shore', 2, 1, 1]);
     expect(BUILDINGS.spaceport.buildDays).toBe(240);
@@ -372,7 +372,8 @@ describe('wealth helpers (§4)', () => {
     f.landValue[ind] = 0.9; // ignored
     f.education[ind] = 1;
     f.crime[ind] = 0.5;
-    expect(wealthScoreAt(w, ind)).toBeCloseTo(0.2 + 0.35 - 0.15, 6);
+    // Base, education and crime weights come from config (Step 7 tunes the base, §10.5).
+    expect(wealthScoreAt(w, ind)).toBeCloseTo(WEALTH.score.ind.base + WEALTH.score.ind.edu + 0.5 * WEALTH.score.ind.crime, 6);
     expect(wealthScoreAt(w, w.idx(30, 30))).toBe(0);
     f.landValue[r] = 5;
     expect(wealthScoreAt(w, r)).toBe(1);

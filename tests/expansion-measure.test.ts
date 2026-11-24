@@ -11,7 +11,7 @@ import { describe, expect, it } from 'vitest';
 import { BUILDINGS, POWER_WEIGHTS } from '../src/game/config';
 import { Simulation } from '../src/game/sim';
 import { powerWeight } from '../src/game/story/factions';
-import { DAYS_PER_MONTH, MAP_SIZE, MONTHS_PER_YEAR, RoadKind, Terrain, ZoneType, type Building } from '../src/game/types';
+import { DAYS_PER_MONTH, MAP_SIZE, RoadKind, Terrain, ZoneType, type Building } from '../src/game/types';
 import { World } from '../src/game/world';
 import { expansionFixture, fabUpShare, playScenario, resComSplit, type ExpansionMayorOptions, type ScenarioResult } from './expansion-fixture';
 import { flatWorld, fullyBuiltWorld } from './helpers';
@@ -142,7 +142,7 @@ describe.skipIf(!env.MEASURE)('expansion measurement (§10.4)', () => {
       if (want('M6')) {
         const base = scenario('M6base', seed, generated(seed), {});
         const m6 = scenario('M6', seed, generated(seed), { seaport: true });
-        if (m6.portMonth < 0) lines.push(`${seed} B8 M6: no seaport placed (no shore site or 5,000 never reached)`);
+        if (m6.portMonth < 0) lines.push(`${seed} B8 M6: no seaport placed (no shore site, or the scripted grid on this generated map never reaches 5,000: pop ${base.pop})`);
         else {
           const at = Math.min(m6.portMonth + 36, m6.monthly.length - 1);
           const dj = m6.monthly[at].jobsInd - base.monthly[at].jobsInd;
@@ -231,8 +231,13 @@ function measureFixture(): string[] {
     `M8 fixture after ${months} mo: pop ${s.population}, wealth ${pct((100 * tiers[0]) / tot)}/${pct((100 * tiers[1]) / tot)}/${pct((100 * tiers[2]) / tot)}, ` +
       `sky load ${s.roads.skyway} tiles, step ${(stepMs / steps).toFixed(2)} ms, recomputeAll ${recompute.toFixed(2)} ms (B12: < 2 / < 10)`,
   );
+  // Land value within the prestige radius (r20), complete vs still building: the city-wide mean is
+  // diluted by the fixture's many Spires (prestige max-combines), §10.5.
+  const near = ring(sp, 0, BUILDINGS.spaceport.radius);
+  const lvNear = (wd: World) => near.reduce((a, i) => a + wd.fields.landValue[i], 0) / Math.max(1, near.length);
   out.push(
     `B11 spaceport ${sp.buildDays ? 'building' : 'complete'}: visitors ${s.visitors} vs 3,000 × mood ${mood.toFixed(2)} = ${Math.round(3000 * mood)}; ` +
+      `land value within r${BUILDINGS.spaceport.radius} ${signed(lvNear(w) - lvNear(building.w), 3)}; ` +
       `avgLandValue ${signed(s.avgLandValue - building.w.stats.avgLandValue, 3)} vs still building (≥ +0.03); net ${Math.round(net)}/mo incl. its ${upkeep} upkeep ` +
       `(vs ${Math.round(building.w.budget.history.slice(-3).reduce((a, b) => a + b, 0) / 3)} building)`,
   );
@@ -253,6 +258,6 @@ function measureFixture(): string[] {
       hw++;
       hwSum += w.fields.traffic[i];
     }
-  out.push(`M8 highway ring mean load ${f3(hwSum / Math.max(1, hw))}; months ${months * 1} ${MONTHS_PER_YEAR > 0 ? '' : ''}`.trim());
+  out.push(`M8 highway ring mean load ${f3(hwSum / Math.max(1, hw))} over ${hw} tiles after ${months} months`);
   return out;
 }

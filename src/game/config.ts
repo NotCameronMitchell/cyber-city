@@ -406,7 +406,8 @@ export const BUILDINGS: Record<BuildingType, BuildingDef> = {
     maxCount: 1,
     needsRoad: true,
     buildDays: 240,
-    noise: { v: 0.7, r: 12 },
+    // Step 7 tuning (§10.5, B11): 0.7 r12 cancelled the prestige it brings; the ring is now the pad crews.
+    noise: { v: 0.5, r: 8 },
     meta: '6×6 · slow build',
   },
 
@@ -1192,7 +1193,8 @@ export const TOURISM = {
 /** Seaport (§5.1). */
 export const SEAPORT = { exportJobs: 260, maxCounted: 2, tradeRate: 0.12, tradeCap: 2000, berthDepth: 2, indScoreRadius: 12, shipCycleSec: 80, snapRadius: 2 } as const;
 /** Airport (§5.2). */
-export const AIRPORT = { comJobs: 240, hubNear: 6, hubFar: 16, hubFade: 20, planeCycleSec: 36 } as const;
+/** comJobs: Market demand the Airport adds (Step 7 tuning, §10.5 B9: 240 → 320, the terminal's own job count). */
+export const AIRPORT = { comJobs: 320, hubNear: 6, hubFar: 16, hubFade: 20, planeCycleSec: 36 } as const;
 /** Spaceport (§5.3). */
 export const SPACEPORT = {
   indJobs: 200,

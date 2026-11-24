@@ -3,7 +3,7 @@
 //   same-origin  cache-first (Vite asset names are content-hashed)
 //   fonts        Google Fonts cached opportunistically (stale-while-revalidate)
 // Bump VERSION to drop old caches after a release.
-const VERSION = 'v1';
+const VERSION = 'v2';
 const CACHE = `cyber-city-${VERSION}`;
 const FONT_CACHE = 'cyber-city-fonts';
 const SHELL = ['./', './index.html', './manifest.webmanifest', './icon.svg', './icon-192.png', './icon-512.png'];

@@ -317,6 +317,7 @@ clearSky(x: number, y: number): void;              // unhooks neighbours like cl
 2. Any other load failure copies the raw string to `${SAVE_KEY}.unreadable` before the fresh city starts (autosave is not blocked).
 3. The first time a v1 or v2 save loads in a v3 build, Game copies its raw string to `${SAVE_KEY}.v2` (once; never overwritten), so a downgrade can recover it.
 4. Step 7 bumps `public/sw.js` `VERSION` with the release so old caches drop.
+5. **Mirror (Step 7).** Rules 1-3 protect a newer save from a build that has them; a *pre-expansion* build (v2) has none, so opened on a v3 save it starts a fresh city and autosaves over it (checked in the browser). So every `save()` of a v3+ build also writes the same string to `${SAVE_KEY}.mirror` (`MIRROR_SAVE_KEY`), a key no v1 / v2 build knows. At startup, before rule 1, a stored main whose `version` is below 3 next to a mirror whose `version` is 3 or more means an older build saved over the city: Game copies the main to `${SAVE_KEY}.stale` (`STALE_SAVE_KEY`), writes the mirror back into `SAVE_KEY` and toasts once "An older version saved over your city. It is back as you left it." A plain v1 / v2 save (no mirror yet) loads exactly as before. Tested in `tests/save-v3.test.ts` and in the browser (§10.5).
 
 Tests (`tests/save-v3.test.ts`, with a stubbed `localStorage`): a v4 save leaves the stored string untouched, `.future` holds it, and `game.save()` returns false until `newCity()`; a v2 load writes `.v2` once.
 
@@ -438,7 +439,7 @@ export const WEALTH = {
   score: {
     res: { edu: 0.10, transit: 0.06, noise: -0.20 },
     com: { edu: 0.08, transit: 0.08, hub: 0.12, noise: -0.10 },
-    ind: { base: 0.20, edu: 0.35, net: 0.20, transit: 0.12, port: 0.10, crime: -0.30 },
+    ind: { base: 0.22, edu: 0.35, net: 0.20, transit: 0.12, port: 0.10, crime: -0.30 },   // base 0.20 → 0.22 in Step 7 (§10.5)
   },
   /** Approval + prosperity × share of res developed at $$ or $$$ (no squeeze term; Appendix C). */
   approval: { prosperity: 6 },
@@ -459,7 +460,7 @@ export const TOURISM = {
 } as const;
 
 export const SEAPORT = { exportJobs: 260, maxCounted: 2, tradeRate: 0.12, tradeCap: 2000, berthDepth: 2, indScoreRadius: 12, shipCycleSec: 80, snapRadius: 2 } as const;
-export const AIRPORT = { comJobs: 240, hubNear: 6, hubFar: 16, hubFade: 20, planeCycleSec: 36 } as const;
+export const AIRPORT = { comJobs: 320, hubNear: 6, hubFar: 16, hubFade: 20, planeCycleSec: 36 } as const;   // comJobs 240 → 320 in Step 7 (§10.5)
 export const SPACEPORT = {
   indJobs: 200, comJobs: 300, income: 1200,
   /** Construction needs both buildDays and this many unpaused real seconds (§5.3). */
@@ -502,7 +503,7 @@ export const SPACEPORT = {
 | `academy` (X1) | Academy | services | 2 | 3,200 | 140 | 8 | education r12 | 30 (0) | 0 | none | 1,500 | `2×2 · schools` | `plural: 'Academies'`, color `#ffd0a0` |
 | `seaport` | Seaport | transport | 4 | 18,000 | 280 | 30 | none | 240 (240) | 0.3 | v 0.5 r6 | 5,000 | `4×4 · shore only` | `site: 'shore'`, `maxCount: 2`, `needsRoad`, color `#38c8ff` |
 | `airport` | Airport | transport | 6 | 45,000 | 650 | 80 | none | 320 (0) | 0.15 | v 0.9 r10 | 12,000 | `6×6 · loud` | `maxCount: 1`, `needsRoad`, `skyAnchor`, color `#e9f0ff` |
-| `spaceport` | Spaceport | transport | 6 | 150,000 | 1,800 | 300 | prestige r20 | 550 (250) | 0.2 | v 0.7 r12 | 30,000 | `6×6 · slow build` | `maxCount: 1`, `needsRoad`, `buildDays: 240`, color `#ff8f6b` |
+| `spaceport` | Spaceport | transport | 6 | 150,000 | 1,800 | 300 | prestige r20 | 550 (250) | 0.2 | v 0.5 r8 (Step 7; was v 0.7 r12) | 30,000 | `6×6 · slow build` | `maxCount: 1`, `needsRoad`, `buildDays: 240`, color `#ff8f6b` |
 
 Unlock order across the expansion: Back Alley 1,200 (when the Undertow arrives, `TURF.seedPop.undertow`), Avenue and Academy 1,500, Highway (with On-ramps) and Seaport 5,000, Airport and Skyway 12,000, Spaceport 30,000. Before 3,000 residents the expansion adds three unlocks, not five.
 
@@ -810,7 +811,7 @@ Computed in one 4096-tile loop right after land value and crime (phase 1 of `FIE
 ```
 Hab Blocks (res):    s = landValue + 0.10·education + 0.06·transit − 0.20·noise
 Market Strip (com):  s = landValue + 0.08·education + 0.08·transit + 0.12·hub − 0.10·noise
-Fab District (ind):  s = 0.20 + 0.35·education + 0.20·net + 0.12·transit + 0.10·sea − 0.30·crime
+Fab District (ind):  s = 0.22 + 0.35·education + 0.20·net + 0.12·transit + 0.10·sea − 0.30·crime
 score = clamp01(s)
 ```
 
@@ -914,6 +915,8 @@ export interface WealthInfo {
 
 A $ city is today's city with a little grit, not a downgrade, so the owner's existing city looks the same after the update (and its qualifying blocks move up at load, §4.3).
 
+**As built (WP-4, recorded in Step 7).** The $$$ palettes use window warmth 0.12 and cool 0.5 (not 0.25 / 0.6): with the spec values $$$ windows read warm at night, and the lower values give the crisp cool-white windows this section asks for; `neon2` and `up` are as specified. $$ walls get a 14% cleaner tint, a lighter roof and neat membranes instead of tarps, beyond "today's look plus tidy props", so $ and $$ can be told apart at zoom 1; $ keeps today's materials exactly. A v2 city's mean colour is unchanged at load (day 0.294/0.310/0.358 → 0.293/0.324/0.371; night 0.156/0.145/0.228 → 0.165/0.170/0.246 on WP-4's test save, where only the 38 of 205 tiles that settle to $$$ turn to glass).
+
 Implementation shape (WP-4): the zone model id becomes `((((zone − 1) × 3 + level − 1) × 8 + form) × 3 + tier) × 2 + palBit` (0..431), **keeping** today's random `palBit` (`(variant >> 3) & 1`) as the variety bit inside each tier. Decoding: zone = ⌊id/144⌋ + 1, level = ⌊id/48⌋ mod 3 + 1, tier = ⌊id/2⌋ mod 3. `LOT_BASE` 200 → 440 (lots 440..463), `SERVICE_BASE` 400 → 480; `zoneBuildingHeight`, the `paintSprite` level read and `zoneHeights` (`Float32Array(SERVICE_BASE)`) use the new formula. Skyway segment sprites get their own range from `SKY_BASE = 4000` (§10.1), so their cache keys can never collide with buildings. `ZONE_PALS[zone]` becomes `[tier][palBit]`: tiers 0 and 1 reuse today's two palettes (tier 0 with a warmer window bias), tier 2 adds two luxe palettes (gold: neon2 `[255, 216, 77]`, up `[255, 200, 120]`, warm 0.25, cool 0.6; platinum: neon2 `[220, 235, 255]`). `Painter.tier` is set in `buildModel` and `paintSprite`, and one shared `dressTier(p, zone, level)` call runs after every zone recipe to add the tier props, placed from the model's recorded footprint and top. **Props never raise the model's recorded top**, so heights, picking and the skybridge "tall" checks are tier-independent. Bodies go 144 → 432 (painted on demand; paint-rate check in §10.1).
 
 ---
@@ -951,7 +954,7 @@ All three are `transport` buildings: square footprints, `needsRoad`, taxed jobs 
 
 **Effects** (online and powered):
 
-- commercial demand target +240 jobs;
+- commercial demand target +320 jobs (Step 7: 240 → 320, §10.5 B9);
 - Market tiles 6 to 16 tiles out get `hub` (fading to 0 at 20): up to +0.12 on the commercial wealth score, a business district that forms outside the noise (§4.2 works the numbers);
 - noise 0.9, r10: land value near it drops, homes there stay $;
 - visitors +1,200 per month (X3);
@@ -962,7 +965,7 @@ All three are `transport` buildings: square footprints, `needsRoad`, taxed jobs 
 
 **Plane cycle** (one plane, `AIRPORT.planeCycleSec` 36 clock-seconds, scaled by `Game.clockRate`: 36 s at speed 1, 15 s at speed 3, frozen while paused; phases below in clock-seconds): 0-9 approach from 14 tiles west of the runway at z 180 descending to touchdown at dx 0.5; 9-13 roll-out to dx 4.5; 13-14 turn off; 14-22 at the gate (hidden); 22-26 take-off roll; 26-36 climb to z 220 heading +x, fading at the map edge. Phases with z < 6 draw in `Effects.drawGround` (before buildings); airborne phases in `drawSky`. Art: a procedural white and steel jet about 26 × 5 px, nav lights (red, green), a red strobe each clock-second; at night a white landing-light glow (`glowSprite`, `'lighter'`). Runway edge lights blink in the animated ground pass.
 
-**Opening:** the first cycle starts at phase 0 (a landing) when the airport opens, and the banner shows "AIRPORT OPEN · +240 jobs" (with X3: "AIRPORT OPEN · +1,200 visitors a month").
+**Opening:** the first cycle starts at phase 0 (a landing) when the airport opens, and the banner shows "AIRPORT OPEN · +320 jobs" (with X3: "AIRPORT OPEN · +1,200 visitors a month").
 
 ### 5.3 Spaceport (6×6, 150,000 CR, upkeep 1,800, 300 MW, 550 jobs (250 Fab), prestige r20, unlock 30,000 residents, max 1)
 
@@ -979,7 +982,7 @@ All three are `transport` buildings: square footprints, `needsRoad`, taxed jobs 
 
 **Effects once complete** (online and powered):
 
-- prestige r20 (wide land-value lift), noise 0.7 r12 around it;
+- prestige r20 (wide land-value lift), noise 0.5 r8 around it (Step 7: the first draft's 0.7 r12 cancelled the prestige it brings, §10.5 B11);
 - industrial demand target +200, commercial +300;
 - income line **"Launch contracts"** +1,200 per month (monthly, independent of launches);
 - visitors +3,000 per month (X3, monthly);
@@ -1006,6 +1009,11 @@ All three are `transport` buildings: square footprints, `needsRoad`, taxed jobs 
 - Jobs: Fab via `jobsInd`, Market for the rest (`buildingStats` splits `jobs` by `def.jobsInd`).
 - Ports never pollute or make noise while offline; the spaceport doesn't until complete.
 - **Opening moments:** PortSystem emits `moment` once per city per id (`'seaport'`, `'airport'`, `'spaceport'`; Game emits `'launch'`), recorded in `world.moments` (saved). `MilestoneBanner` (feedback.ts) queues them like milestones. Effects starts the first ship or plane phase as soon as a new port id appears.
+
+**As built (WP-4, recorded in Step 7).**
+
+- *Ships:* a ship approaches bow-in along the berth normal, turns to moor alongside while the crane trolleys shuttle containers, then turns bow-out and leaves. The approach length comes from a swept-hull check every 0.1 tile that stops before land, bridges, rail or the map edge (a 2.5-tile hull must never touch land while it turns), not from the open-water tiles along the normal alone. Ships and planes are culled by their own screen box (a superset of "only when the port is in view"); S- and E-facing ships draw in the seaport's depth slot.
+- *Spaceport:* a fifth model, complete with an **empty pad** (`SPACE_EMPTY_PAD` in `render/art/ports.ts`), shows from liftoff until 30 s later, so the sprite's rocket and the flying rocket never show together. Pad steam, searchlights and the tower beacon animate on the frame clock like other building fx; only ships, planes and launches follow `clockRate`.
 
 ---
 
@@ -1190,6 +1198,14 @@ The expansion adds the most expensive and destructive actions in the game, and t
 
 - Game records, for each building it places, the credits paid and the wall time (`placed: Map<id, { at, paid }>`, not saved). `Game.plan` for a bulldoze sets `plan.refund` to the sum paid for buildings in the plan placed less than `SAFETY.refundSec` (30 s) ago; `Game.apply` credits it after the demolition, and the pill shows it in green. Build reactions already given stay (their per-type limits cap any loop).
 
+**As built (WP-5, recorded in Step 7).**
+
+- The skyway pill counts **new** deck tiles (those with `world.sky === 0`), not every tile whose `skyMasks` bits change, so the count matches what is charged (`perTile` per new tile).
+- **Watch** eases the camera to the pad (pad at 66% of the screen height, zoom eased to at most 0.85; a touch on the map stops it) instead of a hard `camera.centerOnTile`, so the climb stays in view.
+- Tips (§7.6) also wait while the inspect sheet is open and keep a 2 s quiet gap between two tips. Tray cards are 104 px wide on portrait phones up to 419 px, so a fourth card peeks at 390 px. The action pill hides (keeping its plan) behind a chapter title, Charter Night or the ending, so its ✓ can't be tapped through them; action toasts sit on top and are evicted last; Demolish reads "Full refund" inside the refund window; the Spaceport "Building" row uses a neutral meter.
+- The Spaceport's Power row reads "—" while it builds (it draws nothing yet), not "NO POWER" (Step 7). `Game.readyLaunches()` is a test and harness hook that makes a loaded complete Spaceport's next launch due at the next night.
+- Toolbar buttons stay 43 px wide at 390 px and 40 px at 360 px with all 9 categories, as before this expansion (§7.1 "not made worse"); their short labels stay 10 px. Every new control is ≥ 44 px.
+
 ---
 ## 8. Story hooks
 
@@ -1339,6 +1355,8 @@ Brief: "The Tuning wants to teach in your Academy at night. Allowing it lifts ap
 
 **New spot rules** (WP-6, `story/effects.ts`): `highway`, `alley`, `shore` as defined in §2.2. A card with such a spot is drawable only while the spot resolves (`spotAvailable`), so `{district}` always names a real place.
 
+**As built (WP-6, recorded in Step 7).** STORY.md §2.3 rule 3 ("every penalty is a timed modifier") wins over three permanent approval penalties above, so each became a permanent bonus plus a 720-day penalty (the cards' cooldown): `ex.convoy` "Open the night lanes." = `[demandInd +0.06, perm]` + `[approvalAdd −2, 720d]`; `ex.lounge` "Build the lounge. Move the stop." = `[landValueAdd +0.01, perm]` + `[approvalAdd −1, 720d]`; `ex.nofly` "Bend the flight path." = `[approvalAdd −1, 720d]`. The content lint now allows a perm modifier only as a pure bonus on a `once` card's choice. The briefs of `ex.pricedout`, `ex.thecut` and `ex.nofly` were lightly edited to name who is asking (the Board, the Board, the Glass Kites), and `ex.pricedout`'s to stay under 220 characters. The §8.5 glossary entry was skipped: the glossary is at its 20-entry lint cap.
+
 ### 8.4 Turf affinity (story/turf.ts, WP-2)
 
 Added to STORY.md §3.3's formulas, using the `TURF.affinity` keys from §2.8 (indicators dilated with the same pattern as the ribbon term):
@@ -1375,7 +1393,7 @@ If the glossary has room under its 20-entry lint cap, add one entry: "Launch rig
 | `recomputeAll()` | < 10 ms (today 0.98) | same caches, forced. `settleWealth()` (once per old save) < 5 ms. |
 | Planning previews | < 1 ms per finger move | `lostAccess` is a local scan with a scratch mark array (≈ 20k checks for a 60-tile highway drag); `shoreSites` < 1 ms once per tool select; `noiseReach` ≤ 30×30 tiles. |
 | Frame, mid phone, default zoom, full map | ≥ 30 fps, 60 target | Road kinds and the deck shadows live in the cached ground chunks (repainted by dirty rect only; tier changes never dirty them, §4.3). Port aprons are ground art. Skyway segments are cached sprites keyed `(mask 0..15, ramp, closed, pillar, night bucket 0..6)` in the existing `SpriteCache` at the current scale bucket, with model ids from `SKY_BASE = 4000` (above every building id) so keys never collide. ≤ 0.8 ms for 300 visible sky tiles: car lights drawn with the segment, their night glows collected and drawn in **one** `'lighter'` pass after `drawObjects`, capped at 200, skipped below zoom 0.5 and on low quality. Planes, ships and a launch ≤ 0.3 ms total; ships and planes drawn only when their port is in view, the rocket culled by its own screen box. No `shadowBlur`. |
-| Sprite cache | stays within 32 MB | 432 zone bodies (today 144), painted on demand. WP-4 measures painted sprites per second while panning a full mixed-tier map: ≤ 1.2× today. If over, lower `MAX_SPRITE_SCALE` for zone L1 bodies only. |
+| Sprite cache | stays within 32 MB | 432 zone bodies (today 144), painted on demand. WP-4 measures painted sprites per second while panning a full mixed-tier map: ≤ 1.2× today. If over, lower `MAX_SPRITE_SCALE` for zone L1 bodies only. **Measured and decided in §10.5** (cold pan 2.6×, accepted). |
 | Memory | + ~150 KB | Fields +6 × 16 KB + 4 KB, SimGrid caches ~60 KB. |
 | Save | < 64 KB JSON for a full v3 city | §2.5; tested. |
 
@@ -1428,7 +1446,52 @@ Measured headless (§10.4). The integration step tunes only the expansion tables
 
 ### 10.5 Measured
 
-*(Filled in by the integration step: the final table for B2–B13 with the tuned numbers.)*
+Step 7, `MEASURE=1 npx vitest run tests/expansion-measure.test.ts` (8 years, seeds 2091 / 7 / 31; M6 on `World.generate(seed)`, the rest on `flatWorld(seed)`; M8 on `fullyBuiltWorld()` + the fixture, 12 months). The regular suite holds B2, B3, B4, B10 and B13 for seed 2091 in `tests/expansion-balance.test.ts`.
+
+**Tuned numbers.** Three §2.8 values changed; everything else is the spec's start point.
+
+| Knob | Spec | Tuned | Why |
+|---|---|---|---|
+| `WEALTH.score.ind.base` | 0.20 | **0.22** | B4 money on seed 7 (M2 net +14% at 0.20, +42% at 0.22); B3's Fab share holds either way (71/38/49% at 0.20). Fab tiles only; the starter city stays all $. |
+| `AIRPORT.comJobs` | 240 | **320** | B9: the flat scripted city is land-limited, so the Airport's noise costs Market density near it and +240 demand left jobsCom at +33 / +116 / +289. 320 (the terminal's own job count) gives +256 / +476 / +313. |
+| Spaceport `noise` | v 0.7 r12 | **v 0.5 r8** | B11: the old ring cancelled the prestige it brings (land value within r20 +0.003); now +0.023 there. |
+
+The fixture mayor M2 was rewritten (`RICH` rates in `tests/expansion-fixture.ts`): it packs its academies, plazas, clinics and precincts into the free cells of service blocks, where its services are missing, and takes a new block only while it has fewer service blocks than the plain mayor would. WP-1's M2 took a fresh 3×3 block for every plaza and trailed M1 by 9-12% in population for that reason alone (with tiers off it already trailed by 3-9%).
+
+**Results** (2091 / 7 / 31):
+
+| # | Target | Measured | Verdict |
+|---|---|---|---|
+| B1 | existing balance tests unchanged; starter city all $ | `tests/balance.test.ts` green, unchanged | met |
+| B2 | M1 res+com $ 55-80%, $$ 20-40%, $$$ ≤ 8% | 59/35/7 · 58/36/6 · 63/32/5 | met |
+| B3 | M2 $ ≤ 45%, $$ 35-60%, $$$ 12-30%; Fab $$+ ≥ 25% | 34/50/16, Fab 81% · 31/50/19, 39% · 30/51/19, 36% | met |
+| B4 | M2 vs M1: net ≥ +20%, pop ≥ −3%, approval ≥ −2, 3k / 7k ≤ +30 d | net +33 / +42 / +33%; pop +22 / +25 / +25%; approval +7 / +10 / +8; 3k −136 / −126 / −116 d; 7k −22 / −181 / −149 d | met |
+| B5 | M3 avgTraffic ≤ M1 × 0.88 | × 0.870 / 0.942 / 0.910 (8-seed mean 0.908) | **waived** (see below) |
+| B6 | M4 ≤ M1 × 0.82; highway load > 0; no ramps → 0 | × 0.870 / 0.656 / 0.745 (mean 0.757); load 0.021 / 0.035 / 0.030; rampless ring 0 | load and rampless met; ratio met on the mean and 2 of 3 seeds (see below) |
+| B7 | M5 alley crime − city 0.04-0.10; pop ≥ M1 | +0.076 / +0.047 / +0.074; pop −5.2 / −7.1 / −1.1% | crime met; **pop waived** (see below) |
+| B8 | M6 jobsInd +150..+400 after 3 years; Port trade ≥ 150 | +486 (2091), n/a (7), +398 (31); trade 421 / — / 374 | trade met; jobs met on 31, 2091 above (see below) |
+| B9 | M7 jobsCom +150..+500; land value 3 out −0.08..−0.20 | +256 / +476 / +313; −0.116 / −0.108 / −0.150 | met |
+| B9b | Market 8-16 out at $$+ ≥ +15 pts | +30 / +26 / +44 pts | met |
+| B10 | ≤ 4 tier changes per tile in the last 2 years | max 0 (M1 and M2, all seeds); tier steps happen in years 1-5 (M1 2091: 5, 0, 2, 11, 24, then 0 a year) | met |
+| B11 | after completion: visitors ≥ 3,000 × mood; avgLandValue +0.03; net positive | visitors 2,996 vs 2,250; land value +0.023 within r20, **+0.009 city-wide**; net +16,591/mo (+16,408 while building) | visitors and net met; **land value waived** (see below) |
+| B12 | §10.1 budgets on the fixture | step 0.86 ms, recomputeAll 1.17 ms (`tests/perf.test.ts` asserts the budgets); settleWealth 0.16-0.43 ms (WP-1) | met |
+| B13 | alleys ≤ 60 Undertow, skyways ≤ 100 Kites | 60.0 and 100.0 at 100,000 each | met |
+
+**Waivers and why.**
+
+- **B5 (avenues).** Trips don't route in this sim: a lot sends its trips to its nearest road and smoothing spreads congestion one or two tiles. Widening the two central lines (88 of ~940 road tiles) only relieves the lots whose nearest road they are. The static effect on the finished M1 city is × 0.93 at capacity 480 and × 0.92 at 560; reaching × 0.88 in M3 needs about 3× a street (660: 8-seed mean 0.877), which would break the Avenue's "2× traffic" promise and crowd the Highway's 5×. Capacity stays 480. Seed 2091 meets it.
+- **B6 (highway ring), honestly.** Seed 2091 misses (× 0.870). On the finished M1 city the same ring with only its 4 ramps *raises* avgTraffic × 1.11 (lots along the ring lose their frontage road and send their trips to the next street), so M4's lower means come from the 28-58 ramps the mayor's later street drags add across the ring and from a 6-9% smaller city; the highway does carry load (0.02-0.035) and a rampless ring carries exactly 0. No §2.8 number changed for it.
+- **B7 population.** Added to a grown city, alleys raise population (+1.8 / +1.9 / +1.8% after 3 years on the M1 city: the ×1.1 affordable quarter). Built during growth (M5 from 1,200 residents), the alley rows densify less: L2 needs land value 0.35 and the rows beside an alley sit near 0.19 (alley −0.04, crime +0.06 through land value and the poverty feedback), and an L2 home holds 3.4× an L1 home, so the lost L2s outweigh +10% per tile. Removing the land-value term (`alleyLv` 0) moves the 12-seed mean from −3.5% to −0.3% with a ±7% spread between seeds, and no setting of `alleyLv` or `affordable` was ≥ M1 on every seed. Alleys are meant to be the cheap lever with a cost (§4.4), so the spec values stay.
+- **B8 upper bound, seed 7.** Seed 7's generated map leaves the scripted grid mostly under water: it stalls at 1,414 residents and never reaches the Seaport unlock. On seeds 1-5 the Seaport adds +328 to +972 Fab jobs (land isn't scarce on generated maps); lowering `exportJobs` to 200 or 160 moved single seeds by ±300 without narrowing the spread, so it stays 260. A Seaport that brings more industry than the range is money for the player, not a hazard.
+- **B11 city-wide land value.** Prestige max-combines with the fixture's other prestige buildings (5 Spires, 5 Arcologies), so a new r20 source moves the city mean little: +0.009 on the fixture, +0.010 on a flat M1 city with the Spaceport at its edge, even with the quieter ring. Within its radius it lifts land value by +0.023. Raising the radius to 28 still gives only +0.017 city-wide, so r20 stays.
+
+**Performance and art (§10.1).**
+
+- Sprite paint rate while panning (WP-4, instrumented builds, fixture save, DPR 1, zoom 1, a 12.6 s pan): cold cache 73 → 193 building sprites (5.7 → 15 per second, 33 → 92 ms in all), **2.6×**; a warm pass paints 0 → 0, so there is no cache thrash; cache memory 12 → 18 MB of 32 MB; fps unchanged. The cause is 3× the distinct bodies. **Accepted:** the paint is spread over the frame budget (`budgetMs`, with the previous sprite as fallback), happens once per body and scale bucket, and the spec's fallback (a lower `MAX_SPRITE_SCALE` for L1 bodies) changes neither the count nor anything at DPR 1 while it would blur small buildings on high-DPR phones.
+- Skyway decks keep their own `SpriteCache` (6 MB cap, 1.5 ms paint budget) instead of the buildings' 32 MB one, because the two caches keep separate per-frame budgets (WP-3). Worst case 38 MB in all; measured 18 MB + under 1 MB.
+- Frame (WP-3, headless software canvas, fixture): draw 2.4-5.8 ms against 2.6-4.1 ms before the expansion on the same save; the skyway layer 0.5 ms at 113 visible deck tiles, 0.8 ms at 198 at night (≈ 2.2-2.7 µs per tile, at the 0.8 ms / 300-tile line). Ports FX 0.07-0.12 ms. Not measured on a real phone.
+
+**Saves and the single-file build** (`npm run build:single`, Chromium, 390×844 and 360×640 portrait, 844×390 landscape, touch): a fresh city from the start screen (one tap on Road lays streets; Chapter I title at day 20; the boot card answered by tap); a v1 and a v2 save through Continue (all Street, all $, then the settle: 81 / 48 / 31 developed tiles on the test city, `.v2` backup written once, re-saved as v3); a mid-game v3 save with every road kind, 300 skyway tiles and all three ports; a v4 save left intact (`.future` copy, the title says "This city was saved by a newer version. Reload to update.", no Continue, New City lifts the block). A **pre-expansion** build opened on a v3 save overwrites it (it predates rule 1 of §2.5); the mirror key (§2.5 rule 5) brings the city back on the next v3 load, checked in the browser with both builds on one origin. No console errors, no horizontal scroll.
 
 ---
 

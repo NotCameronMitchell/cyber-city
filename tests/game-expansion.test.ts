@@ -4,7 +4,7 @@
 // old saves, inspect rows / notes / actions, tool prices and the sfx map.
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { BUILDINGS, DAY_CYCLE_SECONDS, SAFETY, SKYWAY, SPACEPORT } from '../src/game/config';
+import { AIRPORT, BUILDINGS, DAY_CYCLE_SECONDS, SAFETY, SKYWAY, SPACEPORT } from '../src/game/config';
 import type { GameEventMap } from '../src/game/events';
 import { Game } from '../src/game/game';
 import { Simulation } from '../src/game/sim';
@@ -461,7 +461,7 @@ describe('inspect (§7.4)', () => {
     const w = g.world;
     const air = w.addBuilding('airport', 10, 10)!;
     let info = fits(g, 10, 10);
-    expect(Object.fromEntries(info.rows)).toMatchObject({ Business: '+240 jobs', Noise: '10 tiles' });
+    expect(Object.fromEntries(info.rows)).toMatchObject({ Business: `+${AIRPORT.comJobs} jobs`, Noise: '10 tiles' });
     expect(info.notes?.[0].text).toBe('Shops 8-16 tiles out do better business');
     const sp = w.addBuilding('spaceport', 30, 30)!;
     sp.buildDays = 120;

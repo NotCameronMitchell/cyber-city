@@ -2,7 +2,7 @@
 
 import { afterEach, describe, expect, it } from 'vitest';
 import { BUILDINGS, SAVE_KEY, SAVE_VERSION, SAVE_VERSIONS_SUPPORTED, SPACEPORT } from '../src/game/config';
-import { FUTURE_SAVE_KEY, FUTURE_SAVE_TEXT, Game, UNREADABLE_SAVE_KEY, V2_SAVE_KEY } from '../src/game/game';
+import { FUTURE_SAVE_KEY, FUTURE_SAVE_TEXT, Game, MIRROR_SAVE_KEY, RESTORED_SAVE_TEXT, STALE_SAVE_KEY, UNREADABLE_SAVE_KEY, V2_SAVE_KEY } from '../src/game/game';
 import { Simulation } from '../src/game/sim';
 import { MAP_SIZE, RoadKind, Terrain, ZoneType, type SaveData, type WealthTier } from '../src/game/types';
 import { World } from '../src/game/world';
@@ -347,6 +347,8 @@ describe('save safety (§2.5, §10.2 #4)', () => {
     expect(g.save()).toBe(true);
     // A parseable but invalid save too.
     const bad = JSON.stringify({ version: 2, tiles: [1, 2, 3] });
+    // (With the mirror the save() above wrote, a v2-numbered main would be restored from it instead.)
+    m.delete(MIRROR_SAVE_KEY);
     m.set(SAVE_KEY, bad);
     new Game();
     expect(m.get(UNREADABLE_SAVE_KEY)).toBe(bad);
@@ -369,10 +371,49 @@ describe('save safety (§2.5, §10.2 #4)', () => {
     // The v3 save loads without touching the backup; another v2 save never replaces it.
     expect(new Game().world.loadedVersion).toBe(3);
     expect(m.get(V2_SAVE_KEY)).toBe(v2);
+    // (Without the v3 mirror: with it, a v2 main is an older build's overwrite, restored below.)
+    m.delete(MIRROR_SAVE_KEY);
     const other = JSON.stringify({ ...data, cityName: 'Other Harbor' });
     m.set(SAVE_KEY, other);
     expect(new Game().world.cityName).toBe('Other Harbor');
     expect(m.get(V2_SAVE_KEY)).toBe(v2);
+  });
+
+  it('a pre-expansion build that saved over a v3 city: the mirror brings the city back (Step 7)', () => {
+    // A v3 build saved the city: main and mirror hold the same string.
+    const m = memStorage();
+    const g = new Game();
+    g.newCity('Glass Shore', 777);
+    expect(g.save()).toBe(true);
+    const v3 = m.get(SAVE_KEY)!;
+    expect(m.get(MIRROR_SAVE_KEY)).toBe(v3);
+    // A stale v2 build could not read it, started a fresh city and autosaved over the main key.
+    const stale = json(World.generate(4242, 'Lanthorn Bay'));
+    stale.version = 2;
+    delete stale.sky;
+    delete stale.moments;
+    const staleRaw = JSON.stringify(stale);
+    m.set(SAVE_KEY, staleRaw);
+    // The next v3 load restores the mirror, keeps the overwrite aside and says so once.
+    const g2 = new Game();
+    expect(g2.world.cityName).toBe('Glass Shore');
+    expect(g2.world.loadedVersion).toBe(3);
+    expect(m.get(SAVE_KEY)).toBe(v3);
+    expect(m.get(STALE_SAVE_KEY)).toBe(staleRaw);
+    expect(m.get(V2_SAVE_KEY)).toBeUndefined();
+    const toasts: string[] = [];
+    g2.events.on('toast', (t) => toasts.push(t.text));
+    g2.update(0.1);
+    expect(toasts).toContain(RESTORED_SAVE_TEXT);
+    // Nothing to restore when the main is the mirror, a plain v2 save has no mirror, or the main is newer.
+    expect(new Game().world.cityName).toBe('Glass Shore');
+    const m2 = memStorage({ [SAVE_KEY]: staleRaw });
+    expect(new Game().world.cityName).toBe('Lanthorn Bay');
+    expect(m2.get(STALE_SAVE_KEY)).toBeUndefined();
+    const v4 = JSON.stringify({ ...JSON.parse(v3), version: 4 });
+    const m3 = memStorage({ [SAVE_KEY]: v4, [MIRROR_SAVE_KEY]: v3 });
+    expect(new Game().saveBlocked).toBe(true);
+    expect(m3.get(SAVE_KEY)).toBe(v4);
   });
 });
 
