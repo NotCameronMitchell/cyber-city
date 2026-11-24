@@ -62,7 +62,7 @@ export class IncidentSystem {
     const devTotal = census.developed[1] + census.developed[2] + census.developed[3];
     const options: [IncidentKind, number][] = [
       ['corpGrant', 0.8],
-      ['gridHack', plants.length > 0 && census.population >= 300 ? 0.7 : 0],
+      ['gridHack', plants.length > 0 && census.population >= 3000 ? 0.7 : 0],
       ['gangSurge', devTotal >= 12 ? 1.1 : 0],
       ['smog', census.developed[3] >= 6 ? 0.8 : 0],
       ['blackMarket', census.developed[2] >= 4 ? 0.8 : 0],
@@ -154,7 +154,8 @@ export class IncidentSystem {
 
   private corpGrant(world: World, census: Census): void {
     const rng = world.rng;
-    const amount = Math.round(Math.min(12000, Math.max(1500, 1500 + census.population * 0.4)) / 100) * 100;
+    // CR stay at per-building parity (MEGACITY §4.3): 0.04 per resident in ×10 units is v3's 0.4.
+    const amount = Math.round(Math.min(12000, Math.max(1500, 1500 + census.population * 0.04)) / 100) * 100;
     world.funds += amount;
     world.pushSignal({ t: 'corpGrant', amount });
     world.addNews(

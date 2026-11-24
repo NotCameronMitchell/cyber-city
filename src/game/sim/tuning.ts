@@ -2,6 +2,9 @@
 // Internal simulation coefficients. Player-facing numbers (costs, capacities,
 // radii, upkeep) live in config.ts; these are the "physics" weights that turn
 // them into city behaviour. Grouped by system so tuning stays readable.
+//
+// Megacity scale (docs/MEGACITY.md §4.3, §4.4): head counts are × POP_SCALE (10) and every
+// per-head rate here ÷ 10 (trips, taxes), so every per-tile number is unchanged.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { ROAD_KINDS } from '../config';
@@ -15,9 +18,9 @@ export const FIELD_STAGGER = 2;
 
 // ── Traffic ──────────────────────────────────────────────────────────────────
 /** Trips emitted per resident / job by zone (index = ZoneType). */
-export const TRIPS_PER_UNIT = [0, 1.0, 0.9, 0.8];
+export const TRIPS_PER_UNIT = [0, 0.1, 0.09, 0.08];
 /** Trips per resident/job housed in a service building or landmark. */
-export const BUILDING_TRIPS = 0.5;
+export const BUILDING_TRIPS = 0.05;
 /** Share of trips removed at full transit coverage. */
 export const TRANSIT_TRIP_CUT = 0.6;
 /**
@@ -66,16 +69,16 @@ export const CRIME_ABANDONMENT = 0.3;
 /**
  * Joblessness only bites once the town is a real city: its crime and approval
  * effects scale from UNEMPLOYMENT_FLOOR up to 1 as population reaches
- * UNEMPLOYMENT_FULL_POP (a 150-person camp with no factory isn't a crime den).
+ * UNEMPLOYMENT_FULL_POP (a 1,500-person camp with no factory isn't a crime den).
  */
 export const UNEMPLOYMENT_FLOOR = 0.25;
-export const UNEMPLOYMENT_FULL_POP = 800;
+export const UNEMPLOYMENT_FULL_POP = 8000;
 /** Small towns are calmer: crime is scaled from CRIME_TOWN_SCALE up to 1 by CRIME_TOWN_POP residents. */
 export const CRIME_TOWN_SCALE = 0.55;
-export const CRIME_TOWN_POP = 3000;
+export const CRIME_TOWN_POP = 30000;
 /** Extra crime in big cities, reached at CRIME_CITY_POP residents. */
 export const CRIME_CITY = 0.15;
-export const CRIME_CITY_POP = 20000;
+export const CRIME_CITY_POP = 200_000;
 /** Crime removed at full security coverage. */
 export const SECURITY_SUPPRESS = 0.65;
 /** Undeveloped land carries only this share of the computed crime. */
@@ -87,14 +90,20 @@ export const WORKFORCE_SHARE = 0.6;
 /** Residents supported per job-holder (workers + dependents), as a multiple of 1/WORKFORCE_SHARE. */
 export const RES_PER_JOB = 1.15;
 /** Settlers who arrive with no jobs in town (keeps a new city moving). */
-export const RES_STARTER = 220;
+export const RES_STARTER = 2200;
 /** Commercial jobs wanted per resident / per industrial job, plus a visitor base. */
 export const COM_PER_RES = 0.25;
 export const COM_PER_IND = 0.1;
-export const COM_BASE = 25;
+export const COM_BASE = 250;
 /** Industrial jobs wanted per worker, plus external-trade base. */
 export const IND_PER_WORKER = 0.45;
-export const IND_EXPORT_BASE = 100;
+export const IND_EXPORT_BASE = 1000;
+/**
+ * Smallest denominators of the demand ratios (census.demandTarget): residents (res) and jobs
+ * (com, ind), so a tiny town's demand doesn't swing on a handful of heads.
+ */
+export const RES_DEMAND_FLOOR = 1600;
+export const JOB_DEMAND_FLOOR = 600;
 /** Tax neutral point (percent) and demand change per percentage point. */
 export const TAX_NEUTRAL = 7;
 export const TAX_DEMAND = 0.045;
@@ -138,9 +147,9 @@ export const COLLAPSE_CHANCE = 0.03;
 
 // ── Budget ───────────────────────────────────────────────────────────────────
 /** Monthly credits per resident / filled job per tax percentage point. */
-export const TAX_PER_RESIDENT = 0.035;
-export const TAX_PER_COM_JOB = 0.045;
-export const TAX_PER_IND_JOB = 0.04;
+export const TAX_PER_RESIDENT = 0.0035;
+export const TAX_PER_COM_JOB = 0.0045;
+export const TAX_PER_IND_JOB = 0.004;
 /** Land value multiplies tax yield: (LV_TAX_BASE + LV_TAX_SLOPE * landValue). */
 export const LV_TAX_BASE = 0.75;
 export const LV_TAX_SLOPE = 0.5;
@@ -162,7 +171,7 @@ export const APPROVAL_SERVICES = 25;
 export const EVENT_GRACE_TICKS = 90;
 /** Days between events: uniform in [min, max] (~2–4 months). */
 export const EVENT_INTERVAL: [number, number] = [60, 120];
-export const EVENT_MIN_POP = 60;
+export const EVENT_MIN_POP = 600;
 /** Per-tick decay of temporary event effects. */
 export const CRIME_BOOST_DECAY = 0.965;
 export const SMOG_DECAY = 0.955;

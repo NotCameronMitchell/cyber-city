@@ -29,7 +29,7 @@ const plural = (n: number, one: string, many: string) => `${fmt(n)} ${n === 1 ? 
 const HIGHLIGHTS: Record<number, { text: string; kind: NewsItem['kind'] }> = {
   [ZoneType.Residential * 4 + 1]: { text: 'First settlers move into {city}. Capsule homes glow along the new streets.', kind: 'good' },
   [ZoneType.Commercial * 4 + 1]: { text: 'First Market Strip opens: a noodle stall, a repair booth and a very loud sign.', kind: 'good' },
-  [ZoneType.Industrial * 4 + 1]: { text: 'First Fab District shift starts. The drones are already on overtime.', kind: 'good' },
+  [ZoneType.Industrial * 4 + 1]: { text: 'First Fab Yards shift starts. The drones are already on overtime.', kind: 'good' },
   [ZoneType.Residential * 4 + 2]: { text: 'Mid-rise hab stacks rise in {city}. Land value is paying off.', kind: 'good' },
   [ZoneType.Commercial * 4 + 2]: { text: 'Arcade malls are moving in. {city} has a shopping district.', kind: 'good' },
   [ZoneType.Industrial * 4 + 2]: { text: 'Fab lines double up: mid-density factories online.', kind: 'info' },
@@ -44,8 +44,8 @@ const WEALTH_HIGHLIGHTS: Record<number, { text: string; kind: NewsItem['kind'] }
   [ZoneType.Residential * 3 + 2]: { text: 'Glass balconies, private lifts: the first $$$ Hab Blocks in {city}. Land value did that.', kind: 'good' },
   [ZoneType.Commercial * 3 + 1]: { text: 'The noodle bars get real chairs. First $$ Market Strip.', kind: 'good' },
   [ZoneType.Commercial * 3 + 2]: { text: 'A boutique with no prices on anything: the first $$$ Market Strip.', kind: 'good' },
-  [ZoneType.Industrial * 3 + 1]: { text: 'Cleaner lines, better pay: the first $$ Fab District.', kind: 'info' },
-  [ZoneType.Industrial * 3 + 2]: { text: 'A fab so clean it has a lobby: the first $$$ Fab District. The smog lifts a little.', kind: 'good' },
+  [ZoneType.Industrial * 3 + 1]: { text: 'Cleaner lines, better pay: the first $$ Fab Yards.', kind: 'info' },
+  [ZoneType.Industrial * 3 + 2]: { text: 'A fab so clean it has a lobby: the first $$$ Fab Yards. The smog lifts a little.', kind: 'good' },
 };
 
 /**
@@ -125,14 +125,14 @@ export class Advisor {
     }
   }
 
-  /** Population milestones (grant once) and building unlocks. Mutates funds; step() only. */
+  /** Population milestones (a Board bonus, once each) and building unlocks. Mutates funds; step() only. */
   milestones(world: World, population: number): void {
     for (const m of MILESTONES) {
       if (population < m.pop || world.milestones.includes(m.pop)) continue;
       world.milestones.push(m.pop);
       world.funds += m.grant;
       world.addNews(
-        `${m.title}! ${world.cityName} passes ${fmt(m.pop)} residents. The Charter Board wires a ${fmt(m.grant)} ${CURRENCY} grant.`,
+        `${m.title}! ${world.cityName} passes ${fmt(m.pop)} residents. The Charter Board wires a ${fmt(m.grant)} ${CURRENCY} bonus.`,
         'good',
       );
       world.events.emit('milestone', { pop: m.pop, title: m.title });
@@ -223,17 +223,17 @@ export class Advisor {
     }
 
     // ── Demand / jobs ───────────────────────────────────────────────────────
-    if (pop > 120 && census.unemployment > 0.18 && demand.res < 0) {
-      this.say(world, 'jobs', 70, 'warn', `Advisor: residents need jobs (${Math.round(census.unemployment * 100)}% unemployed). Zone ${ZONES.com.name}s or ${ZONES.ind.name}s.`);
+    if (pop > 1200 && census.unemployment > 0.18 && demand.res < 0) {
+      this.say(world, 'jobs', 70, 'warn', `Advisor: residents need jobs (${Math.round(census.unemployment * 100)}% unemployed). Zone ${ZONES.com.name}s or ${ZONES.ind.name}.`);
     }
     if (demand.res > 0.45 && census.lotsWithRoad[ZoneType.Residential] < 3) {
       this.say(world, 'needres', 80, 'info', `Settlers are queueing at the city limits. Zone more ${ZONES.res.name}.`);
     }
-    if (demand.com > 0.45 && census.lotsWithRoad[ZoneType.Commercial] < 2 && pop > 60) {
+    if (demand.com > 0.45 && census.lotsWithRoad[ZoneType.Commercial] < 2 && pop > 600) {
       this.say(world, 'needcom', 80, 'info', `Shoppers have nowhere to spend. Zone more ${ZONES.com.name}s.`);
     }
     if (demand.ind > 0.45 && census.lotsWithRoad[ZoneType.Industrial] < 2) {
-      this.say(world, 'needind', 80, 'info', `Idle hands want factory shifts. Zone more ${ZONES.ind.name}s.`);
+      this.say(world, 'needind', 80, 'info', `Idle hands want factory shifts. Zone more ${ZONES.ind.name}.`);
     }
 
     // ── Livability ──────────────────────────────────────────────────────────
@@ -272,7 +272,7 @@ export class Advisor {
         this.say(world, 'abandoned', 90, 'warn', `${census.abandoned} buildings stand abandoned. Check power, roads, crime and pollution.`);
       }
     }
-    if (world.taxRate >= 13 && pop > 200) {
+    if (world.taxRate >= 13 && pop > 2000) {
       this.say(world, 'tax', 120, 'info', `Residents grumble about the ${world.taxRate}% tax rate. Growth is slowing.`);
     }
   }

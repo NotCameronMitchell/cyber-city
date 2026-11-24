@@ -240,13 +240,13 @@ export class Census {
     const mood = (approval - T.APPROVAL_NEUTRAL) * T.APPROVAL_DEMAND;
 
     const resTarget = (jobs / T.WORKFORCE_SHARE) * T.RES_PER_JOB + T.RES_STARTER;
-    const res = (resTarget - pop) / Math.max(160, pop * 0.3);
+    const res = (resTarget - pop) / Math.max(T.RES_DEMAND_FLOOR, pop * 0.3);
 
     const comTarget = pop * T.COM_PER_RES + this.jobsInd * T.COM_PER_IND + T.COM_BASE + this.tradeCom;
-    const com = (comTarget - this.jobsCom) / Math.max(60, comTarget * 0.35);
+    const com = (comTarget - this.jobsCom) / Math.max(T.JOB_DEMAND_FLOOR, comTarget * 0.35);
 
     const indTarget = this.workforce * T.IND_PER_WORKER + T.IND_EXPORT_BASE + this.tradeInd;
-    const ind = (indTarget - this.jobsInd) / Math.max(60, indTarget * 0.35);
+    const ind = (indTarget - this.jobsInd) / Math.max(T.JOB_DEMAND_FLOOR, indTarget * 0.35);
 
     out.res = clampDemand(clampDemand(res) + tax + mood + m.demandRes);
     out.com = clampDemand(clampDemand(com) + tax * 0.8 + mood * 0.5 + comBoost + m.demandCom);

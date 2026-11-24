@@ -8,6 +8,20 @@ import type { BuildingGate, CorpId, CrownId, FactionId, GangId, ModPatch, Unlock
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const CURRENCY = 'CR';
+
+// ── Megacity scale (docs/MEGACITY.md §4) ─────────────────────────────────────
+/**
+ * People per v3 person: every head count (residents and jobs of every zone level, building,
+ * stage and crown; every population threshold) is × this, every per-head rate ÷ this, so
+ * everything per tile and per building (tax, traffic, power, growth, upkeep, prices) is
+ * unchanged (§4.1). Saves carry it as SaveData.scale; one without it is × this at load.
+ */
+export const POP_SCALE = 10;
+/**
+ * Every price × this (§0, "How price is rescaled"): 1 = per-building parity, the owner's
+ * reading to confirm at Step 9. No price reads it yet; a later costOf / upkeepOf will.
+ */
+export const CR_SCALE = 1;
 export const START_FUNDS = 25000;
 export const DEFAULT_TAX = 9; // percent
 export const MIN_TAX = 0;
@@ -48,7 +62,7 @@ export const ZONES: Record<'res' | 'com' | 'ind', ZoneDef> = {
     name: 'Hab Blocks',
     short: 'R',
     cost: 20,
-    capacity: [0, 14, 48, 150],
+    capacity: [0, 140, 480, 1500],
     power: [0, 1, 3, 8],
     pollution: [0, 0, 0.02, 0.05],
     levelLandValue: [0.35, 0.6],
@@ -61,7 +75,7 @@ export const ZONES: Record<'res' | 'com' | 'ind', ZoneDef> = {
     name: 'Market Strip',
     short: 'C',
     cost: 30,
-    capacity: [0, 8, 28, 90],
+    capacity: [0, 80, 280, 900],
     power: [0, 2, 5, 12],
     pollution: [0, 0.02, 0.05, 0.08],
     levelLandValue: [0.4, 0.65],
@@ -71,10 +85,10 @@ export const ZONES: Record<'res' | 'com' | 'ind', ZoneDef> = {
   ind: {
     zone: ZoneType.Industrial,
     tool: 'ind',
-    name: 'Fab District',
+    name: 'Fab Yards',
     short: 'I',
     cost: 25,
-    capacity: [0, 12, 34, 75],
+    capacity: [0, 120, 340, 750],
     power: [0, 3, 7, 14],
     pollution: [0, 0.35, 0.6, 0.85],
     levelLandValue: [0, 0],
@@ -181,8 +195,8 @@ export const BUILDINGS: Record<BuildingType, BuildingDef> = {
     radius: 0,
     pollution: 0.5,
     residents: 0,
-    jobs: 40,
-    unlockPop: 600,
+    jobs: 400,
+    unlockPop: 6000,
     color: '#7b5cff',
   },
   plaza: {
@@ -217,8 +231,8 @@ export const BUILDINGS: Record<BuildingType, BuildingDef> = {
     radius: 13,
     pollution: 0,
     residents: 0,
-    jobs: 20,
-    unlockPop: 150,
+    jobs: 200,
+    unlockPop: 1500,
     color: '#3d7bff',
   },
   clinic: {
@@ -235,8 +249,8 @@ export const BUILDINGS: Record<BuildingType, BuildingDef> = {
     radius: 12,
     pollution: 0,
     residents: 0,
-    jobs: 25,
-    unlockPop: 400,
+    jobs: 250,
+    unlockPop: 4000,
     color: '#ff3b5c',
   },
   datahub: {
@@ -253,8 +267,8 @@ export const BUILDINGS: Record<BuildingType, BuildingDef> = {
     radius: 9,
     pollution: 0,
     residents: 0,
-    jobs: 10,
-    unlockPop: 1000,
+    jobs: 100,
+    unlockPop: 10000,
     color: '#22e5ff',
   },
   maglev: {
@@ -271,15 +285,15 @@ export const BUILDINGS: Record<BuildingType, BuildingDef> = {
     radius: 11,
     pollution: 0,
     residents: 0,
-    jobs: 15,
-    unlockPop: 2000,
+    jobs: 150,
+    unlockPop: 20000,
     color: '#ffe14d',
     station: true,
   },
   spire: {
     type: 'spire',
     name: 'Corp Spire',
-    desc: 'Megacorp HQ. 600 office jobs, huge prestige.',
+    desc: 'Megacorp HQ. 6,000 office jobs, huge prestige.',
     category: 'landmarks',
     size: 2,
     cost: 25000,
@@ -290,8 +304,8 @@ export const BUILDINGS: Record<BuildingType, BuildingDef> = {
     radius: 16,
     pollution: 0,
     residents: 0,
-    jobs: 600,
-    unlockPop: 5000,
+    jobs: 6000,
+    unlockPop: 50000,
     color: '#ff2bd6',
     tall: true,
     skyAnchor: true,
@@ -299,7 +313,7 @@ export const BUILDINGS: Record<BuildingType, BuildingDef> = {
   arcology: {
     type: 'arcology',
     name: 'Arcology',
-    desc: 'Self-contained mega-hab for 3000 residents.',
+    desc: 'Self-contained mega-hab for 30,000 residents.',
     category: 'landmarks',
     size: 3,
     cost: 60000,
@@ -309,9 +323,9 @@ export const BUILDINGS: Record<BuildingType, BuildingDef> = {
     effect: 'prestige',
     radius: 12,
     pollution: 0.05,
-    residents: 3000,
-    jobs: 120,
-    unlockPop: 12000,
+    residents: 30000,
+    jobs: 1200,
+    unlockPop: 120_000,
     color: '#ffb02e',
     tall: true,
     skyAnchor: true,
@@ -332,9 +346,9 @@ export const BUILDINGS: Record<BuildingType, BuildingDef> = {
     radius: 12,
     pollution: 0,
     residents: 0,
-    jobs: 30,
+    jobs: 300,
     jobsInd: 0,
-    unlockPop: 1500,
+    unlockPop: 15000,
     color: '#ffd0a0',
     plural: 'Academies',
     meta: '2×2 · schools',
@@ -352,9 +366,9 @@ export const BUILDINGS: Record<BuildingType, BuildingDef> = {
     radius: 0,
     pollution: 0.3,
     residents: 0,
-    jobs: 240,
-    jobsInd: 240,
-    unlockPop: 5000,
+    jobs: 2400,
+    jobsInd: 2400,
+    unlockPop: 50000,
     color: '#38c8ff',
     site: 'shore',
     maxCount: 2,
@@ -375,9 +389,9 @@ export const BUILDINGS: Record<BuildingType, BuildingDef> = {
     radius: 0,
     pollution: 0.15,
     residents: 0,
-    jobs: 320,
+    jobs: 3200,
     jobsInd: 0,
-    unlockPop: 12000,
+    unlockPop: 120_000,
     color: '#e9f0ff',
     maxCount: 1,
     needsRoad: true,
@@ -399,9 +413,9 @@ export const BUILDINGS: Record<BuildingType, BuildingDef> = {
     radius: 20,
     pollution: 0.2,
     residents: 0,
-    jobs: 550,
-    jobsInd: 250,
-    unlockPop: 30000,
+    jobs: 5500,
+    jobsInd: 2500,
+    unlockPop: 300_000,
     color: '#ff8f6b',
     maxCount: 1,
     needsRoad: true,
@@ -426,10 +440,10 @@ export const BUILDINGS: Record<BuildingType, BuildingDef> = {
     radius: 0,
     pollution: 0,
     residents: 0,
-    jobs: 400, // 300 Market + 100 Fab at stage 1; buildingStats() splits them
+    jobs: 4000, // 3,000 Market + 1,000 Fab at stage 1; buildingStats() splits them
     unlockPop: 0,
     color: '#a9b8ff',
-    gate: { unlock: 'stack', fallbackPop: 8000 },
+    gate: { unlock: 'stack', fallbackPop: 80000 },
     station: true,
     needsRoad: true,
     skyAnchor: true,
@@ -437,7 +451,7 @@ export const BUILDINGS: Record<BuildingType, BuildingDef> = {
   foundry: {
     type: 'foundry',
     name: 'Foundry Spine',
-    desc: "Basalt's furnace column. 1000 MW and 250 Fab jobs, with smoke.",
+    desc: "Basalt's furnace column. 1000 MW and 2,500 Fab jobs, with smoke.",
     category: 'power',
     size: 3,
     cost: 10000,
@@ -447,7 +461,7 @@ export const BUILDINGS: Record<BuildingType, BuildingDef> = {
     radius: 0,
     pollution: 0.5,
     residents: 0,
-    jobs: 250,
+    jobs: 2500,
     unlockPop: 0,
     color: '#ff7b2e',
     gate: { unlock: 'foundry', faction: 'basalt', tier: 'friendly' },
@@ -466,7 +480,7 @@ export const BUILDINGS: Record<BuildingType, BuildingDef> = {
     radius: 6,
     pollution: 0,
     residents: 0,
-    jobs: 10,
+    jobs: 100,
     unlockPop: 0,
     color: '#ffc6f1',
     gate: { unlock: 'glarewall', faction: 'nacre', tier: 'friendly' },
@@ -485,7 +499,7 @@ export const BUILDINGS: Record<BuildingType, BuildingDef> = {
     radius: 0,
     pollution: 0,
     residents: 0,
-    jobs: 150, // untaxed
+    jobs: 1500, // untaxed
     unlockPop: 0,
     color: '#b6ff2e',
     gate: { faction: 'undertow', tier: 'friendly', turf: 'undertow', minTurfTiles: 3 },
@@ -523,7 +537,7 @@ export const BUILDINGS: Record<BuildingType, BuildingDef> = {
     radius: 8,
     pollution: 0,
     residents: 0,
-    jobs: 30,
+    jobs: 300,
     unlockPop: 0,
     color: '#cfe3ff',
     gate: { faction: 'board', tier: 'friendly' },
@@ -581,14 +595,22 @@ export function isZoneTool(tool: ToolId): tool is 'res' | 'com' | 'ind' {
   return tool === 'res' || tool === 'com' || tool === 'ind';
 }
 
-/** Population milestones: each fires a news item + bonus grant once. */
+/**
+ * Population milestones (MEGACITY §4.5): each fires a news item and pays a Board bonus once
+ * (`grant` is the bonus in CR; on screen "grant" means only the land grant). The last four
+ * need more than one district.
+ */
 export const MILESTONES: { pop: number; title: string; grant: number }[] = [
-  { pop: 100, title: 'Settlement', grant: 1000 },
-  { pop: 500, title: 'Outpost', grant: 2000 },
-  { pop: 1500, title: 'Boomtown', grant: 4000 },
-  { pop: 5000, title: 'Neon Metro', grant: 8000 },
-  { pop: 12000, title: 'Megacity', grant: 15000 },
-  { pop: 30000, title: 'Thousand Lamps', grant: 30000 },
+  { pop: 1000, title: 'Settlement', grant: 1000 },
+  { pop: 5000, title: 'Outpost', grant: 2000 },
+  { pop: 15000, title: 'Boomtown', grant: 4000 },
+  { pop: 50000, title: 'Neon Metro', grant: 8000 },
+  { pop: 120_000, title: 'Megacity', grant: 15000 },
+  { pop: 300_000, title: 'Thousand Lamps', grant: 30000 },
+  { pop: 600_000, title: 'Night Harbour', grant: 45000 },
+  { pop: 1_000_000, title: 'Million Windows', grant: 60000 },
+  { pop: 2_000_000, title: 'Neon Coast', grant: 90000 },
+  { pop: 4_000_000, title: 'Endless City', grant: 150_000 },
 ];
 
 /** Simulation speeds: ticks (days) per real second, index = speed setting 0..3. */
@@ -740,24 +762,24 @@ export function paceOf(v: unknown): StoryPace {
 
 /** Population fallbacks for story unlocks (§5.0); others are story or faction only. */
 export const UNLOCK_FALLBACK_POP: Partial<Record<Unlockable, number>> = {
-  // Above the Ch2 trigger (1,500), so the deck stays shut in Ch1 unless it stalls.
-  factions: 3000,
-  comms: 3000,
-  stack: 8000,
-  deals: 8000,
-  crackdown: 6000,
-  pact: 6000,
-  turfOverlay: 6000,
-  skybridge: 9000,
-  rail: 9000,
-  crowns: 20000,
+  // Above the Ch2 trigger (15,000), so the deck stays shut in Ch1 unless it stalls.
+  factions: 30000,
+  comms: 30000,
+  stack: 80000,
+  deals: 80000,
+  crackdown: 60000,
+  pact: 60000,
+  turfOverlay: 60000,
+  skybridge: 90000,
+  rail: 90000,
+  crowns: 200_000,
 };
 
 /** Gangs and turf (§3). */
 export const TURF = {
   /** Each gang holds at most this share of land tiles. */
   capShare: 0.08,
-  seedPop: { undertow: 1200, kites: 2500 } as Record<GangId, number>,
+  seedPop: { undertow: 12000, kites: 25000 } as Record<GangId, number>,
   seedStr: 60,
   seedMinAff: 0.55,
   holdPivot: 0.35,
@@ -882,9 +904,9 @@ export interface StackStageDef {
 
 /** Stage 1 Plinth, 2 Hab Core, 3 Crown. Index = stage − 1. */
 export const STACK_STAGES: readonly StackStageDef[] = [
-  { name: 'Plinth', cost: 12000, days: 60, res: 0, jobsCom: 300, jobsInd: 100, power: 40, upkeep: 120, unlock: 'stack' },
-  { name: 'Hab Core', cost: 16000, days: 90, res: 1600, jobsCom: 0, jobsInd: 0, power: 80, upkeep: 180, minLandValue: 0.4 },
-  { name: 'Crown', cost: 22000, days: 120, res: 400, jobsCom: 300, jobsInd: 0, power: 80, upkeep: 220, prestigeRadius: 10, unlock: 'crowns' },
+  { name: 'Plinth', cost: 12000, days: 60, res: 0, jobsCom: 3000, jobsInd: 1000, power: 40, upkeep: 120, unlock: 'stack' },
+  { name: 'Hab Core', cost: 16000, days: 90, res: 16000, jobsCom: 0, jobsInd: 0, power: 80, upkeep: 180, minLandValue: 0.4 },
+  { name: 'Crown', cost: 22000, days: 120, res: 4000, jobsCom: 3000, jobsInd: 0, power: 80, upkeep: 220, prestigeRadius: 10, unlock: 'crowns' },
 ];
 /** Each existing stack multiplies the plinth cost by this. */
 export const STACK_COST_SCALE = 1.15;
@@ -921,8 +943,8 @@ export const CROWNS: Record<CrownId, CrownDef> = {
   foundry: {
     id: 'foundry',
     name: 'Foundry',
-    summary: '+250 Fab jobs, smoke at the top.',
-    jobsInd: 250,
+    summary: '+2,500 Fab jobs, smoke at the top.',
+    jobsInd: 2500,
     pollution: 0.15,
     favor: { basalt: 8 },
     power: { f: 'basalt', v: 80 },
@@ -950,8 +972,8 @@ export const CROWNS: Record<CrownId, CrownDef> = {
   commons: {
     id: 'commons',
     name: 'Commons',
-    summary: '+600 affordable homes, approval +3.',
-    residents: 600,
+    summary: '+6,000 residents in cheap floors, approval +3.',
+    residents: 6000,
     mods: { approvalAdd: 3 },
     favor: { board: 8, tuning: 4 },
   },
@@ -1002,7 +1024,7 @@ export const RIBBON = {
  * Owner decision: late-game money is the reward for a well-built city, so the
  * price never scales with the treasury. Trace and the cooldown are the limits.
  */
-export const SALT = { base: 600, perPop: 0.08, favor: 8, trace: 3, cooldown: 90 } as const;
+export const SALT = { base: 600, perPop: 0.008, favor: 8, trace: 3, cooldown: 90 } as const;
 
 /** Patron perk while flag `patron` is set and the patron's standing ≥ 0 (§2.4). */
 export const PATRON_PERK: Record<CorpId, ModPatch> = {
@@ -1015,8 +1037,8 @@ export const POWER_WEIGHTS = {
   // Expansion terms (EXPANSION §8.2): launchRights (+150 to the holder), seaports, airports, and
   // the capped alley / skyway terms (weight = min(count × per, max)).
   board: { approval: 3, perPrecinct: 40, perClinic: 40, honestTie: 100, launchRights: 150 },
-  basalt: { jobsIndDiv: 8, perReactor: 60, perFoundry: 80, perCrownFoundry: 80, branded: 80, patron: 300, perSeaport: 60, launchRights: 150 },
-  nacre: { jobsComDiv: 8, perDatahub: 50, perSpire: 120, perGlarewall: 60, perCrownGlare: 80, patron: 300, perAirport: 80, launchRights: 150 },
+  basalt: { jobsIndDiv: 80, perReactor: 60, perFoundry: 80, perCrownFoundry: 80, branded: 80, patron: 300, perSeaport: 60, launchRights: 150 },
+  nacre: { jobsComDiv: 80, perDatahub: 50, perSpire: 120, perGlarewall: 60, perCrownGlare: 80, patron: 300, perAirport: 80, launchRights: 150 },
   undertow: { perTurfTile: 2, perTidemarket: 100, oneTide: 150, perAlley: 0.25, alleyMax: 60 },
   kites: { perTurfTile: 2, perRoost: 100, perCrownNest: 80, oneTide: 150, perSkywayTile: 0.5, skywayMax: 100, launchRights: 150 },
 } as const;
@@ -1097,10 +1119,10 @@ export interface RoadKindDef {
 /** Indexed by RoadKind (ROAD_KINDS[k].kind === k). */
 export const ROAD_KINDS: readonly RoadKindDef[] = [
   { kind: RoadKind.Street, tool: 'road', name: 'Street', cost: 15, bridgeCost: 90, upkeep: 0.6, bridgeUpkeep: 3, capacity: 220, speed: 1, access: 3, rank: 1, pollution: 1, unlockPop: 0, color: '#c8d0f0', meta: 'Lots ≤ 3 tiles', desc: 'Streets carry traffic and power. Lots within 3 tiles can grow.' },
-  { kind: RoadKind.Avenue, tool: 'avenue', name: 'Avenue', cost: 40, bridgeCost: 200, upkeep: 1.4, bridgeUpkeep: 6, capacity: 480, speed: 1.25, access: 3, rank: 2, pollution: 1, unlockPop: 1500, color: '#6f9bff', meta: '2× traffic · widens', desc: "Wide and lit: twice a street's traffic. Drag over a street to widen it." },
-  { kind: RoadKind.Highway, tool: 'highway', name: 'Highway', cost: 90, bridgeCost: 360, upkeep: 3.5, bridgeUpkeep: 12, capacity: 1100, speed: 1.8, access: 0, rank: 3, pollution: 1.4, unlockPop: 5000, color: '#ffb547', meta: '5× traffic · no lots', desc: 'Five streets of traffic, but no lot can use it. Cross it with a street for on-ramps.' },
-  { kind: RoadKind.Alley, tool: 'alley', name: 'Back Alley', cost: 6, bridgeCost: null, upkeep: 0.2, bridgeUpkeep: 0, capacity: 90, speed: 0.55, access: 1, rank: 0, pollution: 0.6, unlockPop: 1200, color: '#a07cff', meta: 'Cheap homes · crime', desc: 'Narrow and cheap. Homes beside it stay affordable and hold more people. Crews like the dark.' },
-  { kind: RoadKind.Ramp, tool: null, name: 'On-ramp', cost: 60, bridgeCost: null, upkeep: 1.5, bridgeUpkeep: 0, capacity: 480, speed: 1, access: 3, rank: -1, pollution: 1, unlockPop: 5000, color: '#f4f7ff', meta: '', desc: 'Joins the street grid to a highway.' },
+  { kind: RoadKind.Avenue, tool: 'avenue', name: 'Avenue', cost: 40, bridgeCost: 200, upkeep: 1.4, bridgeUpkeep: 6, capacity: 480, speed: 1.25, access: 3, rank: 2, pollution: 1, unlockPop: 15000, color: '#6f9bff', meta: '2× traffic · widens', desc: "Wide and lit: twice a street's traffic. Drag over a street to widen it." },
+  { kind: RoadKind.Highway, tool: 'highway', name: 'Highway', cost: 90, bridgeCost: 360, upkeep: 3.5, bridgeUpkeep: 12, capacity: 1100, speed: 1.8, access: 0, rank: 3, pollution: 1.4, unlockPop: 50000, color: '#ffb547', meta: '5× traffic · no lots', desc: 'Five streets of traffic, but no lot can use it. Cross it with a street for on-ramps.' },
+  { kind: RoadKind.Alley, tool: 'alley', name: 'Back Alley', cost: 6, bridgeCost: null, upkeep: 0.2, bridgeUpkeep: 0, capacity: 90, speed: 0.55, access: 1, rank: 0, pollution: 0.6, unlockPop: 12000, color: '#a07cff', meta: 'Cheap homes · crime', desc: 'Narrow and cheap. Homes beside it stay affordable and hold more people. Crews like the dark.' },
+  { kind: RoadKind.Ramp, tool: null, name: 'On-ramp', cost: 60, bridgeCost: null, upkeep: 1.5, bridgeUpkeep: 0, capacity: 480, speed: 1, access: 3, rank: -1, pollution: 1, unlockPop: 50000, color: '#f4f7ff', meta: '', desc: 'Joins the street grid to a highway.' },
 ];
 
 /** Highway load: trips from frontable roads within `reach` (road steps) of an on-ramp move onto that highway (§3.8). */
@@ -1116,7 +1138,7 @@ export const SKYWAY = {
   upkeep: 3,
   maxDrag: 24,
   bulldozeCost: 5,
-  unlockPop: 12000,
+  unlockPop: 120_000,
   /** Deck height in world px (rail is 28). Pick slab z 46..56 (§3.7). */
   z: 52,
   capacity: 700,
@@ -1173,16 +1195,17 @@ export const WEALTH = {
 export const SAFETY = { confirmCost: 10000, undoSec: 10, refundSec: 30, noteMax: 32 } as const;
 
 /** X2 regional links (§3.10): points per border road kind, cap, demand per point, art stubs. */
-export const EDGE_LINKS = { street: 1, avenue: 2, highway: 3, cap: 12, ind: 25, com: 12, stubs: 4 } as const;
+export const EDGE_LINKS = { street: 1, avenue: 2, highway: 3, cap: 12, ind: 250, com: 120, stubs: 4 } as const;
 
 /** X3 tourism (§6.3). */
 export const TOURISM = {
-  airport: 1200,
-  spaceport: 3000,
-  perHighCom: 3,
-  perEdgePoint: 40,
-  landmark: { spire: 150, arcology: 100, memorial: 200 } as Partial<Record<BuildingType, number>>,
-  spend: 0.35,
+  airport: 12000,
+  spaceport: 30000,
+  perHighCom: 30,
+  perEdgePoint: 400,
+  landmark: { spire: 1500, arcology: 1000, memorial: 2000 } as Partial<Record<BuildingType, number>>,
+  /** CR per visitor a month (MEGACITY §4.3: ÷ POP_SCALE with the visitors, so "Tourism" is unchanged). */
+  spend: 0.035,
   comPerVisitor: 0.06,
   crimeHit: 0.8,
   approvalRef: 60,
@@ -1191,14 +1214,14 @@ export const TOURISM = {
 } as const;
 
 /** Seaport (§5.1). */
-export const SEAPORT = { exportJobs: 260, maxCounted: 2, tradeRate: 0.12, tradeCap: 2000, berthDepth: 2, indScoreRadius: 12, shipCycleSec: 80, snapRadius: 2 } as const;
+export const SEAPORT = { exportJobs: 2600, maxCounted: 2, tradeRate: 0.012, tradeCap: 2000, berthDepth: 2, indScoreRadius: 12, shipCycleSec: 80, snapRadius: 2 } as const;
 /** Airport (§5.2). */
-/** comJobs: Market demand the Airport adds (Step 7 tuning, §10.5 B9: 240 → 320, the terminal's own job count). */
-export const AIRPORT = { comJobs: 320, hubNear: 6, hubFar: 16, hubFade: 20, planeCycleSec: 36 } as const;
+/** comJobs: Market demand the Airport adds (Step 7 tuning, §10.5 B9: 240 → 320, the terminal's own job count; ×10 units). */
+export const AIRPORT = { comJobs: 3200, hubNear: 6, hubFar: 16, hubFade: 20, planeCycleSec: 36 } as const;
 /** Spaceport (§5.3). */
 export const SPACEPORT = {
-  indJobs: 200,
-  comJobs: 300,
+  indJobs: 2000,
+  comJobs: 3000,
   income: 1200,
   /** Construction needs both buildDays and this many unpaused real seconds (§5.3). */
   minBuildSec: 240,
