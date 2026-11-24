@@ -1,19 +1,28 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // World + screen effects layered around the building pass:
 //
-//   drawGround  street traffic (art/traffic.ts) + rain ripples on the ground
-//   drawSky     flying cars, searchlights, ad blimps (art/skytraffic.ts)
+//   drawGround  street traffic (art/traffic.ts) + rain ripples on the ground,
+//               ships behind their quay, taxiing planes (art/ports.ts)
+//   drawSky     flying cars, searchlights, ad blimps (art/skytraffic.ts),
+//               airborne planes and launches (art/ports.ts)
 //   drawScreen  weather (rain, storm gloom, lightning), vignette, scanlines
 //               (art/weather.ts)
 //
+// Port FX run on the visual clock: ships and planes advance by dt ×
+// game.clockRate (frozen while paused); a launch is a 14 s cut-scene in
+// unpaused real seconds that starts only on Game's 'liftoff' event.
+//
 // The game's world object is replaced on new game / load, so nothing caches
-// it: 'world' resets every layer, 'tiles' invalidates the road graph.
+// it: 'world' resets every layer, 'tiles' invalidates the road graph and the
+// port list.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import type { Game } from '../game/game';
+import { shoreFacing } from '../game/ports';
 import { hash2 } from '../game/rng';
 import type { ArtEnv } from './buildings';
 import { HALF_H, HALF_W } from './camera';
+import { PortFx, setSeaportGhostFacing } from './art/ports';
 import { SkyTraffic } from './art/skytraffic';
 import { StreetTraffic } from './art/traffic';
 import { ScreenFx } from './art/weather';
@@ -29,6 +38,8 @@ export class Effects {
   private street = new StreetTraffic();
   private sky = new SkyTraffic();
   private screen = new ScreenFx();
+  /** Ships, planes and launches (art/ports.ts). */
+  readonly ports = new PortFx();
   private bounds: TileBounds | null = null;
   private night = 1;
   private unsubs: (() => void)[] = [];
@@ -37,7 +48,11 @@ export class Effects {
     this.screen.reset(game.world.seed);
     this.unsubs.push(
       game.events.on('world', () => this.reset()),
-      game.events.on('tiles', () => this.street.invalidate()),
+      game.events.on('tiles', () => {
+        this.street.invalidate();
+        this.ports.invalidate();
+      }),
+      game.events.on('liftoff', (e) => this.ports.liftoff(this.game.world, e.id, e.first)),
     );
   }
 
@@ -50,6 +65,7 @@ export class Effects {
   private reset() {
     this.street.reset();
     this.sky.reset();
+    this.ports.reset();
     this.screen.reset(this.game.world.seed);
   }
 
@@ -66,6 +82,10 @@ export class Effects {
     this.street.update(dt, world, q);
     this.sky.update(dt, world, q, this.bounds, this.night);
     this.screen.update(dt, game.clock, game.settings.rain);
+    this.ports.update(dt, game.clockRate, world);
+    // The Seaport placement ghost shows the side that would face the water.
+    const plan = game.preview;
+    if (plan?.tool === 'seaport' && plan.footprint) setSeaportGhostFacing(shoreFacing(world, plan.footprint.x, plan.footprint.y, plan.footprint.size));
   }
 
   /** Street-level vehicles etc., world space, drawn after ground, before buildings. */
@@ -78,12 +98,14 @@ export class Effects {
     this.night = env.night;
     const rain = this.screen.rain;
     if (rain > 0.05 && env.quality === 'high' && env.zoom >= 0.5) this.ripples(ctx, bounds, env, rain);
+    this.ports.drawGround(ctx, env);
     this.street.draw(ctx, bounds, env.zoom, env.night, env.quality, rain);
   }
 
-  /** Flying vehicles, searchlights etc., world space, drawn after buildings. */
+  /** Flying vehicles, searchlights, planes and launches, world space, drawn after buildings. */
   drawSky(ctx: CanvasRenderingContext2D, bounds: TileBounds, env: ArtEnv): void {
     this.sky.draw(ctx, bounds, env.time, env.night, env.zoom, env.quality);
+    this.ports.drawSky(ctx, env);
   }
 
   /** Screen-space FX (rain, vignette), identity transform scaled by DPR; width/height in CSS px. */

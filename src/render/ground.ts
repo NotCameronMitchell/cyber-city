@@ -21,11 +21,22 @@
 //
 // A small per-frame pass (`drawAnimated`) adds water shimmer and breathing
 // street glow on top of the cached ground.
+//
+// Road kinds (docs/EXPANSION.md §3.11) are told apart by width and colour:
+// Street 0.30 (amber centre dashes), Avenue 0.40 (blue edge lines, green
+// median, cool lamps), Highway 0.46 (pale concrete by day / dark deck with
+// sodium lamps by night, amber edge lines, barriers), Back Alley 0.16 (grimy,
+// violet edge, wet sheen) and On-ramp 0.30 (white chevrons, gantry sign).
+// Skyway decks leave a faint shadow strip on the ground (the drag target),
+// active sky ramps paint a touchdown chevron, and four faint regional-road
+// stubs mark border points where a road becomes a trade link (§3.10).
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { BUILDINGS, ZONES } from '../game/config';
+import { BUILDINGS, EDGE_LINKS, ZONES } from '../game/config';
+import { shoreFacing } from '../game/ports';
 import { fbm, hash2 } from '../game/rng';
-import { MAP_SIZE, Terrain, ZoneType, type Tile } from '../game/types';
+import { skyRampGround } from '../game/skyway';
+import { MAP_SIZE, RoadKind, Terrain, ZoneType, type Building, type Tile } from '../game/types';
 import type { World } from '../game/world';
 import type { ArtEnv } from './buildings';
 import { HALF_H, HALF_W } from './camera';
@@ -39,8 +50,21 @@ const HP = Math.PI / 2;
 const PERP = (2 * HALF_W * HALF_H) / Math.hypot(HALF_W, HALF_H);
 /** Asphalt half-width of a road (tile units). Sidewalks fill the rest. */
 export const ROAD_HALF = 0.3;
-/** Bridge deck half-width (tile units). */
-const DECK_HALF = 0.36;
+/** Asphalt half-width per RoadKind: Street, Avenue, Highway, Back Alley, On-ramp (§3.11). */
+export const KIND_HALF: readonly number[] = [0.3, 0.4, 0.46, 0.16, 0.3];
+/** Half-width of a road kind (unknown kinds read as Street). */
+export function kindHalf(k: number): number {
+  return KIND_HALF[k] ?? ROAD_HALF;
+}
+/** Bridge deck half-width of a kind: the asphalt plus 0.06 (a highway deck fills its tile). */
+function deckHalf(k: number): number {
+  return Math.min(0.5, kindHalf(k) + 0.06);
+}
+/** Avenue median half-width and lane dash offset; highway lane dash and edge line offsets (§3.11 lanes). */
+const AV_MEDIAN = 0.03;
+const AV_DASH = 0.195;
+const HW_DASH = 0.26;
+const HW_EDGE = 0.41;
 /** How far water sits below the land (world px), as a tile-space diagonal offset. */
 const WALL = 5 / (2 * HALF_H);
 /** Max distance (world px) any tile's ground art reaches outside its diamond. */
@@ -62,6 +86,8 @@ const NIGHT_STEPS = 12;
 
 /** Bit per direction, matching World.roadMask: N, E, S, W. */
 const DIR = [1, 2, 4, 8];
+const DX4 = [0, 1, 0, -1];
+const DY4 = [-1, 0, 1, 0];
 const BITS = [0, 1, 1, 2, 1, 2, 2, 3, 1, 2, 2, 3, 2, 3, 3, 4];
 /** Rotation (quarter turns from the canonical N+E corner) for 2-arm corner masks, else -1. */
 const CORNER_K = [-1, -1, -1, 0, -1, -1, 1, -1, -1, 3, -1, -1, 2, -1, -1, -1];
@@ -123,6 +149,50 @@ function circlePath(path: CanvasPath, cx: number, cy: number, r: number) {
 function ellipsePath(path: CanvasPath, cx: number, cy: number, rx_: number, ry_: number, rot: number) {
   path.moveTo(cx + Math.cos(rot) * rx_, cy + Math.sin(rot) * rx_);
   path.ellipse(cx, cy, rx_, ry_, rot, 0, TAU);
+}
+
+/** Line from canonical (p0, q0) to (p1, q1), rotated by k, offset to tile (x, y). */
+function segLine(path: CanvasPath, x: number, y: number, k: number, p0: number, q0: number, p1: number, q1: number) {
+  path.moveTo(x + rx(k, p0, q0), y + ry(k, p0, q0));
+  path.lineTo(x + rx(k, p1, q1), y + ry(k, p1, q1));
+}
+
+/** Chevron pointing towards canonical north (arm k after rotation): apex at (0.5, q), wings `s` wide and deep. */
+export function chevronPath(path: CanvasPath, x: number, y: number, k: number, q: number, s: number) {
+  path.moveTo(x + rx(k, 0.5 - s, q + s * 0.85), y + ry(k, 0.5 - s, q + s * 0.85));
+  path.lineTo(x + rx(k, 0.5, q), y + ry(k, 0.5, q));
+  path.lineTo(x + rx(k, 0.5 + s, q + s * 0.85), y + ry(k, 0.5 + s, q + s * 0.85));
+}
+
+/**
+ * Solid band parallel to the road centreline at offset `off` (tile units), `w` wide.
+ * Straights run the full tile, corners follow the arc (radius 0.5 + off, so use
+ * symmetric offset pairs), other shapes draw each arm up to `box` from the tile
+ * edge (the junction box) or to the centre for a dead end.
+ */
+function bandPath(path: CanvasPath, x: number, y: number, mask: number, off: number, w: number, box: number) {
+  const c = BITS[mask];
+  if (c === 0) return;
+  if (mask === 5 || mask === 10) {
+    rrect(path, x, y, mask === 5 ? 0 : 1, 0.5 + off - w / 2, 0, w, 1);
+    return;
+  }
+  const ck = CORNER_K[mask];
+  if (ck >= 0) {
+    const cx = x + rx(ck, 1, 0);
+    const cy = y + ry(ck, 1, 0);
+    const a0 = HP + ck * HP;
+    const r0 = Math.max(0, 0.5 + off - w / 2);
+    const r1 = 0.5 + off + w / 2;
+    path.moveTo(cx + Math.cos(a0) * r1, cy + Math.sin(a0) * r1);
+    path.arc(cx, cy, r1, a0, a0 + HP);
+    path.arc(cx, cy, r0, a0 + HP, a0, true);
+    path.closePath();
+    return;
+  }
+  const len = c === 1 ? 0.5 : box;
+  if (len <= 0.001) return;
+  for (let k = 0; k < 4; k++) if (mask & DIR[k]) rrect(path, x, y, k, 0.5 + off - w / 2, 0, w, len);
 }
 
 /**
@@ -210,6 +280,8 @@ export class TerrainInfo {
   readonly tone = new Uint8Array(N * N);
   /** Water: 1..6 distance to land (1 = shoreline). Land: 0. */
   readonly depth = new Uint8Array(N * N);
+  /** Regional-road stubs (§3.10, art only, by seed hash): 0 = none, else 1 + the outward direction (0 N, 1 E, 2 S, 3 W). */
+  readonly stub = new Uint8Array(N * N);
   readonly seed: number;
 
   constructor(world: World) {
@@ -259,6 +331,43 @@ export class TerrainInfo {
       }
     }
     for (let i = 0; i < N * N; i++) if (tiles[i].terrain === Terrain.Water && this.depth[i] === 0) this.depth[i] = 6;
+    this.placeStubs(world);
+  }
+
+  /**
+   * EDGE_LINKS.stubs border points (one per side where the side has land, then extra
+   * points on the sides that do): land tiles whose inward neighbour is land too, at a
+   * hashed position along the side. Deterministic per seed; never stored in the save.
+   */
+  private placeStubs(world: World) {
+    const land = (x: number, y: number) => world.tileAt(x, y)?.terrain === Terrain.Land;
+    const at = (side: number, p: number): [number, number] =>
+      side === 0 ? [p, 0] : side === 1 ? [N - 1, p] : side === 2 ? [p, N - 1] : [0, p];
+    let placed = 0;
+    for (let round = 0; round < 3 && placed < EDGE_LINKS.stubs; round++) {
+      for (let side = 0; side < 4 && placed < EDGE_LINKS.stubs; side++) {
+        const p0 = 8 + Math.floor(hash2(side, round, this.seed + 77) * (N - 16));
+        for (let d = 0; d < N; d++) {
+          const p = p0 + (d & 1 ? -((d + 1) >> 1) : d >> 1);
+          if (p < 2 || p > N - 3) continue;
+          const [x, y] = at(side, p);
+          const i = y * N + x;
+          if (this.stub[i] || !land(x, y) || !land(x - DX4[side], y - DY4[side])) continue;
+          // Keep stubs on one side apart.
+          let near = false;
+          for (let e = -6; e <= 6 && !near; e++) {
+            const q = p + e;
+            if (q < 0 || q >= N) continue;
+            const [ax, ay] = at(side, q);
+            if (this.stub[ay * N + ax]) near = true;
+          }
+          if (near) continue;
+          this.stub[i] = side + 1;
+          placed++;
+          break;
+        }
+      }
+    }
   }
 }
 
@@ -274,6 +383,14 @@ const BUILDING_RGB = new Map<string, RGB>(Object.values(BUILDINGS).map((d) => [d
 
 const WARM: RGB = [255, 196, 128];
 const COOL: RGB = [150, 205, 255];
+/** Signature colours of the road kinds and the skyway (ROAD_KINDS[k].color, SKYWAY.color). */
+const AVENUE_RGB: RGB = [111, 155, 255];
+const HIGHWAY_RGB: RGB = [255, 181, 71];
+const ALLEY_RGB: RGB = [160, 124, 255];
+const SKY_RGB: RGB = [255, 95, 210];
+/** Avenue lamps (cool white) and highway sodium lamps (amber) in the night glow pass. */
+const AV_LAMP: RGB = [200, 225, 255];
+const SODIUM: RGB = [255, 168, 60];
 
 /** Neon colour a lit tile casts onto wet ground / water, or null if dark. */
 function lightColor(world: World, x: number, y: number): RGB | null {
@@ -349,6 +466,62 @@ interface GroundPal {
   gRailB: string;
   gZone: string[];
   gZoneCore: string[];
+  // ── Road kinds (§3.11) ──
+  avAsphalt: string;
+  avEdge: string;
+  avMedian: string;
+  avPlanter: string;
+  laneW: string;
+  hwDeck: string;
+  hwDeckBridge: string;
+  hwDeckFace: string;
+  hwVerge: string;
+  hwEdge: string;
+  barrier: string;
+  barrierShade: string;
+  hwLane: string;
+  grime: string;
+  grimeDark: string;
+  alleyAsph: string;
+  alleyEdge: string;
+  sheen: string;
+  dumpster: string;
+  vent: string;
+  chev: string;
+  gantry: string;
+  sign: string;
+  signRim: string;
+  skyShadow: string;
+  touch: string;
+  touchCore: string;
+  stubAsph: string;
+  stubLine: string;
+  stubChev: string;
+  gAvEdge: string;
+  gHwEdge: string;
+  gAlley: string;
+  gChev: string;
+  gTouch: string;
+  // ── Port aprons and the academy courtyard ──
+  quayConc: string;
+  portLane: string;
+  bollard: string;
+  steel: string;
+  sleeper: string;
+  grass: string;
+  runway: string;
+  runwayLine: string;
+  taxiLine: string;
+  apron: string;
+  runwayLamp: string;
+  scorch: string;
+  scorchDark: string;
+  hazardY: string;
+  hazardK: string;
+  lawn: string;
+  paving: string;
+  gRunway: string;
+  gPortLane: string;
 }
 
 /** Four tiny gradient canvases (colour → transparent) used for shallow water along shores. */
@@ -448,6 +621,60 @@ function buildPal(n: number): GroundPal {
     gRailB: css(NEON.magenta, 0.3 * n),
     gZone: zoneList.map((z) => css(ZONE_RGB[z], 0.06 * n)),
     gZoneCore: zoneList.map((z) => css(ZONE_RGB[z], 0.2 * n)),
+    avAsphalt: css(mix(shade(asph, 0.96), mix([30, 40, 72], [8, 10, 26], n), 0.18)),
+    avEdge: css(AVENUE_RGB, 0.72 + 0.2 * n),
+    avMedian: css(mix(shade(conc, 0.95), [40, 46, 70], n * 0.5)),
+    avPlanter: css(mix([64, 142, 74], [40, 176, 104], n), 0.95),
+    laneW: css(mix([224, 228, 236], [150, 162, 214], n), 0.85),
+    hwDeck: css(mix([168, 170, 176], [34, 36, 50], n)),
+    hwDeckBridge: css(mix([136, 138, 146], [26, 28, 40], n)),
+    hwDeckFace: css(mix([72, 74, 84], [12, 12, 22], n)),
+    hwVerge: css(mix([74, 78, 70], [16, 18, 26], n)),
+    hwEdge: css(mix(HIGHWAY_RGB, [255, 168, 56], n), 0.92),
+    barrier: css(mix([222, 222, 226], [96, 98, 118], n)),
+    barrierShade: css(mix([120, 122, 132], [30, 30, 44], n)),
+    hwLane: css(mix([244, 244, 248], [176, 182, 206], n), 0.9),
+    grime: css(mix([54, 52, 60], [14, 12, 22], n)),
+    grimeDark: css(mix([30, 28, 34], [6, 5, 12], n), 0.85),
+    alleyAsph: css(mix([34, 30, 42], [8, 6, 16], n)),
+    alleyEdge: css(ALLEY_RGB, 0.5 + 0.3 * n),
+    sheen: css(mix([150, 160, 190], [110, 80, 190], n), 0.16 + 0.12 * n),
+    dumpster: css(mix([42, 86, 64], [14, 28, 24], n)),
+    vent: css(mix([112, 114, 122], [40, 40, 58], n)),
+    chev: css(mix([250, 252, 255], [226, 234, 255], n), 0.95),
+    gantry: css(mix([66, 68, 78], [24, 24, 34], n)),
+    sign: css(mix([255, 176, 46], [255, 170, 60], n)),
+    signRim: css(mix([248, 248, 252], [210, 214, 230], n)),
+    skyShadow: css([4, 2, 14], 0.17 + 0.08 * n),
+    touch: css(SKY_RGB, 0.85),
+    touchCore: css([255, 236, 250], 0.9),
+    stubAsph: css(shade(asph, 1.1), 0.42),
+    stubLine: css(mix([200, 205, 225], [120, 140, 220], n), 0.5),
+    stubChev: css(mix([255, 190, 80], [255, 180, 70], n), 0.62),
+    gAvEdge: css(AVENUE_RGB, 0.24 * n),
+    gHwEdge: css(NEON.amber, 0.26 * n),
+    gAlley: css(ALLEY_RGB, 0.2 * n),
+    gChev: css(NEON.white, 0.2 * n),
+    gTouch: css(SKY_RGB, 0.35 * n),
+    quayConc: css(mix(shade(conc, 1.02), [120, 124, 134], 0.2 * (1 - n))),
+    portLane: css(mix([232, 200, 64], [255, 196, 70], n), 0.88),
+    bollard: css(mix([40, 40, 46], [10, 10, 16], n)),
+    steel: css(mix([170, 172, 182], [70, 74, 96], n)),
+    sleeper: css(mix([86, 72, 60], [26, 22, 24], n)),
+    grass: css(mix([70, 98, 62], [16, 30, 24], n)),
+    runway: css(mix([50, 52, 60], [12, 12, 20], n)),
+    runwayLine: css(mix([244, 244, 248], [186, 192, 214], n), 0.92),
+    taxiLine: css(mix([240, 206, 60], [255, 200, 70], n), 0.9),
+    apron: css(mix(shade(conc, 0.92), [52, 54, 70], n * 0.4)),
+    runwayLamp: css(mix([236, 238, 246], [255, 236, 190], n)),
+    scorch: css([18, 14, 16], 0.42 + 0.12 * n),
+    scorchDark: css([8, 6, 8], 0.5),
+    hazardY: css(mix([236, 196, 40], [255, 190, 50], n)),
+    hazardK: css(mix([28, 28, 32], [8, 8, 12], n)),
+    lawn: css(mix([78, 128, 70], [20, 48, 36], n)),
+    paving: css(mix([150, 140, 126], [42, 38, 48], n)),
+    gRunway: css([255, 244, 220], 0.4 * n),
+    gPortLane: css(NEON.amber, 0.14 * n),
   };
 }
 
@@ -549,6 +776,8 @@ export class GroundPainter {
   private b1 = new Batch();
   private b2 = new Batch();
   private b3 = new Batch();
+  /** Over everything else, after the bridges: skyway shadow strips, touchdown chevrons, regional stubs. */
+  private b4 = new Batch();
   private gl = new Batch();
   private bridges: number[] = [];
 
@@ -569,8 +798,10 @@ export class GroundPainter {
     this.lotLines = scale >= 0.42;
     this.bridges.length = 0;
     const P = pal;
-    this.b2.prime([...P.asphalt, P.patch, P.wallFace, P.wallDark]);
-    this.b3.prime([P.grid, P.gridFar, P.gridMajor, P.quay, P.lip, P.edge, P.lane, P.zebra]);
+    this.b2.prime([P.hwDeck, P.avAsphalt, P.alleyAsph, ...P.asphalt, P.patch, P.wallFace, P.wallDark]);
+    // The highway's ramp-gap cover (street asphalt) flushes before every marking.
+    this.b3.prime([P.asphalt[1], P.grid, P.gridFar, P.gridMajor, P.quay, P.lip, P.edge, P.lane, P.zebra]);
+    this.b4.prime([P.skyShadow, P.stubAsph]);
   }
 
   /** Release references to the world / context once a chunk is painted. */
@@ -607,27 +838,32 @@ export class GroundPainter {
   // ── Base pass ─────────────────────────────────────────────────────────────
 
   base(x: number, y: number) {
-    const t = this.world.tiles[y * N + x];
+    const i = y * N + x;
+    const t = this.world.tiles[i];
+    const sky = this.world.sky[i];
     if (t.terrain === Terrain.Water) {
       this.water(x, y);
-      if (t.road) this.bridges.push(y * N + x);
+      if (t.road) this.bridges.push(i);
+      if (sky) this.skyShadow(x, y, sky, t);
       return;
     }
-    if (t.road) this.road(x, y);
+    if (t.road) this.road(x, y, t);
     else if (t.buildingId >= 0) this.buildingPad(x, y, t);
     else if (t.zone !== ZoneType.None) this.lot(x, y, t);
     else this.land(x, y);
     if (this.lines) this.quay(x, y);
     // Gang turf: a colour wash over the street, by strength (§3.7).
-    const i = y * N + x;
     const owner = this.world.turf.owner[i];
     if (owner === 1 || owner === 2) {
       const st = this.world.turf.str[i];
       this.b1.f(this.pal.turfWash[owner][st >= 75 ? 3 : st >= 50 ? 2 : st >= 25 ? 1 : 0]).rect(x, y, 1, 1);
     }
+    if (sky) this.skyShadow(x, y, sky, t);
+    const stub = this.info.stub[i];
+    if (stub && !t.road && t.buildingId < 0 && (t.zone === ZoneType.None || t.level === 0)) this.stub(x, y, stub - 1);
   }
 
-  /** Draw all queued base geometry, then bridges (which need strict per-tile order). */
+  /** Draw all queued base geometry, then bridges (which need strict per-tile order), then the top layer. */
   flushBase() {
     const ctx = this.ctx;
     this.b0.flush(ctx);
@@ -636,6 +872,61 @@ export class GroundPainter {
     this.b3.flush(ctx);
     for (const i of this.bridges) this.bridge(i % N, (i / N) | 0);
     this.bridges.length = 0;
+    this.b4.flush(ctx);
+  }
+
+  /** Road kind of the 4-neighbour of (x, y) in direction d, or −1 when it is not a road. */
+  private kindAt(x: number, y: number, d: number): number {
+    const t = this.world.tileAt(x + DX4[d], y + DY4[d]);
+    return t && t.road ? t.roadKind : -1;
+  }
+
+  /** Arms of `mask` whose neighbour is a Highway (the rest of a highway's arms are ramps). */
+  private highwayArms(x: number, y: number, mask: number): number {
+    let m = 0;
+    for (let d = 0; d < 4; d++) if (mask & DIR[d] && this.kindAt(x, y, d) === RoadKind.Highway) m |= DIR[d];
+    return m;
+  }
+
+  /**
+   * Faint shadow strip (0.5 tile wide) under a skyway deck along its links, and the
+   * touchdown chevron of an active ramp (§3.7, §3.11). Repainted through the normal
+   * 'tiles' event that setSky / clearSky emit.
+   */
+  private skyShadow(x: number, y: number, sky: number, t: Tile) {
+    const P = this.pal;
+    const m = sky & 15;
+    roadShapePath(this.b4.f(P.skyShadow), x, y, m, 0.25, 0);
+    if (!(sky & 16) || !skyRampGround(t) || !this.lines) return;
+    // Touchdown: chevrons on the street pointing along the deck's one link (the way up).
+    const k = DEAD_K[m];
+    if (k < 0) return;
+    const w = this.lw(this.detail ? 2.2 : 1.6);
+    const p = this.b4.s(P.touch, w * 1.8, 'round');
+    chevronPath(p, x, y, k, 0.2, 0.17);
+    chevronPath(p, x, y, k, 0.5, 0.17);
+    if (this.detail) {
+      const c = this.b4.s(P.touchCore, w * 0.7, 'round');
+      chevronPath(c, x, y, k, 0.2, 0.17);
+      chevronPath(c, x, y, k, 0.5, 0.17);
+    }
+  }
+
+  /** A faint regional-road stub running off the map edge (direction `d`), with outward chevrons (§3.10). */
+  private stub(x: number, y: number, d: number) {
+    const P = this.pal;
+    // Canonical arm `d` points at the map edge: asphalt from the edge to the centre, dashed edges.
+    rrect(this.b4.f(P.stubAsph), x, y, d, 0.5 - ROAD_HALF, 0, ROAD_HALF * 2, 0.62);
+    if (!this.lines) return;
+    const th = this.lw(1);
+    const dl = this.b4.f(P.stubLine);
+    for (let k = 0; k < 3; k++) {
+      rrect(dl, x, y, d, 0.5 - ROAD_HALF, 0.04 + k * 0.2, th, 0.1);
+      rrect(dl, x, y, d, 0.5 + ROAD_HALF - th, 0.04 + k * 0.2, th, 0.1);
+    }
+    const c = this.b4.s(P.stubChev, this.lw(this.detail ? 2 : 1.4), 'round');
+    chevronPath(c, x, y, d, 0.1, 0.14);
+    chevronPath(c, x, y, d, 0.32, 0.14);
   }
 
   /** Is this tile bare land (no road, zone or building)? */
@@ -790,10 +1081,32 @@ export class GroundPainter {
 
   private buildingPad(x: number, y: number, t: Tile) {
     const P = this.pal;
-    this.tileRect(this.b0.f(P.bpad), x, y);
-    if (!this.lines) return;
     const b = this.world.buildings.get(t.buildingId);
-    if (!b) return;
+    switch (b?.type) {
+      case 'seaport':
+        this.quayApron(x, y, b);
+        return;
+      case 'airport':
+        this.airfield(x, y, b);
+        return;
+      case 'spaceport':
+        this.blastPad(x, y, b);
+        this.padStripe(x, y, b);
+        return;
+      case 'academy':
+        this.courtyard(x, y, b);
+        this.padStripe(x, y, b);
+        return;
+    }
+    this.tileRect(this.b0.f(P.bpad), x, y);
+    if (!this.lines || !b) return;
+    this.padStripe(x, y, b);
+  }
+
+  /** Slab joints and the painted perimeter stripe in the building's signature colour. */
+  private padStripe(x: number, y: number, b: Building) {
+    if (!this.lines) return;
+    const P = this.pal;
     const lx = x - b.x;
     const ly = y - b.y;
     const last = b.size - 1;
@@ -812,9 +1125,208 @@ export class GroundPainter {
     if (lx === last) p.rect(x + 1 - i - w, y, w, 1);
   }
 
-  private road(x: number, y: number) {
+  /** Add the part of the absolute tile-space rect [u0,u1]×[v0,v1] that lies on tile (x, y). */
+  private clipRect(path: CanvasPath, x: number, y: number, u0: number, v0: number, u1: number, v1: number) {
+    const a = Math.max(x, u0);
+    const b = Math.min(x + 1, u1);
+    const c = Math.max(y, v0);
+    const d = Math.min(y + 1, v1);
+    if (b > a && d > c) path.rect(a, c, b - a, d - c);
+  }
+
+  /** Seaport facing (stored; recomputed for a malformed building). */
+  private facingOf(b: Building): 0 | 1 | 2 | 3 {
+    if (b.facing !== undefined) return b.facing;
+    const f = shoreFacing(this.world, b.x, b.y, b.size);
+    return f < 0 ? 2 : (f as 0 | 1 | 2 | 3);
+  }
+
+  /**
+   * Band of the seaport yard between depths d0..d1 from the water edge and positions
+   * a0..a1 along it (tile units), clipped to tile (x, y).
+   */
+  private quayBand(path: CanvasPath, x: number, y: number, b: Building, f: number, d0: number, d1: number, a0 = 0, a1 = b.size) {
+    const S = b.size;
+    switch (f) {
+      case 0:
+        this.clipRect(path, x, y, b.x + a0, b.y + d0, b.x + a1, b.y + d1);
+        break;
+      case 2:
+        this.clipRect(path, x, y, b.x + a0, b.y + S - d1, b.x + a1, b.y + S - d0);
+        break;
+      case 1:
+        this.clipRect(path, x, y, b.x + S - d1, b.y + a0, b.x + S - d0, b.y + a1);
+        break;
+      default:
+        this.clipRect(path, x, y, b.x + d0, b.y + a0, b.x + d1, b.y + a1);
+    }
+  }
+
+  /** Seaport quay apron (§5.1): concrete, a yellow quay edge, bollards, crane rails, yellow lanes and a rail spur. */
+  private quayApron(x: number, y: number, b: Building) {
     const P = this.pal;
-    const mask = this.world.roadMask(x, y);
+    this.tileRect(this.b0.f(P.quayConc), x, y);
+    if (!this.lines) return;
+    const f = this.facingOf(b);
+    const S = b.size;
+    const th = this.lw(1.3);
+    this.quayBand(this.b3.f(P.portLane), x, y, b, f, 0.02, 0.08);
+    const steel = this.b3.f(P.steel);
+    this.quayBand(steel, x, y, b, f, 0.3 - th / 2, 0.3 + th / 2);
+    this.quayBand(steel, x, y, b, f, 1.15 - th / 2, 1.15 + th / 2);
+    const lane = this.b3.f(P.portLane);
+    this.quayBand(lane, x, y, b, f, 1.6 - th / 2, 1.6 + th / 2);
+    this.quayBand(lane, x, y, b, f, 2.4 - th / 2, 2.4 + th / 2);
+    // Rail spur along the back: sleepers, then two rails.
+    if (this.detail) {
+      const sl = this.b2.f(P.sleeper);
+      for (let a = 0.05; a < S; a += 0.18) this.quayBand(sl, x, y, b, f, 3.22, 3.58, a, a + 0.07);
+      const bo = this.b3.f(P.bollard);
+      for (let a = 0.25; a < S; a += 0.5) this.quayBand(bo, x, y, b, f, 0.1, 0.17, a - 0.035, a + 0.035);
+    }
+    this.quayBand(steel, x, y, b, f, 3.3 - th / 2, 3.3 + th / 2);
+    this.quayBand(steel, x, y, b, f, 3.5 - th / 2, 3.5 + th / 2);
+  }
+
+  /**
+   * Airport ground art (§5.2), rows by dy: 0 grass and taxiway, 1-2 runway (edge lines,
+   * centreline dashes, threshold stripes at dx 0 and 5, edge lights), 3 taxiway, 4-5 apron.
+   */
+  private airfield(x: number, y: number, b: Building) {
+    const P = this.pal;
+    const dx = x - b.x;
+    const dy = y - b.y;
+    const last = b.size - 1;
+    const th = this.lw(1.4);
+    if (dy === 0) {
+      this.tileRect(this.b0.f(P.grass), x, y);
+      this.b1.f(P.runway).rect(x, y + 0.5, 1, 0.5 + this.px * 0.6);
+      if (this.lines) this.b3.f(P.taxiLine).rect(x, y + 0.75 - th / 2, 1, th);
+      return;
+    }
+    if (dy === 1 || dy === 2) {
+      this.tileRect(this.b0.f(P.runway), x, y);
+      if (!this.lines) return;
+      const line = this.b3.f(P.runwayLine);
+      // Edge line on the outer side of each runway row.
+      if (dy === 1) line.rect(x, y + 0.06, 1, th);
+      else line.rect(x, y + 0.94 - th, 1, th);
+      // Centreline dashes on the boundary between the two rows (drawn from row 1).
+      if (dy === 1 && dx > 0 && dx < last) {
+        const w = this.lw(2);
+        line.rect(x + 0.1, y + 1 - w / 2, 0.3, w);
+        line.rect(x + 0.6, y + 1 - w / 2, 0.3, w);
+      }
+      if (dx === 0 || dx === last) {
+        // Threshold bar and piano keys at both ends.
+        const u0 = dx === 0 ? 0.16 : 0.32;
+        line.rect(x + (dx === 0 ? 0.06 : 0.9), y, 0.04, 1);
+        if (this.detail) for (const v of [0.18, 0.38, 0.58, 0.78]) line.rect(x + u0, y + v, 0.5, 0.09);
+      }
+      if (this.detail) {
+        const s = this.lw(2.2);
+        const lamp = this.b3.f(P.runwayLamp);
+        const v = dy === 1 ? 0.02 : 0.98 - s;
+        lamp.rect(x + 0.25 - s / 2, y + v, s, s);
+        lamp.rect(x + 0.75 - s / 2, y + v, s, s);
+      }
+      return;
+    }
+    if (dy === 3) {
+      this.tileRect(this.b0.f(P.runway), x, y);
+      if (!this.lines) return;
+      const yl = this.b3.f(P.taxiLine);
+      yl.rect(x, y + 0.5 - th / 2, 1, th);
+      if (this.detail) {
+        yl.rect(x, y + 0.1, 1, this.lw(0.9));
+        yl.rect(x, y + 0.9 - this.lw(0.9), 1, this.lw(0.9));
+      }
+      // Lead-in lines up to the runway at both ends of the terminal.
+      if (dx === 1 || dx === last - 1) yl.rect(x + 0.5 - th / 2, y, th, 0.5);
+      return;
+    }
+    this.tileRect(this.b0.f(P.apron), x, y);
+    if (!this.lines) return;
+    // Stand lead-in lines on the apron.
+    if (dy === 4 && dx > 0 && dx < last) this.b3.f(P.taxiLine).rect(x + 0.5 - th / 2, y, th, 0.6);
+    if (dy === 4) this.b3.f(P.taxiLine).rect(x, y + 0.04, 1, this.lw(0.9));
+  }
+
+  /** Spaceport blast pad (§5.3): scorched concrete, concentric scorch rings, a service road loop, hazard chevrons at the edge. */
+  private blastPad(x: number, y: number, b: Building) {
+    const P = this.pal;
+    this.tileRect(this.b0.f(P.apron), x, y);
+    if (!this.lines) return;
+    const cx = b.x + b.size / 2;
+    const cy = b.y + b.size / 2;
+    // Every footprint tile adds the whole ring set to the same paths; a path's fill is the
+    // union of its subpaths, so overlap never darkens and partial chunk redraws stay whole.
+    const ring = (path: CanvasPath, r0: number, r1: number) => {
+      path.moveTo(cx + r1, cy);
+      path.arc(cx, cy, r1, 0, TAU);
+      path.moveTo(cx + r0, cy);
+      path.arc(cx, cy, r0, 0, TAU, true);
+    };
+    ring(this.b1.f(P.runway), 2.2, 2.55);
+    circlePath(this.b1.f(P.scorch), cx, cy, 1.6);
+    ring(this.b2.f(P.scorchDark), 0.95, 1.08);
+    ring(this.b2.f(P.scorchDark), 1.45, 1.55);
+    if (this.detail) ring(this.b3.f(P.taxiLine), 2.37, 2.39 + this.px);
+    // Hazard band along the outer edge: yellow with black blocks.
+    const lx = x - b.x;
+    const ly = y - b.y;
+    const last = b.size - 1;
+    const w = 0.12;
+    const yb = this.b2.f(P.hazardY);
+    const kb = this.b3.f(P.hazardK);
+    const band = (k: number) => {
+      rrect(yb, x, y, k, 0, 0, 1, w);
+      if (this.detail) for (let j = 0; j < 4; j++) rrect(kb, x, y, k, j * 0.25 + 0.06, 0, 0.1, w);
+    };
+    if (ly === 0) band(0);
+    if (lx === last) band(1);
+    if (ly === last) band(2);
+    if (lx === 0) band(3);
+  }
+
+  /** Academy courtyard: warm paving, a lawn split by cross paths, planters at its corners. */
+  private courtyard(x: number, y: number, b: Building) {
+    const P = this.pal;
+    this.tileRect(this.b0.f(P.paving), x, y);
+    if (!this.lines) return;
+    const S = b.size;
+    const mid = 0.07;
+    const cu = b.x + S / 2;
+    const cv = b.y + S / 2;
+    const lawn = this.b1.f(P.lawn);
+    for (const [u0, u1] of [[b.x + 0.18, cu - mid], [cu + mid, b.x + S - 0.18]])
+      for (const [v0, v1] of [[b.y + 0.18, cv - mid], [cv + mid, b.y + S - 0.18]]) this.clipRect(lawn, x, y, u0, v0, u1, v1);
+    if (this.detail) {
+      const g = this.b2.f(P.avPlanter);
+      for (const [u, v] of [[b.x + 0.18, b.y + 0.18], [b.x + S - 0.18, b.y + 0.18], [b.x + 0.18, b.y + S - 0.18], [b.x + S - 0.18, b.y + S - 0.18]])
+        if (u >= x && u < x + 1 && v >= y && v < y + 1) circlePath(g, u, v, 0.06);
+    }
+  }
+
+  private road(x: number, y: number, t: Tile) {
+    switch (t.roadKind) {
+      case RoadKind.Avenue:
+        this.avenue(x, y);
+        return;
+      case RoadKind.Highway:
+        this.highway(x, y);
+        return;
+      case RoadKind.Alley:
+        this.alley(x, y);
+        return;
+      default:
+        this.street(x, y, t.roadKind === RoadKind.Ramp);
+    }
+  }
+
+  /** Sidewalk fill plus paving joints (fine LOD). */
+  private sidewalk(x: number, y: number) {
+    const P = this.pal;
     this.tileRect(this.b0.f(P.sidewalk), x, y);
     if (this.fine) {
       // Sidewalk paving joints (covered by asphalt where the road runs).
@@ -825,23 +1337,216 @@ export class GroundPainter {
       p.rect(x, y + 0.1, 1, th);
       p.rect(x, y + 0.9, 1, th);
     }
+  }
+
+  /** Curb closures where a linked neighbour of a narrower kind meets this tile's wider arm. */
+  private steps(path: CanvasPath, x: number, y: number, mask: number, h: number) {
+    for (let k = 0; k < 4; k++) {
+      if (!(mask & DIR[k])) continue;
+      const nk = this.kindAt(x, y, k);
+      if (nk < 0) continue;
+      const hn = kindHalf(nk);
+      if (hn >= h - 1e-3) continue;
+      segLine(path, x, y, k, 0.5 - h, 0, 0.5 - hn, 0);
+      segLine(path, x, y, k, 0.5 + hn, 0, 0.5 + h, 0);
+    }
+  }
+
+  /** Street (unchanged look) or On-ramp: street art plus white chevrons towards the highway and a gantry sign. */
+  private street(x: number, y: number, ramp: boolean) {
+    const P = this.pal;
+    const mask = this.world.roadMask(x, y);
+    this.sidewalk(x, y);
     const hv = this.h(x, y, 70);
     roadShapePath(this.b2.f(P.asphalt[Math.floor(hv * 3)]), x, y, mask, ROAD_HALF, this.px * 0.6);
-    if (this.detail && hv < 0.3) {
+    const hwArms = ramp ? this.highwayArms(x, y, mask) : 0;
+    if (this.detail && hv < 0.3 && !hwArms) {
       // Asphalt repair patch / manhole.
       const p = this.b2.f(P.patch);
       if (hv < 0.15) circlePath(p, x + 0.5 + (this.h(x, y, 71) - 0.5) * 0.3, y + 0.5 + (this.h(x, y, 72) - 0.5) * 0.3, 0.06);
       else p.rect(x + 0.32 + this.h(x, y, 73) * 0.2, y + 0.25 + this.h(x, y, 74) * 0.3, 0.16, 0.22);
     }
     if (!this.lines) {
-      // Far LOD: a single centre stripe keeps the network readable.
-      this.laneMarks(this.b3, P.lane, x, y, mask, this.lw(1.2), true);
+      // Far LOD: a single centre stripe keeps the network readable (white on a ramp).
+      this.laneMarks(this.b3, hwArms ? P.chev : P.lane, x, y, mask, this.lw(1.2), true);
       return;
     }
-    roadOutlinePath(this.b3.s(P.curb, this.lw(1.2), 'square'), x, y, mask, ROAD_HALF);
+    const curb = this.b3.s(P.curb, this.lw(1.2), 'square');
+    roadOutlinePath(curb, x, y, mask, ROAD_HALF);
+    this.steps(curb, x, y, mask, ROAD_HALF);
     if (this.fine) this.edgeLines(this.b3, P.edge, x, y, mask, this.lw(0.8), ROAD_HALF);
+    if (hwArms) {
+      this.rampMarks(x, y, mask, hwArms);
+      return;
+    }
     this.laneMarks(this.b3, P.lane, x, y, mask, this.lw(1.4), false);
-    if (this.detail && BITS[mask] >= 3) this.crosswalks(this.b3.f(P.zebra), x, y, mask);
+    if (this.detail && BITS[mask] >= 3) this.crosswalks(this.b3.f(P.zebra), x, y, mask, ROAD_HALF);
+  }
+
+  /** On-ramp markings: white chevrons pointing at each highway arm, and an amber-and-white gantry sign behind them. */
+  private rampMarks(x: number, y: number, mask: number, hwArms: number) {
+    const P = this.pal;
+    const w = this.lw(this.detail ? 2.2 : 1.6);
+    const c = this.b3.s(P.chev, w, 'round');
+    for (let k = 0; k < 4; k++) {
+      if (!(hwArms & DIR[k])) continue;
+      chevronPath(c, x, y, k, 0.06, 0.15);
+      chevronPath(c, x, y, k, 0.27, 0.15);
+      if (!this.detail) continue;
+      // Gantry: a dark beam across the road with an amber sign in a white rim.
+      rrect(this.b3.f(P.gantry), x, y, k, 0.5 - ROAD_HALF - 0.04, 0.6, ROAD_HALF * 2 + 0.08, 0.045);
+      rrect(this.b3.f(P.signRim), x, y, k, 0.36, 0.575, 0.28, 0.095);
+      rrect(this.b3.f(P.sign), x, y, k, 0.375, 0.59, 0.25, 0.065);
+    }
+    // Centre dashes on the street side only.
+    const rest = mask & ~hwArms;
+    if (rest && BITS[mask] === 2 && (mask === 5 || mask === 10)) {
+      const k = DEAD_K[rest];
+      if (k >= 0) rrect(this.b3.f(P.lane), x, y, k, 0.5 - this.lw(1.4) / 2, 0.08, this.lw(1.4), 0.26);
+    }
+  }
+
+  /** Avenue: 0.40 asphalt, blue edge lines, a planted median with lamps, two lanes each way, crosswalks. */
+  private avenue(x: number, y: number) {
+    const P = this.pal;
+    const h = KIND_HALF[RoadKind.Avenue];
+    const mask = this.world.roadMask(x, y);
+    this.sidewalk(x, y);
+    roadShapePath(this.b2.f(P.avAsphalt), x, y, mask, h, this.px * 0.6);
+    const box = 0.5 - h;
+    if (!this.lines) {
+      // Far LOD: blue edges read as a boulevard.
+      bandPath(this.b3.f(P.avEdge), x, y, mask, -(h - 0.06), this.lw(1.4), box);
+      bandPath(this.b3.f(P.avEdge), x, y, mask, h - 0.06, this.lw(1.4), box);
+      return;
+    }
+    const curb = this.b3.s(P.curb, this.lw(1.2), 'square');
+    roadOutlinePath(curb, x, y, mask, h);
+    this.steps(curb, x, y, mask, h);
+    const ew = this.lw(this.detail ? 1.6 : 1.3);
+    const edge = this.b3.f(P.avEdge);
+    bandPath(edge, x, y, mask, -(h - 0.05), ew, box);
+    bandPath(edge, x, y, mask, h - 0.05, ew, box);
+    // Median (a raised planted strip) and lane dashes.
+    bandPath(this.b3.f(P.avMedian), x, y, mask, 0, AV_MEDIAN * 2, box);
+    this.dashes(this.b3, P.laneW, x, y, mask, AV_DASH, this.lw(1.2));
+    if (!this.detail) return;
+    if (mask === 5 || mask === 10) {
+      const k = mask === 5 ? 0 : 1;
+      const g = this.b3.f(P.avPlanter);
+      for (const q of [0.14, 0.38, 0.62, 0.86]) circlePath(g, x + rx(k, 0.5, q), y + ry(k, 0.5, q), 0.022);
+      if (((x + y) & 1) === 0) {
+        const s = this.lw(2.4);
+        this.b3.f(P.lamp).rect(x + 0.5 - s / 2, y + 0.5 - s / 2, s, s);
+      }
+    }
+    if (BITS[mask] >= 3) this.crosswalks(this.b3.f(P.zebra), x, y, mask, h);
+  }
+
+  /**
+   * Highway: 0.46 deck (pale concrete by day, dark by night), no sidewalk, jersey
+   * barriers and a median barrier, amber edge lines, two lanes each way. Arms to
+   * on-ramps get a narrow slip lane through a gap in the barrier.
+   */
+  private highway(x: number, y: number) {
+    const P = this.pal;
+    const H = KIND_HALF[RoadKind.Highway];
+    const mask = this.world.roadMask(x, y);
+    const hw = this.highwayArms(x, y, mask);
+    const ramps = mask & ~hw;
+    this.tileRect(this.b0.f(P.hwVerge), x, y);
+    roadShapePath(this.b2.f(P.hwDeck), x, y, hw, H, this.px * 0.6);
+    const slip = 0.5 - H + 0.05;
+    for (let k = 0; k < 4; k++) if (ramps & DIR[k]) rrect(this.b2.f(P.asphalt[1]), x, y, k, 0.5 - ROAD_HALF, -this.px * 0.6, ROAD_HALF * 2, slip);
+    const box = 0.5 - H;
+    if (!this.lines) {
+      bandPath(this.b3.f(P.hwEdge), x, y, hw, 0, this.lw(1.8), box);
+      return;
+    }
+    // Barriers along the deck edge (structures layer), then gaps where ramps join.
+    roadOutlinePath(this.b2.s(P.barrier, this.lw(this.detail ? 2 : 1.5)), x, y, hw, H - 0.015);
+    for (let k = 0; k < 4; k++) if (ramps & DIR[k]) rrect(this.b3.f(P.asphalt[1]), x, y, k, 0.5 - ROAD_HALF + 0.02, 0, ROAD_HALF * 2 - 0.04, slip);
+    const edge = this.b3.f(P.hwEdge);
+    const ew = this.lw(this.detail ? 1.7 : 1.4);
+    bandPath(edge, x, y, hw, -HW_EDGE, ew, box);
+    bandPath(edge, x, y, hw, HW_EDGE, ew, box);
+    // Median barrier: a light concrete strip with a shaded core.
+    bandPath(this.b3.f(P.barrier), x, y, hw, 0, Math.max(0.035, this.lw(2.4)), box);
+    if (this.detail) bandPath(this.b3.f(P.barrierShade), x, y, hw, 0, this.lw(0.9), box);
+    this.dashes(this.b3, P.hwLane, x, y, hw, HW_DASH, this.lw(1.3));
+    if (this.detail) {
+      // Slip lanes: white gore lines flaring from the barrier gap into the deck.
+      const g = this.b3.s(P.hwLane, this.lw(1.3), 'round');
+      for (let k = 0; k < 4; k++) {
+        if (!(ramps & DIR[k])) continue;
+        segLine(g, x, y, k, 0.5 - ROAD_HALF + 0.02, slip, 0.5 - ROAD_HALF - 0.16, 0.36);
+        segLine(g, x, y, k, 0.5 + ROAD_HALF - 0.02, slip, 0.5 + ROAD_HALF + 0.16, 0.36);
+      }
+      // Sodium lamp posts on the median every second tile.
+      if ((hw === 5 || hw === 10) && ((x + y) & 1) === 0) {
+        const s = this.lw(2.6);
+        this.b3.f(P.lamp).rect(x + 0.5 - s / 2, y + 0.5 - s / 2, s, s);
+      }
+    }
+  }
+
+  /** Back Alley: 0.16 grimy lane, violet edge, wet sheen, a dumpster or steam vent by hash. */
+  private alley(x: number, y: number) {
+    const P = this.pal;
+    const h = KIND_HALF[RoadKind.Alley];
+    const mask = this.world.roadMask(x, y);
+    this.tileRect(this.b0.f(P.grime), x, y);
+    roadShapePath(this.b2.f(P.alleyAsph), x, y, mask, h, this.px * 0.6);
+    if (!this.lines) {
+      this.laneMarks(this.b3, P.alleyEdge, x, y, mask, this.lw(1.1), true);
+      return;
+    }
+    roadOutlinePath(this.b3.s(P.alleyEdge, this.lw(1.3), 'square'), x, y, mask, h);
+    if (!this.detail) return;
+    // Grime specks on the pavement either side.
+    const d = this.b1.f(P.grimeDark);
+    for (let k = 0; k < 5; k++) {
+      const s = 0.025 + this.h(x, y, 140 + k) * 0.04;
+      d.rect(x + 0.06 + this.h(x, y, 150 + k) * 0.85, y + 0.06 + this.h(x, y, 160 + k) * 0.85, s, s);
+    }
+    // Wet sheen down the middle.
+    if (mask === 5 || mask === 10) rrect(this.b3.f(P.sheen), x, y, mask === 5 ? 0 : 1, 0.47, 0.06, 0.06, 0.88);
+    const hv = this.h(x, y, 170);
+    if (hv < 0.45 && (mask === 5 || mask === 10)) {
+      // Beside the lane: a dumpster, or a steam vent grate.
+      const k = mask === 5 ? 0 : 1;
+      const side = this.h(x, y, 171) < 0.5 ? 0.5 - h - 0.2 : 0.5 + h + 0.04;
+      if (hv < 0.25) rrect(this.b2.f(P.dumpster), x, y, k, side, 0.3, 0.16, 0.26);
+      else {
+        rrect(this.b2.f(P.vent), x, y, k, side + 0.02, 0.4, 0.12, 0.12);
+        const g = this.b3.f(P.grimeDark);
+        const th = this.lw(0.8);
+        for (let j = 0; j < 3; j++) rrect(g, x, y, k, side + 0.04 + j * 0.035, 0.42, th, 0.08);
+      }
+    }
+  }
+
+  /** Two lane dashes per tile at ±off on straights, dashed arcs on corners; junction boxes stay clear. */
+  private dashes(b: Batch, color: string, x: number, y: number, mask: number, off: number, w: number) {
+    if (mask === 5 || mask === 10) {
+      const k = mask === 5 ? 0 : 1;
+      const p = b.f(color);
+      for (const o of [-off, off]) {
+        rrect(p, x, y, k, 0.5 + o - w / 2, 0.08, w, 0.26);
+        rrect(p, x, y, k, 0.5 + o - w / 2, 0.58, w, 0.26);
+      }
+      return;
+    }
+    const ck = CORNER_K[mask];
+    if (ck < 0) return;
+    const cx = x + rx(ck, 1, 0);
+    const cy = y + ry(ck, 1, 0);
+    const a0 = HP + ck * HP;
+    const p = b.s(color, w, 'butt', LANE_DASH);
+    for (const r of [0.5 - off, 0.5 + off]) {
+      p.moveTo(cx + Math.cos(a0) * r, cy + Math.sin(a0) * r);
+      p.arc(cx, cy, r, a0, a0 + HP);
+    }
   }
 
   /** Centre-line dashes (or one solid line at far LOD). */
@@ -905,12 +1610,16 @@ export class GroundPainter {
     }
   }
 
-  /** Zebra crossings on every arm of a junction. */
-  private crosswalks(p: CanvasPath, x: number, y: number, mask: number) {
-    const a = 0.5 - ROAD_HALF;
+  /** Zebra crossings on every arm of a junction (asphalt half-width h). */
+  private crosswalks(p: CanvasPath, x: number, y: number, mask: number, h: number) {
+    const a = 0.5 - h;
+    // Streets keep their original five stripes; wider roads add stripes at the same rhythm.
+    const n = h === ROAD_HALF ? 5 : Math.round((2 * h - 0.04) / 0.12);
+    const step = h === ROAD_HALF ? 0.12 : (2 * h - 0.04) / n;
+    const w = h === ROAD_HALF ? 0.065 : step * 0.54;
     for (let k = 0; k < 4; k++) {
       if (!(mask & DIR[k])) continue;
-      for (let s = 0; s < 5; s++) rrect(p, x, y, k, a + 0.02 + s * 0.12, 0.03, 0.065, a - 0.06);
+      for (let s = 0; s < n; s++) rrect(p, x, y, k, a + 0.02 + s * step, 0.03, w, Math.max(0.05, a - 0.06));
     }
   }
 
@@ -970,58 +1679,102 @@ export class GroundPainter {
     }
   }
 
-  /** Bridge deck, pillar and rails. Drawn directly (after the batched layers), in tile order. */
+  /**
+   * Bridge deck, pillars and rails at the kind's width (deck = asphalt + 0.06).
+   * Highway bridges are darker and heavier, with two pillar columns. Drawn
+   * directly (after the batched layers), in tile order.
+   */
   private bridge(x: number, y: number) {
     const ctx = this.ctx;
     const P = this.pal;
-    const mask = this.world.roadMask(x, y);
+    const t = this.world.tiles[y * N + x];
+    const kind = t.roadKind;
+    const hwy = kind === RoadKind.Highway;
+    const av = kind === RoadKind.Avenue;
+    const full = this.world.roadMask(x, y);
+    // A highway deck spans only its highway arms; arms to ramps are narrow street decks.
+    const mask = hwy ? this.highwayArms(x, y, full) : full;
+    const narrow = full & ~mask;
+    const h = kindHalf(kind);
+    const dh = deckHalf(kind);
     const c = BITS[mask];
-    // Pillar under straight runs (every other tile) and under stubs.
+    // Pillars under straight runs (every other tile) and under stubs; two columns for a highway.
     if (((mask === 5 || mask === 10) && ((x + y) & 1) === 0) || c <= 1) {
-      const p0 = 0.43;
-      const p1 = 0.57;
       const e = 16 / (2 * HALF_H);
-      ctx.fillStyle = P.pillarA;
-      ctx.beginPath();
-      ctx.moveTo(x + p1, y + p0);
-      ctx.lineTo(x + p1, y + p1);
-      ctx.lineTo(x + p1 + e, y + p1 + e);
-      ctx.lineTo(x + p1 + e, y + p0 + e);
-      ctx.fill();
-      ctx.fillStyle = P.pillarB;
-      ctx.beginPath();
-      ctx.moveTo(x + p0, y + p1);
-      ctx.lineTo(x + p1, y + p1);
-      ctx.lineTo(x + p1 + e, y + p1 + e);
-      ctx.lineTo(x + p0 + e, y + p1 + e);
-      ctx.fill();
+      const cols = hwy && (mask === 5 || mask === 10) ? [-0.25, 0.25] : [0];
+      const pw = hwy ? 0.09 : 0.07;
+      for (const o of cols) {
+        const cu = 0.5 + (mask === 5 ? o : 0);
+        const cv = 0.5 + (mask === 10 ? o : 0);
+        const p0u = cu - pw;
+        const p1u = cu + pw;
+        const p0v = cv - pw;
+        const p1v = cv + pw;
+        ctx.fillStyle = P.pillarA;
+        ctx.beginPath();
+        ctx.moveTo(x + p1u, y + p0v);
+        ctx.lineTo(x + p1u, y + p1v);
+        ctx.lineTo(x + p1u + e, y + p1v + e);
+        ctx.lineTo(x + p1u + e, y + p0v + e);
+        ctx.fill();
+        ctx.fillStyle = P.pillarB;
+        ctx.beginPath();
+        ctx.moveTo(x + p0u, y + p1v);
+        ctx.lineTo(x + p1u, y + p1v);
+        ctx.lineTo(x + p1u + e, y + p1v + e);
+        ctx.lineTo(x + p0u + e, y + p1v + e);
+        ctx.fill();
+      }
     }
     const ext = this.px * 0.6;
     // Deck thickness: the shape stacked downwards (cheap extrusion), then the top.
-    const dd = 4 / (2 * HALF_H);
-    ctx.fillStyle = P.deckFace;
+    const dd = (hwy ? 6 : 4) / (2 * HALF_H);
+    const deckPath = (path: CanvasPath, ox: number, oy: number, half: number) => {
+      roadShapePath(path, x + ox, y + oy, mask, half, ext);
+      for (let k = 0; k < 4; k++) if (narrow & DIR[k]) rrect(path, x + ox, y + oy, k, 0.5 - deckHalf(RoadKind.Street), -ext, deckHalf(RoadKind.Street) * 2, 0.5 - half + 0.06);
+    };
+    ctx.fillStyle = hwy ? P.hwDeckFace : P.deckFace;
     ctx.beginPath();
-    for (const f of [1, 0.66, 0.33]) roadShapePath(ctx, x + dd * f, y + dd * f, mask, DECK_HALF, ext);
+    for (const f of hwy ? [1, 0.75, 0.5, 0.25] : [1, 0.66, 0.33]) deckPath(ctx, dd * f, dd * f, dh);
     ctx.fill();
-    ctx.fillStyle = P.deck;
+    ctx.fillStyle = hwy ? P.hwDeckFace : P.deck;
     ctx.beginPath();
-    roadShapePath(ctx, x, y, mask, DECK_HALF, ext);
+    deckPath(ctx, 0, 0, dh);
     ctx.fill();
-    ctx.fillStyle = P.deckAsphalt;
+    ctx.fillStyle = hwy ? P.hwDeckBridge : av ? P.avAsphalt : P.deckAsphalt;
     ctx.beginPath();
-    roadShapePath(ctx, x, y, mask, ROAD_HALF - 0.02, ext);
+    roadShapePath(ctx, x, y, mask, h - 0.02, ext);
+    for (let k = 0; k < 4; k++) if (narrow & DIR[k]) rrect(ctx, x, y, k, 0.5 - ROAD_HALF + 0.02, -ext, ROAD_HALF * 2 - 0.04, 0.5 - h + 0.06);
     ctx.fill();
     const b = this.b3;
-    if (this.lines) this.laneMarks(b, P.lane, x, y, mask, this.lw(1.4), !this.detail);
-    if (this.fine) this.edgeLines(b, P.edge, x, y, mask, this.lw(0.8), ROAD_HALF - 0.02);
+    if (hwy) {
+      if (this.lines) {
+        const box = 0.5 - h;
+        bandPath(b.f(P.hwEdge), x, y, mask, -HW_EDGE + 0.01, this.lw(1.5), box);
+        bandPath(b.f(P.hwEdge), x, y, mask, HW_EDGE - 0.01, this.lw(1.5), box);
+        bandPath(b.f(P.barrier), x, y, mask, 0, Math.max(0.035, this.lw(2.4)), box);
+        if (this.detail) this.dashes(b, P.hwLane, x, y, mask, HW_DASH, this.lw(1.3));
+      } else bandPath(b.f(P.hwEdge), x, y, mask, 0, this.lw(1.8), 0);
+    } else if (av) {
+      if (this.lines) {
+        const box = 0.5 - h;
+        bandPath(b.f(P.avEdge), x, y, mask, -(h - 0.07), this.lw(1.4), box);
+        bandPath(b.f(P.avEdge), x, y, mask, h - 0.07, this.lw(1.4), box);
+        bandPath(b.f(P.avMedian), x, y, mask, 0, AV_MEDIAN * 2, box);
+        if (this.detail) this.dashes(b, P.laneW, x, y, mask, AV_DASH - 0.01, this.lw(1.2));
+      } else bandPath(b.f(P.avEdge), x, y, mask, 0, this.lw(1.4), 0);
+    } else {
+      if (this.lines) this.laneMarks(b, P.lane, x, y, mask, this.lw(1.4), !this.detail);
+      if (this.fine) this.edgeLines(b, P.edge, x, y, mask, this.lw(0.8), ROAD_HALF - 0.02);
+    }
     // Raised side rails.
     if (this.lines) {
       const r = 3 / (2 * HALF_H);
-      roadOutlinePath(b.s(P.rail, this.lw(1.3)), x - r, y - r, mask, DECK_HALF - 0.025);
+      roadOutlinePath(b.s(hwy ? P.barrier : P.rail, this.lw(hwy ? 1.8 : 1.3)), x - r, y - r, mask, dh - 0.025);
       if (this.detail) {
         const s = this.lw(2.2);
         const p = b.f(P.lamp);
-        for (const [u, v] of bridgeLamps(mask)) p.rect(x + u - r - s / 2, y + v - r - s / 2, s, s);
+        for (const [u, v] of bridgeLamps(mask, dh)) p.rect(x + u - r - s / 2, y + v - r - s / 2, s, s);
       }
     }
     b.flush(ctx);
@@ -1046,10 +1799,20 @@ export class GroundPainter {
       if (t.road) this.bridgeGlow(x, y);
       return;
     }
-    if (t.road) this.roadGlow(x, y);
+    if (t.road) this.roadGlow(x, y, t);
     else if (t.buildingId >= 0) this.padGlow(x, y, t);
     else if (t.zone !== ZoneType.None) this.lotGlow(x, y, t);
     else this.landGlow(x, y);
+    // Touchdown chevron of an active sky ramp.
+    const sky = this.world.sky[y * N + x];
+    if (sky & 16 && this.lines && skyRampGround(t)) {
+      const k = DEAD_K[sky & 15];
+      if (k >= 0) {
+        const p = g.s(P.gTouch, this.lw(5), 'round');
+        chevronPath(p, x, y, k, 0.2, 0.17);
+        chevronPath(p, x, y, k, 0.5, 0.17);
+      }
+    }
     // Quay edge glow.
     if (this.lines) {
       const n = this.isWater(x, y - 1);
@@ -1117,6 +1880,23 @@ export class GroundPainter {
   private padGlow(x: number, y: number, t: Tile) {
     const b = this.world.buildings.get(t.buildingId);
     if (!b) return;
+    const n = this.pal.n;
+    if (b.type === 'airport') {
+      // Runway edge lights (the blink is in the animated pass) and apron floodlight.
+      const dy = y - b.y;
+      if (this.detail && (dy === 1 || dy === 2)) {
+        const v = dy === 1 ? 0.03 : 0.97;
+        this.sprite(NEON.white, x + 0.25, y + v, 0.1, 0.55 * n);
+        this.sprite(NEON.white, x + 0.75, y + v, 0.1, 0.55 * n);
+      }
+      if (dy >= 4) this.sprite([255, 236, 200], x + 0.5, y + 0.5, 0.6, 0.12 * n);
+      return;
+    }
+    if (b.type === 'seaport' && this.detail) {
+      // Mast floodlight pools over the yard, and the yellow quay edge.
+      this.sprite([255, 236, 200], x + 0.5, y + 0.5, 0.65, 0.16 * n);
+      this.quayBand(this.gl.f(this.pal.gPortLane), x, y, b, this.facingOf(b), 0, 0.1);
+    }
     const c = BUILDING_RGB.get(b.type) ?? NEON.cyan;
     // One soft pool per footprint, drawn from the footprint's origin tile.
     if (x === b.x && y === b.y) this.sprite(c, b.x + b.size / 2, b.y + b.size / 2, b.size * 0.7, 0.2 * this.pal.n);
@@ -1133,17 +1913,61 @@ export class GroundPainter {
     if (lx === last) p.rect(x + 1 - i - w, y, w, 1);
   }
 
-  private roadGlow(x: number, y: number) {
+  private roadGlow(x: number, y: number, t: Tile) {
     const P = this.pal;
     const mask = this.world.roadMask(x, y);
+    const n = P.n;
+    switch (t.roadKind) {
+      case RoadKind.Avenue: {
+        // Blue edge glow and cool-white lamps on the median every second tile.
+        const h = KIND_HALF[RoadKind.Avenue];
+        const w = this.lw(this.lines ? 4.5 : 3);
+        bandPath(this.gl.f(P.gAvEdge), x, y, mask, -(h - 0.05), w, 0.5 - h);
+        bandPath(this.gl.f(P.gAvEdge), x, y, mask, h - 0.05, w, 0.5 - h);
+        if (!this.detail) return;
+        if (BITS[mask] >= 3) this.crosswalks(this.gl.f(P.gZebra), x, y, mask, h);
+        if ((mask === 5 || mask === 10) && ((x + y) & 1) === 0) {
+          this.sprite(AV_LAMP, x + 0.5, y + 0.5, 0.42, 0.42 * n);
+          this.sprite(NEON.white, x + 0.5, y + 0.5, 0.1, 0.5 * n);
+        }
+        return;
+      }
+      case RoadKind.Highway: {
+        // Amber edge lines and sodium lamps on the median every second tile.
+        const hw = this.highwayArms(x, y, mask);
+        const w = this.lw(this.lines ? 5 : 3.5);
+        const box = 0.5 - KIND_HALF[RoadKind.Highway];
+        bandPath(this.gl.f(P.gHwEdge), x, y, hw, -HW_EDGE, w, box);
+        bandPath(this.gl.f(P.gHwEdge), x, y, hw, HW_EDGE, w, box);
+        if (!this.detail) return;
+        if ((hw === 5 || hw === 10) && ((x + y) & 1) === 0) {
+          this.sprite(SODIUM, x + 0.5, y + 0.5, 0.5, 0.5 * n);
+          this.sprite(NEON.amber, x + 0.5, y + 0.5, 0.12, 0.6 * n);
+        }
+        return;
+      }
+      case RoadKind.Alley:
+        // A faint violet edge; the flickering sign lives in the animated pass.
+        if (this.lines) roadOutlinePath(this.gl.s(P.gAlley, this.lw(3)), x, y, mask, KIND_HALF[RoadKind.Alley]);
+        return;
+    }
+    const ramp = t.roadKind === RoadKind.Ramp ? this.highwayArms(x, y, mask) : 0;
     // Lane glow + curb glow.
-    this.laneMarks(this.gl, P.gLane, x, y, mask, this.lw(this.lines ? 5 : 3), !this.lines);
+    if (!ramp) this.laneMarks(this.gl, P.gLane, x, y, mask, this.lw(this.lines ? 5 : 3), !this.lines);
     if (!this.lines) return;
     roadOutlinePath(this.gl.s(P.gCurb, this.lw(3.5)), x, y, mask, ROAD_HALF);
+    if (ramp) {
+      const c = this.gl.s(P.gChev, this.lw(5), 'round');
+      for (let k = 0; k < 4; k++) {
+        if (!(ramp & DIR[k])) continue;
+        chevronPath(c, x, y, k, 0.06, 0.15);
+        chevronPath(c, x, y, k, 0.27, 0.15);
+        if (this.detail) this.sprite(NEON.amber, x + rx(k, 0.5, 0.62), y + ry(k, 0.5, 0.62), 0.16, 0.45 * n);
+      }
+    }
     if (!this.detail) return;
-    if (BITS[mask] >= 3) this.crosswalks(this.gl.f(P.gZebra), x, y, mask);
+    if (BITS[mask] >= 3) this.crosswalks(this.gl.f(P.gZebra), x, y, mask, ROAD_HALF);
     // Street-lamp light pools on the sidewalk.
-    const n = P.n;
     const hv = this.h(x, y, 91);
     const col = hv < 0.7 ? WARM : hv < 0.9 ? COOL : NEON.magenta;
     if (mask === 5 || mask === 10) {
@@ -1163,11 +1987,22 @@ export class GroundPainter {
 
   private bridgeGlow(x: number, y: number) {
     const P = this.pal;
-    const mask = this.world.roadMask(x, y);
-    this.laneMarks(this.gl, P.gLane, x, y, mask, this.lw(this.lines ? 5 : 3), !this.lines);
+    const t = this.world.tiles[y * N + x];
+    const full = this.world.roadMask(x, y);
+    const hwy = t.roadKind === RoadKind.Highway;
+    const mask = hwy ? this.highwayArms(x, y, full) : full;
+    const dh = deckHalf(t.roadKind);
+    if (hwy || t.roadKind === RoadKind.Avenue) {
+      const h = kindHalf(t.roadKind);
+      const off = hwy ? HW_EDGE - 0.01 : h - 0.07;
+      const g = this.gl.f(hwy ? P.gHwEdge : P.gAvEdge);
+      const w = this.lw(this.lines ? 4.5 : 3);
+      bandPath(g, x, y, mask, -off, w, 0.5 - h);
+      bandPath(g, x, y, mask, off, w, 0.5 - h);
+    } else this.laneMarks(this.gl, P.gLane, x, y, mask, this.lw(this.lines ? 5 : 3), !this.lines);
     if (!this.lines) return;
     const r = 3 / (2 * HALF_H);
-    roadOutlinePath(this.gl.s((x + y) & 1 ? P.gRailA : P.gRailB, this.lw(3.5)), x - r, y - r, mask, DECK_HALF - 0.025);
+    roadOutlinePath(this.gl.s((x + y) & 1 ? P.gRailA : P.gRailB, this.lw(3.5)), x - r, y - r, mask, dh - 0.025);
   }
 
   /** Soft radial glow sprite on the ground plane (tile space, additive; drawn immediately). */
@@ -1207,9 +2042,10 @@ export class GroundPainter {
     }
     if (water && t.road) {
       // Bridge lamp halos and their reflections.
-      const mask = this.world.roadMask(x, y);
+      const full = this.world.roadMask(x, y);
+      const mask = t.roadKind === RoadKind.Highway ? this.highwayArms(x, y, full) : full;
       const r = 3 / (2 * HALF_H);
-      for (const [u, v] of bridgeLamps(mask)) {
+      for (const [u, v] of bridgeLamps(mask, deckHalf(t.roadKind))) {
         const lu = x + u - r;
         const lv = y + v - r;
         const px = (lu - lv) * HALF_W;
@@ -1241,10 +2077,10 @@ export class GroundPainter {
   }
 }
 
-/** Lamp positions (tile space, before rail lift) along a bridge deck. */
-function bridgeLamps(mask: number): [number, number][] {
-  const a = 0.5 - DECK_HALF + 0.025;
-  const b = 0.5 + DECK_HALF - 0.025;
+/** Lamp positions (tile space, before rail lift) along a bridge deck of half-width `dh`. */
+function bridgeLamps(mask: number, dh: number): [number, number][] {
+  const a = 0.5 - dh + 0.025;
+  const b = 0.5 + dh - 0.025;
   if (mask === 5) return [[a, 0.5], [b, 0.5]];
   if (mask === 10) return [[0.5, a], [0.5, b]];
   return [];
@@ -1670,6 +2506,8 @@ export class GroundCache {
     const density = (low ? 0.5 : 1) * (env.zoom < 0.6 ? 0.45 : 1);
     const halo = env.zoom >= 0.6;
     const pulse = glowSprite(mix(NEON.amber, NEON.magenta, 0.35), 64);
+    const flicker = n > 0.2 && !low && env.zoom >= 0.45;
+    const violet = glowSprite(ALLEY_RGB, 32);
     const tint = mix([255, 255, 255], [120, 220, 255], n);
     const sparkTint = glowSprite(tint as RGB, 32);
     const tiles = world.tiles;
@@ -1697,7 +2535,16 @@ export class GroundCache {
             ctx.globalAlpha = Math.min(1, a * 0.5);
             ctx.drawImage(sparkTint, cx - w * 0.6, cy - 4, w * 1.2, 8);
           }
-        } else if (pulseOn && t.road) {
+        } else if (t.road) {
+          if (flicker && t.roadKind === RoadKind.Alley && hash2(x, y, info.seed + 23) < 0.26) {
+            // A violet sign over the alley, buzzing on and off.
+            const h = hash2(x, y, info.seed + 29);
+            const on = Math.sin(time * (7 + h * 5) + h * 30) + Math.sin(time * 2.3 + h * 11) > -0.4 ? 1 : 0.15;
+            const side = h < 0.5 ? -9 : 9;
+            ctx.globalAlpha = Math.min(1, n * 0.55 * on);
+            ctx.drawImage(violet, wx + side - 10, wy + 4, 20, 16);
+          }
+          if (!pulseOn) continue;
           const a = n * 0.11 * breath * (0.5 + 0.5 * Math.sin(time * 1.4 - (x + y) * 0.42));
           if (a < 0.01) continue;
           ctx.globalAlpha = a;
@@ -1705,8 +2552,32 @@ export class GroundCache {
         }
       }
     }
+    if (env.zoom >= 0.45) this.runwayLights(ctx, world, b, env, view);
     ctx.globalAlpha = 1;
     ctx.globalCompositeOperation = 'source-over';
+  }
+
+  /** Runway edge lights running towards the touchdown end (§5.2), brighter at night. Additive, world space. */
+  private runwayLights(ctx: CanvasRenderingContext2D, world: World, b: Rect, env: ArtEnv, view: Rect) {
+    const g = glowSprite(NEON.white, 32);
+    const amp = 0.25 + 0.75 * env.night;
+    for (const bd of world.buildings.values()) {
+      if (bd.type !== 'airport') continue;
+      if (bd.x > b.x1 + 1 || bd.x + bd.size < b.x0 - 1 || bd.y > b.y1 + 1 || bd.y + bd.size < b.y0 - 1) continue;
+      const n = bd.size * 2;
+      for (const v of [bd.y + 1.03, bd.y + 2.97]) {
+        for (let k = 0; k < n; k++) {
+          const u = bd.x + 0.25 + k * 0.5;
+          const ph = (((k - env.time * 7) % n) + n) % n;
+          const a = amp * (0.25 + 0.75 * Math.max(0, 1 - ph / 2.5));
+          const wx = (u - v) * HALF_W;
+          const wy = (u + v) * HALF_H;
+          if (wx < view.x0 - 8 || wx > view.x1 + 8 || wy < view.y0 - 8 || wy > view.y1 + 8) continue;
+          ctx.globalAlpha = Math.min(1, a);
+          ctx.drawImage(g, wx - 4, wy - 3, 8, 6);
+        }
+      }
+    }
   }
 
   private sparkleSprite(): HTMLCanvasElement {

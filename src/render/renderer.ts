@@ -6,9 +6,10 @@
 //           cached ground chunks                                 (ground.ts)
 //           water shimmer · breathing street glow                (ground.ts)
 //           data overlay                                         (overlay.ts)
-//           preview + selection (ground part) · map rim
+//           shore-site hints · preview + selection (ground part) · map rim
 //           Effects.drawGround (street traffic)
-//           depth-sorted buildings (faded while an overlay is on)
+//           depth-sorted buildings, rail, skyway decks and skybridges
+//           (faded while an overlay is on) · skyway light glows (one pass)
 //           no-road + unpowered glyphs · Effects.drawSky
 //           preview ghost + selection box (raised part)
 //   screen  cost tag · Effects.drawScreen
@@ -22,6 +23,7 @@ import { MAP_SIZE, ZoneType, type Settings } from '../game/types';
 import type { World } from '../game/world';
 import { drawServiceBuilding, drawZoneBuilding, serviceBuildingHeight, zoneBuildingHeight, type ArtEnv } from './buildings';
 import { HALF_H, HALF_W, type Camera } from './camera';
+import { SkywayLayer } from './art/skyway';
 import { Effects } from './effects';
 import { GroundCache, type Rect } from './ground';
 import {
@@ -33,6 +35,7 @@ import {
   drawPreviewTop,
   drawSelectionGround,
   drawSelectionTop,
+  drawToolHints,
   drawUnpowered,
 } from './overlay';
 import { Backdrop } from './sky';
@@ -64,6 +67,7 @@ export class Renderer {
   private readonly ground = new GroundCache();
   private readonly overlay = new OverlayLayer();
   private readonly access = new RoadAccessMap();
+  private readonly skyway = new SkywayLayer();
   private backdrop: Backdrop;
   private dpr = 1;
   private cssW = 1;
@@ -279,7 +283,8 @@ export class Renderer {
     if (game.overlay !== 'none') this.overlay.draw(ctx, world, game.overlay, time, tilesVis, zoom);
     this.backdrop.drawRim(ctx, night, zoom);
 
-    // 6. Ground-level interaction feedback.
+    // 6. Ground-level interaction feedback (shore sites while the Seaport tool is active).
+    drawToolHints(ctx, game, time, zoom, tilesVis);
     drawSelectionGround(ctx, game, time, zoom);
     drawPreviewGround(ctx, game, time, zoom);
 
@@ -303,6 +308,7 @@ export class Renderer {
         target = fc;
       }
     }
+    this.skyway.prepare(world, env);
     this.drawObjects(target, world, tilesObj, view, env);
     if (target !== ctx) {
       ctx.setTransform(1, 0, 0, 1, 0, 0);
@@ -311,6 +317,10 @@ export class Renderer {
       ctx.globalAlpha = 1;
       setWorld(ctx);
     }
+    // Skyway headlight / tail-light glows: one additive pass after the sweep (§3.11).
+    this.skyway.drawGlows(ctx);
+    // Wealth lens pips over the faded buildings (§4.5).
+    if (game.overlay !== 'none') this.overlay.drawTop(ctx, world, game.overlay, tilesVis, zoom, view);
 
     // 9. Status glyphs + sky effects.
     if (game.tool === 'skybridge') this.story.drawAnchors(ctx, world, tilesObj, env);
@@ -364,16 +374,23 @@ export class Renderer {
   /**
    * Zone and service buildings back-to-front: ascending x+y, then x. A
    * multi-tile building draws once, when the sweep reaches its front corner.
-   * Ribbon Rail and skybridge segments, turf tags and window candles join the
-   * same sweep at their tile's key, after that tile's own building (rail goes
-   * first under a tall zone tower, so the tower hides it).
+   * Ribbon Rail, skyway decks, skybridge segments, turf tags and window
+   * candles join the same sweep at their tile's key. Same tile: rail first,
+   * then the skyway; a zone tower taller than the rail (or the deck) draws
+   * after it, so the tower hides it. A deck over (or beside the +x / +y face
+   * of) a building lower than the deck is drawn right after that building
+   * (SkywayLayer.afterBuilding), which also lights the dock portals (§3.7).
    */
   private drawObjects(ctx: CanvasRenderingContext2D, world: World, b: Rect, view: Rect, env: ArtEnv) {
     const tiles = world.tiles;
     const rail = world.rail;
+    const sky = world.sky;
+    const skyway = this.skyway;
+    const anySky = skyway.any;
     const story = this.story;
     const vx0 = view.x0 - HALF_W;
     const vx1 = view.x1 + HALF_W;
+    const visibleX = (wx: number) => wx + HALF_W >= vx0 && wx - HALF_W <= vx1;
     for (let s = b.x0 + b.y0; s <= b.x1 + b.y1; s++) {
       const xa = Math.max(b.x0, s - b.y1);
       const xb = Math.min(b.x1, s - b.y0);
@@ -386,7 +403,14 @@ export class Renderer {
         const mask = rail[i];
         const railFirst = mask !== 0 && onScreenX && story.railBefore(t);
         if (railFirst) story.drawRail(ctx, world, x, y, mask);
+        const deck = anySky && sky[i] !== 0 && onScreenX && !skyway.isDeferred(i);
+        let deckDone = false;
         if (t.buildingId >= 0) {
+          // A deck over a taller building draws first: the building hides it (it docks).
+          if (deck) {
+            skyway.drawTile(ctx, world, x, y);
+            deckDone = true;
+          }
           const bd = world.buildings.get(t.buildingId);
           if (bd && bd.x + bd.size - 1 === x && bd.y + bd.size - 1 === y) {
             const wx = (bd.x - bd.y) * HALF_W;
@@ -395,16 +419,25 @@ export class Renderer {
             const visible =
               !(wx + z * HALF_W < vx0 || wx - z * HALF_W > vx1) &&
               !(wy + z * 2 * HALF_H < view.y0 || wy + z * HALF_H - serviceBuildingHeight(bd.type, bd) - 24 > view.y1);
+            if (anySky) skyway.flushCars(ctx);
             if (visible) drawServiceBuilding(ctx, wx, wy, bd, env);
+            if (anySky) skyway.afterBuilding(ctx, world, bd, visibleX);
           }
         } else if (t.zone !== ZoneType.None && onScreenX) {
+          if (deck && skyway.beforeZone(world, i)) {
+            skyway.drawTile(ctx, world, x, y);
+            skyway.flushCars(ctx);
+            deckDone = true;
+          }
           const wy = (x + y) * HALF_H;
           if (!(wy + 2 * HALF_H < view.y0 || wy + HALF_H - zoneBuildingHeight(t) - 24 > view.y1)) drawZoneBuilding(ctx, wx0, wy, t, x, y, env);
         }
         if (!onScreenX) continue;
         if (mask !== 0 && !railFirst) story.drawRail(ctx, world, x, y, mask);
+        if (deck && !deckDone) skyway.drawTile(ctx, world, x, y);
         story.drawAfter(ctx, world, x, y, t, env);
       }
+      if (anySky) skyway.flushCars(ctx);
       story.drawSkybridges(ctx, s);
     }
   }

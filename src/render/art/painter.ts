@@ -29,15 +29,22 @@ import type { Fx } from './fx';
 export interface Mat {
   day: RGB;
   night: RGB;
+  /**
+   * Role of a zone-recipe material, so the wealth tier can restyle it (EXPANSION §4.5):
+   * walls get cleaner or glassier, tarps and rust tidy up. Unset = never restyled.
+   */
+  kind?: MatKind;
 }
+
+export type MatKind = 'wall' | 'roof' | 'tarp' | 'rust';
 
 /** Night colour derived from a day colour: dark, slightly violet. */
 export function nightOf(c: RGB): RGB {
   return [c[0] * 0.2 + 7, c[1] * 0.17 + 5, c[2] * 0.25 + 15];
 }
 
-export function mat(day: RGB, night?: RGB): Mat {
-  return { day, night: night ?? nightOf(day) };
+export function mat(day: RGB, night?: RGB, kind?: MatKind): Mat {
+  return kind ? { day, night: night ?? nightOf(day), kind } : { day, night: night ?? nightOf(day) };
 }
 
 /** Face brightness factors. */
@@ -106,7 +113,67 @@ export interface ArtPal {
   /** Lit-window palette weights: warm, cool, accent (sum ≤ 1, rest = white). */
   warm: number;
   cool: number;
+  /** Curtain-wall glass for this palette ($$$ zone palettes); default GLASS. */
+  glass?: Mat;
 }
+
+/** A flat roof a recipe drew (zone sprites only; dressTier places props on it). */
+export interface Roof {
+  /** Bounding box of the roof polygon in tile units. */
+  u0: number;
+  v0: number;
+  u1: number;
+  v1: number;
+  z: number;
+  /** Polygon area in tile units² (π r² for round roofs). */
+  area: number;
+  round: boolean;
+}
+
+/** A visible wall face a recipe drew (zone sprites only), edge A→B from z0 to z1. */
+export interface Face {
+  au: number;
+  av: number;
+  bu: number;
+  bv: number;
+  z0: number;
+  z1: number;
+  /** Faces +v (the screen-left face), else +u (screen-right). */
+  left: boolean;
+}
+
+/** Tier restyle targets per [tier][zone][kind]: [colour, amount]. Tier 0 keeps today's look. */
+type Tint = readonly [Mat, number] | null;
+const T_CLEAN = mat([206, 206, 214]);
+const T_ROOF1 = mat([140, 138, 150]);
+const T_MEMBRANE = mat([128, 132, 142]);
+const T_STEEL = mat([170, 176, 186]);
+const T_PLAT = mat([200, 208, 222]);
+const T_SLEEK = mat([64, 70, 88]);
+const T_GLASSY = mat([90, 140, 170], [12, 20, 38]);
+const T_WHITE = mat([220, 224, 228], [40, 44, 58]);
+const T_WROOF = mat([196, 200, 206], [36, 40, 54]);
+const T_SOLAR = mat([44, 64, 116], [10, 14, 34]);
+const KINDS: MatKind[] = ['wall', 'roof', 'tarp', 'rust'];
+function tints(rows: Record<MatKind, Tint>): Tint[] {
+  return KINDS.map((k) => rows[k]);
+}
+const TINTS: Tint[][][] = [
+  // $: today's materials.
+  [[], [], [], []].map(() => tints({ wall: null, roof: null, tarp: null, rust: null })),
+  // $$: a little cleaner and lighter; tarps become neat membranes.
+  [[], [], [], []].map(() => tints({ wall: [T_CLEAN, 0.14], roof: [T_ROOF1, 0.4], tarp: [T_MEMBRANE, 0.6], rust: [T_STEEL, 0.25] })),
+  // $$$: platinum and glass for homes and shops, a white clean fab for industry.
+  [
+    tints({ wall: null, roof: null, tarp: null, rust: null }),
+    tints({ wall: [T_PLAT, 0.5], roof: [T_SLEEK, 0.55], tarp: [T_GLASSY, 0.8], rust: [T_STEEL, 0.7] }),
+    tints({ wall: [T_PLAT, 0.4], roof: [T_SLEEK, 0.55], tarp: [T_GLASSY, 0.8], rust: [T_STEEL, 0.7] }),
+    tints({ wall: [T_WHITE, 0.75], roof: [T_WROOF, 0.7], tarp: [T_SOLAR, 0.85], rust: [T_WHITE, 0.8] }),
+  ],
+];
+const KIND_INDEX: Record<MatKind, number> = { wall: 0, roof: 1, tarp: 2, rust: 3 };
+/** Cleanroom ribbon glazing of a $$$ Fab District. */
+const CLEAN_GLASS: Mat = { day: [120, 170, 182], night: [10, 26, 34] };
 
 // ── Colours ────────────────────────────────────────────────────────────────
 
@@ -119,6 +186,10 @@ const GLASS_SKY: RGB = [150, 178, 196];
 const PANEL_BG: Mat = { day: [34, 32, 48], night: [8, 7, 16] };
 const TUBE_DAY: RGB = [150, 150, 164];
 const GRIME: RGB = [72, 64, 58];
+const TANK_TIDY = mat([150, 150, 158]);
+const TANK_TIDY_TOP = mat([128, 128, 138]);
+const TANK_LUXE = mat([206, 212, 220], [40, 44, 60]);
+const TANK_LUXE_TOP = mat([180, 186, 196], [34, 38, 52]);
 
 // ── Invented script glyphs (3 × 4 bit cells, top row first) ────────────────
 // Original shapes; they only have to read as "signage" at a glance.
@@ -172,6 +243,19 @@ export class Painter {
   litBoost = 1;
   /** Multiplier on emissive glow strength at night. */
   glowBoost = 1;
+  /**
+   * Zone of the sprite being painted (1 Hab Blocks, 2 Market Strip, 3 Fab District), or 0 for
+   * every other sprite. Only zone sprites are restyled by `tier`.
+   */
+  zone = 0;
+  /** Wealth tier of a zone sprite: 0 $, 1 $$, 2 $$$ (EXPANSION §4.5). */
+  tier: 0 | 1 | 2 = 0;
+  /** Record roofs and faces while a zone recipe runs (dressTier reads them; props never register). */
+  dressRec = false;
+  /** Flat and round roofs the recipe drew (this pass). */
+  readonly roofs: Roof[] = [];
+  /** Visible wall faces the recipe drew (this pass). */
+  readonly faces: Face[] = [];
   rng = new Rng(1);
   seed = 1;
   pal: ArtPal;
@@ -203,6 +287,32 @@ export class Painter {
     this.bx0 = this.by0 = Infinity;
     this.bx1 = this.by1 = -Infinity;
     this.maxZ = 0;
+    this.roofs.length = 0;
+    this.faces.length = 0;
+  }
+
+  /** True while a $$ or $$$ zone sprite is painted (tidy and luxe variants of recipe props). */
+  private get tidy(): boolean {
+    return this.zone > 0 && this.tier > 0;
+  }
+  /** True while a $$$ zone sprite is painted. */
+  private get luxe(): boolean {
+    return this.zone > 0 && this.tier === 2;
+  }
+
+  /** A zone material restyled for the wealth tier (identity for $ and for non-zone sprites). */
+  private tint(c: RGB, kind: MatKind): RGB {
+    const t = TINTS[this.tier][this.zone]?.[KIND_INDEX[kind]];
+    if (!t) return c;
+    return mix(c, mix(t[0].day, t[0].night, this.n), t[1]);
+  }
+
+  /** Window spec restyled for the wealth tier: $$$ homes and shops go curtain glass, a $$$ fab gets ribbon glazing. */
+  private tierWin(w: WinSpec): WinSpec {
+    if (!this.luxe) return w;
+    if (this.zone === 3) return w.style === 'slit' ? { style: 'band', floor: w.floor, col: w.col, w: 1, h: 0.4, margin: w.margin, lit: (w.lit ?? 1) * 0.9, skip: w.skip } : w;
+    if (w.style === 'curtain') return w;
+    return { style: 'curtain', floor: Math.max(5, w.floor), col: Math.max(5, w.col), w: 1, h: 0.82, margin: 1, lit: w.lit, skip: w.skip };
   }
 
   // ── Projection + path helpers ────────────────────────────────────────────
@@ -262,7 +372,8 @@ export class Painter {
 
   // ── Colour helpers ───────────────────────────────────────────────────────
   rgb(m: Mat, k = 1): RGB {
-    const c = mix(m.day, m.night, this.n);
+    let c = mix(m.day, m.night, this.n);
+    if (m.kind && this.zone) c = this.tint(c, m.kind);
     // Abandoned: grimy, desaturated, darker.
     return this.abandoned ? shade(mix(c, GRIME, 0.4), k * 0.78) : shade(c, k);
   }
@@ -308,7 +419,26 @@ export class Painter {
       this.faceId++;
       if (nu + nv <= 1e-6) continue;
       const k = faceK(nu, nv);
+      if (this.dressRec && z1 - z0 >= 6) this.faces.push({ au, av, bu, bv, z0, z1, left: nv > nu });
       this.wall(au, av, bu, bv, z0, z1, m, k, o);
+    }
+    if (this.dressRec && !o.noTop) {
+      let u0 = Infinity;
+      let v0 = Infinity;
+      let u1 = -Infinity;
+      let v1 = -Infinity;
+      let area = 0;
+      for (let i = 0; i < cnt; i++) {
+        const j = (i + 1) % cnt;
+        const pu = poly[i * 2];
+        const pv = poly[i * 2 + 1];
+        if (pu < u0) u0 = pu;
+        if (pu > u1) u1 = pu;
+        if (pv < v0) v0 = pv;
+        if (pv > v1) v1 = pv;
+        area += pu * poly[j * 2 + 1] - poly[j * 2] * pv;
+      }
+      this.roofs.push({ u0, v0, u1, v1, z: z1, area: Math.abs(area) / 2, round: false });
     }
     if (!o.noTop) {
       const tm = o.top ?? m;
@@ -322,13 +452,15 @@ export class Painter {
       // Crisp lighter lip on the roof edge.
       if (this.g && !this.lod) this.stroke(this.col(tm, K_TOP * 1.18, 0.9), 0.6);
     }
-    if (o.trim) {
+    // $$$ homes and shops: a thin gold or platinum edge trim on every main volume.
+    const trim = o.trim ?? (this.luxe && this.zone !== 3 && !o.noTop && z1 - z0 >= 18 ? this.pal.neon2 : undefined);
+    if (trim) {
       const pts: number[] = [];
       for (let i = 0; i <= cnt; i++) {
         const k = i % cnt;
         pts.push(poly[k * 2], poly[k * 2 + 1], z1);
       }
-      this.neon(pts, o.trim, 0.9);
+      this.neon(pts, trim, o.trim ? 0.9 : 0.55);
     }
   }
 
@@ -344,16 +476,18 @@ export class Painter {
 
   /** One vertical wall face A→B with optional windows and uplight. */
   private wall(au: number, av: number, bu: number, bv: number, z0: number, z1: number, m: Mat, k: number, o: PrismOpts) {
-    const curtain = o.win?.style === 'curtain';
-    const base = curtain ? (o.glass ?? GLASS) : m;
+    const win = o.win && this.zone ? this.tierWin(o.win) : o.win;
+    const curtain = win?.style === 'curtain';
+    const glassM = o.glass ?? (this.luxe ? (this.zone === 3 ? CLEAN_GLASS : this.pal.glass) : undefined) ?? GLASS;
+    const base = curtain ? glassM : m;
     this.begin_();
     this.quad(au, av, z0, bu, bv, z0, bu, bv, z1, au, av, z1);
-    if (this.recording && o.win && z1 - z0 > 14) this.maybeFlicker(au, av, bu, bv, z0, z1, o.win);
+    if (this.recording && win && z1 - z0 > 14) this.maybeFlicker(au, av, bu, bv, z0, z1, win);
     const g = this.g;
     if (!g) return;
     g.fillStyle = this.col(base, curtain ? k * 1.05 : k);
     g.fill();
-    if (o.win && z1 - z0 > 5) this.windows(au, av, bu, bv, z0, z1, o.win, k, o.glass ?? GLASS, m);
+    if (win && z1 - z0 > 5) this.windows(au, av, bu, bv, z0, z1, win, k, glassM, m);
     if (o.uplight !== false && z0 < 4) {
       // Day: soft ambient occlusion at the foot. Night: coloured street glow.
       const yb = Math.max(this.Y(au, av, z0), this.Y(bu, bv, z0));
@@ -406,7 +540,8 @@ export class Painter {
 
     // Lit colours: 3 hues × 2 intensities.
     const litT = Math.min(1, 0.35 + n * 0.9) * (curtain ? 0.82 : 1);
-    const hues: RGB[] = [WARM, COOL, P.neon, WHITE];
+    // $$$ zone sprites: gold or platinum accents instead of the signature neon.
+    const hues: RGB[] = [WARM, COOL, this.luxe ? P.neon2 : P.neon, WHITE];
     const litCols: string[] = [];
     for (const h of hues) {
       litCols.push(css(mix(glassRGB, h, litT)), css(mix(glassRGB, shade(h, 0.62), litT)));
@@ -570,6 +705,7 @@ export class Painter {
     this.track(cx + rx, cy - z1 - ryT);
     this.track(cx - rxT, cy - z1 - ryT);
     this.tz(z1);
+    if (this.dressRec) this.roofs.push({ u0: cu - rTop, v0: cv - rTop, u1: cu + rTop, v1: cv + rTop, z: z1, area: Math.PI * rTop * rTop, round: true });
     const g = this.g;
     if (!g) return;
     g.beginPath();
@@ -597,8 +733,9 @@ export class Painter {
     return grad;
   }
 
-  /** Hyperboloid cooling tower. */
-  coolingTower(cu: number, cv: number, r: number, h: number, m: Mat) {
+  /** Hyperboloid cooling tower (white at a $$$ clean fab). */
+  coolingTower(cu: number, cv: number, r: number, h: number, m0: Mat) {
+    const m = this.luxe && this.zone === 3 ? T_WHITE : m0;
     const cx = this.X(cu, cv);
     const cy = this.Y(cu, cv, 0);
     const rad = (z: number) => r * (1 - 0.34 * Math.sin(Math.min(1, z / h) * Math.PI * 0.78));
@@ -878,7 +1015,9 @@ export class Painter {
     this.m(u + r * 0.6, v, z);
     this.l(u + r * 0.6, v, z + 2);
     this.stroke(this.col(legs, 0.8), 0.6);
-    this.cyl(u, v, r, z + 2, z + 2 + h, mat([128, 112, 96]), mat([110, 96, 84]));
+    if (this.luxe) this.cyl(u, v, r, z + 2, z + 2 + h, TANK_LUXE, TANK_LUXE_TOP);
+    else if (this.tidy) this.cyl(u, v, r, z + 2, z + 2 + h, TANK_TIDY, TANK_TIDY_TOP);
+    else this.cyl(u, v, r, z + 2, z + 2 + h, mat([128, 112, 96]), mat([110, 96, 84]));
   }
 
   /** Antenna mast with cross bars; adds a blinking tip light. */
@@ -945,6 +1084,8 @@ export class Painter {
     this.l(u0, v0, z + 5);
     this.l(u1, v1, z + 5);
     this.l(u1, v1, z);
+    // $$ and $$$ blocks take their washing in (the bounds and top stay the same).
+    if (this.tidy) return;
     this.stroke(this.col(mat([150, 150, 160]), 0.7), 0.4);
     const g = this.g;
     if (!g) return;
@@ -1021,10 +1162,12 @@ export class Painter {
 
   /** Smoke stack with hazard bands; registers a smoke plume fx. */
   stack(u: number, v: number, r: number, z0: number, h: number, smoke = true) {
-    const m = mat([150, 140, 130]);
-    this.cyl(u, v, r, z0, z0 + h, m, mat([60, 56, 54]));
+    // A $$$ clean fab: white vent stacks, no hazard bands and no smoke.
+    const clean = this.luxe && this.zone === 3;
+    const m = clean ? T_WHITE : mat([150, 140, 130]);
+    this.cyl(u, v, r, z0, z0 + h, m, clean ? T_WROOF : mat([60, 56, 54]));
     const g = this.g;
-    if (g && !this.lod) {
+    if (g && !this.lod && !clean) {
       const cx = this.X(u, v);
       const cy = this.Y(u, v, 0);
       const rx = r * HALF_W * Math.SQRT2;
@@ -1041,7 +1184,7 @@ export class Painter {
     }
     this.blinker(u, v, z0 + h + 1, [255, 59, 92], 2.2, 12);
     const ph = this.rng.next();
-    if (smoke && this.recording) this.fx.push({ k: 'smoke', x: this.X(u, v), y: this.Y(u, v, z0 + h), r: Math.max(2.5, r * 40), ph });
+    if (smoke && !clean && this.recording) this.fx.push({ k: 'smoke', x: this.X(u, v), y: this.Y(u, v, z0 + h), r: Math.max(2.5, r * 40), ph });
   }
 
   /** Low perimeter fence along a polyline at ground level. */
@@ -1454,8 +1597,10 @@ export class Painter {
     this.tz(z);
   }
 
-  /** Register an arbitrary live effect (record mode only). */
+  /** Register an arbitrary live effect (record mode only). A $$$ clean fab drops smoke and flares. */
   addFx(f: Fx) {
-    if (this.recording) this.fx.push(f);
+    if (!this.recording) return;
+    if ((f.k === 'smoke' || f.k === 'flame') && this.luxe && this.zone === 3) return;
+    this.fx.push(f);
   }
 }

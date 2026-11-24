@@ -3,10 +3,12 @@
 // ghosts, drawn in WORLD px (the renderer has already set the world transform).
 //
 // Pipeline per building
-//   1. Pick a *model*: a deterministic recipe (art/zones.ts, art/services.ts)
-//      + colour scheme + seed. tile.variant selects the silhouette (8 forms)
-//      and an accent palette (2) per zone and level. A model's first use runs
-//      its recipe in RECORD mode to measure bounds and collect live-fx anchors.
+//   1. Pick a *model*: a deterministic recipe (art/zones.ts, art/services.ts,
+//      art/ports.ts) + colour scheme + seed. tile.variant selects the
+//      silhouette (8 forms) and an accent palette (2) per zone and level, and
+//      tile.wealth the tier ($ / $$ / $$$: palette, material restyle and props,
+//      EXPANSION §4.5). A model's first use runs its recipe in RECORD mode to
+//      measure bounds and collect live-fx anchors.
 //   2. Fetch the static body sprite from the SpriteCache, keyed by
 //      (body, night bucket, scale bucket, LOD). Bodies bake walls, windows,
 //      signs and neon glow, so the per-frame cost is one drawImage.
@@ -23,11 +25,12 @@ import type { Building, BuildingType, Tile } from '../game/types';
 import { ZoneType } from '../game/types';
 import { drawFx, drawAbandonedLight, type Fx, type FxState } from './art/fx';
 import { Painter, type ArtPal } from './art/painter';
+import { PORT_PALS, drawPortLive, portRecipe, portVariant, seaportGhostFacing } from './art/ports';
 import { SERVICE_PALS, SERVICE_RECIPES } from './art/services';
 import { STORY_PALS, STORY_RECIPES } from './art/story';
 import { STACK_PAL, STACK_VARIANTS, stackRecipe, stackVariant } from './art/vertical';
 import { NIGHT_STEPS, SpriteCache, nightBucket, nightOfBucket, scaleBucket, scaleOfBucket, type Sprite } from './art/sprites';
-import { FORMS, LOT_RECIPES, ZONE_PALS, ZONE_RECIPES, type Recipe } from './art/zones';
+import { FORMS, LOT_RECIPES, ZONE_PALS, ZONE_RECIPES, dressBase, dressTier, type Recipe } from './art/zones';
 import { css, glowSprite } from './palette';
 
 export interface ArtEnv {
@@ -65,16 +68,36 @@ interface Model {
   fx: Fx[];
   /** True if the recipe draws nothing (empty lots). */
   empty: boolean;
+  /** Developed zone body: its zone (1..3), level (1..3) and wealth tier; zone 0 for lots and services. */
+  zone: number;
+  level: number;
+  tier: 0 | 1 | 2;
 }
 
-const painter = new Painter(ZONE_PALS[0][0]);
+const painter = new Painter(ZONE_PALS[0][1][0]);
 const models = new Map<number, Model>();
-const LOT_BASE = 200;
-const SERVICE_BASE = 400;
+/** Zone bodies: 3 zones × 3 levels × 8 forms × 3 tiers × 2 palettes = 432 ids (0..431). */
+export const ZONE_BODIES = 432;
+/** Lots: 440..463. */
+const LOT_BASE = 440;
+/** Service, story and port buildings: 480 + type index × STACK_VARIANTS + variant. */
+const SERVICE_BASE = 480;
 
 const emptyRecipe = LOT_RECIPES[0][0];
 
-function buildModel(id: number, recipe: Recipe, pal: ArtPal, seed: number, size: number): Model {
+/** Run a model's recipe in the painter's current mode, with the wealth-tier lot plate and props around a zone body. */
+function runRecipe(p: Painter, m: Pick<Model, 'recipe' | 'zone' | 'level' | 'tier'>) {
+  p.zone = m.zone;
+  p.tier = m.tier;
+  if (m.zone > 0) {
+    dressBase(p);
+    p.dressRec = true;
+    m.recipe(p);
+    p.dressRec = false;
+  } else m.recipe(p);
+}
+
+function buildModel(id: number, recipe: Recipe, pal: ArtPal, seed: number, size: number, zone = 0, level = 0, tier: 0 | 1 | 2 = 0): Model {
   const p = painter;
   p.g = null;
   p.recording = true;
@@ -83,8 +106,13 @@ function buildModel(id: number, recipe: Recipe, pal: ArtPal, seed: number, size:
   p.abandoned = false;
   p.lod = false;
   p.begin(seed, pal);
-  recipe(p);
+  runRecipe(p, { recipe, zone, level, tier });
+  // The recorded top excludes the tier props, so heights, picking and skybridge checks are tier-independent.
+  const top = p.maxZ;
+  if (zone > 0) dressTier(p, zone, level);
   p.recording = false;
+  p.zone = 0;
+  p.tier = 0;
   const empty = recipe === emptyRecipe || !isFinite(p.bx0);
   const m: Model = {
     id,
@@ -96,34 +124,54 @@ function buildModel(id: number, recipe: Recipe, pal: ArtPal, seed: number, size:
     by0: empty ? 0 : p.by0,
     bx1: empty ? 0 : p.bx1,
     by1: empty ? 0 : p.by1,
-    top: p.maxZ,
+    top,
     fx: p.fx,
     empty,
+    zone,
+    level,
+    tier,
   };
   p.fx = [];
   models.set(id, m);
   return m;
 }
 
-/** Zone model id: 0..191 = ((zone-1)*3 + level-1)*16 + form*2 + palBit. */
-function zoneModel(zone: number, level: number, variant: number): Model {
+/**
+ * Zone model id (EXPANSION §4.5): ((((zone − 1) × 3 + level − 1) × 8 + form) × 3 + tier) × 2 + palBit,
+ * 0..431. Decoding: zone = ⌊id / 144⌋ + 1, level = ⌊id / 48⌋ mod 3 + 1, tier = ⌊id / 2⌋ mod 3.
+ */
+export function zoneModelId(zone: number, level: number, variant: number, tier: number): number {
+  const form = variant & (FORMS - 1);
+  const palBit = (variant >> 3) & 1;
+  const t = tier === 1 || tier === 2 ? tier : 0;
+  return ((((zone - 1) * 3 + level - 1) * 8 + form) * 3 + t) * 2 + palBit;
+}
+
+function zoneModel(zone: number, level: number, variant: number, tier = 0): Model {
   const form = variant & (FORMS - 1);
   const palBit = (variant >> 3) & 1;
   if (level <= 0) {
     const id = LOT_BASE + (zone - 1) * FORMS + form;
-    return models.get(id) ?? buildModel(id, LOT_RECIPES[zone - 1][form], ZONE_PALS[zone - 1][palBit], 9000 + id, 1);
+    return models.get(id) ?? buildModel(id, LOT_RECIPES[zone - 1][form], ZONE_PALS[zone - 1][1][palBit], 9000 + id - LOT_BASE + 200, 1);
   }
-  const id = ((zone - 1) * 3 + (level - 1)) * 16 + form * 2 + palBit;
-  return (
-    models.get(id) ??
-    buildModel(id, ZONE_RECIPES[zone - 1][level - 1][form], ZONE_PALS[zone - 1][palBit], 7919 * (id + 1) + 13, 1)
-  );
+  const t: 0 | 1 | 2 = tier === 1 || tier === 2 ? tier : 0;
+  const id = zoneModelId(zone, level, variant, t);
+  const hit = models.get(id);
+  if (hit) return hit;
+  // Seeded from the pre-tier id, so every tier keeps the same silhouette, heights and wall colours.
+  const legacy = ((zone - 1) * 3 + (level - 1)) * 16 + form * 2 + palBit;
+  return buildModel(id, ZONE_RECIPES[zone - 1][level - 1][form], ZONE_PALS[zone - 1][t][palBit], 7919 * (legacy + 1) + 13, 1, zone, level, t);
 }
 
 const SERVICE_INDEX = new Map<BuildingType, number>(BUILDING_ORDER.map((t, i) => [t, i]));
-/** Model variant of a building: Stratablocks get one per complete stage × scaffold × crown (art/vertical.ts). */
-function variantOf(b: Pick<Building, 'type' | 'stage' | 'buildDays' | 'crown'>): number {
-  if (b.type !== 'stack') return 0;
+/** The building fields that pick a model variant (Building satisfies it). */
+type VariantKey = Pick<Building, 'type' | 'stage' | 'buildDays' | 'crown'> & Partial<Pick<Building, 'id' | 'facing' | 'waitSec'>>;
+/**
+ * Model variant of a building: Stratablocks get one per complete stage × scaffold × crown
+ * (art/vertical.ts); a Seaport one per facing, a Spaceport one per construction stage (art/ports.ts).
+ */
+function variantOf(b: VariantKey): number {
+  if (b.type !== 'stack') return portVariant(b);
   const stage = b.stage ?? 1;
   const building = (b.buildDays ?? 0) > 0;
   return stackVariant(building ? stage - 1 : stage, building, b.crown);
@@ -133,8 +181,10 @@ function serviceModel(type: BuildingType, variant = 0): Model {
   const hit = models.get(id);
   if (hit) return hit;
   const story = (STORY_RECIPES as Partial<Record<BuildingType, Recipe>>)[type];
-  const recipe = type === 'stack' ? stackRecipe(variant) : story ?? SERVICE_RECIPES[type];
-  const pal = type === 'stack' ? STACK_PAL : (STORY_PALS as Partial<Record<BuildingType, ArtPal>>)[type] ?? SERVICE_PALS[type];
+  const port = portRecipe(type, variant);
+  const recipe = type === 'stack' ? stackRecipe(variant) : port ?? story ?? SERVICE_RECIPES[type];
+  const pal =
+    type === 'stack' ? STACK_PAL : (PORT_PALS as Partial<Record<BuildingType, ArtPal>>)[type] ?? (STORY_PALS as Partial<Record<BuildingType, ArtPal>>)[type] ?? SERVICE_PALS[type];
   return buildModel(id, recipe, pal, 31337 + SERVICE_BASE + (SERVICE_INDEX.get(type) ?? 0), BUILDINGS[type].size);
 }
 
@@ -176,11 +226,14 @@ function paintSprite(m: Model, state: number, nb: number, scale: number, lod: bo
   p.lod = lod;
   // Low and mid-rise zone blocks light more windows and glow brighter at night, so an
   // ordinary mid-size city reads as vibrant as the dense L3 core.
-  const level = m.id < LOT_BASE ? (Math.floor(m.id / 16) % 3) + 1 : 0;
+  const level = m.level;
   p.litBoost = level === 1 ? 1.7 : level === 2 ? 1.45 : 1;
   p.glowBoost = level === 1 ? 1.55 : level === 2 ? 1.35 : 1;
   p.begin(m.seed, m.pal);
-  m.recipe(p);
+  runRecipe(p, m);
+  if (m.zone > 0) dressTier(p, m.zone, m.level);
+  p.zone = 0;
+  p.tier = 0;
   p.g = null;
   if (state >= ST_GHOST_OK) {
     // Placement ghost: flatten to a translucent green / red hologram.
@@ -413,7 +466,7 @@ function drawConstruction(ctx: CanvasRenderingContext2D, s: Sprite | null, m: Mo
 export function drawZoneBuilding(ctx: CanvasRenderingContext2D, wx: number, wy: number, tile: Tile, tx: number, ty: number, env: ArtEnv): void {
   const zone = tile.zone;
   if (zone === ZoneType.None) return;
-  const m = zoneModel(zone, tile.level, tile.variant);
+  const m = zoneModel(zone, tile.level, tile.variant, tile.wealth);
   if (m.empty) return;
   sync(ctx, env);
   const lod = env.zoom < LOD_ZOOM;
@@ -478,13 +531,19 @@ export function drawServiceBuilding(ctx: CanvasRenderingContext2D, wx: number, w
     fxState.phase = tilePhase(b.x, b.y);
     drawFx(ctx, m.fx, wx, wy, fxState);
   }
+  // Port live parts drawn in the building's depth slot: crane trolleys and moored ships, the tower beacon, pad steam.
+  if (def.category === 'transport') {
+    drawPortLive(ctx, wx, wy, b, env, on);
+    ctx.setTransform(tA, 0, 0, tA, tE, tF);
+  }
 }
 
 /** Ghost for placement preview of a building type. */
 export function drawBuildingGhost(ctx: CanvasRenderingContext2D, wx: number, wy: number, type: BuildingType, ok: boolean, env: ArtEnv): void {
   if (!BUILDINGS[type]) return;
   sync(ctx, env);
-  const m = serviceModel(type, type === 'stack' ? stackVariant(1, false, undefined) : 0);
+  const variant = type === 'stack' ? stackVariant(1, false, undefined) : type === 'seaport' ? seaportGhostFacing() : portVariant({ type });
+  const m = serviceModel(type, variant);
   const s = sprite(m, ok ? ST_GHOST_OK : ST_GHOST_BAD, env.zoom < LOD_ZOOM);
   if (!s) return;
   const a0 = ctx.globalAlpha;
@@ -500,14 +559,14 @@ export function drawBuildingGhost(ctx: CanvasRenderingContext2D, wx: number, wy:
 }
 
 const zoneHeights = new Float32Array(SERVICE_BASE).fill(-1);
-/** Approx pixel height above the ground of what drawZoneBuilding draws (renderer uses it for culling + unpowered icons). */
+/** Approx pixel height above the ground of what drawZoneBuilding draws (renderer uses it for culling + unpowered icons). Tier-independent. */
 export function zoneBuildingHeight(tile: Tile): number {
   if (tile.zone === ZoneType.None) return 0;
   if (tile.level <= 0) return 8;
-  const id = ((tile.zone - 1) * 3 + (tile.level - 1)) * 16 + (tile.variant & 7) * 2 + ((tile.variant >> 3) & 1);
+  const id = zoneModelId(tile.zone, tile.level, tile.variant, tile.wealth);
   let h = zoneHeights[id];
   if (h < 0) {
-    h = zoneModel(tile.zone, tile.level, tile.variant).top;
+    h = zoneModel(tile.zone, tile.level, tile.variant, tile.wealth).top;
     zoneHeights[id] = h;
   }
   return h;
@@ -519,9 +578,9 @@ const serviceHeights = new Map<number, number>();
  * status icons, skybridge height). Pass the building for stage-aware Stratablocks
  * (60 / 150 / 210 px by complete stage).
  */
-export function serviceBuildingHeight(type: BuildingType, b?: Pick<Building, 'type' | 'stage' | 'buildDays' | 'crown'>): number {
+export function serviceBuildingHeight(type: BuildingType, b?: VariantKey): number {
   if (!BUILDINGS[type]) return 40;
-  const variant = b && type === 'stack' ? variantOf(b) : type === 'stack' ? stackVariant(1, false, undefined) : 0;
+  const variant = b ? variantOf(b) : type === 'stack' ? stackVariant(1, false, undefined) : portVariant({ type });
   const key = (SERVICE_INDEX.get(type) ?? 0) * STACK_VARIANTS + variant;
   let h = serviceHeights.get(key);
   if (h === undefined) {
@@ -529,6 +588,12 @@ export function serviceBuildingHeight(type: BuildingType, b?: Pick<Building, 'ty
     serviceHeights.set(key, h);
   }
   return h;
+}
+
+/** Recorded facts of a zone body model (tests, harnesses): its id, seed, top and live-fx count. */
+export function zoneModelInfo(zone: number, level: number, variant: number, tier: number): { id: number; seed: number; top: number; fx: number; zone: number; level: number; tier: number } {
+  const m = zoneModel(zone, level, variant, tier);
+  return { id: m.id, seed: m.seed, top: m.top, fx: m.fx.length, zone: m.zone, level: m.level, tier: m.tier };
 }
 
 /** Drop every cached sprite (e.g. on context loss). Models are kept. */

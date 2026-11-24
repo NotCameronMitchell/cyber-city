@@ -9,14 +9,18 @@
 //    cost tag (drawn in screen space so it stays readable at any zoom).
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { BUILDINGS, CURRENCY, ROAD_ACCESS_RANGE, isBuildingTool } from '../game/config';
+import { BUILDINGS, CURRENCY, WEALTH, isBuildingTool } from '../game/config';
 import type { Game } from '../game/game';
-import { MAP_SIZE, ZoneType, type ActionPlan, type OverlayId, type ServiceEffect, type Tile } from '../game/types';
+import { berthTiles, noiseDef, shoreFacing, shoreSites } from '../game/ports';
+import { computeAccess, fillKinds, isRoadTool, roadLinks } from '../game/roads';
+import { MAP_SIZE, RoadKind, ZoneType, type ActionPlan, type BuildingType, type OverlayId, type ServiceEffect, type Tile } from '../game/types';
+import { potentialTier, tierCapAt } from '../game/wealth';
 import type { World } from '../game/world';
+import { SKY_Z, drawSkywayGhost } from './art/skyway';
 import { drawRailTile, drawSkybridgeTile, type RailEnv } from './art/vertical';
 import { drawBuildingGhost, serviceBuildingHeight, zoneBuildingHeight, LOD_ZOOM, type ArtEnv } from './buildings';
 import { HALF_H, HALF_W, type Camera } from './camera';
-import { ROAD_HALF, roadOutlinePath, roadShapePath, type Rect } from './ground';
+import { chevronPath, kindHalf, roadOutlinePath, roadShapePath, type Rect } from './ground';
 import { highlight } from './highlight';
 import { anchorHeight } from './story';
 import { NEON, css, glowSprite, heat, hexToRgb, type RGB } from './palette';
@@ -54,6 +58,9 @@ export class OverlayLayer {
   private lastBuild = -1e9;
   private builtFor: OverlayId = 'none';
   private lut: Uint8ClampedArray;
+  /** Wealth lens pips per tile (rebuilt with the overlay): 1 ▲ potential above the tier, −1 ▼ below, 0 none. */
+  private pips = new Int8Array(N * N);
+  private pipsFor: World | null = null;
 
   constructor() {
     this.lut = new Uint8ClampedArray(256 * 3);
@@ -93,6 +100,8 @@ export class OverlayLayer {
     const tiles = world.tiles;
     const f = world.fields;
     const lut = this.lut;
+    const pips = this.pips;
+    if (overlay === 'wealth') this.pipsFor = world;
     for (let i = 0; i < N * N; i++) {
       const t = tiles[i];
       const o = i * 4;
@@ -104,14 +113,44 @@ export class OverlayLayer {
         case 'landValue':
         case 'crime':
         case 'pollution':
+        case 'noise':
         case 'traffic': {
-          const v = Math.max(0, Math.min(1, f[overlay][i]));
+          // Under a skyway the traffic view shows the busier of the ground and the deck, at road alpha (§7.3).
+          const skyHere = overlay === 'traffic' && world.sky[i] !== 0;
+          const raw = skyHere ? Math.max(f.traffic[i], f.skyTraffic[i]) : f[overlay][i];
+          const v = Math.max(0, Math.min(1, raw));
           const li = Math.round(v * 255) * 3;
           r = lut[li];
           g = lut[li + 1];
           b = lut[li + 2];
-          a = t.terrain === 1 ? 70 : 150 + v * 70;
-          if (overlay === 'traffic' && !t.road) a *= 0.45;
+          a = t.terrain === 1 && !skyHere ? 70 : 150 + v * 70;
+          if (overlay === 'traffic' && !t.road && !skyHere) a *= 0.45;
+          break;
+        }
+        case 'wealth': {
+          // Discrete swatches (§4.5): developed tiles by tier, lots by potential, abandoned shells dark.
+          pips[i] = 0;
+          if (t.zone === ZoneType.None || t.buildingId >= 0) break;
+          const pot = potentialTier(t.zone, f.wealth[i], tierCapAt(world, i));
+          if (t.level === 0) {
+            const c = TIER_RGB[pot];
+            r = c[0];
+            g = c[1];
+            b = c[2];
+            a = 90;
+          } else if (t.abandoned) {
+            r = 58;
+            g = 53;
+            b = 80;
+            a = 200;
+          } else {
+            const c = TIER_RGB[t.wealth];
+            r = c[0];
+            g = c[1];
+            b = c[2];
+            a = 200;
+            if (pot !== t.wealth) pips[i] = pot > t.wealth ? 1 : -1;
+          }
           break;
         }
         case 'power': {
@@ -183,18 +222,58 @@ export class OverlayLayer {
     // Darken the map so the data reads, then lay the data image over it.
     ctx.fillStyle = 'rgba(4,3,14,0.55)';
     ctx.fillRect(0, 0, N, N);
-    ctx.imageSmoothingEnabled = overlay !== 'power' && overlay !== 'turf';
+    ctx.imageSmoothingEnabled = overlay !== 'power' && overlay !== 'turf' && overlay !== 'wealth';
     ctx.drawImage(this.canvas!, 0, 0, N, N);
     ctx.imageSmoothingEnabled = true;
     if (overlay === 'turf') this.turfPatterns(ctx, world, time, bounds, zoom);
     // Thin tile grid on top keeps tiles countable on the smooth heatmaps.
-    if (overlay !== 'power' && zoom > 0.45) {
+    if (overlay !== 'power' && overlay !== 'wealth' && zoom > 0.45) {
       ctx.fillStyle = 'rgba(0,0,0,0.22)';
       const th = 1 / (zoom * PERP);
       for (let y = bounds.y0; y <= bounds.y1 + 1; y++) ctx.fillRect(bounds.x0, y, bounds.x1 - bounds.x0 + 1, th);
       for (let x = bounds.x0; x <= bounds.x1 + 1; x++) ctx.fillRect(x, bounds.y0, th, bounds.y1 - bounds.y0 + 1);
     }
     if (overlay === 'power') this.conduits(ctx, world, time, bounds, zoom);
+    ctx.restore();
+  }
+
+  /**
+   * Wealth lens pips (§4.5): a small ▲ (potential above the tier) or ▼ (below) at the
+   * centre of developed tiles, over the faded buildings, at zoom ≥ 0.6. World transform.
+   */
+  drawTop(ctx: CanvasRenderingContext2D, world: World, overlay: OverlayId, bounds: Rect, zoom: number, view: Rect) {
+    if (overlay !== 'wealth' || zoom < 0.6 || this.pipsFor !== world || this.builtFor !== 'wealth') return;
+    const pips = this.pips;
+    const s = 6 / zoom;
+    const up = new Path2D();
+    const down = new Path2D();
+    let any = false;
+    for (let y = bounds.y0; y <= bounds.y1; y++)
+      for (let x = bounds.x0; x <= bounds.x1; x++) {
+        const p = pips[y * N + x];
+        if (!p) continue;
+        const cx = (x - y) * HALF_W;
+        const cy = (x + y) * HALF_H + HALF_H;
+        if (cx < view.x0 - s || cx > view.x1 + s || cy < view.y0 - s || cy > view.y1 + s) continue;
+        any = true;
+        const path = p > 0 ? up : down;
+        const dir = p > 0 ? -1 : 1;
+        path.moveTo(cx, cy + dir * s);
+        path.lineTo(cx + s * 0.95, cy - dir * s * 0.65);
+        path.lineTo(cx - s * 0.95, cy - dir * s * 0.65);
+        path.closePath();
+      }
+    if (!any) return;
+    ctx.save();
+    ctx.lineJoin = 'round';
+    ctx.lineWidth = 2.2 / zoom;
+    ctx.strokeStyle = 'rgba(6,4,16,0.9)';
+    ctx.stroke(up);
+    ctx.stroke(down);
+    ctx.fillStyle = css(NEON.green);
+    ctx.fill(up);
+    ctx.fillStyle = css([255, 120, 120]);
+    ctx.fill(down);
     ctx.restore();
   }
 
@@ -253,7 +332,8 @@ export class OverlayLayer {
       for (let x = b.x0; x <= b.x1; x++) {
         const t = world.tiles[y * N + x];
         if (!t.road) continue;
-        const mask = world.roadMask(x, y);
+        // Power conducts between any two adjacent roads, whatever their kinds (§2.7).
+        const mask = world.roadAdjMask(x, y);
         const flow = 0.5 + 0.5 * Math.sin(time * 5 - (x + y) * 0.9);
         const c = t.powered ? NEON.cyan : NEON.red;
         for (const [w, a] of [
@@ -364,7 +444,17 @@ function radiusRing(ctx: CanvasRenderingContext2D, cx: number, cy: number, r: nu
 const OK: RGB = NEON.green;
 const BAD: RGB = NEON.red;
 const DEMOLISH: RGB = [255, 120, 50];
+/** Upgrades in a road ghost, the skyway, and the seaport berth / shore sites. */
+const GOLD: RGB = [255, 216, 77];
+const SKY: RGB = [255, 95, 210];
+const BERTH: RGB = [56, 200, 255];
+/** Ghost colour per road kind (ROAD_KINDS[k].color): Street, Avenue, Highway, Back Alley, On-ramp. */
+const KIND_RGB: RGB[] = [[200, 208, 240], [111, 155, 255], [255, 181, 71], [160, 124, 255], [244, 247, 255]];
+const DX4 = [0, 1, 0, -1];
+const DY4 = [-1, 0, 1, 0];
 const TURF_LIME: RGB = [182, 255, 46];
+/** Wealth lens swatches $ / $$ / $$$ (WEALTH.colors). */
+const TIER_RGB: RGB[] = WEALTH.colors.map((c) => hexToRgb(c));
 const TURF_LILAC: RGB = [201, 162, 255];
 const previewEnv: RailEnv = { time: 0, night: 0, zoom: 1, lod: false, quality: 'high' };
 
@@ -379,8 +469,19 @@ export function drawPreviewGround(ctx: CanvasRenderingContext2D, game: Game, tim
   if (!plan || !plan.tiles.length) return;
   const world = game.world;
   ctx.save();
-  if (plan.tool === 'road') {
+  if (isRoadTool(plan.tool)) {
     roadGhost(ctx, world, plan, time, zoom);
+  } else if (plan.tool === 'skyway') {
+    // The deck ghost is raised (drawPreviewTop); on the ground, the strip it will shade.
+    toTileSpace(ctx);
+    ctx.beginPath();
+    for (let k = 0; k < plan.tiles.length; k++) {
+      const t = plan.tiles[k];
+      if (!world.inBounds(t.x, t.y)) continue;
+      roadShapePath(ctx, t.x, t.y, (plan.skyMasks?.[k] ?? 0) & 15, 0.25);
+    }
+    ctx.fillStyle = css(plan.valid ? SKY : BAD, 0.16 + 0.06 * Math.sin(time * 6));
+    ctx.fill();
   } else if (plan.tool === 'inspect') {
     const t = plan.tiles[0];
     if (world.inBounds(t.x, t.y)) {
@@ -392,6 +493,7 @@ export function drawPreviewGround(ctx: CanvasRenderingContext2D, game: Game, tim
   } else {
     const isBuild = isBuildingTool(plan.tool);
     const bulldoze = plan.tool === 'bulldoze';
+    const skyLayer = bulldoze && plan.layer === 'sky';
     const pulse = 0.85 + 0.15 * Math.sin(time * 6);
     toTileSpace(ctx);
     const okTiles = plan.tiles.filter((t) => t.ok && world.inBounds(t.x, t.y));
@@ -405,7 +507,13 @@ export function drawPreviewGround(ctx: CanvasRenderingContext2D, game: Game, tim
       ctx.fillStyle = css(c, a * pulse);
       ctx.fill();
     };
-    fillGroup(okTiles, okColor, 0.26);
+    // A sky bulldoze tints only the deck strips on the ground (the deck itself lights up above).
+    if (skyLayer) {
+      ctx.beginPath();
+      for (const t of okTiles) roadShapePath(ctx, t.x, t.y, world.sky[t.y * N + t.x] & 15, 0.25);
+      ctx.fillStyle = css(DEMOLISH, 0.3 * pulse);
+      ctx.fill();
+    } else fillGroup(okTiles, okColor, 0.26);
     fillGroup(badTiles, bulldoze ? [200, 200, 220] : BAD, bulldoze ? 0.06 : 0.3);
     const groups: [typeof okTiles, RGB][] = [
       [okTiles, okColor],
@@ -415,28 +523,94 @@ export function drawPreviewGround(ctx: CanvasRenderingContext2D, game: Game, tim
       if (!list.length) continue;
       const set = new Set(list.map((t) => t.y * N + t.x));
       boundaryPath(ctx, list, set);
-      glowStroke(ctx, c, zoom, bulldoze && c !== okColor ? 0.35 : 1);
+      glowStroke(ctx, c, zoom, bulldoze && c !== okColor ? 0.35 : skyLayer ? 0.5 : 1);
     }
     if (isBuild && plan.footprint) {
-      const def = BUILDINGS[plan.tool as keyof typeof BUILDINGS];
+      const type = plan.tool as BuildingType;
+      const def = BUILDINGS[type];
       const fp = plan.footprint;
+      // Homes the building would make loud (§5.4), amber.
+      if (plan.loudTiles?.length) tintTiles(ctx, plan.loudTiles, NEON.amber, 0.3 * pulse);
+      // The seaport's berth: the 4×2 water beyond its shore side, blue (ok) or red.
+      if (type === 'seaport') {
+        const f = shoreFacing(world, fp.x, fp.y, fp.size);
+        if (f >= 0) tintTiles(ctx, berthTiles({ type, x: fp.x, y: fp.y, size: fp.size, facing: f as 0 | 1 | 2 | 3 }), plan.valid ? BERTH : BAD, 0.34 * pulse, true);
+      }
       ctx.restore();
       ctx.save();
       if (def.radius > 0) radiusRing(ctx, fp.x + fp.size / 2, fp.y + fp.size / 2, def.radius, hexToRgb(def.color), zoom, time);
+      const nd = noiseDef(type);
+      if (nd) noiseRing(ctx, fp.x, fp.y, fp.size, nd.r, zoom, time);
     }
   }
   ctx.restore();
 }
 
-/** Translucent hologram road segments for a road drag. Tile space inside. */
+/** Translucent tile tints (tile space), optionally with a glowing outline. */
+function tintTiles(ctx: CanvasRenderingContext2D, list: readonly number[], c: RGB, a: number, outline = false) {
+  if (!list.length) return;
+  ctx.beginPath();
+  for (const i of list) ctx.rect((i % N) + 0.04, ((i / N) | 0) + 0.04, 0.92, 0.92);
+  ctx.fillStyle = css(c, a);
+  ctx.fill();
+  if (outline) {
+    ctx.strokeStyle = css(c, 0.8);
+    ctx.lineWidth = 0.04;
+    ctx.stroke();
+  }
+}
+
+/**
+ * Dashed amber Chebyshev ring (a diamond on screen) at `r` tiles around a footprint:
+ * how far a noisy building's noise reaches (§5.4). World transform expected.
+ */
+function noiseRing(ctx: CanvasRenderingContext2D, x: number, y: number, size: number, r: number, zoom: number, time: number) {
+  ctx.save();
+  toTileSpace(ctx);
+  ctx.beginPath();
+  ctx.rect(x - r, y - r, size + 2 * r, size + 2 * r);
+  ctx.fillStyle = css(NEON.amber, 0.05);
+  ctx.fill();
+  const px = 1 / (zoom * PERP);
+  ctx.globalCompositeOperation = 'lighter';
+  ctx.strokeStyle = css(NEON.amber, 0.2);
+  ctx.lineWidth = 5 * px;
+  ctx.stroke();
+  ctx.setLineDash([10 * px, 7 * px]);
+  ctx.lineDashOffset = (-time * 24) * px;
+  ctx.strokeStyle = css(NEON.amber, 0.85);
+  ctx.lineWidth = 1.6 * px;
+  ctx.stroke();
+  ctx.restore();
+}
+
+/**
+ * Road drag ghost (§7.5): each tile at its resulting kind (width and colour from
+ * plan.roadKinds, links via roadLinks over the plan and the map); widened tiles tint
+ * gold, ramp tiles pulse white with a chevron towards the highway, lots that would
+ * lose road access tint red. Tile space inside.
+ */
 function roadGhost(ctx: CanvasRenderingContext2D, world: World, plan: ActionPlan, time: number, zoom: number) {
   toTileSpace(ctx);
-  const set = new Set<number>();
-  for (const t of plan.tiles) if (t.ok) set.add(t.y * N + t.x);
-  const isRoad = (x: number, y: number) => world.inBounds(x, y) && (set.has(y * N + x) || world.isRoad(x, y));
+  const planned = new Map<number, number>();
+  const tool = plan.tool;
+  const toolKind = tool === 'avenue' ? RoadKind.Avenue : tool === 'highway' ? RoadKind.Highway : tool === 'alley' ? RoadKind.Alley : RoadKind.Street;
+  plan.tiles.forEach((t, k) => {
+    if (t.ok && world.inBounds(t.x, t.y)) planned.set(t.y * N + t.x, plan.roadKinds?.[k] ?? toolKind);
+  });
+  const kindAt = (x: number, y: number): number => {
+    if (!world.inBounds(x, y)) return -1;
+    const i = y * N + x;
+    const p = planned.get(i);
+    if (p !== undefined) return p;
+    const t = world.tiles[i];
+    return t.road ? t.roadKind : -1;
+  };
   const px = 1 / (zoom * PERP);
-  const c: RGB = plan.valid ? NEON.cyan : BAD;
   const flow = time * 2;
+  const pulse = 0.5 + 0.5 * Math.sin(time * 6);
+  // Lots a highway drag would strand: red underneath everything.
+  if (plan.lostTiles?.length) tintTiles(ctx, plan.lostTiles, BAD, 0.22 + 0.16 * pulse, true);
   for (const t of plan.tiles) {
     if (!world.inBounds(t.x, t.y)) continue;
     if (!t.ok) {
@@ -447,15 +621,37 @@ function roadGhost(ctx: CanvasRenderingContext2D, world: World, plan: ActionPlan
       glowStroke(ctx, BAD, zoom);
       continue;
     }
-    const mask =
-      (isRoad(t.x, t.y - 1) ? 1 : 0) | (isRoad(t.x + 1, t.y) ? 2 : 0) | (isRoad(t.x, t.y + 1) ? 4 : 0) | (isRoad(t.x - 1, t.y) ? 8 : 0);
+    const i = t.y * N + t.x;
+    const kind = planned.get(i) ?? toolKind;
+    let mask = 0;
+    for (let d = 0; d < 4; d++) {
+      const nk = kindAt(t.x + DX4[d], t.y + DY4[d]);
+      if (nk >= 0 && roadLinks(kind, nk)) mask |= 1 << d;
+    }
+    const cur = world.tiles[i];
+    const changed = !cur.road || cur.roadKind !== kind;
+    const upgrade = cur.road && cur.roadKind !== kind;
+    const ramp = kind === RoadKind.Ramp;
+    let c: RGB = !plan.valid ? BAD : upgrade ? GOLD : KIND_RGB[kind] ?? NEON.cyan;
+    if (ramp && plan.valid) c = mixRGB(KIND_RGB[RoadKind.Ramp], NEON.white, pulse);
+    const h = kindHalf(kind);
     ctx.beginPath();
-    roadShapePath(ctx, t.x, t.y, mask, ROAD_HALF);
-    ctx.fillStyle = css(c, 0.28);
+    roadShapePath(ctx, t.x, t.y, mask, h);
+    ctx.fillStyle = css(c, changed ? (ramp ? 0.32 + 0.2 * pulse : 0.3) : 0.1);
     ctx.fill();
     ctx.beginPath();
-    roadOutlinePath(ctx, t.x, t.y, mask, ROAD_HALF);
-    glowStroke(ctx, c, zoom, 0.6);
+    roadOutlinePath(ctx, t.x, t.y, mask, h);
+    glowStroke(ctx, c, zoom, changed ? 0.65 : 0.25);
+    if (ramp) {
+      // Chevron towards the highway arm(s).
+      ctx.beginPath();
+      for (let d = 0; d < 4; d++) if (kindAt(t.x + DX4[d], t.y + DY4[d]) === RoadKind.Highway) chevronPath(ctx, t.x, t.y, d, 0.12, 0.17);
+      ctx.strokeStyle = css(NEON.white, 0.6 + 0.4 * pulse);
+      ctx.lineWidth = Math.max(0.03, 2.4 * px);
+      ctx.lineCap = 'round';
+      ctx.stroke();
+    }
+    if (!changed) continue;
     // Bright travelling centre dot.
     const ph = (flow - (t.x + t.y) * 0.35) % 1;
     ctx.globalCompositeOperation = 'lighter';
@@ -466,12 +662,107 @@ function roadGhost(ctx: CanvasRenderingContext2D, world: World, plan: ActionPlan
   }
 }
 
+function mixRGB(a: RGB, b: RGB, t: number): RGB {
+  return [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
+}
+
+// ── Tool hints (no drag needed) ────────────────────────────────────────────
+
+const shore = { world: null as World | null, version: -1, marks: new Uint8Array(N * N), cover: new Uint8Array(N * N), count: 0 };
+
+/**
+ * While the Seaport tool is active, every valid shore site is outlined in faint
+ * blue (§5.1): the union of the valid 4×4 footprints, recomputed after a tile
+ * change (shoreSites, < 1 ms). World transform expected.
+ */
+export function drawToolHints(ctx: CanvasRenderingContext2D, game: Game, time: number, zoom: number, bounds: Rect) {
+  if (game.tool !== 'seaport') return;
+  const world = game.world;
+  if (shore.world !== world || shore.version !== world.version) {
+    shore.world = world;
+    shore.version = world.version;
+    shore.count = shoreSites(world, shore.marks);
+    const cover = shore.cover;
+    cover.fill(0);
+    const S = BUILDINGS.seaport.size;
+    for (let i = 0; i < N * N; i++) {
+      if (!shore.marks[i]) continue;
+      const x = i % N;
+      const y = (i / N) | 0;
+      for (let dy = 0; dy < S; dy++) for (let dx = 0; dx < S; dx++) cover[(y + dy) * N + x + dx] = 1;
+    }
+  }
+  if (!shore.count) return;
+  const cover = shore.cover;
+  const has = (x: number, y: number) => x >= 0 && y >= 0 && x < N && y < N && cover[y * N + x] === 1;
+  ctx.save();
+  toTileSpace(ctx);
+  const fill = new Path2D();
+  const edge = new Path2D();
+  for (let y = bounds.y0; y <= bounds.y1; y++)
+    for (let x = bounds.x0; x <= bounds.x1; x++) {
+      if (!has(x, y)) continue;
+      fill.rect(x, y, 1, 1);
+      if (!has(x, y - 1)) {
+        edge.moveTo(x, y);
+        edge.lineTo(x + 1, y);
+      }
+      if (!has(x + 1, y)) {
+        edge.moveTo(x + 1, y);
+        edge.lineTo(x + 1, y + 1);
+      }
+      if (!has(x, y + 1)) {
+        edge.moveTo(x, y + 1);
+        edge.lineTo(x + 1, y + 1);
+      }
+      if (!has(x - 1, y)) {
+        edge.moveTo(x, y);
+        edge.lineTo(x, y + 1);
+      }
+    }
+  const a = 0.8 + 0.2 * Math.sin(time * 3);
+  ctx.fillStyle = css(BERTH, 0.1 * a);
+  ctx.fill(fill);
+  const px = 1 / (zoom * PERP);
+  ctx.globalCompositeOperation = 'lighter';
+  ctx.lineCap = 'round';
+  ctx.strokeStyle = css(BERTH, 0.22 * a);
+  ctx.lineWidth = 6 * px;
+  ctx.stroke(edge);
+  ctx.strokeStyle = css(BERTH, 0.85 * a);
+  ctx.lineWidth = 1.5 * px;
+  ctx.stroke(edge);
+  ctx.restore();
+}
+
 /** Raised part of the preview (after buildings): building ghost, skybridge span, ribbon. World transform expected. */
 export function drawPreviewTop(ctx: CanvasRenderingContext2D, game: Game, env: ArtEnv) {
   const plan = game.preview;
   if (!plan) return;
   if (plan.tool === 'skybridge' || plan.tool === 'rail') {
     drawStoryPreview(ctx, game, plan, env);
+    return;
+  }
+  if (plan.tool === 'skyway') {
+    if (plan.skyMasks) {
+      ctx.save();
+      drawSkywayGhost(ctx, game.world, plan.tiles, plan.skyMasks, plan.valid, env);
+      ctx.restore();
+    }
+    return;
+  }
+  if (plan.tool === 'bulldoze' && plan.layer === 'sky') {
+    // The decks about to go, lit at deck height.
+    ctx.save();
+    const pulse = 0.6 + 0.4 * Math.sin(env.time * 6);
+    ctx.translate(0, -SKY_Z);
+    toTileSpace(ctx);
+    ctx.beginPath();
+    for (const t of plan.tiles) if (t.ok && game.world.inBounds(t.x, t.y)) roadShapePath(ctx, t.x, t.y, game.world.sky[t.y * N + t.x] & 15, 0.27);
+    ctx.fillStyle = css(DEMOLISH, 0.35 * pulse);
+    ctx.fill();
+    glowStroke(ctx, DEMOLISH, env.zoom, 0.8);
+    ctx.restore();
     return;
   }
   if (!plan.footprint || !isBuildingTool(plan.tool)) return;
@@ -553,7 +844,7 @@ export function drawCostTag(ctx: CanvasRenderingContext2D, game: Game, camera: C
   if (plan.footprint) {
     ax = plan.footprint.x + plan.footprint.size / 2;
     ay = plan.footprint.y + plan.footprint.size / 2;
-  } else if (plan.tool === 'road') {
+  } else if (isRoadTool(plan.tool) || plan.tool === 'skyway') {
     const t = plan.tiles[plan.tiles.length - 1];
     ax = t.x + 0.5;
     ay = t.y + 0.5;
@@ -637,6 +928,10 @@ interface SelectionShape {
   height: number;
   color: RGB;
   radius: number;
+  /** Noise reach of a noisy building (dashed amber diamond), 0 = none. */
+  noise: number;
+  /** The skyway deck over (x, y) is selected, not the ground (§3.7). */
+  sky: boolean;
 }
 
 function selectionShape(game: Game): SelectionShape | null {
@@ -645,15 +940,45 @@ function selectionShape(game: Game): SelectionShape | null {
   const world = game.world;
   const t = world.tileAt(sel.x, sel.y);
   if (!t) return null;
+  if (sel.sky && world.sky[sel.y * N + sel.x] !== 0) return { x: sel.x, y: sel.y, size: 1, height: 0, color: SKY, radius: 0, noise: 0, sky: true };
   if (t.buildingId >= 0) {
     const b = world.buildings.get(t.buildingId);
     if (b) {
       const def = BUILDINGS[b.type];
-      return { x: b.x, y: b.y, size: b.size, height: serviceBuildingHeight(b.type, b), color: hexToRgb(def.color), radius: def.effect ? def.radius : 0 };
+      return {
+        x: b.x,
+        y: b.y,
+        size: b.size,
+        height: serviceBuildingHeight(b.type, b),
+        color: hexToRgb(def.color),
+        radius: def.effect ? def.radius : 0,
+        noise: noiseDef(b.type)?.r ?? 0,
+        sky: false,
+      };
     }
   }
   const h = t.zone !== ZoneType.None && t.level > 0 ? zoneBuildingHeight(t) : 0;
-  return { x: sel.x, y: sel.y, size: 1, height: h, color: NEON.cyan, radius: 0 };
+  return { x: sel.x, y: sel.y, size: 1, height: h, color: NEON.cyan, radius: 0, noise: 0, sky: false };
+}
+
+/** The selected skyway deck: its tile at deck height, glowing magenta. World transform. */
+function drawDeckSelection(ctx: CanvasRenderingContext2D, game: Game, s: SelectionShape, time: number, zoom: number, top: boolean) {
+  const pulse = 0.7 + 0.3 * Math.sin(time * 4);
+  const mask = game.world.sky[s.y * N + s.x] & 15;
+  ctx.save();
+  if (top) ctx.translate(0, -SKY_Z);
+  toTileSpace(ctx);
+  ctx.beginPath();
+  roadShapePath(ctx, s.x, s.y, mask, top ? 0.29 : 0.25);
+  if (!top) {
+    ctx.fillStyle = css(SKY, 0.16 * pulse);
+    ctx.fill();
+  } else {
+    ctx.fillStyle = css(SKY, 0.12 * pulse);
+    ctx.fill();
+    glowStroke(ctx, SKY, zoom, pulse);
+  }
+  ctx.restore();
 }
 
 /** Ground outline + coverage radius of the selection (before buildings). World transform. */
@@ -668,9 +993,14 @@ export function drawSelectionGround(ctx: CanvasRenderingContext2D, game: Game, t
   }
   const s = selectionShape(game);
   if (!s) return;
+  if (s.sky) {
+    drawDeckSelection(ctx, game, s, time, zoom, false);
+    return;
+  }
   const pulse = 0.7 + 0.3 * Math.sin(time * 4);
   ctx.save();
   if (s.radius > 0) radiusRing(ctx, s.x + s.size / 2, s.y + s.size / 2, s.radius, s.color, zoom, time);
+  if (s.noise > 0) noiseRing(ctx, s.x, s.y, s.size, s.noise, zoom, time);
   toTileSpace(ctx);
   ctx.beginPath();
   ctx.rect(s.x, s.y, s.size, s.size);
@@ -684,6 +1014,10 @@ export function drawSelectionGround(ctx: CanvasRenderingContext2D, game: Game, t
 export function drawSelectionTop(ctx: CanvasRenderingContext2D, game: Game, time: number, zoom: number) {
   const s = selectionShape(game);
   if (!s) return;
+  if (s.sky) {
+    drawDeckSelection(ctx, game, s, time, zoom, true);
+    return;
+  }
   const pulse = 0.6 + 0.4 * Math.sin(time * 4);
   const top = (s.x - s.y) * HALF_W;
   const ty = (s.x + s.y) * HALF_H;
@@ -942,12 +1276,17 @@ function getNoRoad(): HTMLCanvasElement {
 }
 
 /**
- * Which tiles have a road within ROAD_ACCESS_RANGE (Chebyshev), as a dilated
- * road mask. Rebuilt lazily after tile changes: two separable passes, ~8k ops.
+ * Which tiles have road access, by the one access rule (roads.computeAccess, §3.3):
+ * a Street, Avenue or Ramp within ROAD_ACCESS_RANGE, or a Back Alley within 1; a
+ * Highway alone never counts. Rebuilt lazily after tile changes (two passes over
+ * the map, scratch arrays reused).
  */
 export class RoadAccessMap {
   private data = new Uint8Array(N * N);
-  private tmp = new Uint8Array(N * N);
+  private kinds = new Uint8Array(N * N);
+  private dist = new Uint8Array(N * N);
+  private near = new Int32Array(N * N);
+  private queue = new Int32Array(N * N);
   private dirty = true;
 
   invalidate() {
@@ -957,33 +1296,11 @@ export class RoadAccessMap {
   get(world: World): Uint8Array {
     if (!this.dirty) return this.data;
     this.dirty = false;
-    const r = ROAD_ACCESS_RANGE;
-    const tiles = world.tiles;
-    const tmp = this.tmp;
+    fillKinds(world, this.kinds);
+    computeAccess(this.kinds, this.dist, this.near, this.queue);
+    const dist = this.dist;
     const out = this.data;
-    for (let y = 0; y < N; y++) {
-      // Sliding count of roads in the horizontal window.
-      let count = 0;
-      for (let x = 0; x < Math.min(N, r); x++) if (tiles[y * N + x].road) count++;
-      for (let x = 0; x < N; x++) {
-        const add = x + r;
-        const sub = x - r - 1;
-        if (add < N && tiles[y * N + add].road) count++;
-        if (sub >= 0 && tiles[y * N + sub].road) count--;
-        tmp[y * N + x] = count > 0 ? 1 : 0;
-      }
-    }
-    for (let x = 0; x < N; x++) {
-      let count = 0;
-      for (let y = 0; y < Math.min(N, r); y++) count += tmp[y * N + x];
-      for (let y = 0; y < N; y++) {
-        const add = y + r;
-        const sub = y - r - 1;
-        if (add < N) count += tmp[add * N + x];
-        if (sub >= 0) count -= tmp[sub * N + x];
-        out[y * N + x] = count > 0 ? 1 : 0;
-      }
-    }
+    for (let i = 0; i < N * N; i++) out[i] = dist[i] !== 255 ? 1 : 0;
     return out;
   }
 }

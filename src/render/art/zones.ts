@@ -12,8 +12,9 @@
 // (ascending u + v) and bottom to top. All randomness goes through p.rng.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { NEON, type RGB } from '../palette';
-import { mat, type ArtPal, type Mat, type Painter, type WinSpec } from './painter';
+import { hash2 } from '../../game/rng';
+import { NEON, css, type RGB } from '../palette';
+import { mat, type ArtPal, type Face, type Mat, type Painter, type Roof, type WinSpec } from './painter';
 
 export type Recipe = (p: Painter) => void;
 
@@ -24,7 +25,8 @@ function pick<T>(p: Painter, arr: readonly T[]): T {
 
 // ── Palettes ───────────────────────────────────────────────────────────────
 
-export const ZONE_PALS: ArtPal[][] = [
+/** Today's two accent palettes per zone (the random palBit picks one). */
+const BASE_PALS: ArtPal[][] = [
   // Residential
   [
     { neon: NEON.magenta, neon2: NEON.amber, up: [200, 40, 170], warm: 0.62, cool: 0.18 },
@@ -42,16 +44,51 @@ export const ZONE_PALS: ArtPal[][] = [
   ],
 ];
 
+/** Gold and platinum: the two $$$ accents (palBit 0 / 1). */
+const GOLD: RGB = [255, 216, 77];
+const PLATINUM: RGB = [220, 235, 255];
+const GOLD_GLASS: Mat = { day: [86, 112, 128], night: [10, 14, 30] };
+const PLAT_GLASS: Mat = { day: [100, 132, 160], night: [12, 16, 36] };
+/** Teal-green neon of a $$$ clean fab. */
+const CLEAN_NEON: RGB = [70, 245, 200];
+
+/** A $ palette: today's colours with window light leaning sodium-orange. */
+function warmer(p: ArtPal): ArtPal {
+  const warm = Math.min(0.85, p.warm + 0.12);
+  return { ...p, warm, cool: Math.max(0.03, Math.min(p.cool - 0.06, 1 - warm)) };
+}
+/** A $$$ palette: the zone's signature neon (teal-green for a clean fab) with gold or platinum accents. */
+function luxe(zi: number, p: ArtPal, bit: number): ArtPal {
+  const gold = bit === 0;
+  return {
+    neon: zi === 2 ? CLEAN_NEON : p.neon,
+    neon2: gold ? GOLD : PLATINUM,
+    up: gold ? [255, 200, 120] : [200, 215, 255],
+    // Crisp cool-white windows: few warm lights, the rest cool and white (gold or platinum accents).
+    warm: 0.12,
+    cool: 0.5,
+    glass: gold ? GOLD_GLASS : PLAT_GLASS,
+  };
+}
+
+/**
+ * Zone palettes by [zone - 1][tier][palBit] (EXPANSION §4.5): $ reuses today's two palettes
+ * with a warmer window bias, $$ reuses them as they are, $$$ adds gold and platinum.
+ */
+export const ZONE_PALS: ArtPal[][][] = BASE_PALS.map((pals, z) => [pals.map(warmer), pals, pals.map((p, bit) => luxe(z, p, bit))]);
+
 // ── Materials ──────────────────────────────────────────────────────────────
 
-const RES_WALL: Mat[] = [mat([142, 116, 140]), mat([150, 130, 128]), mat([112, 126, 136]), mat([128, 122, 142]), mat([158, 150, 144])];
-const COM_WALL: Mat[] = [mat([98, 116, 140]), mat([150, 154, 168]), mat([84, 92, 112]), mat([124, 136, 150])];
-const IND_WALL: Mat[] = [mat([128, 96, 76]), mat([106, 108, 88]), mat([146, 124, 76]), mat([112, 114, 120])];
-const ROOF = mat([104, 100, 112]);
-const ROOF_DARK = mat([78, 76, 88]);
-const TARP: Mat[] = [mat([60, 120, 140]), mat([150, 70, 70]), mat([90, 90, 150]), mat([140, 120, 60])];
+// `kind` marks what the wealth tier may restyle (painter.ts): walls, roofs, tarps and rust.
+const wallMat = (c: RGB) => mat(c, undefined, 'wall');
+const RES_WALL: Mat[] = [wallMat([142, 116, 140]), wallMat([150, 130, 128]), wallMat([112, 126, 136]), wallMat([128, 122, 142]), wallMat([158, 150, 144])];
+const COM_WALL: Mat[] = [wallMat([98, 116, 140]), wallMat([150, 154, 168]), wallMat([84, 92, 112]), wallMat([124, 136, 150])];
+const IND_WALL: Mat[] = [wallMat([128, 96, 76]), wallMat([106, 108, 88]), wallMat([146, 124, 76]), wallMat([112, 114, 120])];
+const ROOF = mat([104, 100, 112], undefined, 'roof');
+const ROOF_DARK = mat([78, 76, 88], undefined, 'roof');
+const TARP: Mat[] = [mat([60, 120, 140], undefined, 'tarp'), mat([150, 70, 70], undefined, 'tarp'), mat([90, 90, 150], undefined, 'tarp'), mat([140, 120, 60], undefined, 'tarp')];
 const STEEL = mat([140, 144, 152]);
-const RUST = mat([132, 84, 60]);
+const RUST = mat([132, 84, 60], undefined, 'rust');
 const CONC = mat([124, 126, 140]);
 const DARK_GLASS: Mat = { day: [58, 84, 112], night: [10, 12, 28] };
 const TEAL_GLASS: Mat = { day: [70, 128, 142], night: [10, 18, 32] };
@@ -1210,3 +1247,466 @@ export const ZONE_RECIPES: Recipe[][][] = [
 ];
 export const LOT_RECIPES = LOTS;
 export const FORMS = 8;
+
+// ════════════════════════════════════════════════════════════════════════════
+// WEALTH TIER DRESSING (EXPANSION §4.5)
+//
+// The 72 recipes stay as they are; the tier is palette (zones ZONE_PALS), a
+// material restyle (Painter.tier: cleaner walls at $$, glass and gold at $$$, a
+// white clean fab) and the props below, placed from the roofs and faces the
+// recipe recorded. dressBase runs before the recipe (the lot plate under the
+// building) and uses no prisms and no rng, so a $ block keeps today's window
+// pattern and silhouette; dressTier runs after it. buildings.ts records the
+// model's top before dressTier, so props never raise it.
+// ════════════════════════════════════════════════════════════════════════════
+
+const PLATE_GRIME = mat([40, 34, 30], [6, 5, 10]);
+const CRACK = mat([30, 28, 34], [4, 4, 8]);
+const PAVER = mat([164, 166, 176], [36, 36, 54]);
+const PAVER_LINE = mat([126, 128, 140], [24, 24, 40]);
+const LEAF = mat([72, 150, 96], [14, 46, 36]);
+const LEAF_HI = mat([110, 190, 120], [22, 70, 50]);
+const POOL = mat([70, 205, 238], [18, 92, 140]);
+const POOL_RIM = mat([226, 232, 238], [50, 54, 70]);
+const VEND = mat([70, 74, 92]);
+const PAINT: RGB[] = [
+  [214, 70, 60],
+  [236, 190, 70],
+  [70, 150, 210],
+  [230, 230, 220],
+];
+const CABLE = mat([30, 30, 36], [6, 6, 10]);
+const FIN = mat([226, 230, 236], [44, 48, 64]);
+const SOLAR = mat([40, 62, 120], [10, 14, 40]);
+const SOLAR_LINE = mat([150, 176, 214], [40, 50, 90]);
+const HAZARD = mat([214, 182, 40]);
+
+const tile4 = (p: Painter, u0: number, v0: number, u1: number, v1: number, z: number) => p.quad(u0, v0, z, u1, v0, z, u1, v1, z, u0, v1, z);
+
+/** Lot plate under a developed zone sprite: $ cracked tint, $$ none (today's lot), $$$ clean pavers with planter dots. */
+export function dressBase(p: Painter): void {
+  if (p.tier === 1) return;
+  const a = 0.04;
+  const b = 0.96;
+  if (p.tier === 0) {
+    p.begin_();
+    tile4(p, a, a, b, b, 0);
+    p.fill(p.col(PLATE_GRIME, 1, 0.16));
+    if (p.lod || !p.g) return;
+    // A few hairline cracks (hashed from the seed: no rng before the recipe).
+    p.begin_();
+    for (let i = 0; i < 3; i++) {
+      let u = 0.1 + 0.8 * hash2(i, 1, p.seed);
+      let v = 0.1 + 0.8 * hash2(i, 2, p.seed);
+      p.m(u, v, 0.05);
+      for (let s = 0; s < 3; s++) {
+        u = Math.max(a, Math.min(b, u + (hash2(i, s + 3, p.seed) - 0.5) * 0.22));
+        v = Math.max(a, Math.min(b, v + (hash2(i, s + 7, p.seed) - 0.5) * 0.22));
+        p.l(u, v, 0.05);
+      }
+    }
+    p.stroke(p.col(CRACK, 1, 0.55), 0.45);
+    return;
+  }
+  p.begin_();
+  tile4(p, a, a, b, b, 0);
+  p.fill(p.col(PAVER, 1.04));
+  if (!p.g) return;
+  if (!p.lod) {
+    p.begin_();
+    for (let k = 1; k < 4; k++) {
+      const t = a + ((b - a) * k) / 4;
+      p.m(t, a, 0.05);
+      p.l(t, b, 0.05);
+      p.m(a, t, 0.05);
+      p.l(b, t, 0.05);
+    }
+    p.stroke(p.col(PAVER_LINE, 1, 0.7), 0.35);
+  }
+  // Planter dots along the two front edges, with garden lights at night.
+  const g = p.g;
+  for (let k = 0; k < 4; k++) {
+    for (const [u, v] of [
+      [0.12 + k * 0.25, 0.93],
+      [0.93, 0.12 + k * 0.25],
+    ] as const) {
+      const x = p.X(u, v);
+      const y = p.Y(u, v, 0.8);
+      g.beginPath();
+      g.ellipse(x, y, 2.1, 1.3, 0, 0, Math.PI * 2);
+      g.fillStyle = p.col(LEAF, 1);
+      g.fill();
+      if (!p.lod) {
+        g.beginPath();
+        g.ellipse(x + 0.4, y - 0.5, 1.1, 0.7, 0, 0, Math.PI * 2);
+        g.fillStyle = p.col(LEAF_HI, 1);
+        g.fill();
+      }
+    }
+  }
+  const ga = p.glowA();
+  if (ga > 0.1 && !p.lod) {
+    g.fillStyle = css([255, 226, 160], Math.min(1, ga));
+    for (let k = 0; k < 3; k++) {
+      g.fillRect(p.X(0.25 + k * 0.25, 0.96) - 0.5, p.Y(0.25 + k * 0.25, 0.96, 1.5) - 0.5, 1, 1);
+      g.fillRect(p.X(0.96, 0.25 + k * 0.25) - 0.5, p.Y(0.96, 0.25 + k * 0.25, 1.5) - 0.5, 1, 1);
+    }
+  }
+}
+
+/** Highest flat roof the recipe drew (ties: the larger one). */
+function topRoof(p: Painter): Roof | null {
+  let best: Roof | null = null;
+  for (const r of p.roofs) {
+    if (r.round || r.area < 0.02) continue;
+    if (!best || r.z > best.z + 0.5 || (Math.abs(r.z - best.z) <= 0.5 && r.area > best.area)) best = r;
+  }
+  return best;
+}
+
+/** Flat roofs at least 8 px under the top (setbacks, podiums, lower wings). */
+function lowerRoofs(p: Painter, top: Roof): Roof[] {
+  return p.roofs.filter((r) => !r.round && r.area >= 0.03 && r.z <= top.z - 8 && r.z > 2);
+}
+
+/** Largest axis-aligned visible face on the left (+v) or right (+u) side. */
+function bigFace(p: Painter, left: boolean): Face | null {
+  let best: Face | null = null;
+  let bestA = 0;
+  for (const f of p.faces) {
+    if (f.left !== left) continue;
+    if (left ? f.av !== f.bv : f.au !== f.bu) continue;
+    const a = Math.abs(left ? f.bu - f.au : f.bv - f.av) * (f.z1 - f.z0);
+    if (a > bestA) {
+      bestA = a;
+      best = f;
+    }
+  }
+  return best;
+}
+
+/** Point on an axis-aligned face at fraction t, pushed `out` tile units outward. */
+function facePt(f: Face, t: number, out: number): [number, number] {
+  const u = f.au + (f.bu - f.au) * t;
+  const v = f.av + (f.bv - f.av) * t;
+  return f.left ? [u, v + out] : [u + out, v];
+}
+
+/** Thin strip on a face from t0 to t1 at height z..z+h, standing `out` off the wall. */
+function faceStrip(p: Painter, f: Face, t0: number, t1: number, z: number, h: number, out: number) {
+  const [a0, b0] = facePt(f, t0, out);
+  const [a1, b1] = facePt(f, t1, out);
+  p.begin_();
+  p.quad(a0, b0, z, a1, b1, z, a1, b1, z + h, a0, b0, z + h);
+}
+
+/** Footprint extent the recipe used (max u and v of its roofs). */
+function extent(p: Painter): [number, number] {
+  let mu = 0;
+  let mv = 0;
+  for (const r of p.roofs) {
+    if (r.u1 > mu) mu = r.u1;
+    if (r.v1 > mv) mv = r.v1;
+  }
+  return [mu, mv];
+}
+
+// ── $ props ────────────────────────────────────────────────────────────────
+
+function tarpOn(p: Painter, r: Roof) {
+  const du = r.u1 - r.u0;
+  const dv = r.v1 - r.v0;
+  if (du < 0.16 || dv < 0.16) return;
+  const u0 = r.u0 + du * (0.12 + 0.3 * p.rng.next());
+  const v0 = r.v0 + dv * (0.12 + 0.3 * p.rng.next());
+  const u1 = Math.min(r.u1 - 0.03, u0 + du * 0.42);
+  const v1 = Math.min(r.v1 - 0.03, v0 + dv * 0.4);
+  const tarp = pick(p, TARP);
+  p.begin_();
+  p.quad(u0, v0, r.z + 1.6, u1, v0, r.z + 0.4, u1, v1, r.z + 0.4, u0, v1, r.z + 1.6);
+  p.fill(p.col(tarp, 1.05));
+  if (!p.lod) p.stroke(p.col(tarp, 0.7, 0.8), 0.4);
+}
+
+function grimeRes(p: Painter, top: Roof | null, left: Face | null, right: Face | null, level: number) {
+  if (top && level >= 2 && top.u1 - top.u0 >= 0.3 && top.v1 - top.v0 >= 0.3) {
+    // A rooftop shack squeezed onto the roof: cramped, patched, lived in.
+    const u0 = top.u0 + 0.05;
+    const v0 = top.v1 - 0.22;
+    p.box(u0, v0, u0 + 0.18, v0 + 0.16, top.z, top.z + 4.5, pick(p, RES_WALL), { win: W_SMALL, noTop: true, uplight: false });
+    p.shed(u0 - 0.01, v0 - 0.01, u0 + 0.19, v0 + 0.17, top.z + 4.5, 1.5, pick(p, TARP), 'v');
+  }
+  if (top && p.rng.next() < 0.75) tarpOn(p, top);
+  if (top) {
+    const low = lowerRoofs(p, top);
+    const r = low.length ? low[Math.floor(p.rng.next() * low.length)] : null;
+    if (r && r.u1 - r.u0 > 0.18 && r.v1 - r.v0 > 0.18) p.tank((r.u0 + r.u1) / 2, (r.v0 + r.v1) / 2, r.z, 0.045, 4.5);
+  }
+  if (right && !p.lod) {
+    const n = 2 + Math.floor(p.rng.next() * 2);
+    for (let i = 0; i < n; i++) {
+      const t = 0.15 + 0.7 * p.rng.next();
+      const z = right.z0 + 4 + (right.z1 - right.z0 - 9) * p.rng.next();
+      const [u, v] = facePt(right, t, 0);
+      p.box(u, v, u + 0.04, v + 0.06, z, z + 2.6, STEEL, { uplight: false });
+    }
+  }
+  if (left && !p.lod && left.z1 - left.z0 > 14 && p.rng.next() < 0.7) {
+    // Washing strung along the face.
+    const z = left.z0 + 7 + Math.floor(p.rng.next() * Math.max(1, (left.z1 - left.z0 - 14) / 7)) * 7;
+    const [u0, v0] = facePt(left, 0.15, 0.05);
+    const [u1, v1] = facePt(left, 0.6, 0.05);
+    p.begin_();
+    p.m(u0, v0, z + 3);
+    p.l(u1, v1, z + 3);
+    p.stroke(p.col(STEEL, 0.6), 0.35);
+    const g = p.g;
+    if (g) {
+      const cloths: RGB[] = [
+        [230, 90, 150],
+        [90, 200, 230],
+        [240, 220, 120],
+        [220, 220, 230],
+      ];
+      for (let i = 0; i < 4; i++) {
+        const t = (i + 0.5) / 4;
+        const x = p.X(u0 + (u1 - u0) * t, v0 + (v1 - v0) * t);
+        const y = p.Y(u0 + (u1 - u0) * t, v0 + (v1 - v0) * t, z + 3);
+        g.fillStyle = p.col(mat(cloths[(i + (p.seed & 3)) % 4]), 0.9);
+        g.fillRect(x - 1, y, 2, 2.2 + (i % 2));
+      }
+    }
+  }
+}
+
+function grimeCom(p: Painter, top: Roof | null, left: Face | null, right: Face | null) {
+  if (left && !p.lod) {
+    // Vending machines against the street face, glowing at night.
+    const n = 1 + (p.rng.next() < 0.5 ? 1 : 0);
+    for (let i = 0; i < n; i++) {
+      const t = 0.62 + i * 0.13;
+      const [u, v] = facePt(left, t, 0);
+      p.box(u, v, u + 0.07, v + 0.05, 0, 6.5, VEND, { uplight: false });
+      const [su, sv] = facePt(left, t + 0.012, 0.05);
+      const c = i ? p.pal.neon2 : p.pal.neon;
+      p.begin_();
+      p.quad(su, sv, 1.5, su + 0.05, sv, 1.5, su + 0.05, sv, 5.8, su, sv, 5.8);
+      p.fill(css(p.emissive(c, 0.4)));
+      p.glow(su + 0.025, sv + 0.02, 3.5, c, 12, p.glowA() * 0.6);
+    }
+  }
+  if (right && !p.lod && right.z1 - right.z0 >= 10) {
+    // Hand-painted sign: flat paint, dark lettering, no neon.
+    const paint = PAINT[Math.floor(p.rng.next() * PAINT.length)];
+    const z0 = Math.min(right.z1 - 5, 7);
+    faceStrip(p, right, 0.2, 0.62, z0, 4.5, 0.01);
+    p.fill(p.col(mat(paint), 0.9));
+    const g = p.g;
+    if (g) {
+      g.fillStyle = p.col(mat([30, 28, 36]), 1);
+      for (let k = 0; k < 4; k++) {
+        const [u, v] = facePt(right, 0.25 + k * 0.09, 0.012);
+        const x = p.X(u, v);
+        const y = p.Y(u, v, z0 + 1);
+        g.fillRect(x - 0.6, y - 2.6 + (k % 2) * 0.4, 1.3, 2.2);
+      }
+    }
+  }
+  if (top && !p.lod) {
+    // Tangled cable sagging from the roof edge down to a street pole at the front corner.
+    const [mu, mv] = extent(p);
+    const pu = Math.min(0.97, mu + 0.06);
+    const pv = Math.min(0.97, mv + 0.06);
+    p.begin_();
+    p.m(pu, pv, 0);
+    p.l(pu, pv, 10);
+    p.stroke(p.col(STEEL, 0.55), 0.6);
+    p.begin_();
+    for (let k = 0; k < 3; k++) {
+      const su = top.u0 + (top.u1 - top.u0) * (0.3 + k * 0.25);
+      const sv = top.v1;
+      const zt = Math.min(top.z, 18) - k;
+      p.m(su, sv, zt);
+      p.l((su + pu) / 2, (sv + pv) / 2, (zt + 10) / 2 - 3 - k);
+      p.l(pu, pv, 9.5 - k * 0.5);
+    }
+    p.stroke(p.col(CABLE, 1, 0.85), 0.35);
+  }
+}
+
+function grimeInd(p: Painter, top: Roof | null, left: Face | null) {
+  const [mu, mv] = extent(p);
+  if (mv <= 0.8) p.container(0.14, 0.84, 0.5, 0.96, 0, 5.5, pick(p, CONTAINER));
+  else if (mu <= 0.8) p.container(0.84, 0.14, 0.96, 0.5, 0, 5.5, pick(p, CONTAINER));
+  if (left && !p.lod && p.g) {
+    // Hazard stripes along the foot of the street face.
+    p.begin_();
+    for (let i = 0; i < 10; i += 2) {
+      const [a0, b0] = facePt(left, i / 10, 0.004);
+      const [a1, b1] = facePt(left, (i + 1) / 10, 0.004);
+      p.quad(a0, b0, 0.6, a1, b1, 0.6, a1, b1, 2.4, a0, b0, 2.4);
+    }
+    p.fill(p.col(HAZARD, 0.8));
+  }
+  if (top) p.blinker(top.u1 - 0.05, top.v1 - 0.05, top.z, NEON.red, 1.1, 12);
+}
+
+// ── $$ props ───────────────────────────────────────────────────────────────
+
+function tidyRes(p: Painter, top: Roof | null, left: Face | null, right: Face | null) {
+  // Window boxes on the right face, lit balcony rails on the left.
+  if (right && !p.lod && right.z1 - right.z0 >= 12) {
+    const g = p.g;
+    for (let z = right.z0 + 8; z < Math.min(right.z1 - 3, right.z0 + 48); z += 7) {
+      for (let k = 0; k < 3; k++) {
+        if (hash2(k, Math.round(z), p.seed + 5) < 0.45) continue;
+        const t = 0.2 + k * 0.3;
+        faceStrip(p, right, t - 0.07, t + 0.07, z, 1.6, 0.025);
+        p.fill(p.col(LEAF, 1));
+        if (g) {
+          const [u, v] = facePt(right, t, 0.03);
+          g.fillStyle = p.col(LEAF_HI, 1);
+          g.fillRect(p.X(u, v) - 1.2, p.Y(u, v, z + 2.2), 2.4, 0.9);
+        }
+      }
+    }
+  }
+  if (left && left.z1 - left.z0 >= 14) {
+    const step = left.z1 - left.z0 > 60 ? 14 : 7;
+    let n = 0;
+    for (let z = left.z0 + step; z < left.z1 - 4 && n < 5; z += step, n++) {
+      const [a0, b0] = facePt(left, 0.06, 0.035);
+      const [a1, b1] = facePt(left, 0.94, 0.035);
+      p.neon([a0, b0, z, a1, b1, z], [255, 228, 182], 0.45);
+    }
+  }
+  if (top && !p.lod && top.area >= 0.06) p.greens(top.u0 + 0.04, top.v1 - 0.12, top.u0 + 0.2, top.v1 - 0.03, top.z, 2);
+}
+
+function tidyCom(p: Painter, left: Face | null) {
+  if (left && !p.lod) {
+    // A clean lit fascia over the shop front.
+    const z = Math.min(left.z1 - 2, 8);
+    faceStrip(p, left, 0.1, 0.9, z, 1.4, 0.02);
+    p.fill(css(p.emissive([235, 240, 255], 0.3)));
+  }
+}
+
+// ── $$$ props ──────────────────────────────────────────────────────────────
+
+function pool(p: Painter, r: Roof, u0: number, v0: number, u1: number, v1: number) {
+  p.begin_();
+  tile4(p, u0 - 0.02, v0 - 0.02, u1 + 0.02, v1 + 0.02, r.z + 0.2);
+  p.fill(p.col(POOL_RIM, 1.05));
+  p.begin_();
+  tile4(p, u0, v0, u1, v1, r.z + 0.3);
+  p.fill(p.col(POOL, 1));
+  if (!p.lod) {
+    p.begin_();
+    p.m(u0 + (u1 - u0) * 0.2, v0 + (v1 - v0) * 0.3, r.z + 0.35);
+    p.l(u0 + (u1 - u0) * 0.7, v0 + (v1 - v0) * 0.3, r.z + 0.35);
+    p.stroke(css([255, 255, 255], 0.35 * (1 - p.n)), 0.4);
+  }
+  p.glow((u0 + u1) / 2, (v0 + v1) / 2, r.z + 1, [60, 220, 255], 26, p.glowA() * 0.6);
+}
+
+function luxeTop(p: Painter, top: Roof, level: number, zone: number) {
+  const du = top.u1 - top.u0;
+  const dv = top.v1 - top.v0;
+  if (du < 0.18 || dv < 0.18) {
+    p.blinker((top.u0 + top.u1) / 2, (top.v0 + top.v1) / 2, top.z, p.pal.neon2, 1.6, 12);
+    return;
+  }
+  const big = du >= 0.4 && dv >= 0.3;
+  const wantPad = zone === 2 ? top.area >= 0.12 : level === 3;
+  if (zone === 1) {
+    // Rooftop pool along the back edge (both halves when there is no pad).
+    const pu1 = wantPad && big ? top.u0 + du * 0.48 : top.u1 - du * 0.12;
+    pool(p, top, top.u0 + du * 0.12, top.v0 + dv * 0.14, pu1, top.v0 + dv * (big ? 0.55 : 0.6));
+  }
+  if (wantPad) {
+    const r = Math.min(du, dv) * (big ? 0.24 : 0.32);
+    const cu = zone === 1 && big ? top.u1 - du * 0.27 : (top.u0 + top.u1) / 2;
+    const cv = zone === 1 && big ? top.v0 + dv * 0.62 : (top.v0 + top.v1) / 2;
+    p.padMark(cu, cv, r, top.z + 0.2, p.pal.neon2);
+  }
+  // Antenna beacon at the roof corner.
+  p.blinker(top.u1 - 0.04, top.v0 + 0.04, top.z, p.pal.neon2, 1.7, 14);
+}
+
+function luxeRes(p: Painter, top: Roof | null, level: number) {
+  if (!top) return;
+  luxeTop(p, top, level, 1);
+  // Sky gardens on the setbacks.
+  for (const r of lowerRoofs(p, top).slice(0, 2)) {
+    if (r.u1 - r.u0 > 0.14 && r.v1 - r.v0 > 0.1) p.greens(r.u0 + 0.03, r.v0 + 0.03, r.u1 - 0.03, r.v1 - 0.03, r.z, 4);
+  }
+}
+
+function luxeCom(p: Painter, top: Roof | null, left: Face | null, right: Face | null, level: number) {
+  if (left) {
+    // A glowing gold lobby.
+    const [a0, b0] = facePt(left, 0, 0);
+    const [a1, b1] = facePt(left, 1, 0);
+    p.door(a0, b0, a1, b1, 0.3, 0.7, 0, Math.min(8, left.z1 - left.z0 - 1), p.pal.neon2);
+    p.glow((a0 + a1) / 2, (b0 + b1) / 2 + 0.06, 2, p.pal.neon2, 30, p.glowA() * 0.7);
+  }
+  if (right && right.z1 - right.z0 >= 18 && Math.abs(right.bv - right.av) >= 0.4) {
+    // One large clean holo panel.
+    const h = right.z1 - right.z0;
+    p.board(right.au, right.av, right.bu, right.bv, 0.16, 0.84, right.z0 + h * 0.35, right.z0 + h * 0.35 + Math.min(40, h * 0.42), 1, p.pal.neon, p.pal.neon2);
+  }
+  if (top) luxeTop(p, top, level, 2);
+}
+
+function luxeInd(p: Painter, top: Roof | null, left: Face | null, right: Face | null) {
+  if (top && top.u1 - top.u0 >= 0.2 && top.v1 - top.v0 >= 0.2) {
+    // Solar roof: rows of panels tilted to the sky.
+    const rows = Math.max(2, Math.min(4, Math.floor((top.v1 - top.v0) / 0.13)));
+    const dv = (top.v1 - top.v0 - 0.06) / rows;
+    for (let i = 0; i < rows; i++) {
+      const v0 = top.v0 + 0.03 + i * dv;
+      const v1 = v0 + dv * 0.72;
+      const u0 = top.u0 + 0.04;
+      const u1 = top.u1 - 0.04;
+      p.begin_();
+      p.quad(u0, v0, top.z + 2, u1, v0, top.z + 2, u1, v1, top.z + 0.5, u0, v1, top.z + 0.5);
+      p.fill(p.col(SOLAR, 1.1));
+      if (!p.lod) {
+        p.begin_();
+        for (let c = 1; c < 5; c++) {
+          const u = u0 + ((u1 - u0) * c) / 5;
+          p.m(u, v0, top.z + 2);
+          p.l(u, v1, top.z + 0.5);
+        }
+        p.stroke(p.col(SOLAR_LINE, 1, 0.5), 0.35);
+      }
+    }
+  }
+  if (right && !p.lod) p.ribs(right.au, right.av, right.bu, right.bv, right.z0 + 1, right.z1 - 1, Math.max(6, Math.round(Math.abs(right.bv - right.av) * 26)), FIN);
+  if (left) {
+    const [a0, b0] = facePt(left, 0.03, 0.01);
+    const [a1, b1] = facePt(left, 0.97, 0.01);
+    p.neon([a0, b0, left.z1 - 2, a1, b1, left.z1 - 2], p.pal.neon, 0.6);
+  }
+}
+
+/**
+ * Tier props for a developed zone sprite, after its recipe (EXPANSION §4.5). Placed from the
+ * recipe's recorded roofs and faces; drawn props register nothing (Painter.dressRec is off).
+ */
+export function dressTier(p: Painter, zone: number, level: number): void {
+  const top = topRoof(p);
+  const left = bigFace(p, true);
+  const right = bigFace(p, false);
+  if (p.tier === 0) {
+    if (zone === 1) grimeRes(p, top, left, right, level);
+    else if (zone === 2) grimeCom(p, top, left, right);
+    else grimeInd(p, top, left);
+  } else if (p.tier === 1) {
+    if (zone === 1) tidyRes(p, top, left, right);
+    else if (zone === 2) tidyCom(p, left);
+  } else if (zone === 1) luxeRes(p, top, level);
+  else if (zone === 2) luxeCom(p, top, left, right, level);
+  else luxeInd(p, top, left, right);
+}

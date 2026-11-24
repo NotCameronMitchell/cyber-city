@@ -12,16 +12,39 @@
 //    traffic field and population of the visible road tiles, new vehicles spawn
 //    there (fading in) and vehicles that leave the view are recycled.
 //  * The road list is rebuilt lazily after a 'tiles' event.
+//  * Road kinds (docs/EXPANSION.md §3.11): spawn weight per visible tile ×
+//    (Highway 1.6, Avenue 1.3, Street / Ramp 1, Back Alley 0.3); speed ×
+//    ROAD_KINDS[k].speed; lanes Street ±0.15, Avenue ±0.12 / ±0.27, Highway
+//    ±0.16 / ±0.36 (inner or outer lane by agent hash, kept on that kind);
+//    trucks are 35% of highway spawns; alleys carry only bikes (and walkers).
+//    15% of spawns enter from visible border roads heading inward, and a car
+//    whose only way on leads off the map fades out there instead of U-turning.
+//  * The public API (reset, invalidate, update, draw) is frozen: Effects drives it.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { MAP_SIZE, ZoneType } from '../../game/types';
+import { ROAD_KINDS } from '../../game/config';
+import { MAP_SIZE, RoadKind, ZoneType } from '../../game/types';
 import type { World } from '../../game/world';
 import { HALF_H, HALF_W } from '../camera';
 import { css, glowSprite, mix, type RGB } from '../palette';
 
 const N = MAP_SIZE;
-const LANE = 0.15;
 const WALK = 0.41;
+/** Lateral lane offsets per RoadKind: [inner, outer] (a street has one lane each way). */
+const LANES: readonly (readonly [number, number])[] = [
+  [0.15, 0.15],
+  [0.12, 0.27],
+  [0.16, 0.36],
+  [0.07, 0.07],
+  [0.15, 0.15],
+];
+/** Spawn weight per RoadKind (§3.11). */
+const SPAWN_W = [1, 1.3, 1.6, 0.3, 1];
+const SPAWN_W_MAX = 1.6;
+/** Car speed multiplier per RoadKind (ROAD_KINDS[k].speed). */
+const SPEED = ROAD_KINDS.map((d) => d.speed);
+/** Share of spawns that enter from a visible border road (X2). */
+const EDGE_SHARE = 0.15;
 /** Direction vectors: 0 = N (y-1), 1 = E (x+1), 2 = S (y+1), 3 = W (x-1). Bit = 1 << d (World.roadMask). */
 const DX = [0, 1, 0, -1];
 const DY = [-1, 0, 1, 0];
@@ -54,6 +77,10 @@ interface Agent {
   /** Seconds alive (fade in) / remaining (fade out when < 0 means dying). */
   age: number;
   dying: number;
+  /** 0 inner / 1 outer lane on multi-lane roads (agent hash, kept while on that kind). */
+  lane: number;
+  /** Lateral offset the agent entered this tile at (continuity across kind changes). */
+  loff: number;
   // Cached path control points (tile space).
   p0u: number;
   p0v: number;
@@ -92,11 +119,15 @@ export class StreetTraffic {
   private cars: Agent[] = [];
   private walkers: Agent[] = [];
   private roads: number[] = [];
+  /** Road kind per tile (valid where a road is). */
+  private kinds = new Uint8Array(N * N);
   /** Road tiles next to dense commercial lots (pedestrian spawn points). */
   private walkRoads: number[] = [];
   private dirty = true;
   private visRoads: number[] = [];
   private visWalk: number[] = [];
+  /** Visible border road tiles (regional traffic enters here). */
+  private visEdge: number[] = [];
   private targetCars = 0;
   private targetWalkers = 0;
   private recount = 0;
@@ -111,6 +142,8 @@ export class StreetTraffic {
   private umbrellaCss = UMBRELLA.map((c) => css(c));
   private headGlow: HTMLCanvasElement | null = null;
   private tailGlow: HTMLCanvasElement | null = null;
+  /** Scratch exit weights (chooseExit). */
+  private w = [0, 0, 0, 0];
   /** Scratch outputs of pos() / heading() (avoids per-agent allocations). */
   private pu = 0;
   private pv = 0;
@@ -138,6 +171,7 @@ export class StreetTraffic {
     for (let i = 0; i < tiles.length; i++) {
       if (!tiles[i].road) continue;
       this.roads.push(i);
+      this.kinds[i] = tiles[i].roadKind;
       const x = i % N;
       const y = (i / N) | 0;
       for (let d = 0; d < 4; d++) {
@@ -160,14 +194,17 @@ export class StreetTraffic {
     const m = 2;
     this.visRoads.length = 0;
     this.visWalk.length = 0;
+    this.visEdge.length = 0;
     const traffic = world.fields.traffic;
+    const kinds = this.kinds;
     let sum = 0;
     for (const i of this.roads) {
       const x = i % N;
       const y = (i / N) | 0;
       if (x < b.x0 - m || x > b.x1 + m || y < b.y0 - m || y > b.y1 + m) continue;
       this.visRoads.push(i);
-      sum += 0.05 + traffic[i] * 0.85;
+      sum += (0.05 + traffic[i] * 0.85) * SPAWN_W[kinds[i]];
+      if ((x === 0 || y === 0 || x === N - 1 || y === N - 1) && world.tiles[i].terrain === 0) this.visEdge.push(i);
     }
     for (const i of this.walkRoads) {
       const x = i % N;
@@ -232,7 +269,8 @@ export class StreetTraffic {
           continue;
         }
       }
-      const jam = walk ? 1 : 1 - 0.45 * traffic[a.y * N + a.x];
+      const ti = a.y * N + a.x;
+      const jam = walk ? 1 : (1 - 0.45 * traffic[ti]) * SPEED[this.kinds[ti]];
       a.t += (a.speed * jam * dt) / a.len;
       while (a.t >= 1) {
         a.t -= 1;
@@ -247,27 +285,37 @@ export class StreetTraffic {
         a.x = nx;
         a.y = ny;
         a.din = a.dout;
-        a.dout = this.chooseExit(world, nx, ny, a.din, walk);
+        a.dout = this.chooseExit(world, nx, ny, a.din, walk, a.kind === Kind.Bike);
+        // Heading off the map (a regional road's end): fade out over this tile.
+        if (!walk && !world.inBounds(nx + DX[a.dout], ny + DY[a.dout]) && a.dying <= 0) a.dying = Math.max(0.3, Math.min(0.6, a.len / Math.max(0.05, a.speed)));
         this.path(a, walk);
       }
     }
   }
 
-  private chooseExit(world: World, x: number, y: number, din: number, walk: boolean): number {
+  private chooseExit(world: World, x: number, y: number, din: number, walk: boolean, bike = false): number {
     const mask = world.roadMask(x, y);
     const back = (din + 2) & 3;
     let total = 0;
-    const w = [0, 0, 0, 0];
+    const w = this.w;
+    w[0] = w[1] = w[2] = w[3] = 0;
     const traffic = world.fields.traffic;
+    const kinds = this.kinds;
     for (let d = 0; d < 4; d++) {
       if (!(mask & (1 << d)) || d === back) continue;
       const ni = (y + DY[d]) * N + (x + DX[d]);
+      // Back alleys carry only bikes and walkers.
+      if (!walk && !bike && kinds[ni] === RoadKind.Alley) continue;
       let k = d === din ? 2.2 : 1;
       if (!walk) k *= 0.35 + traffic[ni];
       w[d] = k;
       total += k;
     }
-    if (total <= 0) return back; // dead end: U-turn
+    if (total <= 0) {
+      // Dead end. A road running off the map edge: drive on and fade out (regional traffic).
+      if (!walk && !world.inBounds(x + DX[din], y + DY[din])) return din;
+      return back; // U-turn
+    }
     let r = rand() * total;
     for (let d = 0; d < 4; d++) {
       r -= w[d];
@@ -276,18 +324,26 @@ export class StreetTraffic {
     return din;
   }
 
+  /** Lane offset of an agent on tile i (its kind's inner or outer lane). */
+  private laneOff(a: Agent, i: number): number {
+    const l = LANES[this.kinds[i]] ?? LANES[0];
+    return l[a.lane];
+  }
+
   /** Set the in-tile Bézier path for the agent's (din → dout). */
   private path(a: Agent, walk: boolean) {
-    const off = walk ? WALK : LANE;
+    const exit = walk ? WALK : this.laneOff(a, a.y * N + a.x);
+    const off = walk ? WALK : (a.loff || exit);
+    a.loff = exit;
     const cu = a.x + 0.5;
     const cv = a.y + 0.5;
     const di = a.din;
     const dout = a.dout;
-    // Right-hand normal of a heading (dx, dy) is (-dy, dx).
+    // Right-hand normal of a heading (dx, dy) is (-dy, dx). Entry at the lane it arrived in, exit in this tile's lane.
     a.p0u = cu - DX[di] * 0.5 - DY[di] * off;
     a.p0v = cv - DY[di] * 0.5 + DX[di] * off;
-    a.p1u = cu + DX[dout] * 0.5 - DY[dout] * off;
-    a.p1v = cv + DY[dout] * 0.5 + DX[dout] * off;
+    a.p1u = cu + DX[dout] * 0.5 - DY[dout] * exit;
+    a.p1v = cv + DY[dout] * 0.5 + DX[dout] * exit;
     let k: number;
     if (dout === di) {
       k = 1 / 3;
@@ -307,37 +363,73 @@ export class StreetTraffic {
     a.c2v = a.p1v - DY[dout] * k;
   }
 
-  private spawn(world: World, pool: number[], walk: boolean) {
-    // Pick the busier of two random candidates.
-    const traffic = world.fields.traffic;
+  /** A pool tile weighted by its kind's spawn weight (rejection sampling, a few tries). */
+  private pick(pool: number[]): number {
+    const kinds = this.kinds;
     let i = pool[(rand() * pool.length) | 0];
-    const j = pool[(rand() * pool.length) | 0];
-    if (!walk && traffic[j] > traffic[i]) i = j;
+    for (let k = 0; k < 4 && rand() * SPAWN_W_MAX > SPAWN_W[kinds[i]]; k++) i = pool[(rand() * pool.length) | 0];
+    return i;
+  }
+
+  private spawn(world: World, pool: number[], walk: boolean) {
+    const traffic = world.fields.traffic;
+    const kinds = this.kinds;
+    let i: number;
+    let fromEdge = -1;
+    if (!walk && this.visEdge.length && rand() < EDGE_SHARE) {
+      // Regional traffic: enter from a visible border road, heading inward.
+      i = this.visEdge[(rand() * this.visEdge.length) | 0];
+      const x = i % N;
+      const y = (i / N) | 0;
+      fromEdge = x === 0 ? 1 : x === N - 1 ? 3 : y === 0 ? 2 : 0;
+    } else {
+      // Pick the busier of two (kind-weighted) random candidates.
+      i = this.pick(pool);
+      const j = this.pick(pool);
+      if (!walk && traffic[j] * SPAWN_W[kinds[j]] > traffic[i] * SPAWN_W[kinds[i]]) i = j;
+    }
     const x = i % N;
     const y = (i / N) | 0;
     const mask = world.roadMask(x, y);
     if (!mask) return;
     const dirs: number[] = [];
     for (let d = 0; d < 4; d++) if (mask & (1 << d)) dirs.push(d);
-    const dout = dirs[(rand() * dirs.length) | 0];
-    // Enter from another connected side (or from the exit side at a dead end → U-turn).
-    const others = dirs.filter((d) => d !== dout);
-    const side = others.length ? others[(rand() * others.length) | 0] : dout;
-    const din = (side + 2) & 3;
+    let din: number;
+    let dout: number;
+    if (fromEdge >= 0) {
+      din = fromEdge;
+      dout = this.chooseExit(world, x, y, din, false);
+    } else {
+      dout = dirs[(rand() * dirs.length) | 0];
+      // Enter from another connected side (or from the exit side at a dead end → U-turn).
+      const others = dirs.filter((d) => d !== dout);
+      const side = others.length ? others[(rand() * others.length) | 0] : dout;
+      din = (side + 2) & 3;
+    }
     const r = rand();
-    const kind = walk ? Kind.Walker : r < 0.12 ? Kind.Taxi : r < 0.24 ? Kind.Truck : r < 0.36 ? Kind.Bike : Kind.Car;
+    const k = kinds[i];
+    // Alleys: bikes only. Highways: 35% trucks. Elsewhere the usual mix.
+    const kind = walk
+      ? Kind.Walker
+      : k === RoadKind.Alley
+        ? Kind.Bike
+        : k === RoadKind.Highway
+          ? r < 0.35 ? Kind.Truck : r < 0.45 ? Kind.Taxi : Kind.Car
+          : r < 0.12 ? Kind.Taxi : r < 0.24 ? Kind.Truck : r < 0.36 ? Kind.Bike : Kind.Car;
     const a: Agent = {
       x,
       y,
       din,
       dout,
-      t: rand(),
+      t: fromEdge >= 0 ? 0 : rand(),
       len: 1,
       speed: walk ? 0.1 + rand() * 0.08 : kind === Kind.Truck ? 0.45 + rand() * 0.15 : kind === Kind.Bike ? 0.8 + rand() * 0.3 : 0.6 + rand() * 0.3,
       kind,
       col: (rand() * 1000) | 0,
-      age: 0,
+      age: fromEdge >= 0 ? -0.15 : 0,
       dying: 0,
+      lane: rand() < 0.5 ? 0 : 1,
+      loff: 0,
       p0u: 0,
       p0v: 0,
       c1u: 0,
