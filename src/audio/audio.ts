@@ -8,6 +8,8 @@
 //     rising tone for a chapter title, a glassy arpeggio for a Silt Log and a
 //     slow chord for an ending. They listen to the story events directly (no
 //     new 'sfx' kinds) and share the SFX bus, volume and voice cap.
+//   • Launch rumble (EXPANSION §9): on 'liftoff', a 3 s low-passed noise swell
+//     under a slow rising sine. Launches are ≥ 180 s apart, so it never drones.
 //   • Optional ambient score (settings.music): a slow generative synthwave pad
 //     — detuned saws + sub triangle through a breathing low-pass, chord changes
 //     every ~8 s, a soft sine bass and a sparse delayed arpeggio.
@@ -21,8 +23,9 @@ import type { GameEventMap } from '../game/events';
 import type { Game } from '../game/game';
 
 type SfxKind = GameEventMap['sfx'];
-type StoryCue = 'incoming' | 'card' | 'chapter' | 'log' | 'ending';
-const STORY_GAP: Record<StoryCue, number> = { incoming: 1.5, card: 0.6, chapter: 2, log: 1.5, ending: 3 };
+/** Event-driven cues with their own gap (not sfx kinds; STORY-CONTRACT keys a Record on those). */
+type StoryCue = 'incoming' | 'card' | 'chapter' | 'log' | 'ending' | 'launch';
+const STORY_GAP: Record<StoryCue, number> = { incoming: 1.5, card: 0.6, chapter: 2, log: 1.5, ending: 3, launch: 20 };
 
 const MASTER_GAIN = 0.42;
 const SFX_GAIN = 0.9;
@@ -67,6 +70,7 @@ export class AudioEngine {
     game.events.on('chapter', () => this.cue('chapter'));
     game.events.on('log', () => this.cue('log'));
     game.events.on('ending', () => this.cue('ending'));
+    game.events.on('liftoff', () => this.cue('launch'));
     game.events.on('settings', () => this.syncSettings());
     const unlock = () => this.unlock();
     for (const type of ['pointerdown', 'touchend', 'mousedown', 'keydown']) {
@@ -240,7 +244,38 @@ export class AudioEngine {
       case 'ending':
         this.milestone(t);
         return;
+      case 'launch':
+        this.launch(t);
+        return;
     }
+  }
+
+  /**
+   * A rocket leaving the city (EXPANSION §9): low-passed noise that swells for ~1.2 s and fades by
+   * 3 s, a sub sine rising slowly under it and a faint high air roar. About 3 s, sfx bus volume.
+   */
+  private launch(t: number): void {
+    const ctx = this.ctx!;
+    const src = ctx.createBufferSource();
+    src.buffer = this.noise;
+    src.loop = true;
+    const lp = ctx.createBiquadFilter();
+    lp.type = 'lowpass';
+    lp.Q.value = 0.7;
+    lp.frequency.setValueAtTime(160, t);
+    lp.frequency.exponentialRampToValueAtTime(520, t + 1.2);
+    lp.frequency.exponentialRampToValueAtTime(140, t + 3);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(0.16, t + 1.1);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 3);
+    src.connect(lp).connect(g).connect(this.sfxBus!);
+    this.track(src, g);
+    src.start(t, Math.random() * 0.5);
+    src.stop(t + 3.05);
+    // The slow rising sine under the roar.
+    this.tone('sine', 38, t, 3, 0.09, { f1: 72, glide: 2.8, attack: 0.6 });
+    this.hiss(t + 0.3, 2.4, 0.012, 'bandpass', 1800, { f1: 900, q: 0.6, attack: 0.5 });
   }
 
   /** Oscillator with an attack / exponential-decay envelope and optional pitch glide. */

@@ -7,15 +7,42 @@
 import { isUnlocked, lockedReason } from '../game/actions';
 import { BUILDINGS, isBuildingTool } from '../game/config';
 import { storageGet, storageSet } from '../game/game';
+import { shoreSites } from '../game/ports';
+import { isRoadTool, type RoadTool } from '../game/roads';
 import type { OverlayId, ToolId } from '../game/types';
 import type { UIContext } from './context';
 import { buzz, closestData, h, setAttr, setClass, setHidden, setHtml, setStyle, setText } from './dom';
 import { abbr } from './format';
 import { icon } from './icons';
 import { factionSigil } from './story/sigils';
-import { CATEGORIES, OVERLAYS, SERVICE_SWATCHES, categoryOf, costLabel, livePrice, overlayMeta, toolMeta, type CategoryId } from './tools';
+import {
+  CATEGORIES,
+  OVERLAYS,
+  SERVICE_SWATCHES,
+  TIER_PIP_DOWN,
+  TIER_PIP_UP,
+  TIER_SWATCHES,
+  categoryChrome,
+  categoryOf,
+  costLabel,
+  isHybrid,
+  livePrice,
+  overlayMeta,
+  roadButton,
+  toolMeta,
+  type CategoryId,
+} from './tools';
 
 const HINT_KEY = 'cybercity.ui.hint.v1';
+/** Tool ids whose tray card the player has seen (the toolbar "new" dots, EXPANSION §7.1). Per device. */
+export const NEWDOT_KEY = 'cybercity.ui.newdot.v1';
+/**
+ * Tools this update adds. A device with no "seen" list yet counts every other unlocked tool as
+ * seen, so an existing city shows dots exactly where the new tools are.
+ */
+const NEW_TOOLS: ReadonlySet<ToolId> = new Set<ToolId>(['alley', 'avenue', 'highway', 'skyway', 'academy', 'seaport', 'airport', 'spaceport']);
+/** "No straight shore here" (EXPANSION §5.1): the Seaport card on a map without a valid site. */
+export const NO_SHORE = 'No straight shore here';
 
 function replayShake(el: HTMLElement): void {
   el.classList.remove('is-shake');
@@ -23,6 +50,16 @@ function replayShake(el: HTMLElement): void {
   el.classList.add('is-shake');
 }
 const HINT_MS = 9000;
+
+interface CatRefs {
+  btn: HTMLButtonElement;
+  ico: HTMLElement;
+  long: HTMLElement;
+  short: HTMLElement;
+  dot: HTMLElement;
+  /** Current chrome key (label|icon), for the Infra relabel diff. */
+  chrome: string;
+}
 
 interface CardRefs {
   el: HTMLButtonElement;
@@ -46,6 +83,14 @@ export class Dock {
   readonly railSlot: HTMLElement;
   private readonly bar: HTMLElement;
   private readonly catBtns = new Map<CategoryId, HTMLButtonElement>();
+  private readonly catRefs = new Map<CategoryId, CatRefs>();
+  /** The session's last road tool (memory only: a new session never starts on a highway, §7.2). */
+  private lastRoad: RoadTool = 'road';
+  /** Tool ids whose card was on screen in an open tray (NEWDOT_KEY). */
+  private readonly seen: Set<ToolId>;
+  /** Valid Seaport sites on the current map, counted when the Infra tray opens (-1 = not counted). */
+  private shoreCount = -1;
+  private shoreMarks: Uint8Array | null = null;
   private readonly tray: HTMLElement;
   private readonly trayTitle: HTMLElement;
   private readonly trayRow: HTMLElement;
@@ -58,6 +103,8 @@ export class Dock {
   private readonly chipName: HTMLElement;
   private readonly chipCost: HTMLElement;
   private readonly hint: HTMLElement;
+  /** First-use tips (ui/tips.ts) render here, in the gesture-hint slot (EXPANSION §7.6). */
+  readonly tipSlot: HTMLElement;
   private hintTimer = 0;
   private hintDone: boolean;
   private coachShowing = false;
@@ -74,6 +121,10 @@ export class Dock {
     // ── Toolbar ────────────────────────────────────────────────────────────
     this.bar = h('nav', { class: 'cc-bar', 'aria-label': 'Build tools' });
     for (const c of CATEGORIES) {
+      const ico = h('span', { class: 'cc-tb-ico', html: icon(c.icon) });
+      const long = h('span', { class: 'is-long', text: c.label });
+      const short = h('span', { class: 'is-short', text: c.short });
+      const dot = h('span', { class: 'cc-tb-dot', 'aria-hidden': 'true' });
       const btn = h(
         'button',
         {
@@ -82,23 +133,28 @@ export class Dock {
           'data-cat': c.id,
           'aria-label': c.label,
           title: c.key ? `${c.label} (${c.key})` : c.label,
+          // A hybrid (Road) is both a tool toggle and a tray opener (§7.2).
           'aria-pressed': c.tool ? 'false' : undefined,
-          'aria-expanded': c.tool ? undefined : 'false',
+          'aria-expanded': c.items || !c.tool ? 'false' : undefined,
           hidden: c.story ? true : undefined,
         },
-        h('span', { class: 'cc-tb-ico', html: icon(c.icon) }),
-        h('span', { class: 'cc-tb-label' }, h('span', { class: 'is-long', text: c.label }), h('span', { class: 'is-short', text: c.short })),
-        h('span', { class: 'cc-tb-dot' }),
+        ico,
+        h('span', { class: 'cc-tb-label' }, long, short),
+        dot,
       );
       setStyle(btn, '--accent', c.accent);
       this.catBtns.set(c.id, btn);
+      this.catRefs.set(c.id, { btn, ico, long, short, dot, chrome: `${c.label}|${c.icon}` });
       this.bar.append(btn);
     }
+    this.seen = this.loadSeen();
     this.bar.addEventListener('click', this.onBarClick);
 
     // ── Tray ───────────────────────────────────────────────────────────────
     this.trayTitle = h('span', { class: 'cc-tray-title' });
     this.trayRow = h('div', { class: 'cc-tray-row', role: 'listbox' });
+    // Trays that can scroll fade at the right edge so later cards are discoverable (§7.2).
+    this.trayRow.addEventListener('scroll', () => this.syncFade(), { passive: true });
     this.tray = h(
       'div',
       { class: 'cc-tray cc-panel', hidden: true, role: 'dialog', 'aria-label': 'Build menu' },
@@ -128,7 +184,8 @@ export class Dock {
     });
     this.hint = h('div', { class: 'cc-hint', hidden: true, role: 'status' });
     this.hintDone = storageGet(HINT_KEY) === '1';
-    this.chipRow = h('div', { class: 'cc-chiprow' }, this.chip, this.hint);
+    this.tipSlot = h('div', { class: 'cc-tipslot' });
+    this.chipRow = h('div', { class: 'cc-chiprow' }, this.chip, this.hint, this.tipSlot);
 
     // ── Legend ─────────────────────────────────────────────────────────────
     this.legendIco = h('span', { class: 'cc-legend-ico' });
@@ -159,6 +216,11 @@ export class Dock {
     return this.openCat !== null;
   }
 
+  /** The one-time gesture hint is on screen (it goes before any first-use tip, §7.6). */
+  get hintShowing(): boolean {
+    return !this.hint.hidden;
+  }
+
   // ── Toolbar ──────────────────────────────────────────────────────────────
 
   private readonly onBarClick = (e: MouseEvent) => {
@@ -168,6 +230,15 @@ export class Dock {
     if (!cat) return;
     const game = this.ctx.game;
     buzz(6);
+    if (isHybrid(cat)) {
+      // Road (§7.2): one tap lays a street; the tray holds the other kinds.
+      const r = roadButton(game.tool, this.openCat === cat.id, this.lastRoad, (t) => !lockedReason(game.world, t));
+      if (r.tool) game.setTool(r.tool);
+      if (r.tray === 'open') this.openTray(cat.id);
+      else if (r.tray === 'close') this.closeTray();
+      else if (this.openCat && this.openCat !== cat.id) this.closeTray();
+      return;
+    }
     if (cat.tool) {
       this.closeTray();
       // Tapping the active single tool again returns to Inspect.
@@ -181,11 +252,12 @@ export class Dock {
 
   openTray(id: CategoryId): void {
     const cat = CATEGORIES.find((c) => c.id === id);
-    if (!cat || cat.tool) return;
+    if (!cat || (cat.tool && !cat.items)) return;
     this.ctx.game.select(null); // the tray takes the inspect sheet's place
     this.openCat = id;
-    setText(this.trayTitle, cat.id === 'data' ? 'Data views' : cat.label);
+    setText(this.trayTitle, cat.id === 'data' ? 'Data views' : categoryChrome(cat, this.ctx.game.world.maxPopulation).label);
     setStyle(this.tray, '--accent', cat.accent);
+    this.tray.dataset.cat = id;
     this.buildCards(cat.id);
     this.tray.hidden = false;
     this.tray.classList.remove('is-in');
@@ -195,7 +267,16 @@ export class Dock {
     setClass(this.el, 'has-tray', true);
     this.syncTool();
     this.refreshTray();
+    this.syncFade();
+    this.syncCategories();
     this.onTrayChange?.();
+  }
+
+  /** Right-edge fade while a tray of 4+ cards can still scroll (one layout read per scroll). */
+  private syncFade(): void {
+    const r = this.trayRow;
+    const more = this.cards.length >= 4 && r.scrollLeft + r.clientWidth < r.scrollWidth - 4;
+    setClass(r, 'is-more', more);
   }
 
   closeTray(): void {
@@ -227,6 +308,12 @@ export class Dock {
       return;
     }
     const cat = CATEGORIES.find((c) => c.id === id)!;
+    if (cat.items?.includes('seaport')) {
+      // Counted once per open (< 1 ms): a map with no straight shore says so on the card (§5.1).
+      const w = this.ctx.game.world;
+      if (!this.shoreMarks || this.shoreMarks.length !== w.size * w.size) this.shoreMarks = new Uint8Array(w.size * w.size);
+      this.shoreCount = shoreSites(w, this.shoreMarks);
+    }
     for (const tool of cat.items ?? []) {
       const m = toolMeta(tool);
       const cost = h('span', { class: 'cc-card-cost', text: costLabel(m) });
@@ -241,10 +328,9 @@ export class Dock {
       lockText.textContent = '';
       const def = isBuildingTool(tool) ? BUILDINGS[tool] : null;
       const meta: string[] = [];
-      if (tool === 'res') meta.push('Housing');
-      else if (tool === 'com') meta.push('Shops · jobs');
-      else if (tool === 'ind') meta.push('Jobs · smog');
-      if (def) {
+      // A card's own meta line carries its key rule on phones (§7.2); the generic size · jobs line is the fallback.
+      if (m.meta) meta.push(m.meta);
+      else if (def) {
         meta.push(`${def.size}×${def.size}`);
         if (def.powerSupply) meta.push(`${def.powerSupply} MW`);
         else if (def.radius) meta.push(`r${def.radius}`);
@@ -253,7 +339,7 @@ export class Dock {
       }
       const el = h(
         'button',
-        { class: 'cc-card', type: 'button', role: 'option', 'data-tool': tool, 'aria-label': `${m.name}, ${costLabel(m)}` },
+        { class: 'cc-card', type: 'button', role: 'option', 'data-tool': tool, 'aria-label': `${m.name}, ${costLabel(m)}${m.meta ? `, ${m.meta}` : ''}` },
         h('span', {
           class: 'cc-card-ico',
           html: icon(m.icon) + (m.badge ? `<b class="cc-card-badge">${m.badge}</b>` : '') + (m.faction ? factionSigil(m.faction, 18, 'cc-card-sig') : ''),
@@ -294,7 +380,14 @@ export class Dock {
       replayShake(card);
       return;
     }
+    if (tool === 'seaport' && this.shoreCount === 0) {
+      game.toast(NO_SHORE, 'info');
+      this.ctx.sfx('error');
+      replayShake(card);
+      return;
+    }
     buzz(8);
+    if (isRoadTool(tool)) this.lastRoad = tool;
     game.setTool(tool);
     this.closeTray();
   };
@@ -327,12 +420,18 @@ export class Dock {
           setStyle(c.lockFill, 'transform', `scaleX(${p.toFixed(3)})`);
         }
       }
+      if (!locked) this.markSeen(tool);
+      const noShore = tool === 'seaport' && !locked && this.shoreCount === 0;
       const price = livePrice(game, tool);
-      if (price !== c.price) {
+      if (noShore) {
+        c.price = -1;
+        setText(c.cost, NO_SHORE);
+      } else if (price !== c.price) {
         c.price = price;
         setText(c.cost, costLabel({ ...m, cost: price }));
       }
-      setClass(c.el, 'is-poor', !locked && w.funds < price);
+      setClass(c.el, 'is-noshore', noShore);
+      setClass(c.el, 'is-poor', !locked && !noShore && w.funds < price);
       const on = game.tool === tool;
       setClass(c.el, 'is-on', on);
       setAttr(c.el, 'aria-selected', on ? 'true' : 'false');
@@ -346,21 +445,78 @@ export class Dock {
     return g.story.view().unlocked.turfOverlay || isUnlocked(g.world, 'turfOverlay');
   }
 
-  /** Show the Deals group once the factions unlock (diffed; cheap enough for the panel tick). */
+  /**
+   * Show the Deals group once the factions unlock, relabel Power → Infra at the first port unlock,
+   * and light the "new" dots (diffed; cheap enough for the panel tick).
+   */
   syncCategories(): void {
     const g = this.ctx.game;
+    const w = g.world;
     const v = g.story.view();
-    const deals = v.unlocked.factions || isUnlocked(g.world, 'factions');
+    const deals = v.unlocked.factions || isUnlocked(w, 'factions');
     for (const c of CATEGORIES) {
-      if (!c.story) continue;
-      const btn = this.catBtns.get(c.id)!;
-      const show = c.id === 'deals' ? deals : true;
-      if (btn.hidden === show) {
-        btn.hidden = !show;
-        if (!show && this.openCat === c.id) this.closeTray();
+      const refs = this.catRefs.get(c.id)!;
+      if (c.story) {
+        const btn = refs.btn;
+        const show = c.id === 'deals' ? deals : true;
+        if (btn.hidden === show) {
+          btn.hidden = !show;
+          if (!show && this.openCat === c.id) this.closeTray();
+        }
       }
+      const ch = categoryChrome(c, w.maxPopulation);
+      const key = `${ch.label}|${ch.icon}`;
+      if (key !== refs.chrome) {
+        refs.chrome = key;
+        setHtml(refs.ico, icon(ch.icon));
+        setText(refs.long, ch.label);
+        setText(refs.short, ch.short);
+        setAttr(refs.btn, 'aria-label', ch.label);
+        setAttr(refs.btn, 'title', c.key ? `${ch.label} (${c.key})` : ch.label);
+        if (this.openCat === c.id) setText(this.trayTitle, ch.label);
+      }
+      // "New" dot: an item unlocked since this tray was last open (opening it clears the dot).
+      let fresh = false;
+      if (c.items && this.openCat !== c.id) {
+        for (const t of c.items) {
+          if (!this.seen.has(t) && !lockedReason(w, t)) {
+            fresh = true;
+            break;
+          }
+        }
+      }
+      setClass(refs.btn, 'has-new', fresh);
     }
     setClass(this.bar, 'is-full', deals);
+  }
+
+  /** Seen tool ids from storage; a device with none counts every unlocked pre-expansion tool as seen. */
+  private loadSeen(): Set<ToolId> {
+    const raw = storageGet(NEWDOT_KEY);
+    if (raw) {
+      try {
+        const arr: unknown = JSON.parse(raw);
+        if (Array.isArray(arr)) return new Set(arr.filter((x): x is ToolId => typeof x === 'string'));
+      } catch {
+        /* unreadable: start over */
+      }
+    }
+    const seen = new Set<ToolId>();
+    const w = this.ctx.game.world;
+    for (const c of CATEGORIES) for (const t of c.items ?? []) if (!NEW_TOOLS.has(t) && !lockedReason(w, t)) seen.add(t);
+    this.saveSeen(seen);
+    return seen;
+  }
+
+  private markSeen(tool: ToolId): void {
+    if (this.seen.has(tool)) return;
+    this.seen.add(tool);
+    this.saveSeen(this.seen);
+  }
+
+  /** A storage failure only means a dot may show again. */
+  private saveSeen(seen: Set<ToolId>): void {
+    storageSet(NEWDOT_KEY, JSON.stringify([...seen]));
   }
 
   // ── Tool / overlay state ─────────────────────────────────────────────────
@@ -369,6 +525,7 @@ export class Dock {
   syncTool(): void {
     const { game } = this.ctx;
     const tool = game.tool;
+    if (isRoadTool(tool)) this.lastRoad = tool; // KeyR and the coach count too
     const activeCat = categoryOf(tool);
     const m = toolMeta(tool);
     for (const c of CATEGORIES) {
@@ -377,7 +534,7 @@ export class Dock {
       setClass(btn, 'is-on', on);
       setClass(btn, 'is-open', this.openCat === c.id);
       if (c.tool) setAttr(btn, 'aria-pressed', on ? 'true' : 'false');
-      else setAttr(btn, 'aria-expanded', this.openCat === c.id ? 'true' : 'false');
+      if (c.items || !c.tool) setAttr(btn, 'aria-expanded', this.openCat === c.id ? 'true' : 'false');
       // Multi-item categories adopt the chosen item's colour while active.
       if (c.items) setStyle(btn, '--accent', on ? m.color : c.accent);
     }
@@ -430,9 +587,15 @@ export class Dock {
       } else if (o.legend === 'turf') {
         scale =
           '<span class="cc-lg-turf is-undertow">Undertow</span><span class="cc-lg-turf is-kites">Kites</span><span class="cc-lg-turf is-contested">Contested</span>';
+      } else if (o.legend === 'tiers') {
+        // EXPANSION §4.5: three swatches, then the one line on the pips (colours match render/overlay.ts).
+        scale =
+          TIER_SWATCHES.map((s) => `<span class="cc-lg-sw" style="--sw:${s.color}">${s.label}</span>`).join('') +
+          `<span class="cc-lg-line"><b style="color:${TIER_PIP_UP}">▲</b> <b style="color:${TIER_PIP_DOWN}">▼</b> = about to change. Schools, transit, parks and quiet lift blocks.</span>`;
       }
       setHtml(this.legendScale, scale);
       setClass(this.legend, 'is-swatches', o.legend !== 'heat');
+      setClass(this.legend, 'is-tiers', o.legend === 'tiers');
     }
     this.refreshTray();
   }
@@ -447,7 +610,9 @@ export class Dock {
           ? 'Drag from tower to tower'
           : tool === 'rail'
             ? 'Drag to lay track between stations'
-            : isBuildingTool(tool)
+            : tool === 'skyway'
+              ? 'Drag to lay a raised road'
+              : isBuildingTool(tool)
               ? 'Drag to place'
               : 'Drag to build';
     const mouse = typeof matchMedia === 'function' && matchMedia('(hover: hover) and (pointer: fine)').matches;

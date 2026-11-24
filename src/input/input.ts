@@ -10,6 +10,14 @@
 //                         / footprint ghost · release applies · near a screen
 //                         edge the map auto-scrolls · hold still ~0.45 s to
 //                         peek-inspect instead (drag to scrub, nothing applied)
+//                         · a costly or lossy plan (game.commit → pendingConfirm)
+//                         keeps its ghost after release and waits for ✓ / ✕ on
+//                         the action pill; a new drag (or tap) moves it, two
+//                         fingers look around without dropping it
+//   Inspect taps          a tap on a skyway deck selects the deck (sky: true)
+//   Port tools            the Seaport ghost snaps to the nearest valid shore
+//                         site; picking a port tool zooms out to fit its noise
+//                         ring, and leaving it zooms back (EXPANSION §5.1, §5.4)
 //   2+ fingers            pinch zoom + pan around the centroid, always; a
 //                         second finger cancels a build drag · quick
 //                         two-finger tap zooms out
@@ -26,11 +34,14 @@
 // zoom, keyboard pan, edge scroll, long-press timing) runs in update(dt).
 // ─────────────────────────────────────────────────────────────────────────────
 
+import { snapSeaport } from '../game/actions';
 import { BUILDINGS, isBuildingTool } from '../game/config';
 import type { Game } from '../game/game';
-import { ZoneType } from '../game/types';
+import { shoreSites } from '../game/ports';
+import { SKY_RAMP } from '../game/skyway';
+import { ZoneType, type ToolId } from '../game/types';
 import { serviceBuildingHeight, zoneBuildingHeight } from '../render/buildings';
-import type { Camera, Vec } from '../render/camera';
+import { TILE_H, TILE_W, type Camera, type Vec } from '../render/camera';
 import {
   CLICK_MAX_MS,
   DOUBLE_TAP_MS,
@@ -67,6 +78,10 @@ import {
   flingDisplacement,
   isTwoFingerTap,
   pickTile,
+  pointerActivity,
+  SKY_PICK_BASE,
+  SKY_PICK_RAMP_BASE,
+  SKY_PICK_TOP,
   pinchFactor,
   screenToTileF,
   screenToTileInto,
@@ -74,6 +89,7 @@ import {
   wheelDeltaPx,
   type Centroid,
   type PickFootprint,
+  type PickHit,
 } from './gestures';
 import { HAPTIC_CONFIRM_MS, HAPTIC_TICK_MS, haptic } from './haptics';
 import { KeyboardInput, isTypingTarget } from './keyboard';
@@ -107,6 +123,11 @@ interface TrackedPointer {
 type Mode = 'idle' | 'pan' | 'build' | 'pinch' | 'tapzoom' | 'scrub' | 'void';
 
 const NO_TILE = -99999;
+
+/** Tools whose ghost is big and loud enough that picking them zooms out to fit (EXPANSION §5.4). */
+const FIT_TOOLS: ReadonlySet<ToolId> = new Set<ToolId>(['seaport', 'airport', 'spaceport']);
+/** Share of the screen the footprint + noise ring may fill after the fit zoom. */
+const FIT_MARGIN = 0.92;
 
 export class InputController {
   // ── Pointer session ───────────────────────────────────────────────────────
@@ -152,6 +173,18 @@ export class InputController {
   private readonly scrubTile: Vec = { x: NO_TILE, y: NO_TILE };
   /** The current selection came from a long-press peek (cleared when building resumes). */
   private peekSelection = false;
+  /**
+   * The press began while a plan waited for ✓: it is only dropped once this finger
+   * moves or lifts as a tap; a second finger (look around) keeps it (EXPANSION §7.7).
+   */
+  private holdPending = false;
+
+  // ── Seaport snap: valid shore top-lefts (ports.shoreSites), recounted after tile edits.
+  private shoreMarks: Uint8Array | null = null;
+  private shoreDirty = true;
+
+  // ── Port tools zoom out to fit; leaving them restores `prev` unless the player zoomed meanwhile.
+  private fit: { prev: number; set: number } | null = null;
 
   // ── Animated zoom (wheel, keyboard, double-tap). 0 = idle.
   private zoomTarget = 0;
@@ -179,6 +212,7 @@ export class InputController {
 
   // ── Scratch (no per-move allocation)
   private readonly tmpTile: Vec = { x: 0, y: 0 };
+  private readonly tmpHit: PickHit = { x: 0, y: 0, sky: false };
   private readonly tmpF: Vec = { x: 0, y: 0 };
   private readonly tmpV: Vec = { x: 0, y: 0 };
 
@@ -234,10 +268,12 @@ export class InputController {
     const ev = game.events;
     this.offs.push(ev.on('tool', this.onToolChanged));
     this.offs.push(ev.on('world', this.onWorldChanged));
+    this.offs.push(ev.on('tiles', () => (this.shoreDirty = true)));
 
     this.keyboard = new KeyboardInput(game, {
       zoomStep: (factor) => this.animateZoom(factor, this.camera.width / 2, this.camera.height / 2, true),
       cancelGesture: () => this.cancelGesture(),
+      confirmPending: () => this.confirmPending(),
     });
     this.updateCursor();
   }
@@ -303,7 +339,7 @@ export class InputController {
       this.camX = cam.x;
       this.camY = cam.y;
       this.camZoom = cam.zoom;
-      if (this.mode === 'build' && p) this.updateBuildAt(p.x, p.y, false);
+      if (this.mode === 'build' && p && !this.holdPending) this.updateBuildAt(p.x, p.y, false);
       else if (this.mode === 'scrub' && p) this.updateScrub(p.x, p.y);
       else this.updateHover(false);
     }
@@ -312,9 +348,24 @@ export class InputController {
     this.replanAcc += dt;
     if (this.replanAcc >= REPLAN_INTERVAL_S) {
       this.replanAcc = 0;
-      if (this.mode === 'build') this.refreshBuildPreview();
+      if (this.mode === 'build' && !this.holdPending) this.refreshBuildPreview();
       else if (this.hoverShown) this.updateHover(true);
     }
+  }
+
+  /**
+   * ✓ on the plan waiting for confirmation (the pill's ✓ and Enter): re-plans from the same points
+   * and builds; a plan that is no longer valid toasts its reason (Game.confirmPending).
+   */
+  confirmPending(): void {
+    const plan = this.game.confirmPending();
+    if (plan?.valid) haptic(HAPTIC_CONFIRM_MS);
+  }
+
+  /** ✕ on the plan waiting for confirmation. */
+  cancelPending(): void {
+    this.game.cancelPending();
+    this.holdPending = false;
   }
 
   destroy(): void {
@@ -383,6 +434,8 @@ export class InputController {
       if (dx * dx + dy * dy > slop * slop) {
         this.moved = true;
         this.updateCursor();
+        // A real drag replaces the plan waiting for ✓ (the ghost moves with the finger).
+        if (this.mode === 'build' && this.holdPending) this.releasePending();
       }
     }
 
@@ -488,7 +541,10 @@ export class InputController {
     // A tool switch mid-drag (hotkey, UI) abandons the drag; setTool cleared the preview.
     if (this.mode === 'build' || this.mode === 'scrub') this.mode = 'void';
     this.peekSelection = false;
+    this.holdPending = false;
     this.hoverShown = false;
+    this.shoreDirty = true;
+    this.fitTool(this.game.tool);
     this.updateHover(true);
     this.updateCursor();
   };
@@ -496,6 +552,9 @@ export class InputController {
   private readonly onWorldChanged = () => {
     this.cancelGesture();
     this.stopFling();
+    this.fit = null;
+    this.shoreDirty = true;
+    this.holdPending = false;
     this.peekSelection = false;
     this.lastTapT = -Infinity;
     this.hoverShown = false;
@@ -553,13 +612,26 @@ export class InputController {
     this.buildStart.x = this.buildCur.x = t.x;
     this.buildStart.y = this.buildCur.y = t.y;
     this.mode = 'build';
+    pointerActivity.building = true;
+    // A plan waiting for ✓ keeps its ghost until this press turns out to be a drag or a tap.
+    this.holdPending = this.game.pendingConfirm !== null;
+    if (!this.holdPending) this.refreshBuildPreview();
+  }
+
+  /** The press that began over a waiting plan became a drag or a tap: drop the plan, preview this one. */
+  private releasePending(): void {
+    this.holdPending = false;
+    this.game.cancelPending();
+    if (this.primary) this.updateBuildAt(this.primary.x, this.primary.y, false);
     this.refreshBuildPreview();
   }
 
   /** A second (or further) finger landed: everything becomes a pinch. */
   private beginPinch(now: number): void {
     const fresh = this.mode !== 'pinch';
-    if (this.mode === 'build') this.game.setPreview(null); // cancel, nothing applied
+    // Cancel the drag, nothing applied; a plan waiting for ✓ keeps its ghost while two fingers look around.
+    if (this.mode === 'build' && !this.holdPending) this.game.setPreview(null);
+    pointerActivity.building = false;
     if (fresh) {
       const first = this.primary;
       this.pinchTapEligible =
@@ -661,6 +733,11 @@ export class InputController {
         else this.startFling(now);
         break;
       case 'build':
+        if (this.holdPending) {
+          // A tap (no drag) over a waiting plan: drop it and plan here instead.
+          if (cancelled) break;
+          this.releasePending();
+        }
         if (cancelled) this.game.setPreview(null);
         else this.commitBuild();
         break;
@@ -679,6 +756,8 @@ export class InputController {
 
   private endSession(last: TrackedPointer): void {
     this.mode = 'idle';
+    this.holdPending = false;
+    pointerActivity.building = false;
     this.session = null;
     this.primary = null;
     this.moved = false;
@@ -698,8 +777,10 @@ export class InputController {
 
   /** Drop all pointer state without applying anything. */
   private resetSession(): void {
-    if (this.mode === 'build') this.game.setPreview(null);
+    if (this.mode === 'build' && !this.holdPending) this.game.setPreview(null);
     this.pointers.length = 0;
+    this.holdPending = false;
+    pointerActivity.building = false;
     this.mode = 'idle';
     this.session = null;
     this.primary = null;
@@ -712,7 +793,9 @@ export class InputController {
    * idles in 'void' until the fingers lift.
    */
   private cancelGesture(release = false): void {
-    if (this.mode === 'build') this.game.setPreview(null);
+    if (this.mode === 'build' && !this.holdPending) this.game.setPreview(null);
+    this.holdPending = false;
+    pointerActivity.building = false;
     if (release) {
       this.resetSession();
       this.hoverActive = false;
@@ -761,11 +844,16 @@ export class InputController {
   // ── Inspect ───────────────────────────────────────────────────────────────
 
   private handleTap(sx: number, sy: number, now: number): void {
-    const t = this.pickAt(sx, sy, this.tmpTile);
+    const t = this.pickAt(sx, sy, this.tmpHit, true);
     const sel = this.game.selected;
-    if (sel && sel.x === t.x && sel.y === t.y) {
-      // Tapping the selected tile again dismisses the info card.
+    const sky = !!t.sky;
+    if (sel && sel.x === t.x && sel.y === t.y && !!sel.sky === sky) {
+      // Tapping the selected tile (or deck) again dismisses the info card.
       this.game.select(null);
+      this.game.events.emit('sfx', 'click');
+    } else if (sky) {
+      // The visible skyway deck: its own sheet (EXPANSION §3.7, §7.4).
+      this.game.select({ x: t.x, y: t.y, sky: true });
       this.game.events.emit('sfx', 'click');
     } else {
       this.game.apply({ x: t.x, y: t.y }, { x: t.x, y: t.y });
@@ -775,23 +863,34 @@ export class InputController {
     this.lastTapY = sy;
   }
 
-  /** Height-aware tile pick: what the player sees under the point, towers included. */
-  private pickAt(sx: number, sy: number, out: Vec): Vec {
+  /** Height-aware tile pick: what the player sees under the point, towers (and, with `sky`, skyway decks) included. */
+  private pickAt(sx: number, sy: number, out: PickHit, sky = false): PickHit {
     const f = screenToTileF(this.camera, sx, sy, this.tmpF);
-    return pickTile(f.x, f.y, this.lookupFootprint, out);
+    return pickTile(f.x, f.y, this.lookupFootprint, out, undefined, sky);
   }
 
-  private readonly lookupFootprint = (tx: number, ty: number, out: PickFootprint): boolean => {
+  private readonly lookupFootprint = (tx: number, ty: number, out: PickFootprint, layer: 0 | 1): boolean => {
     const world = this.game.world;
     const t = world.tileAt(tx, ty);
     if (!t) return false;
+    if (layer === 1) {
+      // The skyway slab over this tile (deck at SKYWAY.z; a ramp slopes lower).
+      const bits = world.sky[world.idx(tx, ty)];
+      if (!bits) return false;
+      out.x = tx;
+      out.y = ty;
+      out.size = 1;
+      out.base = bits & SKY_RAMP ? SKY_PICK_RAMP_BASE : SKY_PICK_BASE;
+      out.height = SKY_PICK_TOP;
+      return true;
+    }
     if (t.buildingId >= 0) {
       const b = world.buildings.get(t.buildingId);
       if (!b) return false;
       out.x = b.x;
       out.y = b.y;
       out.size = b.size;
-      out.height = serviceBuildingHeight(b.type);
+      out.height = serviceBuildingHeight(b.type, b);
       return true;
     }
     if (t.zone !== ZoneType.None && t.level > 0) {
@@ -805,6 +904,11 @@ export class InputController {
   };
 
   private enterScrub(ptr: TrackedPointer): void {
+    // A long-press peek over a plan waiting for ✓ drops that plan (nothing is built).
+    if (this.holdPending) {
+      this.holdPending = false;
+      this.game.cancelPending();
+    }
     this.game.setPreview(null);
     this.mode = 'scrub';
     this.scrubTile.x = this.scrubTile.y = NO_TILE;
@@ -813,22 +917,74 @@ export class InputController {
   }
 
   private updateScrub(sx: number, sy: number): void {
-    const t = this.pickAt(sx, sy, this.tmpTile);
-    if (t.x === this.scrubTile.x && t.y === this.scrubTile.y) return;
-    this.scrubTile.x = t.x;
+    const t = this.pickAt(sx, sy, this.tmpHit, true);
+    const key = t.sky ? -t.x - 1 : t.x;
+    if (key === this.scrubTile.x && t.y === this.scrubTile.y) return;
+    this.scrubTile.x = key;
     this.scrubTile.y = t.y;
     if (!this.game.world.inBounds(t.x, t.y)) return;
-    this.game.select({ x: t.x, y: t.y });
+    this.game.select(t.sky ? { x: t.x, y: t.y, sky: true } : { x: t.x, y: t.y });
     this.peekSelection = true;
     haptic(HAPTIC_TICK_MS, HAPTIC_TICK_GAP_MS);
   }
 
   // ── Build tools ───────────────────────────────────────────────────────────
 
-  /** Keep the finger tile on the map (and building footprints fully on it). */
+  /** Keep the finger tile on the map (and building footprints fully on it); the Seaport snaps to a shore site. */
   private clampTile(t: Vec): Vec {
     const tool = this.game.tool;
-    return clampToolTile(t, this.game.world.size, isBuildingTool(tool) ? BUILDINGS[tool].size : 1);
+    clampToolTile(t, this.game.world.size, isBuildingTool(tool) ? BUILDINGS[tool].size : 1);
+    if (tool === 'seaport') {
+      // EXPANSION §5.1: slide toward a highlighted shore instead of hunting for it (snapRadius tiles).
+      const s = snapSeaport(t, this.shores());
+      t.x = s.x;
+      t.y = s.y;
+    }
+    return t;
+  }
+
+  /** Valid Seaport top-lefts, recounted when the tool is picked and after tile edits (< 1 ms). */
+  private shores(): Uint8Array {
+    const w = this.game.world;
+    if (!this.shoreMarks || this.shoreMarks.length !== w.size * w.size) {
+      this.shoreMarks = new Uint8Array(w.size * w.size);
+      this.shoreDirty = true;
+    }
+    if (this.shoreDirty) {
+      shoreSites(w, this.shoreMarks);
+      this.shoreDirty = false;
+    }
+    return this.shoreMarks;
+  }
+
+  /**
+   * Port tools zoom out (animated, around the screen centre, clamped to the camera's minimum)
+   * until footprint + noise ring fits the screen; leaving them zooms back to where the player was,
+   * unless they zoomed by hand meanwhile (EXPANSION §5.4).
+   */
+  private fitTool(tool: ToolId): void {
+    const cam = this.camera;
+    const cx = cam.width / 2;
+    const cy = cam.height / 2;
+    if (FIT_TOOLS.has(tool) && isBuildingTool(tool)) {
+      const def = BUILDINGS[tool];
+      const span = def.size + 2 * (def.noise?.r ?? 0);
+      const want = clamp(Math.min(cam.width / (span * TILE_W), cam.height / (span * TILE_H)) * FIT_MARGIN, cam.minZoom, cam.maxZoom);
+      const now = this.zoomTarget > 0 ? this.zoomTarget : cam.zoom;
+      const prev = this.fit ? this.fit.prev : now;
+      if (want < now - 1e-3) {
+        this.animateZoom(want / cam.zoom, cx, cy, false);
+        this.fit = { prev, set: want };
+      } else if (this.fit) this.fit = { prev, set: now };
+      return;
+    }
+    const fit = this.fit;
+    this.fit = null;
+    if (!fit) return;
+    const now = this.zoomTarget > 0 ? this.zoomTarget : cam.zoom;
+    // Zoomed by hand since the fit: leave the view alone.
+    if (Math.abs(now - fit.set) > fit.set * 0.03) return;
+    this.animateZoom(fit.prev / cam.zoom, cx, cy, false);
   }
 
   private updateBuildAt(sx: number, sy: number, tick: boolean): void {
@@ -846,23 +1002,31 @@ export class InputController {
       this.game.setPreview(null);
       return;
     }
+    if (this.holdPending) return; // the waiting plan keeps its ghost
     // planAction copies what it needs, so passing our scratch points is safe.
     const from = isBuildingTool(tool) ? this.buildCur : this.buildStart;
     this.game.setPreview(this.game.plan(from, this.buildCur));
   }
 
+  /**
+   * Lift: build, unless the plan needs ✓ (a costly building or a highway that strands lots,
+   * EXPANSION §7.7). Then game.commit keeps it as pendingConfirm and the ghost stays.
+   */
   private commitBuild(): void {
     const tool = this.game.tool;
     const to = { x: this.buildCur.x, y: this.buildCur.y };
     const from = isBuildingTool(tool) ? to : { x: this.buildStart.x, y: this.buildStart.y };
-    const plan = this.game.apply(from, to);
-    if (plan.valid) haptic(HAPTIC_CONFIRM_MS);
+    const plan = this.game.commit(from, to);
+    if (this.game.pendingConfirm) haptic(HAPTIC_TICK_MS);
+    else if (plan.valid) haptic(HAPTIC_CONFIRM_MS);
   }
 
   // ── Mouse hover preview ───────────────────────────────────────────────────
 
   private updateHover(force: boolean): void {
     if (!this.hoverActive || this.session) return;
+    // The ghost of a plan waiting for ✓ stays put under a moving cursor.
+    if (this.game.pendingConfirm) return;
     const tool = this.game.tool;
     if (tool === 'inspect') {
       this.clearHover();
@@ -882,7 +1046,7 @@ export class InputController {
   }
 
   private clearHover(): void {
-    if (this.hoverShown) this.game.setPreview(null);
+    if (this.hoverShown && !this.game.pendingConfirm) this.game.setPreview(null);
     this.hoverShown = false;
     this.hoverTile.x = this.hoverTile.y = NO_TILE;
   }

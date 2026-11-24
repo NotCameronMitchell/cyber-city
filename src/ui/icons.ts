@@ -17,6 +17,23 @@ const PATHS = {
   services: '<path d="M12 3l7.5 3v5.6c0 4.6-3.2 8.1-7.5 9.4-4.3-1.3-7.5-4.8-7.5-9.4V6z"/><path d="M12 8.5v7M8.5 12h7"/>',
   landmarks: '<path d="M12 1.8L14.2 6v15h-4.4V6z"/><path d="M7.5 21v-9.5l2.3-1.5M16.5 21v-9.5l-2.3-1.5"/><path d="M4 21h16"/><path class="d" d="M12 9v2.2M12 13.5v2.2"/>',
   data: '<path d="M12 3l9 5-9 5-9-5z"/><path d="M3 12.5l9 5 9-5"/><path class="d" d="M3 17l9 5 9-5"/>',
+  /** Power & Ports (the Power tray once the first port unlocks): a bolt over a crane and hull. */
+  infra:
+    '<path d="M9.6 2.5L5.2 9h3.2L7.6 13l4.5-6.2H8.9z"/><path d="M16.5 15.5V4.5M16.5 5.5h-3.5M13.4 5.5v3.4M16.5 9l3-3.5"/><path d="M2.5 15.5h19l-2.6 4.5H5.1z"/><path class="d" d="M9 15.5v-2h3.5v2"/>',
+
+  // ── Road kinds and the Skyway (EXPANSION §7.2) ───────────────────────────
+  /** Avenue: a wide boulevard with a planted median. */
+  avenue:
+    '<path d="M7 3L2 21M17 3l5 18"/><path d="M11.3 3.5l-.5 17M12.7 3.5l.5 17"/><path class="d" d="M8.9 6.5l-.5 2M7.6 12l-.5 2.2M6.2 17.5l-.5 2.3M15.1 6.5l.5 2M16.4 12l.5 2.2M17.8 17.5l.5 2.3"/>',
+  /** Highway: lanes running under an overhead sign gantry. */
+  highway:
+    '<path d="M3 8h18M4.5 8v13M19.5 8v13"/><rect x="8.2" y="3.2" width="7.6" height="4.8" rx=".8"/><path d="M9.2 21l1.4-9.5M14.8 21l-1.4-9.5"/><path class="d" d="M12 13v2M12 17.5v3"/>',
+  /** Back Alley: a narrow lane between two walls, one lamp. */
+  alley:
+    '<path d="M3 21V3.5h5.5V21M15.5 21V6.5H21V21"/><path d="M10.6 21l.6-6.5M13.4 21l-.6-6.5"/><circle class="f" cx="12" cy="10.5" r="1.1"/><path class="d" d="M5 7h2M5 10.5h2M5 14h2M17.5 10h2M17.5 13.5h2"/>',
+  /** Skyway: a raised deck on pillars, ramping down to the ground, with headlights. */
+  skyway:
+    '<path d="M2 20.5L8.6 10H22M4.8 20.5L10.6 13H22"/><path d="M14.5 13v8M19.5 13v8"/><circle class="f" cx="13.5" cy="11.5" r=".85"/><circle class="f" cx="17.8" cy="11.5" r=".85"/><path class="d" d="M1.5 21h21"/>',
 
   // ── Zones ────────────────────────────────────────────────────────────────
   res: '<path d="M2.5 21h19"/><path d="M4 21V10.5l5-3.8 5 3.8V21"/><path d="M14 21V7l3.2-2.3L20.5 7v14"/><path class="d" d="M7 13.5h4M7 17h4M16.2 10.5h2M16.2 14h2M16.2 17.5h2"/>',
@@ -36,6 +53,18 @@ const PATHS = {
   maglev: '<rect x="6" y="3" width="12" height="14" rx="3.2"/><path d="M6 11h12"/><path d="M9.5 7h5"/><circle class="f" cx="9" cy="14" r="1"/><circle class="f" cx="15" cy="14" r="1"/><path d="M8 21.5l2-4.5M16 21.5l-2-4.5"/>',
   spire: '<path d="M12 1.5l2.4 4.5v15h-4.8V6z"/><path d="M7.5 21V10.5l2.1-1.2M16.5 21V10.5l-2.1-1.2"/><path d="M4.5 21h15"/><path class="d" d="M12 9.5v2M12 14v2"/>',
   arcology: '<path d="M2.5 21L12 3.5 21.5 21z"/><path class="d" d="M7.2 12.4h9.6M4.9 16.7h14.2M12 3.5V21"/>',
+  /** Academy: a mortarboard over a hall. */
+  academy:
+    '<path d="M12 3L2.5 7.6 12 12.2l9.5-4.6z"/><path d="M6.2 9.8v4.4c1.6 1.3 3.6 1.9 5.8 1.9s4.2-.6 5.8-1.9V9.8"/><path d="M21.5 7.6v5.2"/><circle class="f" cx="21.5" cy="13.8" r=".9"/><path class="d" d="M3.5 20.5h17"/>',
+  /** Seaport: a gantry crane over a container ship on the water. */
+  seaport:
+    '<path d="M3 15.5h18l-2.4 4h-13.2z"/><path d="M6.5 15.5v-3h4v3M10.5 15.5v-3h4v3"/><path d="M17 12.5V3.5M17 4.5H8.5M10.5 4.5v4.5"/><path class="d" d="M2 22c1.6 0 1.6-.9 3.3-.9S6.9 22 8.6 22s1.6-.9 3.3-.9 1.6.9 3.3.9 1.6-.9 3.3-.9 1.6.9 3.3.9"/>',
+  /** Airport: a jet from above over a runway line. */
+  airport:
+    '<path d="M12 2.5c.9 0 1.4.9 1.4 2v4.6l7.1 4.1v2l-7.1-2.2v4.3l2.2 1.6v1.6L12 19.6l-3.6.9v-1.6l2.2-1.6V13l-7.1 2.2v-2l7.1-4.1V4.5c0-1.1.5-2 1.4-2z"/><path class="d" d="M3 22h3M10.5 22h3M18 22h3"/>',
+  /** Spaceport: a rocket beside its launch tower. */
+  spaceport:
+    '<path d="M13 2.5c2 1.7 3 4.2 3 7.2V16h-6V9.7c0-3 1-5.5 3-7.2z"/><path d="M10 12.5l-2.2 2.3v3.4L10 16.6M16 12.5l2.2 2.3v3.4L16 16.6"/><circle cx="13" cy="8.6" r="1.2"/><path class="d" d="M11.8 18.6l1.2 3 1.2-3M4 21.5V4.5M4 8h2.6M4 12h2.6M4 16h2.6"/>',
 
   // ── Overlays ─────────────────────────────────────────────────────────────
   eyeOff:
@@ -47,6 +76,10 @@ const PATHS = {
   smog: '<path d="M4.5 21v-7h4v7M2.5 21h19"/><path d="M6 10.5c-1.7 0-3-1.1-3-2.6s1.3-2.6 3-2.6c.4-1.6 1.9-2.8 3.7-2.8 1.7 0 3.1 1 3.6 2.4.4-.1.8-.2 1.2-.2 1.9 0 3.5 1.5 3.5 3.4s-1.6 2.4-3.5 2.4z"/>',
   car: '<path d="M5 16v-4.5L7.2 6h9.6l2.2 5.5V16z"/><path d="M5 11.5h14"/><path d="M5.5 16v3h3v-3M15.5 16v3h3v-3"/><circle class="f" cx="8.4" cy="13.8" r=".9"/><circle class="f" cx="15.6" cy="13.8" r=".9"/>',
   rings: '<circle class="f" cx="12" cy="12" r="2.2"/><circle cx="12" cy="12" r="5.6"/><circle class="d" cx="12" cy="12" r="9.2"/>',
+  /** Wealth view: three rising blocks under a glint. */
+  tiers: '<path d="M3.5 20.5v-5h4.5v5M9.8 20.5v-9h4.4v9M16 20.5V8h4.5v12.5"/><path class="d" d="M2 20.5h20"/><path d="M18.25 1.8l.75 1.7 1.7.75-1.7.75-.75 1.7-.75-1.7-1.7-.75 1.7-.75z"/>',
+  /** Noise view: a source with spreading rings, louder to one side. */
+  noise: '<circle class="f" cx="5.5" cy="12" r="2.2"/><path d="M9.5 8a5.6 5.6 0 0 1 0 8M13 5.2a9.6 9.6 0 0 1 0 13.6"/><path class="d" d="M16.6 2.6a13.2 13.2 0 0 1 0 18.8M20 4.8a16 16 0 0 1 0 14.4"/>',
 
   // ── HUD / chrome ─────────────────────────────────────────────────────────
   menu: '<path d="M4 7h16M4 12h16M4 17h10"/>',
@@ -58,6 +91,7 @@ const PATHS = {
   pop: '<circle cx="12" cy="7.5" r="3.6"/><path d="M4.8 21c0-4 3.2-7.1 7.2-7.1s7.2 3.1 7.2 7.1"/>',
   close: '<path d="M6.5 6.5l11 11M17.5 6.5l-11 11"/>',
   check: '<path d="M4.5 12.5l5 5 10-11"/>',
+  undo: '<path d="M8.5 4L4 8.5 8.5 13"/><path d="M4.5 8.5h9.5a5.5 5.5 0 0 1 0 11H9"/>',
   warn: '<path d="M12 3.2l9.5 17.3h-19z"/><path d="M12 10v4.8M12 17.6v.1"/>',
   lock: '<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/>',
   save: '<path d="M5 3.5h11l3 3v14H5z"/><path d="M8 3.5v5h7v-5M8 20.5V14h8v6.5"/>',

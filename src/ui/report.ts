@@ -3,11 +3,13 @@
 // load and city-wide averages. Opened from the population / demand HUD items.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { ZONES } from '../game/config';
+import { CURRENCY, EDGE_LINKS, ROAD_KINDS, ZONES } from '../game/config';
+import { RoadKind } from '../game/types';
 import { buildDialog, type UIContext } from './context';
-import { h, setClass, setStyle, setText } from './dom';
-import { groupInt, pct } from './format';
+import { h, setClass, setHidden, setStyle, setText } from './dom';
+import { MINUS, groupInt, pct } from './format';
 import { icon } from './icons';
+import { TIER_SWATCHES } from './tools';
 
 interface Meter {
   row: HTMLElement;
@@ -33,6 +35,11 @@ export class CityReport {
   private readonly power: Meter;
   private readonly powerNote: HTMLElement;
   private readonly avgs: Meter[];
+  /** Wealth split ($ / $$ / $$$) and what tiers change (EXPANSION §4.4, §7.6). */
+  private readonly wealthBox: HTMLElement;
+  private readonly wealthBar: HTMLElement[];
+  private readonly wealthKey: HTMLElement;
+  private readonly tierNote: HTMLElement;
 
   constructor(private readonly ctx: UIContext) {
     const d = buildDialog({ id: 'cc-report', title: 'City report', icon: icon('chart') });
@@ -67,6 +74,22 @@ export class CityReport {
     this.powerNote = h('p', { class: 'cc-rep-note' });
     this.avgs = [meterRow('Land value', 'is-goodhigh'), meterRow('Crime'), meterRow('Pollution'), meterRow('Traffic')];
 
+    this.wealthBar = TIER_SWATCHES.map((t) => {
+      const seg = h('i');
+      seg.style.setProperty('--sw', t.color);
+      return seg;
+    });
+    this.wealthKey = h('div', { class: 'cc-rep-tierkey' });
+    this.tierNote = h('p', { class: 'cc-rep-note' });
+    this.wealthBox = h(
+      'section',
+      { class: 'cc-subpanel cc-rep-wealth', hidden: true },
+      h('div', { class: 'cc-lines-head' }, h('span', { class: 'cc-label', text: 'Wealth' }), h('span', { class: 'cc-rep-hint', text: 'Data → Wealth' })),
+      h('div', { class: 'cc-rep-tierbar', 'aria-hidden': 'true' }, ...this.wealthBar),
+      this.wealthKey,
+      this.tierNote,
+    );
+
     d.body.append(
       h('div', { class: 'cc-rep-hero' }, h('span', { class: 'cc-rep-ico', html: icon('pop') }), h('div', null, this.pop, this.peak)),
       h('section', { class: 'cc-subpanel' }, this.approval.row),
@@ -77,6 +100,7 @@ export class CityReport {
         demandBox,
       ),
       h('section', { class: 'cc-subpanel' }, h('div', { class: 'cc-lines-head' }, h('span', { class: 'cc-label', text: 'Work' })), this.jobs),
+      this.wealthBox,
       h('section', { class: 'cc-subpanel' }, h('div', { class: 'cc-lines-head' }, h('span', { class: 'cc-label', text: 'Power' })), this.power.row, this.powerNote),
       h(
         'section',
@@ -128,11 +152,41 @@ export class CityReport {
       `<div><dt>${ZONES.ind.name} jobs</dt><dd>${groupInt(s.jobsInd)}</dd></div>` +
       `<div><dt>Employed</dt><dd>${groupInt(s.employed)} / ${groupInt(jobs)}</dd></div>` +
       `<div><dt>Unemployment</dt><dd class="${s.unemployment > 0.12 ? 'is-down' : 'is-up'}">${pct(s.unemployment)}</dd></div>` +
-      `<div><dt>Developed</dt><dd>${s.developed.res} R · ${s.developed.com} C · ${s.developed.ind} I</dd></div>` +
-      `<div><dt>Abandoned</dt><dd class="${s.abandonedTiles > 0 ? 'is-down' : ''}">${s.abandonedTiles}</dd></div>`;
+      `<div class="is-wide"><dt>Developed</dt><dd>${s.developed.res} R · ${s.developed.com} C · ${s.developed.ind} I</dd></div>` +
+      `<div><dt>Abandoned</dt><dd class="${s.abandonedTiles > 0 ? 'is-down' : ''}">${s.abandonedTiles}</dd></div>` +
+      // Ports and regional links (EXPANSION §6.2, §6.3): shown once they matter.
+      (s.visitors > 0 ? `<div><dt>Visitors</dt><dd>${groupInt(s.visitors)}/mo</dd></div>` : '') +
+      (s.edgeLinks > 0 || w.maxPopulation >= ROAD_KINDS[RoadKind.Highway].unlockPop
+        ? `<div><dt>Regional links</dt><dd>${s.edgeLinks}/${EDGE_LINKS.cap}</dd></div>`
+        : '');
     if (this.jobs.dataset.html !== html) {
       this.jobs.dataset.html = html;
       this.jobs.innerHTML = html;
+    }
+
+    // Wealth split over developed zone tiles, and the tiers' effect against an all-$ city.
+    const tiers = s.wealth;
+    const dev = tiers[0] + tiers[1] + tiers[2];
+    setHidden(this.wealthBox, dev === 0);
+    if (dev > 0) {
+      let key = '';
+      for (let i = 0; i < 3; i++) {
+        const share = tiers[i] / dev;
+        setStyle(this.wealthBar[i], 'flex-grow', share.toFixed(4));
+        key += `<span class="cc-lg-sw" style="--sw:${TIER_SWATCHES[i].color}">${TIER_SWATCHES[i].label} ${pct(share)}</span>`;
+      }
+      if (this.wealthKey.dataset.html !== key) {
+        this.wealthKey.dataset.html = key;
+        this.wealthKey.innerHTML = key;
+      }
+      const te = s.tierEffect;
+      const sign = (n: number) => (n < 0 ? MINUS : '+') + groupInt(Math.abs(n));
+      setText(
+        this.tierNote,
+        tiers[1] + tiers[2] === 0
+          ? 'Every block is $ so far. Schools, transit, parks and quiet lift them.'
+          : `Tiers: ${sign(te.residents)} residents · ${sign(te.tax)} ${CURRENCY}/mo`,
+      );
     }
 
     const load = s.powerSupply > 0 ? s.powerDemand / s.powerSupply : s.powerDemand > 0 ? 1.5 : 0;

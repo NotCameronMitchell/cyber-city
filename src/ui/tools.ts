@@ -4,8 +4,10 @@
 // balance changes flow through automatically.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { BRIDGE_COST, BUILDINGS, BULLDOZE_COST, RIBBON, ROAD_COST, SKYBRIDGE, UNLOCK_FALLBACK_POP, ZONES, isBuildingTool, isZoneTool } from '../game/config';
+import { BUILDINGS, BULLDOZE_COST, RIBBON, ROAD_KINDS, SKYBRIDGE, SKYWAY, UNLOCK_FALLBACK_POP, WEALTH, ZONES, isBuildingTool, isZoneTool } from '../game/config';
 import type { Game } from '../game/game';
+import { ROAD_TOOL_KIND, ROAD_TOOLS, isRoadTool, type RoadTool } from '../game/roads';
+import { TIER_LABEL } from '../game/wealth';
 import type { FactionId } from '../game/story/types';
 import type { OverlayId, ToolId } from '../game/types';
 import { credits } from './format';
@@ -22,7 +24,7 @@ export interface Category {
   icon: IconName;
   /** Desktop keyboard shortcut hint (handled by the input module). */
   key?: string;
-  /** Single-tool categories select this tool directly. */
+  /** Single-tool categories select this tool directly. With `items` too, the category is a hybrid (Road, EXPANSION §7.2). */
   tool?: ToolId;
   /** Multi-item categories open a tray. */
   items?: ToolId[];
@@ -34,20 +36,22 @@ export interface Category {
 export const CATEGORIES: Category[] = [
   { id: 'inspect', label: 'Inspect', short: 'Info', icon: 'inspect', key: 'Esc', tool: 'inspect', accent: '#22e5ff' },
   { id: 'bulldoze', label: 'Bulldoze', short: 'Demo', icon: 'bulldoze', key: 'B', tool: 'bulldoze', accent: '#ff3b5c' },
-  { id: 'road', label: 'Road', short: 'Road', icon: 'road', key: 'R', tool: 'road', accent: '#c8d0f0' },
+  // Hybrid (EXPANSION §7.2): one tap lays a street; the tray holds the other road kinds.
+  { id: 'road', label: 'Road', short: 'Road', icon: 'road', key: 'R', tool: 'road', items: ['road', 'alley', 'avenue', 'highway'], accent: '#c8d0f0' },
   { id: 'zones', label: 'Zones', short: 'Zone', icon: 'zones', key: 'Z X C', items: ['res', 'com', 'ind'], accent: '#ff2bd6' },
-  { id: 'power', label: 'Power', short: 'Power', icon: 'power', items: ['solar', 'reactor'], accent: '#4dff9a' },
+  // Relabels to "Infra" ("Power & Ports" on wide screens) once the Seaport unlocks (categoryChrome, §7.1).
+  { id: 'power', label: 'Power', short: 'Power', icon: 'power', items: ['solar', 'reactor', 'seaport', 'airport', 'spaceport'], accent: '#4dff9a' },
   {
     id: 'services',
     label: 'Services',
     short: 'Civic',
     icon: 'services',
-    items: ['plaza', 'precinct', 'clinic', 'datahub', 'maglev', 'memorial'],
+    items: ['plaza', 'precinct', 'clinic', 'datahub', 'academy', 'maglev', 'memorial'],
     accent: '#3d7bff',
   },
   // Sky (§8.9): the megastructures, skybridges and the ribbon share the old Landmarks slot,
   // so the phone toolbar stays at 8–9 thumb-sized buttons.
-  { id: 'sky', label: 'Sky', short: 'Sky', icon: 'sky', items: ['stack', 'skybridge', 'rail', 'spire', 'arcology'], accent: '#a9b8ff' },
+  { id: 'sky', label: 'Sky', short: 'Sky', icon: 'sky', items: ['stack', 'skybridge', 'rail', 'skyway', 'spire', 'arcology'], accent: '#a9b8ff' },
   { id: 'deals', label: 'Deals', short: 'Deals', icon: 'deals', items: ['commons', 'foundry', 'glarewall', 'tidemarket', 'roost'], accent: '#ffb02e', story: true },
   { id: 'data', label: 'Data', short: 'Data', icon: 'data', key: 'O', accent: '#22e5ff' },
 ];
@@ -58,6 +62,45 @@ export function categoryOf(tool: ToolId): CategoryId {
     if (c.items && c.items.includes(tool)) return c.id;
   }
   return 'inspect';
+}
+
+/** A tool + tray category (Road): tapping it lays a street at once and opens the tray (§7.2). */
+export function isHybrid(c: Category): boolean {
+  return !!c.tool && !!c.items;
+}
+
+/** Population at which the Power tray becomes "Infra" (the first port, the Seaport, §7.1). */
+export const INFRA_POP = BUILDINGS.seaport.unlockPop;
+
+/** Toolbar label, short label and icon of a category for a city that has reached `maxPop` (the Infra relabel). */
+export function categoryChrome(c: Category, maxPop: number): { label: string; short: string; icon: IconName } {
+  if (c.id === 'power' && maxPop >= INFRA_POP) return { label: 'Power & Ports', short: 'Infra', icon: 'infra' };
+  return { label: c.label, short: c.short, icon: c.icon };
+}
+
+/**
+ * The Road button (EXPANSION §7.2), as a pure rule so it is testable:
+ *  1. no road tool active → select `last` (the session's last road tool; Street if it is locked),
+ *     and open the tray too when two or more road kinds are unlocked;
+ *  2. a road tool active, tray closed → open the tray;
+ *  3. a road tool active, tray open → close the tray (the tool stays).
+ */
+export function roadButton(active: ToolId, trayOpen: boolean, last: RoadTool, unlocked: (t: RoadTool) => boolean): { tool: ToolId | null; tray: 'open' | 'close' | 'keep' } {
+  if (isRoadTool(active)) return { tool: null, tray: trayOpen ? 'close' : 'open' };
+  const tool: RoadTool = unlocked(last) ? last : 'road';
+  let open = 0;
+  for (const t of ROAD_TOOLS) if (unlocked(t)) open++;
+  return { tool, tray: open >= 2 ? 'open' : 'keep' };
+}
+
+/** KeyR: Street, then (pressed again while a road tool is active) the next unlocked road tool in tray order. Null = back to Inspect. */
+export function nextRoadTool(active: ToolId, unlocked: (t: RoadTool) => boolean): ToolId {
+  if (!isRoadTool(active)) return 'road';
+  const order = ROAD_TOOLS.filter((t) => t === 'road' || unlocked(t));
+  // Only Street open: R toggles back to Inspect as it always has.
+  if (order.length <= 1) return 'inspect';
+  const i = order.indexOf(active);
+  return order[(i + 1) % order.length];
 }
 
 export interface ToolMeta {
@@ -77,6 +120,8 @@ export interface ToolMeta {
   unlockPop: number;
   /** Faction whose sigil badges the card (Deals group). */
   faction?: FactionId;
+  /** Tray card meta line on phones (≤ 22 chars), the one rule a card must carry (§7.2). */
+  meta?: string;
 }
 
 const BUILDING_ICON: Record<string, IconName> = {
@@ -96,16 +141,23 @@ const BUILDING_ICON: Record<string, IconName> = {
   roost: 'roost',
   commons: 'commons',
   memorial: 'memorial',
+  academy: 'academy',
+  seaport: 'seaport',
+  airport: 'airport',
+  spaceport: 'spaceport',
 };
+
+const ROAD_ICON: Record<RoadTool, IconName> = { road: 'road', avenue: 'avenue', highway: 'highway', alley: 'alley' };
+const ZONE_META: Record<'res' | 'com' | 'ind', string> = { res: 'Housing', com: 'Shops · jobs', ind: 'Jobs · smog' };
 
 export function toolMeta(tool: ToolId): ToolMeta {
   if (isZoneTool(tool)) {
     const z = ZONES[tool];
-    return { id: tool, name: z.name, desc: z.desc, icon: tool, color: z.color, badge: z.short, cost: z.cost, perTile: true, unlockPop: 0 };
+    return { id: tool, name: z.name, desc: z.desc, icon: tool, color: z.color, badge: z.short, cost: z.cost, perTile: true, unlockPop: 0, meta: ZONE_META[tool] };
   }
   if (isBuildingTool(tool)) {
     const b = BUILDINGS[tool];
-    return {
+    const m: ToolMeta = {
       id: tool,
       name: b.name,
       desc: b.desc,
@@ -117,8 +169,28 @@ export function toolMeta(tool: ToolId): ToolMeta {
       unlockPop: b.gate?.fallbackPop ?? (b.gate?.unlock ? UNLOCK_FALLBACK_POP[b.gate.unlock] ?? 0 : b.unlockPop),
       faction: b.gate?.faction,
     };
+    if (b.meta) m.meta = b.meta;
+    return m;
+  }
+  if (isRoadTool(tool)) {
+    // Street, Back Alley, Avenue, Highway: one row of ROAD_KINDS each (§2.8). 'road' is the Street.
+    const k = ROAD_KINDS[ROAD_TOOL_KIND[tool]];
+    const desc = k.bridgeCost !== null ? `${k.desc} Bridges ${credits(k.bridgeCost)}.` : k.desc;
+    return { id: tool, name: k.name, desc, icon: ROAD_ICON[tool], color: k.color, cost: k.cost, perTile: true, unlockPop: k.unlockPop, meta: k.meta };
   }
   switch (tool) {
+    case 'skyway':
+      return {
+        id: tool,
+        name: 'Skyway',
+        desc: SKYWAY.desc,
+        icon: 'skyway',
+        color: SKYWAY.color,
+        cost: SKYWAY.perTile,
+        perTile: true,
+        unlockPop: SKYWAY.unlockPop,
+        meta: SKYWAY.meta,
+      };
     case 'skybridge':
       return {
         id: tool,
@@ -129,6 +201,7 @@ export function toolMeta(tool: ToolId): ToolMeta {
         cost: SKYBRIDGE.base + SKYBRIDGE.perTile * SKYBRIDGE.minGap,
         perTile: false,
         unlockPop: UNLOCK_FALLBACK_POP.skybridge ?? 0,
+        meta: 'Tower to tower',
       };
     case 'rail':
       return {
@@ -140,17 +213,7 @@ export function toolMeta(tool: ToolId): ToolMeta {
         cost: RIBBON.perTile,
         perTile: true,
         unlockPop: UNLOCK_FALLBACK_POP.rail ?? 0,
-      };
-    case 'road':
-      return {
-        id: tool,
-        name: 'Road',
-        desc: `Streets carry traffic and power. Bridges ${credits(BRIDGE_COST)}.`,
-        icon: 'road',
-        color: '#c8d0f0',
-        cost: ROAD_COST,
-        perTile: true,
-        unlockPop: 0,
+        meta: 'Stations',
       };
     case 'bulldoze':
       return {
@@ -163,6 +226,7 @@ export function toolMeta(tool: ToolId): ToolMeta {
         perTile: true,
         unlockPop: 0,
       };
+    case 'inspect':
     default:
       return { id: 'inspect', name: 'Inspect', desc: 'Tap anything to see how it is doing.', icon: 'inspect', color: '#22e5ff', cost: 0, perTile: false, unlockPop: 0 };
   }
@@ -187,7 +251,7 @@ export function costLabel(meta: ToolMeta): string {
   return meta.perTile ? `${credits(meta.cost)}/tile` : credits(meta.cost);
 }
 
-export type LegendKind = 'heat' | 'power' | 'services' | 'turf';
+export type LegendKind = 'heat' | 'power' | 'services' | 'turf' | 'tiers';
 
 export interface OverlayMeta {
   id: OverlayId;
@@ -199,13 +263,16 @@ export interface OverlayMeta {
   high?: string;
 }
 
+/** Data tray order (EXPANSION §7.3): Off, Wealth, Land Value, Traffic, Noise, Power, Crime, Pollution, Services, Turf. */
 export const OVERLAYS: OverlayMeta[] = [
   { id: 'none', name: 'Off', icon: 'eyeOff', desc: 'Plain city view.', legend: null },
-  { id: 'power', name: 'Power', icon: 'plug', desc: 'Which blocks are on the grid.', legend: 'power' },
+  { id: 'wealth', name: 'Wealth', icon: 'tiers', desc: 'Which blocks are $, $$ or $$$.', legend: 'tiers' },
   { id: 'landValue', name: 'Land Value', icon: 'gem', desc: 'Where towers want to rise.', legend: 'heat', low: 'Cheap', high: 'Prime' },
+  { id: 'traffic', name: 'Traffic', icon: 'car', desc: 'Congestion on the streets.', legend: 'heat', low: 'Clear', high: 'Jammed' },
+  { id: 'noise', name: 'Noise', icon: 'noise', desc: 'Highways, runways and launch pads.', legend: 'heat', low: 'Quiet', high: 'Roaring' },
+  { id: 'power', name: 'Power', icon: 'plug', desc: 'Which blocks are on the grid.', legend: 'power' },
   { id: 'crime', name: 'Crime', icon: 'siren', desc: 'Street-crew activity.', legend: 'heat', low: 'Calm', high: 'Rough' },
   { id: 'pollution', name: 'Pollution', icon: 'smog', desc: 'Smog from fabs and plants.', legend: 'heat', low: 'Clean', high: 'Toxic' },
-  { id: 'traffic', name: 'Traffic', icon: 'car', desc: 'Congestion on the streets.', legend: 'heat', low: 'Clear', high: 'Jammed' },
   { id: 'services', name: 'Services', icon: 'rings', desc: 'Coverage of civic buildings.', legend: 'services' },
   { id: 'turf', name: 'Turf', icon: 'turf', desc: 'Whose streets are whose.', legend: 'turf' },
 ];
@@ -222,4 +289,11 @@ export const SERVICE_SWATCHES: { label: string; color: string }[] = [
   { label: 'Park', color: '#4dff9a' },
   { label: 'Transit', color: '#ffe14d' },
   { label: 'Prestige', color: '#ff2bd6' },
+  // X1 (EXPANSION §6.1): EFFECT_RGB.education in render/overlay.ts.
+  { label: 'Schools', color: '#ffd0a0' },
 ];
+
+/** Wealth view swatches (WEALTH.colors) and the pips the lens draws (render/overlay.ts, EXPANSION §4.5). */
+export const TIER_SWATCHES: { label: string; color: string }[] = WEALTH.colors.map((color, i) => ({ label: TIER_LABEL[i], color }));
+export const TIER_PIP_UP = '#4dff9a';
+export const TIER_PIP_DOWN = 'rgb(255, 120, 120)';

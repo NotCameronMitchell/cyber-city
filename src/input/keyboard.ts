@@ -6,8 +6,10 @@
 //   + / =  and  -   zoom in / out around the screen centre
 //   Space           pause ↔ previous speed
 //   1 2 3           sim speed
-//   Esc             back to inspect, clear preview + selection
-//   B R             bulldoze / road            (press again → inspect)
+//   Esc             cancel a plan waiting for ✓; else back to inspect, clear preview + selection
+//   Enter           ✓ on a plan waiting for confirmation (EXPANSION §7.7)
+//   B               bulldoze                   (press again → inspect)
+//   R               street; again: the next unlocked road kind in tray order (EXPANSION §7.2)
 //   Z X C           zone hab / market / fab    (press again → inspect)
 //   O               cycle data overlays (Shift+O backwards)
 //
@@ -16,18 +18,19 @@
 // already called preventDefault (the UI can claim a key, e.g. Esc in a dialog).
 // ─────────────────────────────────────────────────────────────────────────────
 
+import { lockedReason } from '../game/actions';
 import type { Game } from '../game/game';
 import type { OverlayId, ToolId } from '../game/types';
 import type { Vec } from '../render/camera';
+import { nextRoadTool } from '../ui/tools';
 import { KEY_PAN_EASE, KEY_PAN_FAST, KEY_PAN_SPEED, KEY_ZOOM_STEP, damp } from './gestures';
 
-/** Overlay cycle order for the O key. */
-export const OVERLAY_CYCLE: readonly OverlayId[] = ['none', 'power', 'landValue', 'crime', 'pollution', 'traffic', 'services'];
+/** Overlay cycle order for the O key (the Data tray's order, EXPANSION §7.3; Turf is story-gated and left out). */
+export const OVERLAY_CYCLE: readonly OverlayId[] = ['none', 'wealth', 'landValue', 'traffic', 'noise', 'power', 'crime', 'pollution', 'services'];
 
-/** Tool hotkeys by KeyboardEvent.code. */
+/** Tool hotkeys by KeyboardEvent.code (KeyR is the road cycle, below). */
 const TOOL_KEYS: Record<string, ToolId> = {
   KeyB: 'bulldoze',
-  KeyR: 'road',
   KeyZ: 'res',
   KeyX: 'com',
   KeyC: 'ind',
@@ -44,6 +47,8 @@ export interface KeyboardHooks {
   zoomStep(factor: number): void;
   /** Abort any in-progress pointer gesture without applying it. */
   cancelGesture(): void;
+  /** ✓ on the plan waiting for confirmation (the same path as the pill's ✓). */
+  confirmPending(): void;
 }
 
 /** True when keyboard focus is somewhere typing should go. */
@@ -188,11 +193,31 @@ export class KeyboardInput {
         e.preventDefault();
         return;
       case 'Escape':
+        // A plan waiting for ✓ is cancelled first; the tool stays (EXPANSION §7.7).
+        if (game.pendingConfirm) {
+          game.cancelPending();
+          e.preventDefault();
+          return;
+        }
         this.hooks.cancelGesture();
         game.setTool('inspect');
         game.setPreview(null);
         game.select(null);
         return;
+      case 'Enter':
+      case 'NumpadEnter':
+        if (game.pendingConfirm) {
+          this.hooks.confirmPending();
+          e.preventDefault();
+        }
+        return;
+      case 'KeyR': {
+        // Street; again while a road tool is active: the next unlocked road kind (wraps to Street).
+        this.hooks.cancelGesture();
+        game.setTool(nextRoadTool(game.tool, (t) => !lockedReason(game.world, t)));
+        e.preventDefault();
+        return;
+      }
       case 'KeyO': {
         const i = OVERLAY_CYCLE.indexOf(game.overlay);
         const n = OVERLAY_CYCLE.length;

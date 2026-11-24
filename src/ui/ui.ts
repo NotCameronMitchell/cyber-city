@@ -5,7 +5,9 @@
 //   Ticker       news strip under the HUD (tap → NewsLog)
 //   Dock         bottom toolbar / landscape side rail, item tray, tool chip,
 //                gesture hint, overlay legend (+ Coach + InspectSheet slots)
-//   Feedback     toasts, live action pill, milestone banner, FPS readout
+//   Feedback     toasts (with Undo / Watch buttons), live action pill (✓ / ✕ for
+//                plans that need confirming), milestone + city-first banner, FPS
+//   Tips         first-use tips for new tools and sim hints, one at a time
 //   Dialogs      Budget, CityReport, NewsLog, Menu (settings/help/about), Confirm
 //
 // The root is pointer-events:none; only real panels take pointer events, so
@@ -15,13 +17,14 @@
 
 import './ui.css';
 import type { Game } from '../game/game';
+import { pointerActivity } from '../input/gestures';
 import type { Camera } from '../render/camera';
 import { BudgetPanel } from './budget';
 import { Coach } from './coach';
 import { ConfirmDialog } from './confirm';
 import { Modals, type UIActions, type UIContext } from './context';
 import { Dock } from './dock';
-import { h, setClass } from './dom';
+import { buzz, h, setClass } from './dom';
 import { ActionPill, FpsMeter, MilestoneBanner, Toasts } from './feedback';
 import { gridLink } from './grid';
 import { Hud } from './hud';
@@ -32,6 +35,7 @@ import { CityReport } from './report';
 import { StoryUI } from './story/storyUI';
 import './story/story.css';
 import { Ticker } from './ticker';
+import { Tips } from './tips';
 import type { CategoryId } from './tools';
 
 /** HUD figures refresh interval (s). */
@@ -39,6 +43,10 @@ const HUD_INTERVAL = 0.2;
 /** Open panels / tray / coach refresh interval (s). */
 const PANEL_INTERVAL = 0.3;
 const COMPACT_QUERY = '(max-width: 639px)';
+/** Watch (the first launch): where the pad sits on screen, as a share of the height (room above for the climb). */
+const WATCH_Y = 0.66;
+/** Watch: the view is eased out to at most this zoom so the tower and the climb fit. */
+const WATCH_ZOOM = 0.85;
 
 export class UI {
   /** Public for the start screen (src/ui/start): shared dialogs, menu views and the story hold. */
@@ -53,6 +61,11 @@ export class UI {
   private readonly pill: ActionPill;
   private readonly banner: MilestoneBanner;
   private readonly fps: FpsMeter;
+  private readonly tips: Tips;
+  /** Action pill + toasts, at the top. The pill steps aside while a full-screen story surface is up. */
+  private readonly topStack: HTMLElement;
+  /** Watch: the camera glides to this tile (the Spaceport pad) until it arrives or the player grabs the map. */
+  private glide: { x: number; y: number } | null = null;
   private readonly budget: BudgetPanel;
   private readonly report: CityReport;
   private readonly news: NewsLog;
@@ -115,7 +128,20 @@ export class UI {
     this.coach = new Coach(this.ctx);
     this.inspect = new InspectSheet(this.ctx);
     this.toasts = new Toasts();
-    this.pill = new ActionPill();
+    this.toasts.hooks = {
+      run: (id) => {
+        if (id === 'undo') game.undo();
+        else if (id === 'watch') this.watchLaunch();
+      },
+      alive: (id) => (id === 'undo' ? game.undoLeft() > 0 : game.launchLead !== null),
+    };
+    this.pill = new ActionPill({
+      confirm: () => {
+        const plan = game.confirmPending();
+        if (plan?.valid) buzz(14);
+      },
+      cancel: () => game.cancelPending(),
+    });
     this.banner = new MilestoneBanner();
     this.fps = new FpsMeter();
     this.budget = new BudgetPanel(this.ctx);
@@ -126,10 +152,12 @@ export class UI {
     this.story = new StoryUI(this.ctx);
     this.banner.held = () => this.story.busy || this.modals.depth > 0;
     this.toasts.held = () => this.story.holdsToasts;
+    // One item at a time (EXPANSION §7.6): never over a tray, drag, confirm, story surface, message banner or dialog.
+    this.tips = new Tips(this.dock.tipSlot, () => this.tipBlocked());
 
     this.dock.stack.prepend(this.coach.el);
     this.dock.sheetSlot.append(this.inspect.el);
-    const topStack = h('div', { class: 'cc-topstack' }, this.pill.el, this.toasts.el);
+    const topStack = (this.topStack = h('div', { class: 'cc-topstack' }, this.pill.el, this.toasts.el));
     root.prepend(this.dock.el, this.ticker.el, this.hud.el, this.fps.el, this.banner.el, topStack);
     for (const dlg of [this.budget.el, this.report.el, this.news.el, this.menu.el, this.confirm.el]) this.modals.layer.append(dlg);
     this.dock.railSlot.append(this.story.rail.el);
@@ -165,9 +193,10 @@ export class UI {
       this.statsDirty = true;
       this.panelsDirty = true;
     });
-    on('tool', () => {
+    on('tool', (tool) => {
       this.dock.syncTool();
       this.dock.refreshTray();
+      this.tips.onTool(tool);
       this.syncCoach();
     });
     on('overlay', () => this.dock.syncOverlay());
@@ -180,8 +209,10 @@ export class UI {
       this.ticker.push(item);
       this.news.refresh();
     });
-    on('toast', (t) => this.toasts.push(t.text, t.kind));
+    on('toast', (t) => this.toasts.push(t.text, t.kind, t.action));
     on('milestone', (m) => this.banner.show(m));
+    on('moment', (m) => this.banner.showMoment(m));
+    on('hint', (e) => this.tips.onHint(e.id));
     on('settings', () => {
       this.applySettings();
       this.menu.refresh();
@@ -203,6 +234,8 @@ export class UI {
 
   /** game.world was replaced (new city / load): drop every per-world view state. */
   private onWorld(): void {
+    this.glide = null;
+    this.tips.reset();
     this.inspect.onSelect(null);
     this.dock.closeTray();
     this.dock.syncTool();
@@ -235,6 +268,7 @@ export class UI {
       if (t && root.contains(t)) return;
       this.dock.closeTray();
       this.inspect.cancelNudge();
+      this.glide = null;
     };
     window.addEventListener('pointerdown', onDown, true);
     this.offs.push(() => window.removeEventListener('pointerdown', onDown, true));
@@ -304,6 +338,46 @@ export class UI {
     this.stranded = stranded;
   }
 
+  /** Is anything up that a first-use tip must not cover or compete with? */
+  private tipBlocked(): boolean {
+    const g = this.game;
+    if (this.dock.trayOpen || this.dock.hintShowing || pointerActivity.building || g.pendingConfirm) return true;
+    // The inspect sheet has the player's attention (and shares the dock column on phones).
+    if (this.inspect.isOpen) return true;
+    if (this.story.busy || this.modals.depth > 0) return true;
+    // The story's message banner (src/ui/story/incoming.ts) is a .cc-incoming element in the root.
+    const banner = this.root.querySelector<HTMLElement>('.cc-incoming');
+    return !!banner && !banner.hidden;
+  }
+
+  /** Watch (the first launch's toast): ease the camera to the pad, leaving room above for the climb. */
+  private watchLaunch(): void {
+    const lead = this.game.launchLead;
+    if (!lead) return;
+    this.glide = { x: lead.x, y: lead.y };
+    const cam = this.ctx.camera;
+    if (cam.zoom > WATCH_ZOOM) cam.zoomAt(WATCH_ZOOM / cam.zoom, cam.width / 2, cam.height / 2);
+  }
+
+  private updateGlide(dt: number): void {
+    const g = this.glide;
+    if (!g) return;
+    const cam = this.ctx.camera;
+    const p = cam.tileToScreen(g.x, g.y);
+    const dx = cam.width / 2 - p.x;
+    const dy = cam.height * WATCH_Y - p.y;
+    if (Math.abs(dx) < 1 && Math.abs(dy) < 1) {
+      this.glide = null;
+      return;
+    }
+    const k = 1 - Math.exp(-dt * 6);
+    const bx = cam.x;
+    const by = cam.y;
+    cam.panBy(dx * k, dy * k);
+    // The camera clamp at the map edge ate the motion: stop there.
+    if (cam.x === bx && cam.y === by) this.glide = null;
+  }
+
   private refreshHud(): void {
     this.hud.refresh();
     this.ticker.refreshDate();
@@ -315,12 +389,16 @@ export class UI {
   update(dt: number): void {
     if (!(dt >= 0) || dt > 1) dt = 0;
     this.pill.update(this.game);
+    // A chapter title, Charter Night or the ending covers the map: a plan waiting for ✓ waits behind it.
+    setClass(this.topStack, 'is-story', this.story.fullscreen);
     this.fps.update(dt, this.game.settings.showFps);
     this.ticker.update(performance.now());
     this.inspect.update(dt);
     this.story.update(dt);
     this.banner.update();
     this.toasts.flush();
+    this.tips.update(dt);
+    this.updateGlide(dt);
 
     this.hudAcc += dt;
     if (this.hudAcc >= HUD_INTERVAL) {

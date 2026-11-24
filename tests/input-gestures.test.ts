@@ -13,9 +13,14 @@ import {
   pickTile,
   pinchFactor,
   screenToTileInto,
+  SKY_PICK_BASE,
+  SKY_PICK_LOW,
+  SKY_PICK_TOP,
   wheelDeltaPx,
   type FootprintLookup,
+  type PickHit,
 } from '../src/input/gestures';
+import { SKYWAY } from '../src/game/config';
 import { Camera, tileCenterWorld } from '../src/render/camera';
 
 function camera(w = 390, h = 844, zoom = 1.3): Camera {
@@ -229,5 +234,95 @@ describe('pickTile (height-aware)', () => {
     const g = groundAt(c.x + 90, c.y - 64); // well right of the tower's silhouette
     const p = pickTile(g.u, g.v, world([{ x: 10, y: 10, size: 1, height: 300 }]), { x: 0, y: 0 });
     expect(p).not.toEqual({ x: 10, y: 10 });
+  });
+
+  it('respects a silhouette base: nothing below it is hit', () => {
+    const c = tileCenterWorld(10, 10);
+    const slab = [{ x: 10, y: 10, size: 1, height: 56, base: 46 }];
+    // The ground point of the tile itself is under the slab, not on it.
+    const g0 = groundAt(c.x, c.y);
+    expect(pickTile(g0.u, g0.v, world(slab), { x: 0, y: 0 })).toEqual({ x: 10, y: 10 }); // ground fallback, same tile
+    const low = groundAt(c.x, c.y - 20);
+    expect(pickTile(low.u, low.v, world(slab), { x: 0, y: 0 })).not.toEqual({ x: 10, y: 10 });
+    const mid = groundAt(c.x, c.y - 51);
+    expect(pickTile(mid.u, mid.v, world(slab), { x: 0, y: 0 })).toEqual({ x: 10, y: 10 });
+  });
+});
+
+describe('pickTile with the skyway slab (EXPANSION §3.7)', () => {
+  function groundAt(wx: number, wy: number) {
+    const a = wx / 32;
+    const b = wy / 16;
+    return { u: (b + a) / 2, v: (b - a) / 2 };
+  }
+  type Obj = { x: number; y: number; size: number; height: number };
+  /** Ground objects on layer 0, a deck slab over each `sky` tile on layer 1. */
+  const scene = (objs: Obj[], sky: [number, number][]): FootprintLookup => (tx, ty, out, layer) => {
+    if (layer === 1) {
+      if (!sky.some(([x, y]) => x === tx && y === ty)) return false;
+      Object.assign(out, { x: tx, y: ty, size: 1, height: SKY_PICK_TOP, base: SKY_PICK_BASE });
+      return true;
+    }
+    for (const o of objs) {
+      if (tx >= o.x && tx < o.x + o.size && ty >= o.y && ty < o.y + o.size) {
+        Object.assign(out, o);
+        return true;
+      }
+    }
+    return false;
+  };
+  /** Where the deck over tile (x, y) is drawn on screen (zoom 1, camera at origin). */
+  const deckAt = (x: number, y: number) => {
+    const c = tileCenterWorld(x, y);
+    return groundAt(c.x, c.y - SKYWAY.z);
+  };
+  const hit = (): PickHit => ({ x: 0, y: 0, sky: false });
+
+  it('the slab sits where the deck is drawn (SKYWAY.z inside the pick range)', () => {
+    expect(SKYWAY.z).toBeGreaterThanOrEqual(SKY_PICK_BASE);
+    expect(SKYWAY.z).toBeLessThanOrEqual(SKY_PICK_TOP);
+    expect(SKY_PICK_LOW).toBe(SKYWAY.z - 4);
+  });
+
+  it('a tap on the drawn deck selects the deck tile with sky: true, not the ground behind it', () => {
+    const g = deckAt(20, 20);
+    expect([Math.floor(g.u), Math.floor(g.v)]).not.toEqual([20, 20]); // the ground there is another tile
+    expect(pickTile(g.u, g.v, scene([], [[20, 20]]), hit(), undefined, true)).toEqual({ x: 20, y: 20, sky: true });
+  });
+
+  it('a tap on the street under a deck still picks the ground', () => {
+    const c = tileCenterWorld(20, 20);
+    const g = groundAt(c.x, c.y);
+    expect(pickTile(g.u, g.v, scene([], [[20, 20]]), hit(), undefined, true)).toEqual({ x: 20, y: 20, sky: false });
+  });
+
+  it('without sky picking the slab is never asked for (old callers unchanged)', () => {
+    const g = deckAt(20, 20);
+    const out = { x: 0, y: 0 };
+    pickTile(g.u, g.v, scene([], [[20, 20]]), out);
+    expect(out).toEqual({ x: Math.floor(g.u), y: Math.floor(g.v) });
+  });
+
+  it('a low building under or beside the deck draws first, so the deck wins', () => {
+    const g = deckAt(20, 20);
+    // A 2×2 plinth (low anchor) whose footprint holds the deck tile.
+    const r = pickTile(g.u, g.v, scene([{ x: 19, y: 19, size: 2, height: 40 }], [[20, 20]]), hit(), undefined, true);
+    expect(r).toEqual({ x: 20, y: 20, sky: true });
+  });
+
+  it('a tall tower in front of the deck hides it and keeps the tap', () => {
+    const g = deckAt(20, 20);
+    // A tower one tile in front whose body covers the deck on screen.
+    const r = pickTile(g.u, g.v, scene([{ x: 21, y: 21, size: 1, height: 200 }], [[20, 20]]), hit(), undefined, true);
+    expect(r).toEqual({ x: 21, y: 21, sky: false });
+  });
+
+  it('a tall tower behind the deck loses to it', () => {
+    const g = deckAt(20, 20);
+    // Behind (smaller depth) and tall enough to reach the point: the deck is drawn over it.
+    const behind = { x: Math.floor(g.u) + 1, y: Math.floor(g.v) + 1, size: 1, height: 200 };
+    expect(behind.x + behind.y).toBeLessThan(40);
+    const r = pickTile(g.u, g.v, scene([behind], [[20, 20]]), hit(), undefined, true);
+    expect(r).toEqual({ x: 20, y: 20, sky: true });
   });
 });

@@ -296,13 +296,32 @@ export interface PickFootprint {
   x: number;
   y: number;
   size: number;
+  /** Top of the silhouette (world px above the ground). */
   height: number;
+  /** Bottom of the silhouette (world px, default 0): a skyway deck is a slab from `base` to `height` (EXPANSION §3.7). */
+  base?: number;
 }
 
-/** Fill `out` with the object occupying tile (tx, ty); false if none (or off-map). */
-export type FootprintLookup = (tx: number, ty: number, out: PickFootprint) => boolean;
+/**
+ * Fill `out` with the object occupying tile (tx, ty); false if none (or off-map). `layer` 0 asks
+ * for the ground object (a building or zone tower), 1 for the skyway slab over the tile.
+ */
+export type FootprintLookup = (tx: number, ty: number, out: PickFootprint, layer: 0 | 1) => boolean;
 
-const scratchFp: PickFootprint = { x: 0, y: 0, size: 1, height: 0 };
+/** pickTile's answer: the tile, and (when sky picking was asked for) whether the skyway slab over it won. */
+export interface PickHit extends Vec {
+  sky?: boolean;
+}
+
+/** The skyway slab a tap can pick: the deck is drawn at SKYWAY.z 52, picked from z 46 to z 56 (EXPANSION §3.7). */
+export const SKY_PICK_BASE = 46;
+export const SKY_PICK_TOP = 56;
+/** A ramp slopes down to its street: its slab reaches lower. */
+export const SKY_PICK_RAMP_BASE = 24;
+/** Ground objects lower than SKYWAY.z − 4 draw before a deck over or beside them, so the deck wins the tap. */
+export const SKY_PICK_LOW = 48;
+
+const scratchFp: PickFootprint = { x: 0, y: 0, size: 1, height: 0, base: 0 };
 
 /**
  * Which tile did the player mean? A tall tower drawn in front of the ground
@@ -311,11 +330,17 @@ const scratchFp: PickFootprint = { x: 0, y: 0, size: 1, height: 0 };
  *
  * Moving a screen point *down* by t world px moves it by (t/TILE_H, t/TILE_H)
  * in tile space, so the point is inside an object's extruded silhouette iff
- * the diagonal ray (u+d, v+d), d ∈ [0, height/TILE_H], enters its footprint.
- * We walk that ray through the grid and keep the front-most (largest draw
- * depth) hit. Falls back to the ground tile. (u, v) = fractional tile coords.
+ * the diagonal ray (u+d, v+d), d ∈ [base/TILE_H, height/TILE_H], enters its
+ * footprint. We walk that ray through the grid and keep the front-most
+ * (largest draw depth) hit. Falls back to the ground tile. (u, v) = fractional
+ * tile coords.
+ *
+ * With `sky`, each tile is also asked for its skyway slab (layer 1). The slab
+ * wins over the front-most ground hit when that object is lower than the deck
+ * (it draws first) or sits behind the slab; a taller object in front keeps the
+ * tap, as it hides the deck. `out.sky` then says which won.
  */
-export function pickTile(u: number, v: number, lookup: FootprintLookup, out: Vec, maxHeight = MAX_PICK_HEIGHT): Vec {
+export function pickTile(u: number, v: number, lookup: FootprintLookup, out: PickHit, maxHeight = MAX_PICK_HEIGHT, sky = false): PickHit {
   let tx = Math.floor(u);
   let ty = Math.floor(v);
   out.x = tx;
@@ -324,16 +349,31 @@ export function pickTile(u: number, v: number, lookup: FootprintLookup, out: Vec
   let nextX = tx + 1 - u; // ray parameter where it crosses into column tx+1
   let nextY = ty + 1 - v;
   let bestDepth = -Infinity;
+  let bestHeight = 0;
+  let skyDepth = -Infinity;
+  let skyX = 0;
+  let skyY = 0;
   const fp = scratchFp;
   for (let guard = 0; guard < 64; guard++) {
-    if (lookup(tx, ty, fp)) {
-      const enter = Math.max(fp.x - u, fp.y - v, 0);
-      const exit = Math.min(fp.x + fp.size - u, fp.y + fp.size - v);
+    fp.base = 0;
+    if (lookup(tx, ty, fp, 0)) {
       const depth = fp.x + fp.y + 2 * (fp.size - 1);
-      if (enter < exit && enter * TILE_H <= fp.height && depth > bestDepth) {
+      if (depth > bestDepth && silhouetteHit(u, v, fp)) {
         bestDepth = depth;
+        bestHeight = fp.height;
         out.x = tx;
         out.y = ty;
+      }
+    }
+    if (sky) {
+      fp.base = 0;
+      if (lookup(tx, ty, fp, 1)) {
+        const depth = fp.x + fp.y + 2 * (fp.size - 1);
+        if (depth > skyDepth && silhouetteHit(u, v, fp)) {
+          skyDepth = depth;
+          skyX = tx;
+          skyY = ty;
+        }
       }
     }
     const d = Math.min(nextX, nextY);
@@ -351,5 +391,26 @@ export function pickTile(u: number, v: number, lookup: FootprintLookup, out: Vec
       nextY += 1;
     }
   }
+  if (sky) {
+    const won = skyDepth > -Infinity && (bestDepth === -Infinity || bestHeight < SKY_PICK_LOW || skyDepth > bestDepth);
+    if (won) {
+      out.x = skyX;
+      out.y = skyY;
+    }
+    out.sky = won;
+  }
   return out;
 }
+
+/** Does the diagonal ray from (u, v) meet `fp`'s extruded silhouette between its base and its top? */
+function silhouetteHit(u: number, v: number, fp: PickFootprint): boolean {
+  const enter = Math.max(fp.x - u, fp.y - v, 0, (fp.base ?? 0) / TILE_H);
+  const exit = Math.min(fp.x + fp.size - u, fp.y + fp.size - v);
+  return enter < exit && enter * TILE_H <= fp.height;
+}
+
+/**
+ * Pointer activity the UI must not cover (EXPANSION §7.6 tips): true while a build drag or a
+ * long-press peek is in progress. Written by InputController; read by the UI root.
+ */
+export const pointerActivity = { building: false };

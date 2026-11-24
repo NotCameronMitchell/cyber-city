@@ -7,6 +7,10 @@
 //                the Crown stage opens the crown picker (4 rows of 56 px with
 //                an effect summary and favor chips); while it is open the
 //                sheet grows and hides its stat rows (onMode).
+//   Spaceport    Launch rights · Choose (EXPANSION §5.3): opens the ex.rights
+//                card on demand (no deck slot), disabled with its reason.
+//   Skyway deck  Demolish segment · 5 CR (EXPANSION §7.4): the sheet a tap on
+//                the deck opens (Selection.sky); removes that one segment.
 //
 // The turf, stage, ribbon and skybridge rows themselves come from
 // game.getTileInfo, so the generic inspect rows already show them.
@@ -50,7 +54,7 @@ export class InspectStory {
 
   refresh(): void {
     const sel = this.sel;
-    const acts = sel ? this.ctx.game.inspectActions(sel.x, sel.y) : [];
+    const acts = sel ? this.ctx.game.inspectActions(sel.x, sel.y, !!sel.sky) : [];
     this.actions = acts;
     if (!acts.length && this.mode !== 'idle') this.setMode('idle');
     const key = `${this.mode}|${JSON.stringify(acts)}`;
@@ -82,9 +86,10 @@ export class InspectStory {
           `<button class="cc-btn is-danger cc-story-act" type="button" data-act="go" data-i="${i}">${icon('shield')}<span>Crackdown</span></button></span></div>`;
         continue;
       }
-      const ico = a.id === 'crackdown' ? 'shield' : 'stack';
+      const ico = a.id === 'crackdown' ? 'shield' : a.id === 'rights' ? 'key' : a.id === 'skyway' ? 'trash' : 'stack';
+      const cls = a.id === 'crackdown' ? ' is-crackdown' : a.id === 'rights' ? ' is-rights' : a.id === 'skyway' ? ' is-skyway' : '';
       s +=
-        `<button class="cc-story-act${a.enabled ? '' : ' is-off'}${a.id === 'crackdown' ? ' is-crackdown' : ''}" type="button" data-act="${a.id}" data-i="${i}"${a.enabled ? '' : ` aria-disabled="true"`}>` +
+        `<button class="cc-story-act${a.enabled ? '' : ' is-off'}${cls}" type="button" data-act="${a.id}" data-i="${i}"${a.enabled ? '' : ` aria-disabled="true"`}>` +
         `<span class="cc-story-act-ico">${icon(a.enabled ? ico : 'lock')}</span>` +
         `<span class="cc-story-act-main"><span class="cc-story-act-label">${esc(a.label)}</span>${a.reason ? `<span class="cc-story-act-reason">${esc(a.reason)}</span>` : ''}</span>` +
         `</button>`;
@@ -152,6 +157,14 @@ export class InspectStory {
       this.refresh();
     } else if (act === 'crown') {
       this.setMode('crowns');
+      this.refresh();
+    } else if (act === 'rights') {
+      // Opens ex.rights through director.openOnDemand: it blocks like any card, the sheet stays behind it.
+      game.openLaunchRights(a.buildingId);
+      this.refresh();
+    } else if (act === 'skyway' && a.x !== undefined && a.y !== undefined) {
+      const r = game.demolishSkySegment(a.x, a.y);
+      if (r.ok) game.toast('Skyway segment removed', 'info');
       this.refresh();
     }
   };
