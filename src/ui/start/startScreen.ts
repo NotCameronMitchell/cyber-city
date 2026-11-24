@@ -455,10 +455,13 @@ export class StartScreen {
     // First launch: found the untouched map waiting under the showcase (the camera is framed on it). Otherwise a fresh map.
     const keepMap = !this.city && !worthKeeping({ tick: game.world.tick, buildingCount: game.world.buildings.size, tiles: game.world.tiles });
     const seed = keepMap ? game.world.seed : randomSeed();
+    const before = { N: game.world.N, region: game.world.region };
     // Region (MEGACITY §3.11): the device default until WP-5 adds the New City sheet's Region control.
     game.newCity(name || undefined, seed, defaultRegion());
+    // No room to keep a copy of the current city (§3.10): nothing changed, the Export toast says so; stay on the sheet.
+    if (game.keepCopyFailed !== null) return;
     this.nightClock();
-    if (!keepMap) this.reframe();
+    if (needsReframe(keepMap, before, game.world)) this.reframe();
     this.city = true;
     this.unreadable = false;
     game.toast(`Charter signed: welcome to ${game.world.cityName}`, 'good');
@@ -606,7 +609,8 @@ export class StartScreen {
         if (!this.flow.interactive) return;
         const ok = game.loadPrevious();
         if (!ok) {
-          game.toast('The previous city could not be read', 'error');
+          // A refused swap (no room for a copy, or for the restored city) has already said why, with Export.
+          if (game.keepCopyFailed === null && !game.lastSaveFailed) game.toast('The previous city could not be read', 'error');
           this.refresh();
           return;
         }
@@ -741,10 +745,19 @@ function readEnv(returning: boolean): Parameters<typeof a2hsHint>[0] {
   };
 }
 
-/** Frame the developed area (or the map centre) at a tappable zoom, as the renderer does on first layout. */
-function frameCity(cam: Camera, w: World): void {
+/**
+ * After Found city: a first launch keeps the untouched map waiting under the showcase, already framed, unless New City
+ * changed the world's side or region (a PC's first city is a 5×5 one, MEGACITY §3.11): then the old view is off the map.
+ */
+export function needsReframe(keepMap: boolean, before: { N: number; region: number }, w: Pick<World, 'N' | 'region'>): boolean {
+  return !keepMap || w.N !== before.N || w.region !== before.region;
+}
+
+/** Frame the developed area (or the owned land's centre) at a tappable zoom, as the renderer does on first layout. */
+export function frameCity(cam: Camera, w: World): void {
   const N = w.N;
   cam.setMapSize(N);
+  const o = w.ownedBox;
   let x0 = N;
   let y0 = N;
   let x1 = -1;
@@ -760,8 +773,9 @@ function frameCity(cam: Camera, w: World): void {
     }
   const phone = Math.min(cam.width, cam.height) < 640;
   if (x1 < 0) {
+    // An empty city: the centre of the owned land (the start slot), not of the whole region.
     cam.zoom = phone ? 0.9 : 1;
-    cam.centerOnTile(N / 2, N / 2);
+    cam.centerOnTile((o.x0 + o.x1 + 1) / 2, (o.y0 + o.y1 + 1) / 2);
     return;
   }
   const [zmin, zmax] = phone ? [0.8, 1.0] : [0.7, 1.25];

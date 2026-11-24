@@ -14,8 +14,9 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { REGION, SAVE_KEY } from './config';
+import { isFutureSave } from './districts/migrate';
 import { storageGet, storageRemove, storageSet } from './storage';
-import type { SaveData } from './types';
+import { SLOT, type SaveData } from './types';
 
 /** Backup slot: New City, Import, Restore and Grow move the city they replace here ("Restore previous city"). */
 export const PREV_SAVE_KEY = `${SAVE_KEY}.prev`;
@@ -200,18 +201,107 @@ export async function unpackStored(key: string): Promise<string | null> {
   return plain;
 }
 
+/** True when an envelope's header (or a save's) names a version or region this build can't load (a newer build's). */
+export function isFutureHeader(h: Pick<EnvelopeHeader, 'version' | 'region'> | null): boolean {
+  if (!h) return false;
+  return isFutureSave({ version: h.version, region: h.region, size: SLOT * h.region });
+}
+
 /**
  * Boot (§3.10): `main.ts` awaits this before constructing Game. An envelope in SAVE_KEY (only after an older build
- * restored our envelope mirror there) is unpacked and written back plain, so the synchronous load reads it; envelopes in
- * the mirror, `.prev` and `.future` are unpacked into memory (never written back: `.future` stays as the newer build left it).
+ * restored our envelope mirror there) is unpacked into memory first, so the synchronous load reads it even when the
+ * write-back below fails, then written back plain with the quota rule. A newer build's envelope is left exactly as
+ * stored (Game blocks on it). Envelopes in the mirror, `.prev` and `.future` are unpacked into memory (never written
+ * back: `.future` stays as the newer build left it). An envelope that doesn't unpack stays as stored: Game reads its
+ * header (a newer build's: blocked; ours: copied to `.unreadable` before a fresh city starts).
  */
 export async function readStoredSave(): Promise<void> {
   const main = storageGet(SAVE_KEY);
-  if (main !== null && parseEnvelope(main)) {
+  const env = parseEnvelope(main);
+  if (main !== null && env) {
     const plain = await unpackEnvelope(main);
-    if (plain !== null) storageSet(SAVE_KEY, plain);
+    if (plain !== null) {
+      unpacked.set(SAVE_KEY, { stored: main, plain });
+      let future = isFutureHeader(readHeader(main));
+      if (!future)
+        try {
+          future = isFutureSave(JSON.parse(plain));
+        } catch {
+          future = false;
+        }
+      if (!future && writeWithEviction(SAVE_KEY, plain)) unpacked.delete(SAVE_KEY);
+    }
   }
   for (const key of [MIRROR_SAVE_KEY, PREV_SAVE_KEY, FUTURE_SAVE_KEY]) await unpackStored(key);
+}
+
+/** A stored value and its unpacked text, so a write can be undone exactly (`restoreKey`). */
+export interface KeySnapshot {
+  key: string;
+  stored: string | null;
+  cached: { stored: string; plain: string } | undefined;
+}
+/** Take a snapshot of `key` (the stored string, and the unpacked text this session holds for it). */
+export function snapshotKey(key: string): KeySnapshot {
+  return { key, stored: storageGet(key), cached: unpacked.get(key) };
+}
+/**
+ * Put `key` back as the snapshot had it (removed when it was empty). Used when a swap must change nothing: the value
+ * it replaced fitted before, so writing it back over the bigger or smaller one fits again. False if even that fails.
+ */
+export function restoreKey(snap: KeySnapshot): boolean {
+  if (snap.stored === null) {
+    storageRemove(snap.key);
+    unpacked.delete(snap.key);
+    return true;
+  }
+  if (storageGet(snap.key) !== snap.stored && !writeWithEviction(snap.key, snap.stored)) return false;
+  if (snap.cached && snap.cached.stored === snap.stored) unpacked.set(snap.key, snap.cached);
+  else unpacked.delete(snap.key);
+  return true;
+}
+
+/** Why `keepNewerSave` could not keep the stored save: storage is full, or `.future` holds a different city. */
+export type KeepNewerResult = 'kept' | 'full' | 'taken';
+
+/** Name, seed (when readable) and save time of a stored save, for telling copies of one city apart. */
+function cityOf(key: string, raw: string): { name: string; seed: number | null; savedAt: number } | null {
+  const h = readHeader(raw);
+  if (!h) return null;
+  let seed: number | null = null;
+  const plain = parseEnvelope(raw) ? readPlain(key) : raw;
+  if (plain !== null)
+    try {
+      const s = Number((JSON.parse(plain) as { seed?: unknown }).seed);
+      seed = Number.isFinite(s) ? s : null;
+    } catch {
+      seed = null;
+    }
+  return { name: h.cityName, seed, savedAt: h.savedAt };
+}
+
+/**
+ * Before a stale session lifts the newer-save block (New City, Restore, Import, Grow) and writes SAVE_KEY, make sure
+ * `.future` holds exactly the stored main save (§3.10, EXPANSION §2.5), written with the quota rule. An older copy of
+ * the same city there (same name and seed, saved no later) is replaced; any other content of `.future` is another
+ * kept city and is never overwritten ('taken'). 'full' when it doesn't fit even after the drops. Boot calls it too.
+ */
+export function keepNewerSave(): KeepNewerResult {
+  const main = storageGet(SAVE_KEY);
+  if (main === null) return 'kept';
+  const fut = storageGet(FUTURE_SAVE_KEY);
+  if (fut === main) return 'kept';
+  if (fut !== null) {
+    const a = cityOf(FUTURE_SAVE_KEY, fut);
+    const b = cityOf(SAVE_KEY, main);
+    const same = !!a && !!b && a.name === b.name && (a.seed === null || b.seed === null || a.seed === b.seed) && a.savedAt <= b.savedAt;
+    if (!same) return 'taken';
+  }
+  if (!writeWithEviction(FUTURE_SAVE_KEY, main)) return 'full';
+  const c = unpacked.get(SAVE_KEY);
+  if (c && c.stored === main) unpacked.set(FUTURE_SAVE_KEY, c);
+  else unpacked.delete(FUTURE_SAVE_KEY);
+  return 'kept';
 }
 
 // ── Writes ──────────────────────────────────────────────────────────────────
@@ -256,16 +346,35 @@ export async function flushEnvelopes(): Promise<void> {
 }
 
 /**
+ * The mirror's write generation: every mirror write (plain, removed, or an envelope scheduled) takes the next one, and
+ * an envelope that finishes compressing lands only if no later mirror write happened meanwhile. So `.mirror` always
+ * holds the last save this build wrote (or nothing), never an older or different city (§3.10, EXPANSION §2.5).
+ */
+let mirrorGen = 0;
+
+/**
  * Replace the plain value under `key` with a compressed envelope in an idle callback, if the key still holds exactly
- * `json` then (nothing newer was written). The unpacked text stays in memory so synchronous reads keep working.
+ * `json` then (nothing newer was written); for the mirror, if no later mirror write happened (its generation). The
+ * unpacked text stays in memory so synchronous reads keep working.
  */
 export function envelopeLater(key: string, json: string, data?: Parameters<typeof packEnvelope>[1]): void {
   if (!hasCompression()) return;
+  const gen = mirrorGen;
   scheduleIdle(() => {
     const p = (async () => {
       const env = await packEnvelope(json, data);
       if (env === null) return;
-      if (key !== MIRROR_SAVE_KEY && storageGet(key) !== json) return;
+      if (key === MIRROR_SAVE_KEY) {
+        if (gen !== mirrorGen) return;
+        if (writeWithEviction(key, env)) unpacked.set(key, { stored: env, plain: json });
+        else {
+          // No room for this save's mirror: an older one would point at another city state, so it goes.
+          if (storageGet(key) !== null) storageRemove(key);
+          unpacked.delete(key);
+        }
+        return;
+      }
+      if (storageGet(key) !== json) return;
       if (writeWithEviction(key, env)) unpacked.set(key, { stored: env, plain: json });
     })();
     pending.add(p);
@@ -300,12 +409,16 @@ export interface MainWriteResult {
 export function writeMainSave(json: string, data: Pick<SaveData, 'version' | 'region' | 'cityName' | 'maxPopulation' | 'savedAt' | 'scale'>, opts: { mirrorEverySec?: number; force?: boolean } = {}): MainWriteResult {
   if (!writeWithEviction(SAVE_KEY, json)) return { ok: false, mirror: 'none' };
   if (json.length <= MIRROR_PLAIN_MAX) {
-    storageSet(MIRROR_SAVE_KEY, json);
+    mirrorGen++;
     unpacked.delete(MIRROR_SAVE_KEY);
-    return { ok: true, mirror: 'plain' };
+    // A failed mirror write must not leave the previous city's mirror behind.
+    if (storageSet(MIRROR_SAVE_KEY, json)) return { ok: true, mirror: 'plain' };
+    if (storageGet(MIRROR_SAVE_KEY) !== null) storageRemove(MIRROR_SAVE_KEY);
+    return { ok: true, mirror: 'none' };
   }
   if (!hasCompression()) {
     // No envelope possible: a stale plain mirror would point at an older city state, so it goes.
+    mirrorGen++;
     storageRemove(MIRROR_SAVE_KEY);
     unpacked.delete(MIRROR_SAVE_KEY);
     return { ok: true, mirror: 'none' };
@@ -313,6 +426,13 @@ export function writeMainSave(json: string, data: Pick<SaveData, 'version' | 're
   const every = opts.mirrorEverySec ?? REGION[5].mirrorEverySec;
   if (!opts.force && Number.isFinite(mirrorSec) && mirrorSec < every) return { ok: true, mirror: 'none' };
   mirrorSec = 0;
+  mirrorGen++;
+  // A forced mirror follows a city swap (New City, Import, Restore): until the envelope lands, the old mirror would
+  // be another city, so it goes now.
+  if (opts.force && storageGet(MIRROR_SAVE_KEY) !== null) {
+    storageRemove(MIRROR_SAVE_KEY);
+    unpacked.delete(MIRROR_SAVE_KEY);
+  }
   envelopeLater(MIRROR_SAVE_KEY, json, data);
   return { ok: true, mirror: 'envelope' };
 }

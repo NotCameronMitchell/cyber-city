@@ -335,16 +335,23 @@ describe('save safety (§2.5, §10.2 #4)', () => {
     expect(m.get(SAVE_KEY)).toBe(v4);
     expect(g.load()).toBe(false);
     expect(m.get(SAVE_KEY)).toBe(v4);
-    // A second stale start keeps the first copy.
+    // A second stale start keeps the first copy (another kept city is never overwritten).
     m.set(FUTURE_SAVE_KEY, 'first copy');
     expect(new Game().saveBlocked).toBe(true);
     expect(m.get(FUTURE_SAVE_KEY)).toBe('first copy');
-    // Only an explicit New City clears the block.
+    // So New City can't keep the newer city aside: nothing changes and the player is offered Export (MEGACITY §3.10;
+    // before the review fix it overwrote the newer save while its only copy was SAVE_KEY).
+    g.newCity('Fresh Start');
+    expect(g.saveBlocked).toBe(true);
+    expect(g.keepCopyFailed).toBe('Future Reach');
+    expect(m.get(SAVE_KEY)).toBe(v4);
+    // Only an explicit New City clears the block, once the newer city is safe in .future.
+    m.delete(FUTURE_SAVE_KEY);
     g.newCity('Fresh Start');
     expect(g.saveBlocked).toBe(false);
     expect(JSON.parse(m.get(SAVE_KEY)!).version).toBe(4);
     expect(g.save()).toBe(true);
-    expect(m.get(FUTURE_SAVE_KEY)).toBe('first copy');
+    expect(m.get(FUTURE_SAVE_KEY)).toBe(v4);
   });
 
   it('an unreadable save is copied to .unreadable and autosave still works', () => {
@@ -443,15 +450,19 @@ describe('save safety (§2.5, §10.2 #4)', () => {
     expect(toasts).not.toContain(FUTURE_SAVE_TEXT);
     expect(g.save()).toBe(true);
     expect(new Game().world.cityName).toBe('Old Town');
-    // A restore that cannot be saved (storage full) keeps the backup slot.
+    // A restore that cannot be saved (storage full) keeps the backup slot and changes nothing (MEGACITY §3.10:
+    // it returns false and the storage-full toast says why; before the review fix it swapped in an unsaved city).
     const m2 = memStorage({ [PREV_SAVE_KEY]: old });
     const g2 = new Game();
+    const before = g2.world;
     const ls = globalThis.localStorage as unknown as { setItem: (k: string, v: string) => void };
     ls.setItem = (k, v) => {
       if (k === SAVE_KEY) throw new Error('QuotaExceededError');
       m2.set(k, v);
     };
-    expect(g2.loadPrevious()).toBe(true);
+    expect(g2.loadPrevious()).toBe(false);
+    expect(g2.lastSaveFailed).toBe(true);
+    expect(g2.world).toBe(before);
     expect(m2.get(PREV_SAVE_KEY)).toBe(old);
   });
 });

@@ -58,8 +58,12 @@ import {
   UNREADABLE_SAVE_KEY,
   V2_SAVE_KEY,
   V3_SAVE_KEY,
+  isFutureHeader,
+  keepNewerSave,
   readHeader,
   readPlain,
+  restoreKey,
+  snapshotKey,
   tickMirrorClock,
   writeMainSave,
   writePrev,
@@ -274,6 +278,11 @@ export class Game {
    * the UI offers Export and Replace without a copy (newCity's `replaceWithoutCopy`). Null otherwise.
    */
   keepCopyFailed: string | null = null;
+  /**
+   * The last main-save write failed even after the quota drops (§3.10). A Restore that couldn't save the restored
+   * city changes nothing and leaves this set, so the UI doesn't call the backup unreadable.
+   */
+  lastSaveFailed = false;
   private tickAcc = 0;
   /** Speed to restore once a blocking story card closes (null = not paused by the story). */
   private storyResumeSpeed: number | null = null;
@@ -1091,7 +1100,7 @@ export class Game {
    * "Replace without a copy" (`opts.replaceWithoutCopy`).
    */
   newCity(name?: string, seed = randomSeed(), region: Region = 3, opts: { replaceWithoutCopy?: boolean } = {}) {
-    if (!this.backupCurrent(opts.replaceWithoutCopy === true)) return;
+    if (this.backupCurrent(opts.replaceWithoutCopy === true) === null) return;
     // An explicit New City is the only thing that lifts the newer-save block (its copy stays in FUTURE_SAVE_KEY);
     // the "saved by a newer version" notice no longer applies.
     this.saveBlocked = false;
@@ -1180,10 +1189,16 @@ export class Game {
     if (this.saveBlocked) return false;
     this.world.story.pace = this.settings.storyPace;
     const data = this.world.serialize();
-    const raw = JSON.stringify(data);
-    const every = this.lowerDetail ? LOW_DETAIL.mirrorEverySec : REGION[this.world.region].mirrorEverySec || REGION[5].mirrorEverySec;
+    return this.writeSave(data, JSON.stringify(data), this.world.region, forceMirror);
+  }
+
+  /** The main save and mirror write behind save() and the restore paths (the quota rule and the toast, §3.10). */
+  private writeSave(data: SaveData, raw: string, region: number, forceMirror: boolean, loud = false): boolean {
+    const low = region === 5 && this.settings.lowerDetail === true;
+    const every = low ? LOW_DETAIL.mirrorEverySec : REGION[region as Region]?.mirrorEverySec || REGION[5].mirrorEverySec;
     const r = writeMainSave(raw, data, { mirrorEverySec: every, force: forceMirror });
-    if (!r.ok && !this.storageFullShown) {
+    this.lastSaveFailed = !r.ok;
+    if (!r.ok && (loud || !this.storageFullShown)) {
       this.storageFullShown = true;
       this.toast(STORAGE_FULL_TEXT, 'error', { id: 'export', label: 'Export', sec: 12 });
     }
@@ -1258,33 +1273,40 @@ export class Game {
 
   /**
    * Restore the kept newer city (§3.10): the loadPrevious path from `.future`. The current city goes to `.prev`
-   * (unless saveBlocked or untouched), the kept one becomes the city, and `.future` is removed only after it saved.
+   * (unless saveBlocked or untouched), the kept one becomes the city, and `.future` is removed only once the restored
+   * city is the stored main save. `replaceWithoutCopy`: the second confirm after a failed copy (keepCopyFailed).
    */
-  restoreKept(): boolean {
+  restoreKept(opts: { replaceWithoutCopy?: boolean } = {}): boolean {
     if (!this.keptCityInfo()) return false;
     const plain = readPlain(FUTURE_SAVE_KEY)!;
-    const ok = this.replaceWith(plain, FUTURE_SAVE_KEY);
-    if (ok && storageGet(SAVE_KEY) !== null && !this.saveBlocked) storageRemove(FUTURE_SAVE_KEY);
+    const ok = this.replaceWith(plain, FUTURE_SAVE_KEY, opts);
+    if (ok) storageRemove(FUTURE_SAVE_KEY);
     return ok;
   }
 
   /**
-   * Restore the city "New City" replaced. The current city (if it has any
-   * progress) takes its place in the backup slot, so the swap can be undone.
-   * Returns false when there is no readable backup.
+   * Restore the city "New City" replaced. The current city (if it has any progress) takes its place in the backup
+   * slot, so the swap can be undone. False when there is no readable backup, or nothing could change: the current city
+   * doesn't fit in the backup slot (keepCopyFailed, the Export toast; `replaceWithoutCopy` is the second confirm), or
+   * the restored city couldn't be saved (lastSaveFailed, the storage-full toast).
    */
-  loadPrevious(): boolean {
+  loadPrevious(opts: { replaceWithoutCopy?: boolean } = {}): boolean {
     const raw = readPlain(PREV_SAVE_KEY);
     if (raw === null) return false;
-    return this.replaceWith(raw, PREV_SAVE_KEY);
+    return this.replaceWith(raw, PREV_SAVE_KEY, opts);
   }
 
   /**
-   * Swap the current city for a stored one (Restore previous city, the kept city): the stored city loads, the current
-   * one takes the backup slot (never while saveBlocked: it is a stand-in), the restored city saves first, then the slot
-   * takes the replaced city (or empties). If the save fails the slot keeps the restored city, so a reload loses nothing.
+   * Swap the current city for a stored one (Restore previous city, the kept city; WP-9's Import and Grow reuse it).
+   * Every city stays stored at every step (§3.10):
+   * 1. the city being replaced goes to `.prev` first, plain and synchronously (never while saveBlocked: it is a
+   *    stand-in; then the stored newer city must be safe in `.future` instead). If it doesn't fit, nothing changes;
+   * 2. the restored city is written as the main save before anything in memory changes. If that fails, `.prev` is
+   *    put back as it was and nothing changes (the restored text never left its slot);
+   * 3. only then does the world swap, and a restored `.prev` slot is emptied when it isn't holding the replaced city.
+   * True only when the restored city is the stored main save.
    */
-  private replaceWith(raw: string, from: string): boolean {
+  private replaceWith(raw: string, from: string, opts: { replaceWithoutCopy?: boolean } = {}): boolean {
     let data: SaveData | null = null;
     try {
       data = JSON.parse(raw) as SaveData;
@@ -1298,13 +1320,22 @@ export class Game {
     } catch {
       return false;
     }
+    const prevBefore = snapshotKey(PREV_SAVE_KEY);
+    const backup = this.backupCurrent(opts.replaceWithoutCopy === true);
+    if (backup === null) return false;
+    // The pace the restored city will save with once adopted (adoptCity, then save()).
+    const pace = world.story.pace;
+    world.story.pace = pace && paceOf(pace) === pace ? pace : this.settings.storyPace;
+    const saved = world.serialize();
+    const json = JSON.stringify(saved);
+    if (!this.writeSave(saved, json, world.region, true, true)) {
+      if (backup === 'prev') restoreKey(prevBefore);
+      return false;
+    }
+    if (from === PREV_SAVE_KEY && backup !== 'prev') storageRemove(PREV_SAVE_KEY);
     this.keepOldSave(raw, world);
-    const current = !this.saveBlocked && worthKeeping(this.world) ? JSON.stringify(this.world.serialize()) : null;
     if (this.saveBlocked) {
-      // An explicit replacement, like New City: it lifts the newer-save block (the newer city keeps
-      // its copy in FUTURE_SAVE_KEY), so the restored city can be saved.
-      const main = storageGet(SAVE_KEY);
-      if (main !== null && storageGet(FUTURE_SAVE_KEY) === null) storageSet(FUTURE_SAVE_KEY, main);
+      // An explicit replacement, like New City, lifts the newer-save block: the newer city is safe in FUTURE_SAVE_KEY.
       this.saveBlocked = false;
       for (let k = this.notices.length - 1; k >= 0; k--) if (this.notices[k].text === FUTURE_SAVE_TEXT) this.notices.splice(k, 1);
     }
@@ -1313,29 +1344,39 @@ export class Game {
     this.adoptCity();
     this.selected = null;
     this.preview = null;
-    // Save the restored city first; only then does the backup slot take the city it replaced (or empty).
-    // If the save fails the slot keeps the restored city, so a reload loses nothing it held.
-    if (this.save(true)) {
-      if (from === PREV_SAVE_KEY && (current === null || !writePrev(current))) storageRemove(PREV_SAVE_KEY);
-      if (from !== PREV_SAVE_KEY && current !== null) writePrev(current);
-    }
     this.events.emit('world');
     this.events.emit('stats');
     return true;
   }
 
   /**
-   * Copy the current city into the backup slot before it is replaced (§3.10): plain and synchronously first, never
-   * while saveBlocked or for an untouched city. False when it doesn't fit even after the drops (and `withoutCopy` is
-   * not set): the caller changes nothing; `keepCopyFailed` names the city and a toast offers Export.
+   * Keep what a New City / Restore / Import / Grow is about to replace (§3.10). The current city goes into `.prev`,
+   * plain and synchronously, unless it is untouched or `withoutCopy` (the player's "Replace without a copy"). While
+   * saveBlocked the city in memory is a stand-in and never goes to `.prev`; instead the stored newer city must be in
+   * `.future` before SAVE_KEY is written. Returns 'prev' when `.prev` now holds the current city, 'none' when nothing
+   * needed keeping, and null when the copy didn't fit (or `.future` holds another city): nothing changed,
+   * `keepCopyFailed` names the city and a toast offers Export.
    */
-  private backupCurrent(withoutCopy = false): boolean {
+  private backupCurrent(withoutCopy = false): 'prev' | 'none' | null {
     this.keepCopyFailed = null;
-    if (this.saveBlocked || !worthKeeping(this.world) || withoutCopy) return true;
-    if (writePrev(JSON.stringify(this.world.serialize()))) return true;
-    this.keepCopyFailed = this.world.cityName;
-    this.toast(`Couldn't keep a copy of ${this.world.cityName}: storage is full. Export it first.`, 'error', { id: 'export', label: 'Export', sec: 12 });
-    return false;
+    if (withoutCopy) return 'none';
+    if (this.saveBlocked) {
+      const r = keepNewerSave();
+      if (r === 'kept') return 'none';
+      this.refuseReplace(readHeader(storageGet(SAVE_KEY))?.cityName || 'the newer city', r);
+      return null;
+    }
+    if (!worthKeeping(this.world)) return 'none';
+    if (writePrev(JSON.stringify(this.world.serialize()))) return 'prev';
+    this.refuseReplace(this.world.cityName, 'full');
+    return null;
+  }
+
+  /** A replacement that couldn't keep a copy (§3.10): nothing changed; name the city and offer Export. */
+  private refuseReplace(name: string, why: 'full' | 'taken'): void {
+    this.keepCopyFailed = name;
+    const reason = why === 'full' ? 'storage is full' : 'another city is already kept aside';
+    this.toast(`Couldn't keep a copy of ${name}: ${reason}. Export it first.`, 'error', { id: 'export', label: 'Export', sec: 12 });
   }
 
   /** Serialize current state (also used by the artifact hot-reload snapshot). */
@@ -1358,35 +1399,41 @@ export class Game {
   }
 
   /**
-   * Load the stored city at startup with the save-safety rules (EXPANSION §2.5): a newer
-   * build's save is copied to FUTURE_SAVE_KEY (if empty) and blocks saving; any other failure
-   * copies the raw string to UNREADABLE_SAVE_KEY; the first v1 / v2 save is copied to V2_SAVE_KEY.
+   * Load the stored city at startup with the save-safety rules (EXPANSION §2.5, MEGACITY §3.10): a newer
+   * build's save (plain, or an envelope whose header says so) is copied raw to FUTURE_SAVE_KEY (keepNewerSave)
+   * and blocks saving; any other failure, an envelope that boot couldn't unpack included, copies the raw string
+   * to UNREADABLE_SAVE_KEY; the first v1 / v2 save is copied to V2_SAVE_KEY, the first v3 to V3_SAVE_KEY.
    * Returns null (start a fresh city) unless the save loaded.
    */
   private loadStored(): World | null {
     this.restoreMirror();
+    const stored = storageGet(SAVE_KEY);
+    if (stored === null) return null;
+    // An envelope boot couldn't unpack has no plain text; its readable header still says whose save it is.
     const raw = readPlain(SAVE_KEY);
-    if (raw === null) return null;
     let data: SaveData | null = null;
-    try {
-      data = JSON.parse(raw) as SaveData;
-    } catch {
-      data = null;
-    }
-    if (isFutureSave(data)) {
-      if (storageGet(FUTURE_SAVE_KEY) === null) storageSet(FUTURE_SAVE_KEY, raw);
+    if (raw !== null)
+      try {
+        data = JSON.parse(raw) as SaveData;
+      } catch {
+        data = null;
+      }
+    if (raw === null ? isFutureHeader(readHeader(stored)) : isFutureSave(data)) {
+      // A raw copy in FUTURE_SAVE_KEY (an older copy of the same city is refreshed; another kept city is never
+      // overwritten). The block lifts only once it holds the stored save (backupCurrent).
+      keepNewerSave();
       this.saveBlocked = true;
       this.notices.push({ text: FUTURE_SAVE_TEXT, kind: 'error' });
       return null;
     }
     try {
-      if (!data) throw new Error('Unreadable save');
+      if (!data || raw === null) throw new Error('Unreadable save');
       const world = World.deserialize(data, this.events);
       this.keepOldSave(raw, world);
       return world;
     } catch (err) {
       console.warn('Save could not be loaded, starting fresh', err);
-      storageSet(UNREADABLE_SAVE_KEY, raw);
+      storageSet(UNREADABLE_SAVE_KEY, stored);
       return null;
     }
   }

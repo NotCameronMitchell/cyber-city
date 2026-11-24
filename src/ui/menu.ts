@@ -350,7 +350,8 @@ export class Menu {
         confirmLabel: 'Restore',
         onConfirm: () => {
           const ok = !!g.loadPrevious?.();
-          game.toast(ok ? `Welcome back to ${game.world.cityName}` : 'The previous city could not be read', ok ? 'good' : 'error');
+          // A refused swap (no room for a copy, or for the restored city) has already said why, with Export.
+          if (ok || (game.keepCopyFailed === null && !game.lastSaveFailed)) game.toast(ok ? `Welcome back to ${game.world.cityName}` : 'The previous city could not be read', ok ? 'good' : 'error');
           if (ok) {
             this.resumeSpeed = 0;
             modals.closeAll();
@@ -373,7 +374,8 @@ export class Menu {
           this.resumeSpeed = 0; // newCity() sets its own speed
           game.newCity(name || undefined, undefined, defaultRegion()); // the device default region (MEGACITY §3.11) until WP-5's control
           modals.closeAll();
-          game.toast(`Charter signed: welcome to ${game.world.cityName}`, 'good');
+          // No room to keep a copy of this city: nothing changed and the Export toast says so (§3.10).
+          if (game.keepCopyFailed === null) game.toast(`Charter signed: welcome to ${game.world.cityName}`, 'good');
         },
       });
     }

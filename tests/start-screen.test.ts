@@ -488,3 +488,60 @@ describe('title warning for a save the game cannot continue', () => {
     expect(titleWarning({ unreadable: false, future: g.saveBlocked })).toBe('');
   });
 });
+
+describe('Found city frames the city it founds, whatever its region (review fix, §12 Step 0b acceptance)', () => {
+  /** The tile under the camera's centre. */
+  const centre = (cam: { x: number; y: number }, toTile: (x: number, y: number) => { x: number; y: number }) => toTile(cam.x, cam.y);
+
+  it('a first-launch Found city on a PC region (5×5) leaves the camera centre inside the owned box', async () => {
+    const { installCanvasMock } = await import('./canvas-mock');
+    const uninstall = installCanvasMock();
+    try {
+      const { Renderer } = await import('../src/render/renderer');
+      const { Camera, worldToTileF } = await import('../src/render/camera');
+      const { frameCity, needsReframe } = await import('../src/ui/start/startScreen');
+      // First launch: an untouched 3×3 map waits under the showcase, framed by the renderer's first layout.
+      const g = new Game();
+      expect(g.world.region).toBe(3);
+      const canvas = (globalThis as unknown as { document: { createElement: (t: string) => HTMLCanvasElement } }).document.createElement('canvas');
+      canvas.width = 1440;
+      canvas.height = 900;
+      const cam = new Camera(g.world.N);
+      const r = new Renderer(canvas, g, cam);
+      try {
+        const o3 = g.world.ownedBox;
+        const c3 = centre(cam, worldToTileF);
+        expect(c3.x >= o3.x0 && c3.x <= o3.x1 + 1 && c3.y >= o3.y0 && c3.y <= o3.y1 + 1).toBe(true);
+        // found(): keepMap (untouched, same seed), the PC default region.
+        const before = { N: g.world.N, region: g.world.region };
+        g.newCity('Harbor Nine', g.world.seed, 5);
+        const o = g.world.ownedBox;
+        const inside = () => {
+          const c = centre(cam, worldToTileF);
+          return c.x >= o.x0 && c.x <= o.x1 + 1 && c.y >= o.y0 && c.y <= o.y1 + 1;
+        };
+        // The renderer only clamps the old view into the new bounds: off the owned land (the bug).
+        expect(inside()).toBe(false);
+        expect(needsReframe(true, before, g.world)).toBe(true);
+        frameCity(cam, g.world);
+        expect(inside()).toBe(true);
+        // The same region again keeps the framed view (no jump), a fresh map always reframes.
+        expect(needsReframe(true, { N: g.world.N, region: g.world.region }, g.world)).toBe(false);
+        expect(needsReframe(false, { N: g.world.N, region: g.world.region }, g.world)).toBe(true);
+      } finally {
+        r.destroy();
+      }
+    } finally {
+      uninstall();
+    }
+  });
+
+  it('found() reframes through needsReframe and stays on the sheet when no copy could be kept', () => {
+    const src = (import.meta.glob('../src/ui/start/startScreen.ts', { query: '?raw', import: 'default', eager: true }) as Record<string, string>)['../src/ui/start/startScreen.ts'];
+    const at = src.indexOf('\n  private found(): void {');
+    const body = src.slice(at, src.indexOf('\n  }\n', at));
+    expect(body).toMatch(/const before = \{ N: game\.world\.N, region: game\.world\.region \};\s*\/\/[^\n]*\n\s*game\.newCity\(/);
+    expect(body).toMatch(/if \(game\.keepCopyFailed !== null\) return;/);
+    expect(body).toContain('if (needsReframe(keepMap, before, game.world)) this.reframe();');
+  });
+});
