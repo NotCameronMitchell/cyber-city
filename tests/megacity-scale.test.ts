@@ -699,9 +699,11 @@ describe('S4: the density pass (§4.1, §4.2, §11.3)', () => {
 const pct = (v: number) => `${(100 * v).toFixed(1)}%`;
 const f3 = (v: number) => v.toFixed(3);
 
-// Each `it` stays well under a minute of synchronous work (a longer one starves Vitest's worker
-// RPC), so the runs are split per seed and the tables printed by a last `it`.
+// Each `it` stays well under a minute of synchronous work and yields to the event loop after
+// (Vitest's worker RPC times out when its loop is busy for a minute), so the runs are split per
+// seed and the tables printed by a last `it`.
 describe.skipIf(!MEASURE)('MEASURE: S2 and S4 tables (docs/MEGACITY.md §11.6)', () => {
+  afterEach(() => new Promise<void>((r) => setTimeout(r, 20)));
   const ENSEMBLE = [2091, 7, 31, 1, 2, 3, 4, 5, 6, 8, 9, 10];
   type Years = ReturnType<typeof scriptedMayorYears>;
   const runs: { seed: number; v4: Years; cf: Years; dice: Years }[] = [];

@@ -1084,7 +1084,7 @@ Two steps, both in Step 0a, so each can be checked on its own:
 
 - A balanced L3 city becomes **≈ 60% Hab, 20% Market, 20% Fab** land (per Hab tile: 0.33 Market and 0.34 Fab tiles).
 - Money per resident is unchanged (the same jobs per resident pay the same tax per job); a district holds about a fifth more residents because less of it is shops and fabs, so income per district rises by about that much ("late-game money is the reward").
-- Trips per tile follow capacity (a Market L3 tile makes ×1.39 the trips, a Fab L3 tile ×1.6; city-wide trips per resident are unchanged), so downtowns are busier: a real city's shape. S4 checks average traffic; if it misses, Step 9 adds a per-level trip factor rather than touching capacity.
+- Trips per tile follow capacity (a Market L3 tile makes ×1.39 the trips, a Fab L3 tile ×1.6; city-wide trips per resident are unchanged), so downtowns are busier: a real city's shape. S4 checks average traffic; if it misses, Step 9 adds a per-level trip factor rather than touching capacity. (Step 0a measured +0.012 to +0.021 on a district whose homes are mostly L2, and +0.035 to +0.062 on an L3 downtown, §11.6.)
 - Megastructures get a density premium so they out-house the towers beside them (§4.2).
 - S1 stays meaningful: `tests/megacity-scale.test.ts` keeps its static half (every head count in the tables equals v3 × 10, times the density table for Market and Fab L2–L3 and the listed megastructures; every per-head rate equals v3 ÷ 10), and **S4** (§11.3) measures the density pass dynamically.
 
@@ -2126,6 +2126,71 @@ Measured headless (§11.4); Step 9 tunes only the megacity tables in config.ts a
 ### 11.6 Measured
 
 *(Filled in by Step 9: the final §11.3 table, the frame and speed-3 numbers with p95 and max, the phone and PC factors and the micro-benchmark correlation, whether 3×3 cities needed O8, the lower-detail top speed chosen, the `localStorage` quotas and `setItem` times, the desktop frame rates at 1280×800, 1440×900 and 1920×1080, and the cross-engine terrain hashes. Every number says how it was measured: **automated** (Node, Playwright Chromium in the dev container, or WebKit and Firefox where they could be installed), **proxy** (Chrome with 4× CPU throttling for the phone, the container's headless Chrome for the PC) or **owner-measured** (a real device). An agent never marks an owner row passed.)*
+
+**Step 0a, measured (automated, Node, `MEASURE=1 npx vitest run tests/megacity-scale.test.ts -t MEASURE`).** *S1* (part 1, commit `5e3a28c`): exact. The eight pinned v3 saves load as v3 × 10 at load and after a month, and the seed-2091 ScriptedMayor replays the v3 city month for month. This holds because head counts are whole tens of people. *Density pass* (part 2): the counterfactual "units alone" is the same run with Market and Fab at v3 × 10 (`unitsOnly` in `tests/megacity-density.ts`). With it, the ScriptedMayor replays the pinned v3 baseline exactly, so every comparison below isolates the density pass. "Dice" is the units-alone run with the world's rng shifted by one draw after the opening: the same city with other dice, which shows the runs' own noise.
+
+*S2, ScriptedMayor, 12 seeds* (2091, 7, 31, 1–6, 8–10), ratio to units alone, mean [min–max]:
+
+| Year | Population, density | Population, dice | Funds, density | Funds, dice |
+|---|---|---|---|---|
+| 1 | 1.009 [0.914–1.090] | 1.020 [0.927–1.157] | 1.239 [0.708–2.177] | 1.093 [0.641–2.085] |
+| 2 | 1.006 [0.948–1.082] | 0.990 [0.877–1.130] | 1.273 [0.540–2.013] | 1.038 [0.571–1.611] |
+| 3 | 1.012 [0.941–1.094] | 0.993 [0.936–1.085] | 1.737 [0.580–3.284] | 1.256 [0.196–3.112] |
+| 4 | 1.010 [0.902–1.154] | 0.979 [0.839–1.041] | 1.559 [0.434–4.025] | 1.094 [0.397–3.151] |
+| 5 | 1.030 [0.924–1.166] | 0.980 [0.847–1.060] | 1.199 [0.519–1.992] | 1.008 [0.516–1.370] |
+| 6 | 1.062 [0.956–1.181] | 0.999 [0.830–1.103] | 1.161 [0.589–1.652] | 0.993 [0.596–1.327] |
+| 7 | 1.062 [0.961–1.181] | 1.000 [0.830–1.110] | 1.129 [0.604–1.672] | 0.963 [0.599–1.158] |
+| 8 | 1.062 [0.960–1.180] | 1.001 [0.830–1.111] | 1.113 [0.657–1.534] | 0.983 [0.658–1.175] |
+
+At year 8, averaged over the 12 seeds: traffic is 0.113 against 0.107, unemployment 10.0% against 12.1%, and the Balance of Power board / basalt / nacre is 31.3 / 35.3 / 33.5 against 32.7 / 36.1 / 31.2.
+
+The ScriptedMayor gives each block a fixed role, so its shops cannot become homes. The denser jobs do not free land in its city, and the expected effect is small: population +1% to +6% on the mean. The three pinned seeds against the pinned v3 run:
+
+| Seed | Population, years 1–8 | Funds, years 1–8 |
+|---|---|---|
+| 2091 | 0.914 0.959 0.945 0.913 0.924 0.956 0.961 0.960 | 0.708 1.747 0.836 0.581 0.655 0.818 0.821 0.799 |
+| 7 | 0.986 0.995 0.941 0.925 0.942 1.018 1.019 1.018 | 1.519 1.343 3.284 0.662 0.663 0.871 0.883 0.956 |
+| 31 | 1.090 1.082 1.046 1.069 1.047 1.046 1.041 1.039 | 1.027 1.133 3.059 1.625 1.883 1.576 1.500 1.414 |
+
+The mean of the three seeds is 0.969–1.012 for population and 1.056–1.088 for funds in years 5–8, inside −5% / +25%. Single runs leave the band (2091: population −9% in year 4, funds −20% in year 8), but by no more than the dice do. The suite asserts S2 on the three-seed mean: population every year, funds in years 5–8, because the early treasury is spent down to nothing and its ratios are noise. Each single run must also stay within 0.85–1.25 for population.
+
+*S2, story harness* (flat map, speed 1, `readDelaySec` 20, half the pending cards answered, run to the ending). Chapter starts, density minus pinned v3, and dice-shifted v3 minus pinned v3, in days for Ch1..Ch6:
+
+| Pace | Seed 2091 | Seed 7 | Seed 31 |
+|---|---|---|---|
+| Relaxed | 0 0 0 0 0 0 / 0 0 0 0 0 0 | 0 0 0 −360 −360 −360 / 0 0 0 0 0 0 | 0 0 0 0 0 0 / 0 0 0 0 0 0 |
+| Normal | 0 0 0 0 0 0 / 0 0 0 0 0 0 | 0 0 0 281 360 360 / 0 0 0 281 360 720 | 0 0 0 0 0 0 / 0 0 0 79 0 0 |
+| Brisk | 0 0 0 −369 −360 −360 / same | 0 0 0 −360 −360 −360 / same | 0 0 0 −579 −140 −140 / 0 0 0 −579 −140 −500 |
+
+In every pinned run, Chapters I–III start on the same day. Chapters IV–VI move only by whole goal-waiver periods (360 d, one waived goal: Ch3's "Average crime at or under 30%" and Ch4's "Reach 120,000 residents" sit on the edge in this harness city). A v3 run with one draw of other dice makes the same jumps in four of the five moved runs. The ±30 d of §11.3 is below the harness's own noise from Ch4 on; the gated test asserts ±30 d for Ch1–Ch3 on the pinned seeds.
+
+A probe with seeds 1–6 on every pace (18 runs, compared with units alone) gives the same picture:
+
+- The density pass moved Ch4–Ch6 in 10 runs (7 earlier, 2 later, 1 both ways); the dice moved them in 9.
+- Seed 2 also starts Ch3 79 d (Normal) and 109 d (Relaxed) later with the density pass, and on the same day with the dice.
+- The small bias toward earlier chapters matches the lower unemployment, and so lower crime, of the denser jobs.
+
+All 9 pinned runs end 'quiet', as in v3. The pace tests (`tests/story/pace.test.ts`, `pacing.test.ts`) pass unchanged.
+
+*S4, demand-led mayor* (`DemandMayor`: one district, 12 years, events off, generous services, two blocks a month of the zone with the highest demand). "Plain" is the flat district. Its homes stay mostly at L2, because land value is about 0.36 against L3's 0.60. "Downtown" adds +0.3 land value everywhere, so homes reach L3: this is §4.1's "balanced L3 city". Year 12, density against units alone:
+
+| Seed, variant | Residents | Hab / Market / Fab land | Unemployment | Traffic | Board / basalt / nacre |
+|---|---|---|---|---|---|
+| 2091 plain | 229,310 vs 187,540 | 62.6 / 27.5 / 9.9% vs 58.0 / 29.6 / 12.3% | 11.7 vs 11.2% | 0.193 vs 0.181 | 24.0 / 31.9 / 44.1 vs 27.3 / 31.4 / 41.4 |
+| 7 plain | 213,070 vs 200,320 | 67.9 / 21.0 / 11.1% vs 58.3 / 29.8 / 11.9% | 11.2 vs 11.2% | 0.204 vs 0.183 | 25.2 / 31.9 / 42.9 vs 25.9 / 31.3 / 42.8 |
+| 31 plain | 238,850 vs 206,340 | 66.3 / 25.3 / 8.4% vs 57.5 / 30.5 / 12.0% | 11.6 vs 11.0% | 0.193 vs 0.181 | 23.5 / 32.3 / 44.2 vs 25.6 / 31.7 / 42.7 |
+| 2091 downtown | 162,620 vs 152,490 | 61.3 / 19.4 / 19.4% vs 50.0 / 27.8 / 22.2% | 10.8 vs 10.8% | 0.368 vs 0.306 | 29.8 / 29.6 / 40.7 vs 31.3 / 29.4 / 39.3 |
+| 7 downtown | 155,920 vs 132,470 | 57.0 / 23.9 / 19.0% vs 48.3 / 27.6 / 24.1% | 11.0 vs 11.3% | 0.356 vs 0.322 | 30.9 / 29.7 / 39.4 vs 31.2 / 30.2 / 38.6 |
+| 31 downtown | 155,530 vs 143,710 | 54.8 / 22.6 / 22.6% vs 46.9 / 28.1 / 25.0% | 11.0 vs 11.3% | 0.360 vs 0.325 | 30.9 / 29.8 / 39.3 vs 29.6 / 30.0 / 40.4 |
+
+What S4 shows:
+
+- **Land use.** In the L3 downtown the pass moves land use from about 48 / 28 / 24 to 55–61 / 19–24 / 19–23, which is §4.1's 60 / 20 / 20. Seed 31's Hab share of 54.8% is 0.2 points under the band. In the plain district homes are at L2 while fabs reach L3 without land value (fabs have no land-value gate). Fab land is 8–11% there, with or without the pass, outside 15–25%.
+- **Residents and money.** A district holds 6–22% more residents and ends with 2–24% more money ("late-game money is the reward").
+- **Traffic.** +0.012 to +0.021 in the plain district, inside +0.03. Downtown it is +0.035 to +0.062, outside: Market and Fab L3 tiles make ×1.39 and ×1.6 the trips. This is the case §4.1 hands to Step 9's per-level trip factor.
+- **Balance of Power.** Within ±2 points downtown, where the city is the same size. In the plain district the board loses up to 3.3 points: that district holds up to 22% more people, so the job terms grow against the board's fixed terms.
+- **Unemployment.** 11–12% in both builds. Residents follow jobs × `RES_PER_JOB` (1.15), so the demand model settles at 1 − 1 / 1.15 ≈ 13% less the starter wave, and §11.3's "≤ 5%" is not this sim's balance.
+- **Megastructures** (§4.2): a full Stratablock houses 38,000 (48,000 with the Commons crown) against 36,000 required. The Arcology houses 40,000 against 20,250. The Corp Spire employs 8,000 against 7,500. §6.3's Pearl Atrium (3×3, 18,000 jobs) passes against 16,875. Its Hexworks (4×4, 20,000 Fab jobs) does not: it needs 28,800. The test checks both once Step 0b adds their rows, so Step 0b or Step 9 must raise the Hexworks or restate the rule. §4.2's "42,000 with the Commons crown" is 38,000 + 10,000 = 48,000 in its own table.
 
 **Owner checklist** (Step 9 writes it out with the build's links; the owner runs it and signs off each row; an unchecked row stays open in this section, it is not waived):
 
