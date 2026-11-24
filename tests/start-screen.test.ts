@@ -6,7 +6,8 @@
 // Chapter I title, then the boot card, once play starts.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { Game } from '../src/game/game';
+import { FUTURE_SAVE_TEXT, Game } from '../src/game/game';
+import { SAVE_KEY } from '../src/game/config';
 import { MAP_SIZE, Terrain, ZoneType } from '../src/game/types';
 import { buildShowcase } from '../src/ui/start/showcase';
 import {
@@ -22,6 +23,8 @@ import {
   saveState,
   startButtons,
   startKey,
+  titleWarning,
+  TITLE_FUTURE_TEXT,
   worthKeeping,
   type HintEnv,
   type StartPhase,
@@ -419,5 +422,38 @@ describe('hold contract with a real Game', () => {
     const boot = events.indexOf('card:ch1.boot');
     expect(ch).toBeGreaterThanOrEqual(0);
     expect(boot).toBeGreaterThan(ch);
+  });
+});
+
+describe('title warning for a save the game cannot continue', () => {
+  afterEach(() => {
+    delete (globalThis as { localStorage?: unknown }).localStorage;
+  });
+
+  it('a newer build\'s save is explained (FUTURE_SAVE_TEXT), never called unreadable', () => {
+    expect(TITLE_FUTURE_TEXT).toBe(FUTURE_SAVE_TEXT);
+    expect(titleWarning({ unreadable: false, future: false })).toBe('');
+    expect(titleWarning({ unreadable: true, future: false })).toMatch(/could not be read/);
+    expect(titleWarning({ unreadable: true, future: true })).toBe(FUTURE_SAVE_TEXT);
+  });
+
+  it('a real stale Game on a newer save: blocked, no Continue, the warning shows until New City', () => {
+    const src = new Game();
+    src.newCity('Future Reach', 4243);
+    const v4 = JSON.stringify({ ...src.world.serialize(), version: 4 });
+    const m = new Map<string, string>([[SAVE_KEY, v4]]);
+    (globalThis as { localStorage?: unknown }).localStorage = {
+      getItem: (k: string) => m.get(k) ?? null,
+      setItem: (k: string, v: string) => void m.set(k, String(v)),
+      removeItem: (k: string) => void m.delete(k),
+    };
+    const g = new Game();
+    expect(g.saveBlocked).toBe(true);
+    // main.ts: hasCity needs a loaded save and no block; the stored string is not ours, so saveState says 'unreadable'.
+    expect(saveState(m.get(SAVE_KEY)!, g.world)).toBe('unreadable');
+    expect(titleWarning({ unreadable: false, future: g.saveBlocked })).toBe(FUTURE_SAVE_TEXT);
+    expect(m.get(SAVE_KEY)).toBe(v4);
+    g.newCity('Fresh Start');
+    expect(titleWarning({ unreadable: false, future: g.saveBlocked })).toBe('');
   });
 });

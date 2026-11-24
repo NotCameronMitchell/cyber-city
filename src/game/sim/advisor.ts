@@ -199,7 +199,7 @@ export class Advisor {
 
     // ── Roads ───────────────────────────────────────────────────────────────
     if (census.noRoad >= 4) {
-      this.say(world, 'roads', 60, 'warn', `Advisor: ${fmt(census.noRoad)} zoned lots have no road in reach. Streets reach 3 tiles, alleys 1, highways none.`);
+      this.say(world, 'roads', 60, 'warn', `Advisor: ${fmt(census.noRoad)} zoned lots have no usable road. Streets reach 3 tiles, alleys 1, highways none.`);
     }
     if (g) {
       let bare = false;

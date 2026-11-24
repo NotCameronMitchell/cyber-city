@@ -13,6 +13,7 @@
 //
 // Created by WP-1; Step 7 extends it.
 
+import { applyAction, lockedReason } from '../src/game/actions';
 import { BUILDINGS, ROAD_KINDS } from '../src/game/config';
 import { shoreFacing, shoreSites } from '../src/game/ports';
 import { Simulation } from '../src/game/sim';
@@ -222,7 +223,8 @@ export interface ExpansionMayorOptions {
   liftLocks?: { year: number; pop: number }[];
 }
 
-type Placer = { place(type: BuildingType, reserve: number): boolean };
+/** M2's service rates: one per this many residents (maglevPer 0 = none). Step 7 tunes them with §10.3. */
+export const RICH = { academyPer: 2500, plazaPer: 250, clinicPer: 2500, precinctPer: 3000, maglevPer: 0, reserve: 7000 };
 
 /** ScriptedMayor plus the §10.4 options. Call opening() once, then turn() monthly (like ScriptedMayor). */
 export class ExpansionMayor {
@@ -280,13 +282,91 @@ export class ExpansionMayor {
     return true;
   }
 
+  /**
+   * M2's services, on top of the plain mayor's: academies, extra plazas, clinics and precincts as
+   * they unlock, packed into the free cells of service blocks (the plain mayor puts one building
+   * per 3×3 block, so most of a plaza block stays empty). A new block is taken only when no
+   * service block has room, so M2 zones about the same land as M1 (§10.4).
+   */
   private richServices(pop: number): void {
-    const p = this.base as unknown as Placer;
     const w = this.world;
-    if (w.maxPopulation >= BUILDINGS.academy.unlockPop && this.count('academy') < 1 + Math.floor(pop / 2500)) p.place('academy', 2500);
-    if (pop >= 200 && this.count('plaza') < Math.floor(pop / 250)) p.place('plaza', 1500);
-    if (pop >= 400 && this.count('clinic') < 1 + Math.floor(pop / 2000)) p.place('clinic', 3000);
-    if (pop >= 200 && this.count('precinct') < 1 + Math.floor(pop / 2500)) p.place('precinct', 2500);
+    const want: [BuildingType, number, number][] = [];
+    if (w.maxPopulation >= BUILDINGS.academy.unlockPop) want.push(['academy', 1 + Math.floor(pop / RICH.academyPer), RICH.reserve]);
+    if (pop >= 200) want.push(['plaza', Math.floor(pop / RICH.plazaPer), RICH.reserve]);
+    if (pop >= 400) want.push(['clinic', 1 + Math.floor(pop / RICH.clinicPer), RICH.reserve]);
+    if (pop >= 200) want.push(['precinct', 1 + Math.floor(pop / RICH.precinctPer), RICH.reserve]);
+    if (RICH.maglevPer > 0 && w.maxPopulation >= BUILDINGS.maglev.unlockPop) want.push(['maglev', Math.floor(pop / RICH.maglevPer), RICH.reserve]);
+    for (const [type, n, reserve] of want) if (this.count(type) < n) this.pack(type, reserve);
+  }
+
+  /** Place `type` in the first free cells of a service block (blocks with a building), else on a new block. */
+  private pack(type: BuildingType, reserve: number): boolean {
+    const w = this.world;
+    const def = BUILDINGS[type];
+    if (lockedReason(w, type) || w.funds < def.cost + reserve) return false;
+    const size = def.size;
+    const free = (x: number, y: number) => {
+      for (let dy = 0; dy < size; dy++)
+        for (let dx = 0; dx < size; dx++) {
+          const t = w.tileAt(x + dx, y + dy);
+          if (!t || t.terrain !== Terrain.Land || t.road || t.buildingId >= 0 || t.zone !== ZoneType.None || w.sky[(y + dy) * N + x + dx]) return false;
+        }
+      return true;
+    };
+    const tryBlock = (b: { x: number; y: number }) => {
+      for (let oy = 0; oy + size <= 3; oy++)
+        for (let ox = 0; ox + size <= 3; ox++) {
+          if (!free(b.x + ox, b.y + oy)) continue;
+          const off = Math.floor((size - 1) / 2);
+          const at = { x: b.x + ox + off, y: b.y + oy + off };
+          if (applyAction(w, type, at, at).valid) return true;
+        }
+      return false;
+    };
+    // Land parity with M1: while M2 has fewer service blocks than the plain mayor would have used
+    // for its own services at this population, take a new block; otherwise fill free cells first.
+    const pop = w.stats.population;
+    const parity =
+      (pop >= 300 ? Math.floor(pop / 400) : 0) +
+      (pop >= 500 ? Math.floor(pop / 3000) + 1 : 0) +
+      (pop >= 200 ? Math.floor(pop / 3500) + 1 : 0) +
+      (pop >= 1200 ? Math.floor(pop / 5000) + 1 : 0);
+    let serviceBlocks = 0;
+    for (const b of this.base.blocks) if (b.used && b.building && !BUILDINGS[b.building].powerSupply) serviceBlocks++;
+    // Where the service is missing: the block with the most zoned tiles in its radius whose
+    // coverage of this service is still under half (ties: the earlier block, centre first).
+    const field = def.effect ? w.fields[def.effect] : null;
+    const r = def.radius;
+    const need = (b: { x: number; y: number }) => {
+      if (!field || r <= 0) return 0;
+      let n = 0;
+      const cx = b.x + 1;
+      const cy = b.y + 1;
+      for (let y = Math.max(0, cy - r); y <= Math.min(N - 1, cy + r); y++)
+        for (let x = Math.max(0, cx - r); x <= Math.min(N - 1, cx + r); x++) {
+          const i = y * N + x;
+          const z = w.tiles[i].zone;
+          // Schools matter most to Fab Districts (their score weight is 3.5× a home's, §4.2).
+          if (z !== ZoneType.None && field[i] < 0.5) n += def.effect === 'education' && z === ZoneType.Industrial ? 3 : 1;
+        }
+      return n;
+    };
+    const best = <T extends { x: number; y: number }>(list: T[]): T[] => {
+      const scored = list.map((b, k) => ({ b, k, n: need(b) }));
+      scored.sort((a, c) => c.n - a.n || a.k - c.k);
+      return scored.map((e) => e.b);
+    };
+    if (serviceBlocks >= parity) for (const b of best(this.base.blocks.filter((k) => k.used && k.building))) if (tryBlock(b)) return true;
+    // A new block, the way the plain mayor takes one (utility blocks first, then the outermost),
+    // picked by the same need among the first few candidates.
+    const placer = this.base as unknown as { roadsAround(b: unknown): boolean };
+    const util = this.base.blocks.filter((k) => !k.used && k.role === 'util');
+    const pool = util.length ? util : [...this.base.blocks].reverse().filter((k) => !k.used).slice(0, 6);
+    const nb = best(pool)[0];
+    if (!nb || !placer.roadsAround(nb)) return false;
+    nb.used = true;
+    nb.building = type;
+    return tryBlock(nb);
   }
 
   /** Grid line coordinate k (0..11) of ScriptedMayor's road grid. */
@@ -417,8 +497,16 @@ export class ExpansionMayor {
     if (best < 0) return;
     const tx = best % N;
     const ty = (best / N) | 0;
-    const sx = Math.max(b.x - 1, Math.min(b.x + b.size, tx));
-    const sy = Math.max(b.y - 1, Math.min(b.y + b.size, ty));
+    // Start on the 4-neighbour of the footprint facing the target (never a diagonal corner).
+    let sx: number;
+    let sy: number;
+    if (tx >= b.x && tx < b.x + b.size) {
+      sx = tx;
+      sy = ty < b.y ? b.y - 1 : b.y + b.size;
+    } else {
+      sx = tx < b.x ? b.x - 1 : b.x + b.size;
+      sy = Math.max(b.y, Math.min(b.y + b.size - 1, ty));
+    }
     for (const [x, y] of [...run(sx, sy, tx, sy), ...run(tx, sy, tx, ty)]) {
       const t = w.tileAt(x, y);
       if (!t || t.road || t.buildingId >= 0) continue;
@@ -443,4 +531,179 @@ export function playExpansion(world: World, years: number, opts: ExpansionMayorO
     mayor.turn();
   }
   return { sim, mayor };
+}
+
+// ── Scenario measurement (§10.3 / §10.4; Step 7) ────────────────────────────
+
+/** What one scenario run measured (the §10.4 columns plus what §10.3's checks need). */
+export interface ScenarioResult {
+  pop: number;
+  approval: number;
+  avgTraffic: number;
+  avgNoise: number;
+  avgCrime: number;
+  avgLandValue: number;
+  /** Developed tiles by zone (res, com, ind) and tier: split[zone - 1][tier]. */
+  split: [number, number, number][];
+  jobsInd: number;
+  jobsCom: number;
+  /** Mean of the last 12 monthly nets. */
+  net: number;
+  visitors: number;
+  /** Mean traffic over Highway tiles (0 with none). */
+  highwayLoad: number;
+  /** Mean skyTraffic over skyway tiles (0 with none). */
+  skyLoad: number;
+  /** Tier changes per developed tile per year over the last two years, and the most any one tile changed there. */
+  tierChangesPerTileYear: number;
+  maxTierChanges2y: number;
+  tierEffect: { residents: number; tax: number };
+  /** Day the population first reached each chapter goal (−1 = never). */
+  reach: Record<number, number>;
+  /** Mean crime over developed tiles within 1 of an alley (−1 with none). */
+  alleyCrime: number;
+  /** Income lines of the last month by label. */
+  income: Record<string, number>;
+  /** Stats at the end of each month (index = month). */
+  monthly: { pop: number; jobsInd: number; jobsCom: number; trade: number; net: number }[];
+  /** Month the scenario's port went down (−1 = none). */
+  portMonth: number;
+}
+
+/** res + com developed share by tier, in percent. */
+export function resComSplit(r: ScenarioResult): [number, number, number] {
+  const s = [0, 1, 2].map((t) => r.split[0][t] + r.split[1][t]);
+  const tot = s[0] + s[1] + s[2] || 1;
+  return [(100 * s[0]) / tot, (100 * s[1]) / tot, (100 * s[2]) / tot];
+}
+
+/** Share (percent) of developed Fab tiles at $$ or better. */
+export function fabUpShare(r: ScenarioResult): number {
+  const f = r.split[2];
+  return (100 * (f[1] + f[2])) / (f[0] + f[1] + f[2] || 1);
+}
+
+/** Play `years` with an ExpansionMayor and measure. Deterministic for the same world and options. */
+export function playScenario(world: World, years: number, opts: ExpansionMayorOptions = {}, goals: readonly number[] = [3000, 7000]): ScenarioResult & { sim: Simulation; mayor: ExpansionMayor } {
+  const sim = new Simulation(world);
+  sim.options.events = false;
+  sim.recomputeAll();
+  const mayor = new ExpansionMayor(world, sim, opts);
+  mayor.opening();
+  const reach: Record<number, number> = {};
+  for (const g of goals) reach[g] = -1;
+  const changes = new Uint16Array(N * N);
+  const prev = new Uint8Array(N * N);
+  const monthly: ScenarioResult['monthly'] = [];
+  let portMonth = -1;
+  let day = 0;
+  const watchFrom = (years - 2) * MONTHS_PER_YEAR * DAYS_PER_MONTH;
+  for (let m = 0; m < years * MONTHS_PER_YEAR; m++) {
+    for (let d = 0; d < DAYS_PER_MONTH; d++) {
+      sim.step();
+      mayor.observe();
+      day++;
+      const pop = world.stats.population;
+      for (const g of goals) if (reach[g] < 0 && pop >= g) reach[g] = day;
+      if (day > watchFrom) {
+        for (let i = 0; i < N * N; i++) {
+          const t = world.tiles[i];
+          const v = t.level > 0 && !t.abandoned ? t.wealth : 255;
+          if (v !== prev[i] && v !== 255 && prev[i] !== 255) changes[i]++;
+          prev[i] = v;
+        }
+      } else if (day === watchFrom) {
+        for (let i = 0; i < N * N; i++) {
+          const t = world.tiles[i];
+          prev[i] = t.level > 0 && !t.abandoned ? t.wealth : 255;
+        }
+      }
+    }
+    const hadPort = portMonth >= 0;
+    mayor.turn();
+    if (!hadPort) for (const b of world.buildings.values()) if (b.type === 'seaport' || b.type === 'airport') portMonth = m;
+    const trade = world.budget.incomeLines.find((l) => l.label === 'Port trade')?.amount ?? 0;
+    monthly.push({ pop: world.stats.population, jobsInd: world.stats.jobsInd, jobsCom: world.stats.jobsCom, trade, net: world.budget.history.at(-1) ?? 0 });
+  }
+  return { ...measureWorld(world, changes, years, reach, monthly, portMonth), sim, mayor };
+}
+
+function measureWorld(
+  w: World,
+  changes: Uint16Array,
+  years: number,
+  reach: Record<number, number>,
+  monthly: ScenarioResult['monthly'],
+  portMonth: number,
+): ScenarioResult {
+  const s = w.stats;
+  const f = w.fields;
+  const split: [number, number, number][] = [
+    [0, 0, 0],
+    [0, 0, 0],
+    [0, 0, 0],
+  ];
+  let developed = 0;
+  let totalChanges = 0;
+  let maxCh = 0;
+  let hw = 0;
+  let hwSum = 0;
+  let sky = 0;
+  let skySum = 0;
+  let nearAlley = 0;
+  let nearAlleySum = 0;
+  for (let i = 0; i < N * N; i++) {
+    const t = w.tiles[i];
+    if (t.road && t.roadKind === RoadKind.Highway) {
+      hw++;
+      hwSum += f.traffic[i];
+    }
+    if (w.sky[i] & 15) {
+      sky++;
+      skySum += f.skyTraffic[i];
+    }
+    if (t.zone === ZoneType.None || t.level === 0 || t.abandoned) continue;
+    developed++;
+    split[t.zone - 1][t.wealth]++;
+    totalChanges += changes[i];
+    if (changes[i] > maxCh) maxCh = changes[i];
+    const x = i % N;
+    const y = (i / N) | 0;
+    let alley = false;
+    for (let dy = -1; dy <= 1 && !alley; dy++)
+      for (let dx = -1; dx <= 1 && !alley; dx++) {
+        const n = w.tileAt(x + dx, y + dy);
+        if (n && n.road && n.roadKind === RoadKind.Alley) alley = true;
+      }
+    if (alley) {
+      nearAlley++;
+      nearAlleySum += f.crime[i];
+    }
+  }
+  const hist = w.budget.history.slice(-12);
+  const income: Record<string, number> = {};
+  for (const l of w.budget.incomeLines) income[l.label] = l.amount;
+  return {
+    pop: s.population,
+    approval: s.approval,
+    avgTraffic: s.avgTraffic,
+    avgNoise: s.avgNoise,
+    avgCrime: s.avgCrime,
+    avgLandValue: s.avgLandValue,
+    split,
+    jobsInd: s.jobsInd,
+    jobsCom: s.jobsCom,
+    net: hist.reduce((a, b) => a + b, 0) / Math.max(1, hist.length),
+    visitors: s.visitors,
+    highwayLoad: hw ? hwSum / hw : 0,
+    skyLoad: sky ? skySum / sky : 0,
+    tierChangesPerTileYear: developed ? totalChanges / developed / Math.min(2, years) : 0,
+    maxTierChanges2y: maxCh,
+    tierEffect: { ...s.tierEffect },
+    reach,
+    alleyCrime: nearAlley ? nearAlleySum / nearAlley : -1,
+    income,
+    monthly,
+    portMonth,
+  };
 }

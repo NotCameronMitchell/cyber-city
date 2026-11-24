@@ -35,6 +35,7 @@ import {
   replaceNote,
   startButtons,
   startKey,
+  titleWarning,
   worthKeeping,
   type StartButtons,
 } from './startModel';
@@ -347,8 +348,9 @@ export class StartScreen {
     const { game } = this;
     const hasBackup = game.hasPreviousSave();
     this.buttons = startButtons({ hasCity: this.city, hasBackup });
-    setText(this.warn, this.unreadable ? 'Your saved city could not be read. A new city replaces it.' : '');
-    setHidden(this.warn, !this.unreadable);
+    const warning = titleWarning({ unreadable: this.unreadable, future: game.saveBlocked });
+    setText(this.warn, warning);
+    setHidden(this.warn, !warning);
     const b = this.buttons;
     setHidden(this.slot, !b.continue);
     if (b.continue) {

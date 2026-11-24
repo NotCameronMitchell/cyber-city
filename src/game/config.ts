@@ -1160,7 +1160,7 @@ export const WEALTH = {
   score: {
     res: { edu: 0.1, transit: 0.06, noise: -0.2 },
     com: { edu: 0.08, transit: 0.08, hub: 0.12, noise: -0.1 },
-    ind: { base: 0.2, edu: 0.35, net: 0.2, transit: 0.12, port: 0.1, crime: -0.3 },
+    ind: { base: 0.22, edu: 0.35, net: 0.2, transit: 0.12, port: 0.1, crime: -0.3 },
   },
   /** Approval + prosperity × share of res developed at $$ or $$$ (no squeeze term; Appendix C). */
   approval: { prosperity: 6 },

@@ -229,6 +229,19 @@ export function startKey(o: {
   return 'block';
 }
 
+/** Shown on the title when a newer build saved the stored city (Game.saveBlocked); same copy as Game's notice. */
+export const TITLE_FUTURE_TEXT = 'This city was saved by a newer version. Reload to update.';
+const TITLE_UNREADABLE_TEXT = 'Your saved city could not be read. A new city replaces it.';
+
+/**
+ * The title's warning line, or '' for none. A newer build's save (`future`) is not unreadable:
+ * it stays stored untouched, and only an explicit New City replaces it (a copy is kept aside).
+ */
+export function titleWarning(o: { unreadable: boolean; future: boolean }): string {
+  if (o.future) return TITLE_FUTURE_TEXT;
+  return o.unreadable ? TITLE_UNREADABLE_TEXT : '';
+}
+
 /**
  * What the stored save turned out to be at boot: none, the city the Game loaded,
  * or a save the Game could not read (corrupt JSON, an incompatible version). The

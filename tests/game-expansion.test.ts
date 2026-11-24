@@ -285,6 +285,19 @@ describe('launches (§5.3)', () => {
     expect(lifts).toHaveLength(3);
   });
 
+  it('readyLaunches (harness hook) makes a loaded Spaceport due at once; it skips one under construction', () => {
+    const { g, sp } = launchGame(false);
+    const toasts = record(g, 'toast');
+    g.readyLaunches();
+    run(g, 0.5);
+    expect(toasts.map((t) => t.text)).toContain('First launch in 10 s');
+    const { g: g2, sp: sp2 } = launchGame(false);
+    sp2.buildDays = 40;
+    g2.readyLaunches();
+    expect(g2.launchStatus(sp2.id)!.complete).toBe(false);
+    expect(sp.launches ?? 0).toBe(0);
+  });
+
   it('no liftoff by day; one at night; never two in the same visual night at speed 1', () => {
     const { g, sp } = launchGame(true);
     const lifts = record(g, 'liftoff');
@@ -454,6 +467,8 @@ describe('inspect (§7.4)', () => {
     sp.buildDays = 120;
     info = fits(g, 30, 30);
     expect(info.rows[0]).toEqual(['Building', '50%']);
+    // It draws no power while it builds, so the row never reads "NO POWER".
+    expect(Object.fromEntries(info.rows).Power).toBe('—');
     expect(Object.fromEntries(info.rows).Rights).toBe('Open');
     const [a] = g.inspectActions(31, 31);
     expect(a.id).toBe('rights');

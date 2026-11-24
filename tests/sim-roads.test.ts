@@ -611,7 +611,7 @@ describe('advisor (§7.1, §7.6, Appendix B)', () => {
     const { texts } = listen(w, () => {
       for (let d = 0; d < 10; d++) sim.step();
     });
-    expect(texts).toContain('Advisor: 10 zoned lots have no road in reach. Streets reach 3 tiles, alleys 1, highways none.');
+    expect(texts).toContain('Advisor: 10 zoned lots have no usable road. Streets reach 3 tiles, alleys 1, highways none.');
   });
 });
 

@@ -77,7 +77,8 @@ function start(data?: unknown): void {
     canvas,
     // A restored snapshot counts only with progress (a title that was never left has none).
     hasCity: (stored === 'loaded' && !blocked) || (restored && worthKeeping({ tick: w.tick, buildingCount: w.buildings.size, tiles: w.tiles })),
-    unreadable: stored === 'unreadable' && !restored,
+    // A newer build's save is not "unreadable": the title says so with FUTURE_SAVE_TEXT (game.saveBlocked).
+    unreadable: stored === 'unreadable' && !restored && !blocked,
     save: () => saveNow('menu'),
   });
 

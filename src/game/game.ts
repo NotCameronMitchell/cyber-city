@@ -680,6 +680,15 @@ export class Game {
     }
   }
 
+  /**
+   * Test and harness hook: make every complete Spaceport's next launch due at the next night
+   * (its launch clock jumps to the full gap), instead of waiting out half a gap after a load.
+   */
+  readyLaunches(): void {
+    for (const b of this.world.buildings.values())
+      if (b.type === 'spaceport' && !((b.buildDays ?? 0) > 0) && !((b.waitSec ?? 0) > 0)) this.launchClock.set(b.id, SPACEPORT.launchGapSec);
+  }
+
   /** A Spaceport's launch clock: a launch gap once it completes in this world, half a gap after a load or swap. */
   private launchClockOf(b: Building): number {
     const c = this.launchClock.get(b.id);
@@ -1150,6 +1159,8 @@ export class Game {
       const s = buildingStats(b);
       const rows: [string, string][] = [];
       if (def.powerSupply) rows.push(['Output', b.offline > 0 ? 'OFFLINE' : `${s.powerSupply} MW`]);
+      // Under construction it draws nothing yet (buildingStats zeroes it), so "NO POWER" would be a false alarm.
+      else if ((b.buildDays ?? 0) > 0 || (b.waitSec ?? 0) > 0) rows.push(['Power', '—']);
       else rows.push(['Power', b.powered ? 'Online' : 'NO POWER']);
       if (b.type === 'stack') rows.push(['Stage', this.stageLabel(b)]);
       if (s.effect) rows.push(['Radius', `${s.radius} tiles`]);

@@ -148,10 +148,10 @@ describe('access (§3.3)', () => {
       const { dist } = access(w);
       for (let i = 0; i < AREA; i++) expect(dist[i] !== 255, `seed ${seed} tile ${i}`).toBe(w.hasRoadAccess(i % N, (i / N) | 0));
     }
-    // RoadAccessMap (render/overlay.ts) still uses its pre-expansion window rule, which equals the
-    // access rule on streets-only maps; WP-3 switches it to computeAccess for mixed kinds (§3.3).
+    // RoadAccessMap (render/overlay.ts) runs computeAccess itself (§3.3), so it agrees on mixed maps
+    // too; the streets-only loop keeps the pre-expansion rule pinned.
     for (let seed = 200; seed < 220; seed++) {
-      const w = randomRoads(seed, false);
+      const w = randomRoads(seed, seed % 2 === 0);
       const { dist } = access(w);
       const map = new RoadAccessMap().get(w);
       for (let i = 0; i < AREA; i++) expect(map[i] === 1, `seed ${seed} tile ${i}`).toBe(dist[i] !== 255);

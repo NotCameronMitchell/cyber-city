@@ -76,7 +76,7 @@ describe('news desk', () => {
     });
     run(sim, 60);
     const power = warns.filter((t) => t.includes('without power'));
-    const roads = warns.filter((t) => t.includes('no road'));
+    const roads = warns.filter((t) => t.includes('no usable road'));
     expect(power.length).toBeGreaterThanOrEqual(1);
     expect(power.length).toBeLessThanOrEqual(2);
     expect(roads.length).toBeGreaterThanOrEqual(1);

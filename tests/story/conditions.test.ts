@@ -530,7 +530,8 @@ describe('standing and tiers (§2.1)', () => {
     w.addBuilding('precinct', 2, 2);
     w.addBuilding('clinic', 10, 2); // +2 each
     const d = moodDrivers(w, 'board');
-    expect(d.map((x) => Math.round(x.value))).toEqual([12, 10, 4, 0]);
+    // The fifth driver is the expansion's 'Priced out' row (§8.2), 0 here.
+    expect(d.map((x) => Math.round(x.value))).toEqual([12, 10, 4, 0, 0]);
     expect(computeMood(w, 'board')).toBe(26);
     for (let k = 0; k < 4; k++) w.addBuilding('precinct', 2 + k * 4, 20);
     expect(computeMood(w, 'board')).toBe(30); // 12 + 10 + 8 capped at 30
