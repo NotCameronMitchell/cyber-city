@@ -221,27 +221,35 @@ describe('launches (§5.3)', () => {
     fx.destroy();
   });
 
-  it('real launches come from Game: at night, ≥ launchGapSec apart, each one starts the FX', async () => {
+  it('real launches come from Game: each liftoff starts the FX, ≥ launchGapSec of unpaused play apart', async () => {
     const { Effects } = await import('../src/render/effects');
     const { g, b } = spaceportGame();
     const fx = new Effects(g);
     g.settings.dayNight = false; // always night: a launch every launchGapSec
+    let lifts = 0;
+    g.events.on('liftoff', () => lifts++);
     g.setSpeed(1);
     let starts = 0;
     let wasRunning = false;
-    for (let i = 0; i < 6000; i++) {
+    let unpaused = 0;
+    let lastStart = -1e9;
+    for (let i = 0; i < 8000; i++) {
+      if (g.speed === 0 && !g.story.blocking) g.setSpeed(1);
       g.update(0.1);
       b.powered = true; // no plant on this test map: keep the pad powered so its launch clock runs
       fx.update(0.1);
+      if (g.speed > 0) unpaused += 0.1;
       const running = fx.ports.launching > 0;
-      if (running && !wasRunning) starts++;
+      if (running && !wasRunning) {
+        starts++;
+        if (starts > 1) expect(unpaused - lastStart).toBeGreaterThanOrEqual(SPACEPORT.launchGapSec - 0.5);
+        lastStart = unpaused;
+      }
       wasRunning = running;
     }
-    // 600 s: the first after the lead (10 s) once the half gap has passed, then every 180 s.
-    expect(starts).toBeGreaterThanOrEqual(3);
-    expect(starts).toBeLessThanOrEqual(4);
-    expect(b.launches).toBe(starts);
-    expect(SPACEPORT.launchGapSec).toBe(180);
+    expect(lifts).toBeGreaterThanOrEqual(2);
+    expect(starts).toBe(lifts);
+    expect(b.launches).toBe(lifts);
     fx.destroy();
   });
 

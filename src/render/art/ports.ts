@@ -1557,12 +1557,15 @@ export class PortFx {
       const g = 80 + ign * 120;
       ctx.drawImage(glowSprite([255, 170, 80], 64), x - g / 2, y - g * 0.35, g, g * 0.6);
       if (!low && t >= 1.5) {
+        // A column of 12 glow sprites, stretched along the climb so they overlap into one plume.
+        const gap = 10 + rise * 26;
         for (let k = 0; k < 12; k++) {
-          const zz = z - 8 - k * (10 + rise * 26);
+          const zz = z - 8 - k * gap;
           if (zz < 0) break;
           const sz = 22 - k * 1.2 + Math.sin(t * 40 + k) * 2;
+          const tall = Math.max(sz, gap * 2.2);
           ctx.globalAlpha = (1 - k / 12) * 0.85;
-          ctx.drawImage(glowSprite(k < 3 ? [255, 236, 190] : [255, 150, 70], 32), x - sz / 2, y - zz - sz / 2, sz, sz);
+          ctx.drawImage(glowSprite(k < 3 ? [255, 236, 190] : [255, 150, 70], 32), x - sz / 2, y - zz - tall / 2, sz, tall);
         }
       } else if (t >= 1.5) {
         ctx.globalAlpha = 0.9;
