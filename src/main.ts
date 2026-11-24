@@ -13,11 +13,14 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { AudioEngine } from './audio/audio';
+import { SAVE_KEY } from './game/config';
 import { Game } from './game/game';
+import { storageGet } from './game/storage';
 import type { SaveData } from './game/types';
 import { InputController } from './input/input';
 import { Camera } from './render/camera';
 import { Renderer } from './render/renderer';
+import { saveState, worthKeeping } from './ui/start/startModel';
 import { StartScreen } from './ui/start/startScreen';
 import { UI } from './ui/ui';
 
@@ -29,6 +32,8 @@ const AUTOSAVE_MONTHS = 3;
 const AUTOSAVE_SECONDS = 90;
 /** The idle title redraws the drifting city at most this often (s): half the work on phones. */
 const TITLE_FRAME = 1 / 30;
+/** With reduced motion the title's city is a still picture: redrawn this rarely (s), time stopped. */
+const TITLE_STILL_FRAME = 1 / 8;
 
 interface HotApi {
   data?: unknown;
@@ -46,6 +51,8 @@ function start(data?: unknown): void {
   if (!canvas || !root) throw new Error('Cyber City: #game canvas or #ui root missing');
 
   const game = new Game();
+  // Did the Game load the stored city, or start fresh because it could not read it?
+  const stored = saveState(storageGet(SAVE_KEY), game.world);
   let restored = false;
   if (looksLikeSave(data)) {
     restored = game.restore(data);
@@ -61,17 +68,22 @@ function start(data?: unknown): void {
   // ── Start screen ──────────────────────────────────────────────────────────
   // A newer build's save keeps this session on a throwaway city (save blocked): offer New City, not Continue.
   const blocked = (game as { saveBlocked?: boolean }).saveBlocked === true;
-  let saveNow: (why: string) => void = () => undefined;
+  let saveNow: (why: string) => boolean = () => false;
+  const w = game.world;
   const title = new StartScreen({
     game,
     camera,
     ui,
-    hasCity: (game.hasSave() && !blocked) || restored,
+    canvas,
+    // A restored snapshot counts only with progress (a title that was never left has none).
+    hasCity: (stored === 'loaded' && !blocked) || (restored && worthKeeping({ tick: w.tick, buildingCount: w.buildings.size, tiles: w.tiles })),
+    unreadable: stored === 'unreadable' && !restored,
     save: () => saveNow('menu'),
   });
 
   (window as any).cc = { game, camera, renderer, input, ui, audio, start: title };
-  (window as any).claude?.hot?.snapshot?.(() => game.snapshot());
+  // No snapshot of a first-launch title that was never left: the next load must not offer Continue for it.
+  (window as any).claude?.hot?.snapshot?.(() => (title.holding && !title.hasCity ? undefined : game.snapshot()));
 
   // ── Sizing ────────────────────────────────────────────────────────────────
   // Coalesce bursts of resize events into one resize per frame; iOS reports
@@ -83,6 +95,7 @@ function start(data?: unknown): void {
     requestAnimationFrame(() => {
       resizeQueued = false;
       renderer.resize();
+      title.resize();
     });
   };
   window.addEventListener('resize', queueResize);
@@ -97,15 +110,16 @@ function start(data?: unknown): void {
   // ── Autosave ──────────────────────────────────────────────────────────────
   let monthsSinceSave = 0;
   let playSinceSave = 0;
-  const save = (why: string) => {
+  const save = (why: string): boolean => {
     // Nothing changes behind the title, and a first launch that never left it has no city to keep.
-    if (title.holding && why !== 'menu') return;
+    if (title.holding && why !== 'menu') return false;
     monthsSinceSave = 0;
     playSinceSave = 0;
     try {
-      game.save();
+      return game.save();
     } catch (err) {
       console.warn(`[autosave] ${why} failed`, err);
+      return false;
     }
   };
   game.events.on('month', () => {
@@ -126,6 +140,8 @@ function start(data?: unknown): void {
   let errors = 0;
   /** Seconds since the idle title last redrew the city. */
   let titleAcc = TITLE_FRAME;
+  /** Animation time the title draws with (stopped while its backdrop is a still picture). */
+  let titleTime = 0;
 
   const frame = (now: number) => {
     rafId = requestAnimationFrame(frame);
@@ -137,10 +153,13 @@ function start(data?: unknown): void {
     try {
       if (title.holding) {
         // Title: the city is held (no sim, no story timers, no input); only the drift moves.
+        // First launch draws the showcase city (title.backdrop) instead of the bare map.
         title.update(dt);
         titleAcc += dt;
-        if (!title.idle || titleAcc >= TITLE_FRAME * 0.9) {
-          renderer.render(Math.min(titleAcc, MAX_DT), time);
+        const still = title.still;
+        if (!still) titleTime = time;
+        if (!title.idle || titleAcc >= (still ? TITLE_STILL_FRAME : TITLE_FRAME) * 0.9) {
+          (title.backdrop ?? renderer).render(still ? 0 : Math.min(titleAcc, MAX_DT), titleTime);
           titleAcc = 0;
         }
       } else {

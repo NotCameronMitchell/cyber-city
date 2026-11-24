@@ -4,7 +4,8 @@
    canvas is the backdrop; a gradient + vignette keeps text readable.
    Phone portrait first (390 × 844 and 360 × 640): actions in the bottom half,
    16 px gutters, 52 px primaries, 44 px secondaries, text ≥ 12 px.
-   Landscape phones (844 × 390): wordmark left, actions right.
+   Landscape up to 760 px tall (phones 844 × 390, small tablets 960 × 540):
+   wordmark left, actions right.
    No backdrop-filter: the canvas behind changes every frame (cheap on phones).
    ───────────────────────────────────────────────────────────────────────────── */
 
@@ -118,8 +119,9 @@
 .cc-start-sys {
   font: 12px/1.2 var(--cc-mono);
   letter-spacing: 0.08em;
-  color: rgba(34, 229, 255, 0.78);
-  text-shadow: 0 0 8px rgba(34, 229, 255, 0.4);
+  color: rgba(34, 229, 255, 0.82);
+  /* A dark halo under the glow: it stays readable over lit buildings. */
+  text-shadow: 0 0 8px rgba(34, 229, 255, 0.4), 0 1px 6px rgba(0, 0, 0, 0.95), 0 0 2px rgba(0, 0, 0, 0.9);
 }
 
 .cc-start-mark {
@@ -492,9 +494,17 @@
 
 /* Settings · How to play · About */
 .cc-start-row {
+  container: cc-start-row / inline-size;
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
+}
+
+/* A narrow row (360 px phones, the landscape column): the labels need the room more than the icons do. */
+@container cc-start-row (max-width: 350px) {
+  .cc-start-mini .cc-i {
+    display: none;
+  }
 }
 
 .cc-start-mini {
@@ -570,23 +580,22 @@
   color: var(--cc-ink);
 }
 
-/* Optional install tip (touch devices, not installed). */
+/* Optional install tip (touch browsers, not installed, from the second visit): one quiet line. */
 .cc-start-hint {
   display: flex;
   align-items: center;
-  gap: 4px;
+  justify-content: center;
   min-height: 44px;
-  padding-left: 12px;
+  margin: -6px 0 -8px;
   font-size: 12px;
   line-height: 1.3;
   color: var(--cc-ink-2);
-  background: rgba(12, 11, 28, 0.7);
-  border-left: 2px solid rgba(34, 229, 255, 0.6);
+  text-shadow: 0 1px 6px rgba(0, 0, 0, 0.9);
 }
 
 .cc-start-hint-text {
-  flex: 1 1 auto;
   min-width: 0;
+  text-align: center;
 }
 
 .cc-start-hint-x {
@@ -607,7 +616,19 @@
   font: 12px/1.2 var(--cc-mono);
   letter-spacing: 0.06em;
   text-align: center;
-  color: var(--cc-ink-3);
+  color: var(--cc-ink-2);
+  text-shadow: 0 1px 6px rgba(0, 0, 0, 0.9);
+}
+
+/* The stored save could not be read (New City is the primary then). */
+.cc-start-warn {
+  margin: 0;
+  padding: 8px 12px;
+  font-size: 13px;
+  line-height: 1.35;
+  color: #ffdca6;
+  background: rgba(10, 9, 24, 0.86);
+  border-left: 2px solid var(--cc-amber);
 }
 
 /* ── New city sheet ────────────────────────────────────────────────────── */
@@ -713,6 +734,10 @@
   font-size: 13px;
 }
 
+.cc-start-seg .cc-seg-btn:not(.is-on) {
+  color: var(--cc-ink-2);
+}
+
 .cc-start-desc {
   min-height: 2.6em;
   margin: 0;
@@ -733,6 +758,9 @@
 
 .cc-start-sheet-foot {
   flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
   padding: 10px 16px 16px;
 }
 
@@ -853,18 +881,19 @@
   }
 }
 
-/* Narrow phones (360 px): the labels need the room more than the icons do. */
-@media (max-width: 379px) {
+/* Narrow phones (360 px) and small landscape (568 × 320): the labels need the room more than the icons do. */
+@media (max-width: 379px), (orientation: landscape) and (max-width: 640px) and (max-height: 520px) {
   .cc-start-mini .cc-i {
     display: none;
   }
 }
 
-/* ── Landscape phones (844 × 390): wordmark left, actions right ───────── */
+/* ── Landscape up to 760 px tall: wordmark left, actions right ─────────── */
+/* Small tablets and short laptop windows (960 × 540, 1024 × 600, 1280 × 720) */
 
-@media (orientation: landscape) and (max-height: 520px) {
+@media (orientation: landscape) and (max-height: 760px) {
   .cc-start {
-    --mk: clamp(40px, 13vh, 66px);
+    --mk: clamp(56px, min(14vh, 8.4vw), 108px);
   }
   .cc-start-shade {
     background:
@@ -883,22 +912,54 @@
     flex-direction: row;
     align-items: center;
     justify-content: space-between;
-    gap: 20px;
-    padding: calc(var(--cc-sat) + 10px) calc(var(--cc-sar) + 20px) calc(var(--cc-sab) + 10px) calc(var(--cc-sal) + 20px);
+    gap: clamp(20px, 4vw, 64px);
+    padding: calc(var(--cc-sat) + 24px) calc(var(--cc-sar) + clamp(20px, 5vw, 72px)) calc(var(--cc-sab) + 24px) calc(var(--cc-sal) + clamp(20px, 5vw, 72px));
   }
   .cc-start-brand {
     flex: 1 1 0;
     min-width: 0;
     max-width: none;
+    gap: 16px;
+  }
+  .cc-start-line {
+    font-size: 17px;
+  }
+  .cc-start-actions {
+    flex: 0 0 auto;
+    width: min(420px, 42vw);
+    max-height: 100%;
+  }
+  .cc-start-sheet {
+    top: 0;
+    bottom: 0;
+    height: fit-content;
+    margin: auto;
+    max-height: calc(100% - 48px);
+    padding-bottom: 0;
+  }
+  .cc-start.is-leaving .cc-start-actions {
+    transform: translateX(16px);
+  }
+}
+
+/* ── Landscape phones (844 × 390, 740 × 360, 568 × 320) ───────────────── */
+
+@media (orientation: landscape) and (max-height: 520px) {
+  .cc-start {
+    --mk: clamp(44px, min(19vh, 10vw), 84px);
+  }
+  .cc-start-layout {
+    gap: 20px;
+    padding: calc(var(--cc-sat) + 10px) calc(var(--cc-sar) + 20px) calc(var(--cc-sab) + 10px) calc(var(--cc-sal) + 20px);
+  }
+  .cc-start-brand {
     gap: 12px;
   }
   .cc-start-line {
     font-size: 15px;
   }
   .cc-start-actions {
-    flex: 0 0 auto;
     width: min(380px, 47vw);
-    max-height: 100%;
     gap: 8px;
   }
   .cc-start-slot-info {
@@ -908,41 +969,89 @@
   .cc-start-slot-name {
     font-size: 18px;
   }
-  .cc-start-prev {
-    min-height: 40px;
-  }
+  /* No room for the tip or the footer beside the buttons. */
+  .cc-start-hint,
   .cc-start-foot {
     display: none;
   }
+  /* The sheet replaces the actions column, a little wider. */
   .cc-start-sheet {
     left: auto;
     right: calc(var(--cc-sar) + 20px);
     top: calc(var(--cc-sat) + 10px);
     bottom: calc(var(--cc-sab) + 10px);
-    width: min(420px, 52vw);
+    width: min(440px, 56vw);
+    height: auto;
+    margin: 0;
     max-height: none;
-    padding-bottom: 0;
   }
   .cc-start-sheet-head {
-    padding-top: 10px;
+    align-items: center;
+    padding-top: 6px;
+  }
+  .cc-start-sheet-head .cc-start-sys {
+    display: none;
+  }
+  .cc-start-sheet-t {
+    margin: 0;
+    font-size: 18px;
   }
   .cc-start-sheet-body {
-    gap: 12px;
+    gap: 10px;
+    padding: 4px 16px 4px;
+  }
+  .cc-start-field {
+    gap: 6px;
   }
   .cc-start-desc {
     min-height: 0;
   }
-  .cc-start-sheet-foot {
-    padding: 8px 16px 12px;
+  .cc-start-note {
+    padding: 7px 10px;
+    font-size: 12px;
+    line-height: 1.35;
   }
-  .cc-start.is-leaving .cc-start-actions {
-    transform: translateX(16px);
+  .cc-start-sheet-foot {
+    gap: 8px;
+    padding: 6px 16px 10px;
+  }
+}
+
+/* Short landscape (740 × 360): the pace line gives way to the backup note and Found city. */
+@media (orientation: landscape) and (max-height: 380px) {
+  .cc-start-desc {
+    display: none;
+  }
+  .cc-start-actions {
+    gap: 6px;
+  }
+}
+
+/* Very short landscape (568 × 320): a wide sheet, name and pace side by side. */
+@media (orientation: landscape) and (max-height: 340px) {
+  .cc-start-sheet {
+    left: calc(var(--cc-sal) + 20px);
+    right: calc(var(--cc-sar) + 20px);
+    top: 0;
+    bottom: 0;
+    width: auto;
+    max-width: 600px;
+    height: fit-content;
+    max-height: calc(100% - 20px);
+    margin: auto;
+  }
+  .cc-start-sheet-body {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    align-items: start;
+    gap: 12px;
   }
 }
 
 /* ── Tablets and desktop: a centred sheet, a bigger wordmark ──────────── */
+/* (Landscape screens up to 760 px tall use the two-column layout above.) */
 
-@media (min-width: 720px) and (min-height: 600px) {
+@media (min-width: 720px) and (min-height: 761px), (orientation: portrait) and (min-width: 720px) and (min-height: 600px) {
   .cc-start {
     --mk: clamp(72px, 10vw, 112px);
   }
@@ -973,6 +1082,17 @@
     max-height: calc(100% - 48px);
     padding-bottom: 0;
   }
+}
+
+/* ── Quality: Low: no filter glow, no glitch slices on the wordmark ───── */
+
+.cc-ui.cc-lowfx .cc-start-glow {
+  filter: none;
+}
+
+.cc-ui.cc-lowfx .cc-start-w1::before,
+.cc-ui.cc-lowfx .cc-start-w1::after {
+  display: none;
 }
 
 /* ── Reduced motion: no drift (JS), no flicker, no glitch, instant fades ── */

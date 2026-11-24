@@ -229,6 +229,84 @@ export function startKey(o: {
   return 'block';
 }
 
+/**
+ * What the stored save turned out to be at boot: none, the city the Game loaded,
+ * or a save the Game could not read (corrupt JSON, an incompatible version). The
+ * Game starts a fresh random city in that last case, so it compares the stored
+ * seed and day with the world it ended up with.
+ */
+export type SaveState = 'none' | 'loaded' | 'unreadable';
+
+export function saveState(raw: string | null, world: { seed: number; tick: number }): SaveState {
+  if (raw === null) return 'none';
+  try {
+    const d = JSON.parse(raw) as { seed?: unknown; tick?: unknown } | null;
+    if (!d || typeof d !== 'object') return 'unreadable';
+    return Number(d.seed) >>> 0 === world.seed && (Number(d.tick) | 0) === world.tick ? 'loaded' : 'unreadable';
+  } catch {
+    return 'unreadable';
+  }
+}
+
+/**
+ * A one-shot timer that stops while the title holds the game. Held while it runs,
+ * it is owed instead, and starts again in full when the hold ends: the boot
+ * "where you left off" toast always follows the same real seconds of play, so it
+ * never reads goals the story has not checked yet.
+ */
+export class HeldTimer {
+  private id: ReturnType<typeof setTimeout> | null = null;
+  private owed = false;
+  private held = false;
+
+  constructor(
+    private readonly ms: number,
+    private readonly fn: () => void,
+  ) {}
+
+  /** Due (running or owed). */
+  get pending(): boolean {
+    return this.id !== null || this.owed;
+  }
+
+  /** (Re)start the countdown; while held it starts when the hold ends. */
+  schedule(): void {
+    this.clear();
+    if (this.held) {
+      this.owed = true;
+      return;
+    }
+    this.id = setTimeout(() => {
+      this.id = null;
+      this.fn();
+    }, this.ms);
+  }
+
+  hold(on: boolean): void {
+    if (this.held === on) return;
+    this.held = on;
+    if (on) {
+      if (this.id !== null) {
+        this.clear();
+        this.owed = true;
+      }
+    } else if (this.owed) {
+      this.owed = false;
+      this.schedule();
+    }
+  }
+
+  cancel(): void {
+    this.clear();
+    this.owed = false;
+  }
+
+  private clear(): void {
+    if (this.id !== null) clearTimeout(this.id);
+    this.id = null;
+  }
+}
+
 /** Where the page runs, for the optional "Add to Home Screen" tip. */
 export interface HintEnv {
   /** Touch-first device ((pointer: coarse)). */
@@ -242,10 +320,12 @@ export interface HintEnv {
   ios: boolean;
   /** Served over http(s) (not file://), so it can be installed. */
   web: boolean;
+  /** A returning player (a city to continue at boot): never on the very first launch. */
+  returning: boolean;
 }
 
 /** One-line install tip, or null when it does not apply. */
 export function a2hsHint(e: HintEnv): string | null {
-  if (!e.coarse || e.standalone || !e.topLevel || e.dismissed || !e.web) return null;
-  return e.ios ? 'Tip: Share › Add to Home Screen for full screen.' : 'Tip: menu › Add to Home screen for full screen.';
+  if (!e.returning || !e.coarse || e.standalone || !e.topLevel || e.dismissed || !e.web) return null;
+  return e.ios ? 'Full screen: Share › Add to Home Screen' : 'Full screen: menu › Add to Home screen';
 }

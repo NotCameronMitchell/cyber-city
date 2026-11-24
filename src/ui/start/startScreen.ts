@@ -3,8 +3,9 @@
 // from the in-game menu's "Main menu"). The city stays paused behind it and
 // the story waits (StoryUI.setHold; main.ts skips game.update while held).
 //
-//   backdrop   the canvas itself (saved city, or the fresh map on first
-//              launch) at night, drifting slowly; a gradient + vignette here
+//   backdrop   the canvas itself (the saved city, or on first launch a lit
+//              showcase city, showcase.ts) at night, drifting slowly; a
+//              gradient + vignette here
 //   brand      neon CYBER CITY wordmark in a chamfered frame, tagline
 //   actions    Continue card (save) · New city · Settings / How to play /
 //              About (the menu's own views) · Previous city (backup slot)
@@ -20,6 +21,7 @@ import { CITY_NAME_MAX, randomCityName, randomSeed, type Game } from '../../game
 import { MAP_SIZE, STORY_PACES, ZoneType, type StoryPace } from '../../game/types';
 import type { World } from '../../game/world';
 import { HALF_H, HALF_W, type Camera } from '../../render/camera';
+import type { Renderer } from '../../render/renderer';
 import type { UI } from '../ui';
 import { h, prefersReducedMotion, setAttr, setClass, setHidden, setText } from '../dom';
 import { icon } from '../icons';
@@ -36,15 +38,20 @@ import {
   worthKeeping,
   type StartButtons,
 } from './startModel';
+import { Showcase } from './showcase';
 
 export interface StartOptions {
   game: Game;
   camera: Camera;
   ui: UI;
+  /** The game canvas (the first-launch showcase draws on it while the title is up). */
+  canvas?: HTMLCanvasElement;
   /** A city to continue already exists (a save on this device, or a restored hot-reload snapshot). */
   hasCity: boolean;
-  /** Save now (main.ts resets its autosave clocks too). */
-  save: () => void;
+  /** A save exists but the game could not read it (it starts a fresh city instead). */
+  unreadable?: boolean;
+  /** Save now (main.ts resets its autosave clocks too); false when nothing was stored. */
+  save: () => boolean;
 }
 
 const A2HS_KEY = 'cybercity.ui.a2hs.v1';
@@ -58,7 +65,7 @@ export class StartScreen {
   private readonly camera: Camera;
   private readonly ui: UI;
   private readonly root: HTMLElement;
-  private readonly save: () => void;
+  private readonly save: () => boolean;
 
   private readonly layout: HTMLElement;
   private readonly slot: HTMLElement;
@@ -71,6 +78,7 @@ export class StartScreen {
   private readonly prevName: HTMLElement;
   private readonly hint: HTMLElement;
   private readonly hintText: HTMLElement;
+  private readonly warn: HTMLElement;
   private readonly foot: HTMLElement;
 
   private readonly sheet: HTMLElement;
@@ -83,7 +91,13 @@ export class StartScreen {
 
   private buttons: StartButtons = startButtons({ hasCity: false, hasBackup: false });
   /** Continue is offered: a save, a restored snapshot, or a city played this session. */
-  private hasCity: boolean;
+  private city: boolean;
+  /** A returning player at boot (the install tip waits for the second visit). */
+  private readonly returning: boolean;
+  /** The stored save could not be read: say so once, New City is the primary. */
+  private unreadable: boolean;
+  /** First launch: a lit city behind the title instead of a bare map (until the player leaves). */
+  private showcase: Showcase | null = null;
   private anchor: { x: number; y: number } | null = null;
   private driftT = 0;
   private leaveTimer = 0;
@@ -94,7 +108,9 @@ export class StartScreen {
     this.ui = o.ui;
     this.root = o.ui.ctx.root;
     this.save = o.save;
-    this.hasCity = o.hasCity;
+    this.city = o.hasCity;
+    this.returning = o.hasCity;
+    this.unreadable = !!o.unreadable && !o.hasCity;
 
     // ── Brand ──────────────────────────────────────────────────────────────
     const mark = h(
@@ -165,8 +181,9 @@ export class StartScreen {
       this.hintText,
       h('button', { class: 'cc-start-hint-x', type: 'button', 'data-act': 'hint-x', 'aria-label': 'Dismiss tip', html: icon('close') }),
     );
+    this.warn = h('p', { class: 'cc-start-warn', role: 'status', hidden: true });
     this.foot = h('div', { class: 'cc-start-foot' });
-    const actions = h('nav', { class: 'cc-start-actions', 'aria-label': 'Start' }, this.slot, this.newBtn, row, this.prevBtn, this.hint, this.foot);
+    const actions = h('nav', { class: 'cc-start-actions', 'aria-label': 'Start' }, this.warn, this.slot, this.newBtn, row, this.prevBtn, this.hint, this.foot);
     this.layout = h('div', { class: 'cc-start-layout' }, brand, actions);
 
     // ── New city sheet ─────────────────────────────────────────────────────
@@ -218,9 +235,9 @@ export class StartScreen {
           ),
         ),
         h('div', { class: 'cc-start-field' }, h('span', { class: 'cc-start-k', id: 'cc-start-pace-k', text: 'Story pace' }), paceSeg, this.paceDesc),
-        this.note,
       ),
-      h('div', { class: 'cc-start-sheet-foot' }, this.foundBtn),
+      // The backup note sits with Found city, so it can never scroll out of sight.
+      h('div', { class: 'cc-start-sheet-foot' }, this.note, this.foundBtn),
     );
 
     this.el = h(
@@ -236,6 +253,17 @@ export class StartScreen {
     this.el.addEventListener('click', this.onClick);
     window.addEventListener('keydown', this.onKey, true);
     this.ui.menu.onMainMenu = () => this.show();
+    this.ui.menu.onNewCity = () => this.show(true);
+
+    // First launch: a lit city behind the title (the real, empty map waits underneath).
+    if (!o.hasCity && o.canvas) {
+      try {
+        this.showcase = new Showcase(this.game, o.canvas);
+      } catch (err) {
+        console.warn('[start] showcase backdrop unavailable', err);
+        this.showcase = null;
+      }
+    }
 
     // Boot: the title is the first thing on screen, the game held behind it.
     this.ui.story.setHold(true);
@@ -254,10 +282,33 @@ export class StartScreen {
     return this.flow.interactive;
   }
 
-  /** In-game menu › Main menu: save, pause and show the title again. */
-  show(): void {
+  /** Continue is offered (main.ts: a hot-reload snapshot is only worth taking then). */
+  get hasCity(): boolean {
+    return this.city;
+  }
+
+  /** What main.ts draws while the title holds: the first-launch showcase, or null for the game's own renderer. */
+  get backdrop(): Renderer | null {
+    return this.showcase?.renderer ?? null;
+  }
+
+  /** Reduced motion: the backdrop is a still picture (main.ts redraws it rarely, with time stopped). */
+  get still(): boolean {
+    return reducedMotion();
+  }
+
+  /** The viewport changed (main.ts, alongside the game's renderer). */
+  resize(): void {
+    this.showcase?.resize();
+  }
+
+  /**
+   * In-game menu › Main menu: save, pause and show the title again.
+   * `setup`: the menu's New city, straight to the setup sheet (✕ leaves the title up).
+   */
+  show(setup = false): void {
     if (this.flow.phase !== 'play') return;
-    this.save();
+    if (!this.save() && storageWorks()) this.game.toast('This city could not be saved: storage is full', 'error');
     this.flow.show();
     const { game } = this;
     game.setSpeed(0);
@@ -266,6 +317,7 @@ export class StartScreen {
     this.ui.ctx.actions.closeTray();
     this.ui.story.setHold(true);
     this.present(false);
+    if (setup) this.openSheet();
   }
 
   private present(boot: boolean): void {
@@ -294,7 +346,9 @@ export class StartScreen {
   refresh(): void {
     const { game } = this;
     const hasBackup = game.hasPreviousSave();
-    this.buttons = startButtons({ hasCity: this.hasCity, hasBackup });
+    this.buttons = startButtons({ hasCity: this.city, hasBackup });
+    setText(this.warn, this.unreadable ? 'Your saved city could not be read. A new city replaces it.' : '');
+    setHidden(this.warn, !this.unreadable);
     const b = this.buttons;
     setHidden(this.slot, !b.continue);
     if (b.continue) {
@@ -320,7 +374,7 @@ export class StartScreen {
       const info = game.previousSaveInfo();
       setText(this.prevName, info?.cityName ? ` · ${info.cityName}` : '');
     }
-    const hint = a2hsHint(readEnv());
+    const hint = a2hsHint(readEnv(this.returning));
     setText(this.hintText, hint ?? '');
     setHidden(this.hint, !hint);
     setText(this.foot, `> build 0.1 · ${storageWorks() ? 'saved on this device' : 'saving is off in this browser'}`);
@@ -354,8 +408,8 @@ export class StartScreen {
     const { game } = this;
     this.nameInput.value = randomCityName(randomSeed());
     this.setPace(game.settings.storyPace);
-    const keeps = this.hasCity && worthKeeping({ tick: game.world.tick, buildingCount: game.world.buildings.size, tiles: game.world.tiles });
-    const note = replaceNote({ current: this.hasCity ? game.world.cityName : null, keeps, backup: game.previousSaveInfo()?.cityName ?? null });
+    const keeps = this.city && worthKeeping({ tick: game.world.tick, buildingCount: game.world.buildings.size, tiles: game.world.tiles });
+    const note = replaceNote({ current: this.city ? game.world.cityName : null, keeps, backup: game.previousSaveInfo()?.cityName ?? null });
     setText(this.note, note);
     setHidden(this.note, !note);
     this.sheet.hidden = false;
@@ -397,13 +451,14 @@ export class StartScreen {
     const { game } = this;
     const name = this.nameInput.value.trim().slice(0, CITY_NAME_MAX);
     if (game.settings.storyPace !== this.pace) game.updateSettings({ storyPace: this.pace });
-    // First launch: found the map the title showed. Otherwise a fresh map.
-    const keepMap = !this.hasCity && !worthKeeping({ tick: game.world.tick, buildingCount: game.world.buildings.size, tiles: game.world.tiles });
+    // First launch: found the untouched map waiting under the showcase (the camera is framed on it). Otherwise a fresh map.
+    const keepMap = !this.city && !worthKeeping({ tick: game.world.tick, buildingCount: game.world.buildings.size, tiles: game.world.tiles });
     const seed = keepMap ? game.world.seed : randomSeed();
     game.newCity(name || undefined, seed);
     this.nightClock();
     if (!keepMap) this.reframe();
-    this.hasCity = true;
+    this.city = true;
+    this.unreadable = false;
     game.toast(`Charter signed: welcome to ${game.world.cityName}`, 'good');
     this.leave();
   }
@@ -413,6 +468,7 @@ export class StartScreen {
   private leave(): void {
     if (!this.flow.leave()) return;
     this.closeSheet(false);
+    this.dropShowcase();
     this.el.classList.remove('is-boot', 'is-back');
     this.el.inert = true;
     try {
@@ -436,7 +492,7 @@ export class StartScreen {
     this.el.hidden = true;
     this.el.classList.remove('is-leaving');
     this.root.classList.remove('cc-start-reveal');
-    this.hasCity = true;
+    this.city = true;
     // Release the story first so the first frame of play sees it unheld, then run at 1×.
     this.ui.story.setHold(false);
     this.game.setSpeed(1);
@@ -447,13 +503,22 @@ export class StartScreen {
   /** Per frame while held: the slow backdrop drift (none with reduced motion). */
   update(dt: number): void {
     if (!this.flow.drifting || reducedMotion()) return;
-    const cam = this.camera;
+    const cam = this.showcase?.camera ?? this.camera;
     if (!this.anchor) this.anchor = { x: cam.x, y: cam.y };
     this.driftT += Math.min(Math.max(dt, 0), 0.1);
     const d = driftOffset(this.driftT);
     cam.x = this.anchor.x + d.x;
     cam.y = this.anchor.y + d.y;
     cam.clamp();
+  }
+
+  /** Leaving the first-launch title: the game's own map takes over the canvas (under the fade). */
+  private dropShowcase(): void {
+    if (!this.showcase) return;
+    this.showcase.destroy();
+    this.showcase = null;
+    this.anchor = null;
+    this.driftT = 0;
   }
 
   /** A different city is on the canvas: frame it, and drift from there (not from the old anchor). */
@@ -545,7 +610,8 @@ export class StartScreen {
         }
         this.nightClock();
         this.reframe();
-        this.hasCity = true;
+        this.city = true;
+        this.unreadable = false;
         game.toast(`Welcome back to ${game.world.cityName}`, 'good');
         this.leave();
       },
@@ -565,6 +631,17 @@ export class StartScreen {
       const next = this.paceBtns[(i + (e.key === 'ArrowRight' ? 1 : this.paceBtns.length - 1)) % this.paceBtns.length];
       this.setPace(next.dataset.pace as StoryPace);
       next.focus();
+      return;
+    }
+    // aria-modal: Tab wraps inside the title (or its sheet) instead of leaving for the page.
+    if (e.key === 'Tab' && this.flow.interactive && this.ui.ctx.modals.depth === 0) {
+      const items = focusables(phase === 'setup' ? this.sheet : this.layout);
+      const i = items.indexOf(document.activeElement as HTMLElement);
+      const wrap = e.shiftKey ? i <= 0 : i < 0 || i === items.length - 1;
+      if (items.length && wrap) {
+        e.preventDefault();
+        items[e.shiftKey ? items.length - 1 : 0].focus();
+      }
       return;
     }
     const action = startKey({
@@ -615,6 +692,13 @@ function reducedMotion(): boolean {
   return !!reduceMq?.matches;
 }
 
+/** Keyboard-reachable controls inside `scope`, in DOM order (hidden, inert and roving -1 ones skipped). */
+function focusables(scope: HTMLElement): HTMLElement[] {
+  return [...scope.querySelectorAll<HTMLElement>('button, input, [tabindex]')].filter(
+    (el) => el.tabIndex >= 0 && !el.closest('[hidden], [inert]') && el.getClientRects().length > 0,
+  );
+}
+
 function storageWorks(): boolean {
   try {
     const ls = globalThis.localStorage;
@@ -628,7 +712,7 @@ function storageWorks(): boolean {
   }
 }
 
-function readEnv(): Parameters<typeof a2hsHint>[0] {
+function readEnv(returning: boolean): Parameters<typeof a2hsHint>[0] {
   const mm = (q: string) => typeof matchMedia === 'function' && matchMedia(q).matches;
   let dismissed = false;
   try {
@@ -651,6 +735,7 @@ function readEnv(): Parameters<typeof a2hsHint>[0] {
     dismissed,
     ios: /iPhone|iPad|iPod/.test(ua) || (/Macintosh/.test(ua) && (navigator.maxTouchPoints || 0) > 1),
     web: location.protocol === 'https:' || location.protocol === 'http:',
+    returning,
   };
 }
 

@@ -2,8 +2,9 @@
 // Main menu: resume / save / load / new city plus the Settings, How to Play
 // and About pages (sub-views of the same dialog). Opening the menu pauses the
 // simulation; closing it resumes at the previous speed. The start screen opens
-// the sub-views on their own (open(view, true): Back closes) and sets
-// onMainMenu, which adds the "Main menu" row.
+// the sub-views on their own (open(view, true): ✕ returns to the title), sets
+// onMainMenu, which adds the "Main menu" row, and onNewCity, which sends
+// "New city" to its setup sheet (one New City flow).
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { BUILDINGS, ZONES } from '../game/config';
@@ -61,6 +62,8 @@ export class Menu {
   private solo = false;
   /** Set by the start screen: the "Main menu" row saves, pauses and shows the title. */
   onMainMenu: (() => void) | null = null;
+  /** Set by the start screen: "New city" opens its setup sheet (name, story pace, backup note). */
+  onNewCity: (() => void) | null = null;
 
   constructor(private readonly ctx: UIContext) {
     const d = buildDialog({ id: 'cc-menu', title: '', icon: icon('logo') });
@@ -235,7 +238,8 @@ export class Menu {
   private show(view: View): void {
     this.view = view;
     for (const k of Object.keys(this.views) as View[]) setHidden(this.views[k], k !== view);
-    setHidden(this.back, view === 'main');
+    // Solo (from the title): ✕ is the only way back, so no second, identical chevron.
+    setHidden(this.back, view === 'main' || this.solo);
     setClass(this.el, 'is-sub', view !== 'main');
     this.refresh();
     this.views[view].scrollTop = 0;
@@ -349,6 +353,11 @@ export class Menu {
           }
         },
       });
+    } else if (act === 'new' && this.onNewCity) {
+      const go = this.onNewCity;
+      this.resumeSpeed = 0; // the start screen holds the game; Continue or Found city resumes at 1×
+      modals.closeAll();
+      go();
     } else if (act === 'new') {
       actions.confirm({
         title: 'Found a new city',

@@ -5,10 +5,12 @@
 // main.ts never calls game.update, and a brand-new city still gets its
 // Chapter I title, then the boot card, once play starts.
 
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Game } from '../src/game/game';
-import { MAP_SIZE, Terrain } from '../src/game/types';
+import { MAP_SIZE, Terrain, ZoneType } from '../src/game/types';
+import { buildShowcase } from '../src/ui/start/showcase';
 import {
+  HeldTimer,
   LEAVE_MS,
   StartFlow,
   a2hsHint,
@@ -17,6 +19,7 @@ import {
   driftOffset,
   replaceNote,
   residents,
+  saveState,
   startButtons,
   startKey,
   worthKeeping,
@@ -233,10 +236,13 @@ describe('backdrop drift', () => {
 });
 
 describe('install tip', () => {
-  const env: HintEnv = { coarse: true, standalone: false, topLevel: true, dismissed: false, ios: false, web: true };
+  const env: HintEnv = { coarse: true, standalone: false, topLevel: true, dismissed: false, ios: false, web: true, returning: true };
   it('shows on a touch browser tab that is not installed', () => {
     expect(a2hsHint(env)).toMatch(/add to home screen/i);
     expect(a2hsHint({ ...env, ios: true })).toContain('Share');
+  });
+  it('waits for a returning player: never on the very first launch', () => {
+    expect(a2hsHint({ ...env, returning: false })).toBeNull();
   });
   it('never when installed, dismissed, on desktop, in a frame or from a file', () => {
     expect(a2hsHint({ ...env, standalone: true })).toBeNull();
@@ -244,6 +250,132 @@ describe('install tip', () => {
     expect(a2hsHint({ ...env, coarse: false })).toBeNull();
     expect(a2hsHint({ ...env, topLevel: false })).toBeNull();
     expect(a2hsHint({ ...env, web: false })).toBeNull();
+  });
+});
+
+describe('boot resume toast timer (held while the title is up)', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('a quick Continue still gets the full 1.6 s of play before the toast', () => {
+    const fired: number[] = [];
+    let now = 0;
+    const t = new HeldTimer(1600, () => fired.push(now));
+    t.schedule(); // StoryUI constructor (onWorld)
+    t.hold(true); // the title comes up straight after
+    expect(t.pending).toBe(true);
+    now = 200;
+    vi.advanceTimersByTime(200); // Continue tapped 0.2 s after load…
+    vi.advanceTimersByTime(380); // …the fade…
+    t.hold(false); // …and play starts
+    vi.advanceTimersByTime(1599);
+    expect(fired).toEqual([]);
+    vi.advanceTimersByTime(1);
+    expect(fired.length).toBe(1);
+    expect(t.pending).toBe(false);
+  });
+
+  it('never fires while held, however long the title stays up', () => {
+    let n = 0;
+    const t = new HeldTimer(1600, () => n++);
+    t.hold(true);
+    t.schedule(); // a world loaded behind the title (Found city, Previous city)
+    vi.advanceTimersByTime(60_000);
+    expect(n).toBe(0);
+    t.hold(false);
+    vi.advanceTimersByTime(1600);
+    expect(n).toBe(1);
+  });
+
+  it('a hold after it fired owes nothing (Main menu → Continue: no second toast)', () => {
+    let n = 0;
+    const t = new HeldTimer(1600, () => n++);
+    t.schedule();
+    vi.advanceTimersByTime(2000);
+    expect(n).toBe(1);
+    t.hold(true);
+    t.hold(false);
+    vi.advanceTimersByTime(5000);
+    expect(n).toBe(1);
+  });
+
+  it('a new schedule replaces the old one; cancel drops it', () => {
+    let n = 0;
+    const t = new HeldTimer(1600, () => n++);
+    t.schedule();
+    vi.advanceTimersByTime(1000);
+    t.schedule();
+    vi.advanceTimersByTime(1000);
+    expect(n).toBe(0);
+    vi.advanceTimersByTime(600);
+    expect(n).toBe(1);
+    t.schedule();
+    t.cancel();
+    vi.advanceTimersByTime(5000);
+    expect(n).toBe(1);
+  });
+});
+
+describe('stored save at boot', () => {
+  it('none, the loaded city, or a save the game could not read', () => {
+    const g = new Game();
+    g.newCity('Readable', 4242);
+    g.world.tick = 37;
+    const raw = JSON.stringify(g.world.serialize());
+    expect(saveState(null, g.world)).toBe('none');
+    expect(saveState(raw, g.world)).toBe('loaded');
+    // The game fell back to a fresh random city: its seed or day no longer match the stored one.
+    expect(saveState(raw, { seed: g.world.seed ^ 1, tick: 0 })).toBe('unreadable');
+    expect(saveState('{not json', g.world)).toBe('unreadable');
+    expect(saveState('null', g.world)).toBe('unreadable');
+  });
+});
+
+describe('first-launch showcase backdrop', () => {
+  it('is a lit, settled city of its own, deterministic, and quick to build', () => {
+    const t0 = performance.now();
+    const w = buildShowcase();
+    const ms = performance.now() - t0;
+    let roads = 0;
+    let lots = 0;
+    let towers = 0;
+    let dark = 0;
+    let young = 0;
+    for (const t of w.tiles) {
+      if (t.road) roads++;
+      if (t.zone !== ZoneType.None && t.level > 0) {
+        lots++;
+        if (t.level === 3) towers++;
+        if (!t.powered) dark++;
+        if (t.age < 24) young++;
+      }
+    }
+    expect(roads).toBeGreaterThan(150);
+    expect(lots).toBeGreaterThan(300);
+    expect(towers).toBeGreaterThan(20);
+    expect(w.buildings.size).toBeGreaterThanOrEqual(5);
+    expect(dark).toBe(0); // no unpowered glyphs
+    expect(young).toBe(0); // no construction scaffolds
+    expect(w.stats.population).toBeGreaterThan(1000); // street and sky traffic scale with it
+    expect(ms).toBeLessThan(1000);
+    const again = buildShowcase();
+    expect(again.serialize().tiles).toEqual(w.serialize().tiles);
+    expect(again.stats.population).toBe(w.stats.population);
+  });
+
+  it('never touches the game: its world is separate from the city the player founds', () => {
+    const g = new Game();
+    g.newCity('Untouched', 9001);
+    const snap = () => ({ ...g.world.serialize(), savedAt: 0 });
+    const before = snap();
+    const w = buildShowcase();
+    expect(w).not.toBe(g.world);
+    expect(w.events).not.toBe(g.events);
+    expect(snap()).toEqual(before);
   });
 });
 

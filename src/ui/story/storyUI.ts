@@ -21,13 +21,15 @@
 // Reading budget (§8.11): nothing here queues extra modals; a banner that
 // arrives under a card waits until the card closes, then shows once.
 // Start screen hold (setHold): while the title is up nothing here syncs or
-// shows; a chapter title, the resume toast and toasts wait for the release.
+// shows; a chapter title, a message banner, the resume toast (its 1.6 s count
+// restarts after the release) and toasts wait for the release.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import type { StoryView } from '../../game/story/types';
 import type { UIContext } from '../context';
 import { h, setClass } from '../dom';
 import { clock } from '../format';
+import { HeldTimer } from '../start/startModel';
 import { CharterNight } from './charterNight';
 import { ChapterTitle, type TitleData } from './chapterTitle';
 import { Comms } from './comms';
@@ -42,6 +44,8 @@ type Sheet = 'goals' | 'factions' | 'comms';
 
 /** Real seconds between gentle repeats of the banner while a story message waits unread. */
 const RECUE_SEC = 150;
+/** Real ms of play after a world loads before the "where you left off" toast (§8.10). */
+const RESUME_MS = 1600;
 
 export class StoryUI {
   readonly el: HTMLElement;
@@ -63,14 +67,13 @@ export class StoryUI {
   private endingWaiting = false;
   private endingDelay = 0;
   private seenTick = -1;
-  private resumeTimer = 0;
+  /** The boot "where you left off" toast: stopped while the title holds, restarted in full after. */
+  private readonly resume = new HeldTimer(RESUME_MS, () => this.resumeToast());
   /** Real seconds since the last banner for the waiting story message (gentle re-cue). */
   private cueAge = 0;
   private offs: (() => void)[] = [];
   /** The start screen is up (setHold): every story surface waits. */
   private held = false;
-  /** The resume toast came due while held: it runs once the hold ends. */
-  private resumeOwed = false;
   /** A chapter title that came due (or was showing) while held: it shows once the hold ends. */
   private titleOwed: TitleData | null = null;
   private titleData: TitleData | null = null;
@@ -224,8 +227,11 @@ export class StoryUI {
   setHold(on: boolean): void {
     if (this.held === on) return;
     this.held = on;
+    this.resume.hold(on);
     if (on) {
       this.closeSheets();
+      // A message banner on screen comes back after the hold (not only at the 150 s re-cue).
+      if (this.banner.isOpen && this.banner.id) this.bannerWaiting = this.banner.id;
       this.banner.hide(true);
       if (this.title.isOpen && this.titleData) {
         this.titleOwed = this.titleData;
@@ -239,11 +245,6 @@ export class StoryUI {
     this.titleOwed = null;
     if (d) this.showTitle(d);
     else this.layout();
-    if (this.resumeOwed) {
-      this.resumeOwed = false;
-      window.clearTimeout(this.resumeTimer);
-      this.resumeTimer = window.setTimeout(() => this.resumeToast(), 1600);
-    }
   }
 
   private onWorld(): void {
@@ -261,16 +262,11 @@ export class StoryUI {
     this.lastStory = null;
     const v = this.view();
     this.seenTick = v.comms.reduce((m, r) => Math.max(m, r.tick), -1);
-    window.clearTimeout(this.resumeTimer);
-    this.resumeTimer = window.setTimeout(() => this.resumeToast(), 1600);
+    this.resume.schedule();
   }
 
   /** On load: pulse the goal chip and toast where the chapter stands (§8.10). */
   private resumeToast(): void {
-    if (this.held) {
-      this.resumeOwed = true;
-      return;
-    }
     const v = this.view();
     // Never over a card, sheet, title, Charter Night or the ending screen (they carry their own context).
     if (!StoryRail.hasStory(v) || this.busy) return;
@@ -515,5 +511,6 @@ export class StoryUI {
   destroy(): void {
     for (const off of this.offs) off();
     this.offs = [];
+    this.resume.cancel();
   }
 }
