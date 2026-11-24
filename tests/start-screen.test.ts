@@ -235,7 +235,7 @@ describe('backdrop drift', () => {
 describe('install tip', () => {
   const env: HintEnv = { coarse: true, standalone: false, topLevel: true, dismissed: false, ios: false, web: true };
   it('shows on a touch browser tab that is not installed', () => {
-    expect(a2hsHint(env)).toContain('Add to Home Screen');
+    expect(a2hsHint(env)).toMatch(/add to home screen/i);
     expect(a2hsHint({ ...env, ios: true })).toContain('Share');
   });
   it('never when installed, dismissed, on desktop, in a frame or from a file', () => {

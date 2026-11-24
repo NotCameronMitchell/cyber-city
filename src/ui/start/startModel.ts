@@ -247,5 +247,5 @@ export interface HintEnv {
 /** One-line install tip, or null when it does not apply. */
 export function a2hsHint(e: HintEnv): string | null {
   if (!e.coarse || e.standalone || !e.topLevel || e.dismissed || !e.web) return null;
-  return e.ios ? 'Tip: Share › Add to Home Screen plays full screen.' : 'Tip: browser menu › Add to Home Screen plays full screen.';
+  return e.ios ? 'Tip: Share › Add to Home Screen for full screen.' : 'Tip: menu › Add to Home screen for full screen.';
 }

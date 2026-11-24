@@ -234,8 +234,6 @@ export class StartScreen {
     this.root.insertBefore(this.el, this.ui.ctx.modals.layer);
 
     this.el.addEventListener('click', this.onClick);
-    this.sheet.addEventListener('click', (e) => e.stopPropagation());
-    this.sheet.addEventListener('click', this.onClick);
     window.addEventListener('keydown', this.onKey, true);
     this.ui.menu.onMainMenu = () => this.show();
 
@@ -373,13 +371,14 @@ export class StartScreen {
     else this.focus(this.sheet, false);
   }
 
+  /** Hide the sheet (✕, Esc, a tap outside it, leaving, or showing the title again). */
   private closeSheet(refocus: boolean): void {
     this.flow.closeSetup();
-    if (this.sheet.hidden) return;
+    const wasOpen = !this.sheet.hidden;
     this.sheet.hidden = true;
     this.layout.inert = false;
     this.el.classList.remove('is-setup');
-    if (refocus) this.focus(this.newBtn, true);
+    if (wasOpen && refocus) this.focus(this.newBtn, true);
   }
 
   private setPace(p: StoryPace): void {
@@ -403,7 +402,7 @@ export class StartScreen {
     const seed = keepMap ? game.world.seed : randomSeed();
     game.newCity(name || undefined, seed);
     this.nightClock();
-    if (!keepMap) frameCity(this.camera, game.world);
+    if (!keepMap) this.reframe();
     this.hasCity = true;
     game.toast(`Charter signed: welcome to ${game.world.cityName}`, 'good');
     this.leave();
@@ -413,8 +412,8 @@ export class StartScreen {
 
   private leave(): void {
     if (!this.flow.leave()) return;
-    this.sheet.hidden = true;
-    this.el.classList.remove('is-setup', 'is-boot', 'is-back');
+    this.closeSheet(false);
+    this.el.classList.remove('is-boot', 'is-back');
     this.el.inert = true;
     try {
       (document.activeElement as HTMLElement | null)?.blur?.();
@@ -447,7 +446,7 @@ export class StartScreen {
 
   /** Per frame while held: the slow backdrop drift (none with reduced motion). */
   update(dt: number): void {
-    if (!this.flow.drifting || prefersReducedMotion()) return;
+    if (!this.flow.drifting || reducedMotion()) return;
     const cam = this.camera;
     if (!this.anchor) this.anchor = { x: cam.x, y: cam.y };
     this.driftT += Math.min(Math.max(dt, 0), 0.1);
@@ -455,6 +454,13 @@ export class StartScreen {
     cam.x = this.anchor.x + d.x;
     cam.y = this.anchor.y + d.y;
     cam.clamp();
+  }
+
+  /** A different city is on the canvas: frame it, and drift from there (not from the old anchor). */
+  private reframe(): void {
+    frameCity(this.camera, this.game.world);
+    this.anchor = null;
+    this.driftT = 0;
   }
 
   /** The backdrop is a night city: move the visual clock to late evening when it is day. */
@@ -538,7 +544,7 @@ export class StartScreen {
           return;
         }
         this.nightClock();
-        frameCity(this.camera, game.world);
+        this.reframe();
         this.hasCity = true;
         game.toast(`Welcome back to ${game.world.cityName}`, 'good');
         this.leave();
@@ -600,6 +606,13 @@ if (typeof window !== 'undefined') {
     if (e.key === 'Tab' || e.key === 'Enter' || e.key === ' ' || e.key.startsWith('Arrow')) keyboardModality = true;
   }, true);
   window.addEventListener('pointerdown', () => (keyboardModality = false), true);
+}
+
+/** Per-frame reduced-motion check without building a MediaQueryList every frame. */
+let reduceMq: MediaQueryList | null | undefined;
+function reducedMotion(): boolean {
+  if (reduceMq === undefined) reduceMq = typeof matchMedia === 'function' ? matchMedia('(prefers-reduced-motion: reduce)') : null;
+  return !!reduceMq?.matches;
 }
 
 function storageWorks(): boolean {
