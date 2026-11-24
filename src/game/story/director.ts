@@ -103,7 +103,7 @@ import {
 } from './factions';
 import { STORY_CONTENT } from './content';
 import { composeLayers } from './mods';
-import { cardFaction, deckGate, defaultChoice, drawCard, FRONT_KINDS, pendingExpired, URGENT_SYSTEM } from './pacing';
+import { cardEligible, cardFaction, deckGate, defaultChoice, drawCard, FRONT_KINDS, pendingExpired, URGENT_SYSTEM } from './pacing';
 import { resolveMods, tierPatches } from './resolve';
 import { CHAPTER_NUMERALS, coherenceFor, LONG_AGO_SEC } from './state';
 import * as turf from './turf';
@@ -984,23 +984,31 @@ export class StoryDirector implements EffectHost {
       return;
     }
     const wasPending = st.pending?.card === open.card;
+    // Opened from a button (openOnDemand), not delivered: it is neither the COMMS card nor a story message.
+    const onDemand = !!card.onDemand && !wasPending && st.waiting?.card !== open.card;
     st.open = null;
     if (wasPending) {
       st.pending = null;
       w.events.emit('pending', null);
     }
     if (st.waiting?.card === open.card) st.waiting = null;
-    this.resolve(card, open.card, choiceIndex, open.spot, false);
+    this.resolve(card, open.card, choiceIndex, open.spot, false, onDemand);
   }
 
-  /** Apply a choice, log it, close the card and run the follow-ups (chains, Charter Night, ending). */
-  private resolve(card: Card, id: string, i: number, spot: number, auto: boolean): void {
+  /**
+   * Apply a choice, log it, close the card and run the follow-ups (chains, Charter Night, ending).
+   * `onDemand` (a card the player opened from a button, EXPANSION §2.2): the close moves no
+   * pacing clock and starts no chain (frontSec, the chain counter and the beat gap stay as
+   * they were); anything its choice queues arrives through the normal gates.
+   */
+  private resolve(card: Card, id: string, i: number, spot: number, auto: boolean, onDemand = false): void {
     const w = this.world;
     const st = w.story;
     const choices = this.choicesOf(card);
     const ch = choices[i] ?? CONTINUE;
     const ctx: EffectCtx = { spot };
-    if (!auto) this.resolving++;
+    const direct = !auto && !onDemand;
+    if (direct) this.resolving++;
     this.applying++;
     applyEffects(this, ch.fx, ctx);
     this.applying--;
@@ -1009,18 +1017,18 @@ export class StoryDirector implements EffectHost {
     if (KEY_CARDS.includes(id)) st.keyChoices[id] = i;
     if (!auto) {
       // The card was on screen: it closes now, and a direct reply (or a chain) may follow.
-      w.story.frontSec = 0;
-      this.justClosed = true;
+      if (direct) {
+        w.story.frontSec = 0;
+        this.justClosed = true;
+      }
       if (this.meetCard === id) this.meetCard = null;
       w.events.emit('card', null);
     }
     this.afterClose();
     // Completion first, so a chapter's reward card follows right after its last beat.
     this.checkComplete();
-    if (!auto) {
-      this.resolving--;
-      this.tryOpenFront();
-    }
+    if (direct) this.resolving--;
+    if (!auto) this.tryOpenFront();
   }
 
   private afterClose(): void {
@@ -1054,6 +1062,39 @@ export class StoryDirector implements EffectHost {
       if (k === 'ending' || k === 'log') return true;
     }
     return false;
+  }
+
+  /**
+   * Open a card marked `onDemand` from a button (EXPANSION §2.2, §8.3: the Spaceport's
+   * "Launch rights · Choose"). It opens when nothing is open, Charter Night is not up, the
+   * card is drawable (its `when` holds, it is not a spent `once`, its faction is visible, its
+   * spot resolves). If it already waits as the pending COMMS card, that card opens instead
+   * (openPending). It never takes a deck slot: deckSec, frontSec, the chain counter, the beat
+   * gap, lastCardTick and the pending slot stay as they were, and its close starts no chain.
+   * It marks the card seen (a `once` card is spent) and blocks like any open card; there is
+   * no Later (the button is explicit).
+   */
+  openOnDemand(id: string): Result {
+    const w = this.world;
+    const st = w.story;
+    const card = this.idx.cards.get(id);
+    if (!card || !card.onDemand) return { ok: false, reason: 'Not available', cost: 0 };
+    if (st.open || this.charterOpen || this.applying) return { ok: false, reason: 'Answer the open message first', cost: 0 };
+    if (st.pending?.card === id) {
+      this.openPending();
+      return { ok: true, cost: 0 };
+    }
+    if (!cardEligible(w, card)) return { ok: false, reason: 'Not available right now', cost: 0 };
+    const spot = card.spot ? findSpot(w, card.spot, this.rng) : -1;
+    st.seen[id] = w.tick;
+    st.open = { card: id, spot };
+    this.meet(card);
+    this.applying++;
+    applyEffects(this, card.onShow, { spot });
+    this.applying--;
+    w.events.emit('card', { id });
+    this.markChanged();
+    return { ok: true, cost: 0 };
   }
 
   /** Open the pending COMMS card. */

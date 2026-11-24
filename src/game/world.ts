@@ -1,7 +1,9 @@
-import { BUILDINGS, DEFAULT_TAX, ROAD_ACCESS_RANGE, SAVE_VERSION, SAVE_VERSIONS_SUPPORTED, START_FUNDS } from './config';
+import { BUILDINGS, DEFAULT_TAX, ROAD_ACCESS_RANGE, SAVE_VERSION, SAVE_VERSIONS_SUPPORTED, SPACEPORT, START_FUNDS } from './config';
 import { Emitter, type GameEventMap } from './events';
+import { shoreFacing } from './ports';
 import { Rng, fbm, hash2 } from './rng';
-import { decodeStory, encodeStory, isCrownId, type DecodeOptions } from './story/encode';
+import { accessRange, roadLinks, storedKind } from './roads';
+import { decodeRle, decodeStory, encodeRle, encodeStory, isCrownId, type DecodeOptions } from './story/encode';
 import { cloneMods, makeLayerParts, makeLayers } from './story/mods';
 import { emptyLedger, emptyTurf, emptyVertical, newStoryState } from './story/state';
 import type {
@@ -18,12 +20,17 @@ import type {
 } from './story/types';
 import {
   MAP_SIZE,
+  MOMENT_IDS,
+  RoadKind,
   Terrain,
   ZoneType,
   DAYS_PER_MONTH,
   MONTHS_PER_YEAR,
   START_YEAR,
   type Building,
+  type MomentId,
+  type TileSnap,
+  type WealthTier,
   type BuildingType,
   type BudgetReport,
   type CityStats,
@@ -39,6 +46,27 @@ const MAX_SIGNALS = 256;
 /** Building types whose footprint keeps the turf under it (§3.1). */
 const TURF_KEEPING: ReadonlySet<BuildingType> = new Set<BuildingType>(['tidemarket', 'roost']);
 
+/** Skyway bits: link mask N1 E2 S4 W8 and the ramp bit (EXPANSION §2.4). */
+const SKY_LINKS = 15;
+const SKY_RAMP = 16;
+/** Link bit → [dx, dy, opposite bit]. */
+const SKY_DIRS: readonly [number, number, number, number][] = [
+  [1, 0, -1, 4],
+  [2, 1, 0, 8],
+  [4, 0, 1, 1],
+  [8, -1, 0, 2],
+];
+
+const tierOf = (v: number): WealthTier => (v >= 2 ? 2 : v >= 1 ? 1 : 0);
+const popcount4 = (m: number) => (m & 1) + ((m >> 1) & 1) + ((m >> 2) & 1) + ((m >> 3) & 1);
+
+/** Skyway bits a tile may keep (EXPANSION §2.5): ramp only with exactly one link; no links → nothing. */
+function saneSky(bits: number): number {
+  const m = bits & SKY_LINKS;
+  if (m === 0) return 0;
+  return (bits & SKY_RAMP) !== 0 && popcount4(m) === 1 ? m | SKY_RAMP : m;
+}
+
 function makeFields(): Fields {
   const f = () => new Float32Array(N * N);
   return {
@@ -52,6 +80,13 @@ function makeFields(): Fields {
     park: f(),
     transit: f(),
     prestige: f(),
+    noise: f(),
+    education: f(),
+    skyTraffic: f(),
+    wealth: f(),
+    hub: f(),
+    sea: f(),
+    alleyNear: new Uint8Array(N * N),
   };
 }
 
@@ -73,6 +108,12 @@ export function emptyStats(): CityStats {
     approval: 60,
     developed: { res: 0, com: 0, ind: 0 },
     abandonedTiles: 0,
+    wealth: [0, 0, 0],
+    tierEffect: { residents: 0, tax: 0 },
+    avgNoise: 0,
+    roads: { street: 0, avenue: 0, highway: 0, alley: 0, ramp: 0, skyway: 0 },
+    edgeLinks: 0,
+    visitors: 0,
   };
 }
 
@@ -91,6 +132,8 @@ function blankTile(): Tile {
     buildingId: -1,
     powered: false,
     age: 9999,
+    roadKind: RoadKind.Street,
+    wealth: 0,
   };
 }
 
@@ -146,6 +189,18 @@ export class World {
   /** Derived vertical caches (active links, live rail, metrics). Written by story/vertical.ts. */
   vertical: VerticalCache = emptyVertical();
 
+  // ── Expansion (docs/EXPANSION.md §2.1, §2.4). ──
+  /** Skyway bits per tile: 0-3 link mask (N1 E2 S4 W8), bit 4 = ramp. Uint8Array(4096). Mutate via setSky/clearSky. Saved (v3). */
+  sky = new Uint8Array(N * N);
+  /** ++ on every sky mutation (not saved). SimGrid compares it to rebuild its sky caches. */
+  skyVersion = 0;
+  /** Wealth hysteresis streak per tile (GrowthSystem writes, wealthInfo reads the sign for ▲/▼). Not saved. */
+  wealthStreak = new Int8Array(N * N);
+  /** Save version this world was decoded from (SAVE_VERSION for a new world). Game reads it once (settleWealth, §4.3). */
+  loadedVersion = SAVE_VERSION;
+  /** Once-per-city moments already shown (§5.4). Saved as SaveData.moments. */
+  moments = new Set<MomentId>();
+
   constructor(seed: number, cityName = 'Lanthorn Bay', events?: Emitter<GameEventMap>) {
     this.seed = seed >>> 0;
     this.cityName = cityName;
@@ -181,8 +236,28 @@ export class World {
     const t = this.tileAt(x, y);
     return !!t && t.road;
   }
-  /** 4-bit road connectivity mask: 1 = north (y-1), 2 = east (x+1), 4 = south (y+1), 8 = west (x-1). */
+  /**
+   * 4-bit road connectivity mask: 1 = north (y-1), 2 = east (x+1), 4 = south (y+1), 8 = west (x-1).
+   * On a road tile a bit is set only when the neighbour is a road it links to (EXPANSION §3.2:
+   * a highway joins only highways and ramps). On a non-road tile it is roadAdjMask (any road).
+   */
   roadMask(x: number, y: number): number {
+    const t = this.tileAt(x, y);
+    if (!t || !t.road) return this.roadAdjMask(x, y);
+    const k = t.roadKind;
+    let m = 0;
+    let n = this.tileAt(x, y - 1);
+    if (n && n.road && roadLinks(k, n.roadKind)) m |= 1;
+    n = this.tileAt(x + 1, y);
+    if (n && n.road && roadLinks(k, n.roadKind)) m |= 2;
+    n = this.tileAt(x, y + 1);
+    if (n && n.road && roadLinks(k, n.roadKind)) m |= 4;
+    n = this.tileAt(x - 1, y);
+    if (n && n.road && roadLinks(k, n.roadKind)) m |= 8;
+    return m;
+  }
+  /** Raw 4-bit adjacency of any ground road, whatever its kind (power conducts between any two roads). */
+  roadAdjMask(x: number, y: number): number {
     return (
       (this.isRoad(x, y - 1) ? 1 : 0) |
       (this.isRoad(x + 1, y) ? 2 : 0) |
@@ -190,11 +265,19 @@ export class World {
       (this.isRoad(x - 1, y) ? 8 : 0)
     );
   }
-  /** True if a road lies within ROAD_ACCESS_RANGE (Chebyshev) of (x, y). */
+  /**
+   * Road access (EXPANSION §3.3): true iff a Street, Avenue or Ramp lies within `range`
+   * (ROAD_ACCESS_RANGE, Chebyshev) of (x, y), or a Back Alley within 1. A Highway never counts.
+   */
   hasRoadAccess(x: number, y: number, range = ROAD_ACCESS_RANGE): boolean {
     for (let dy = -range; dy <= range; dy++) {
       for (let dx = -range; dx <= range; dx++) {
-        if (this.isRoad(x + dx, y + dy)) return true;
+        const t = this.tileAt(x + dx, y + dy);
+        if (!t || !t.road) continue;
+        const a = accessRange(t.roadKind);
+        if (a <= 0) continue;
+        const d = Math.max(Math.abs(dx), Math.abs(dy));
+        if (d <= Math.min(a, range)) return true;
       }
     }
     return false;
@@ -237,14 +320,33 @@ export class World {
     t.age = 0;
   }
 
-  setRoad(x: number, y: number) {
+  /**
+   * Lay a new ground road of `kind` (default Street, so `setRoad(x, y)` is unchanged).
+   * Alley and Ramp can't sit on water: they are written as Street there.
+   */
+  setRoad(x: number, y: number, kind: RoadKind = RoadKind.Street) {
     const t = this.tileAt(x, y);
     if (!t || t.buildingId >= 0) return;
     t.road = true;
+    t.roadKind = storedKind(kind, t.terrain);
     t.zone = ZoneType.None;
     t.level = 0;
     t.abandoned = false;
+    t.wealth = 0;
     this.reroll(t, x, y);
+    this.touch(x, y, x, y);
+  }
+
+  /**
+   * Change the kind of an existing road (widening, ramps, highway conversion): no variant
+   * reroll, no age reset. No-op on a non-road tile. Alley / Ramp on water are written as Street.
+   */
+  setRoadKind(x: number, y: number, kind: RoadKind) {
+    const t = this.tileAt(x, y);
+    if (!t || !t.road) return;
+    const k = storedKind(kind, t.terrain);
+    if (t.roadKind === k) return;
+    t.roadKind = k;
     this.touch(x, y, x, y);
   }
 
@@ -252,39 +354,130 @@ export class World {
     const t = this.tileAt(x, y);
     if (!t || t.terrain === Terrain.Water || t.buildingId >= 0) return;
     t.road = false;
+    t.roadKind = RoadKind.Street;
     t.zone = zone;
     t.level = 0;
     t.abandoned = false;
+    t.wealth = 0;
     this.reroll(t, x, y);
     this.touch(x, y, x, y);
   }
 
-  /** Set a zone tile's development level (sim growth). */
-  setLevel(x: number, y: number, level: number, abandoned = false) {
+  /**
+   * Set a zone tile's development level (sim growth). `wealth` (EXPANSION §4.3) sets the tier
+   * at the same time (the latch when a lot develops); omitted, the tier is kept. Level 0 always
+   * resets the tier to $; abandonment keeps it.
+   */
+  setLevel(x: number, y: number, level: number, abandoned = false, wealth?: WealthTier) {
     const t = this.tileAt(x, y);
     if (!t || t.zone === ZoneType.None) return;
-    if (t.level === level && t.abandoned === abandoned) return;
+    if (t.level === level && t.abandoned === abandoned) {
+      if (wealth !== undefined) this.setWealth(x, y, wealth);
+      return;
+    }
     t.level = Math.max(0, Math.min(3, level));
     t.abandoned = abandoned && t.level > 0;
+    t.wealth = t.level === 0 ? 0 : wealth !== undefined ? tierOf(wealth) : t.wealth;
     this.reroll(t, x, y);
     this.touch(x, y, x, y);
   }
 
-  /** Clear a single tile (road/zone). Buildings must be removed via removeBuilding. */
-  clearTile(x: number, y: number) {
+  /**
+   * Set a developed zone tile's wealth tier (EXPANSION §4.3). Forced to $ on a lot or a
+   * non-zone tile. Emits no 'tiles' event and does not reroll or reset age: tier art lives
+   * in the zone sprite, so gentrification never dirties ground chunks.
+   */
+  setWealth(x: number, y: number, tier: WealthTier) {
     const t = this.tileAt(x, y);
     if (!t) return;
+    t.wealth = t.zone === ZoneType.None || t.level === 0 ? 0 : tierOf(tier);
+  }
+
+  /**
+   * Clear a single tile's ground (road / zone, rail, skybridge anchors). Buildings must be
+   * removed via removeBuilding (a building tile removes the whole building). The skyway over
+   * the tile stays unless `withSky` (a ground bulldoze leaves decks spanning the cleared site,
+   * EXPANSION §3.6; a sky bulldoze uses clearSky).
+   */
+  clearTile(x: number, y: number, withSky = false) {
+    const t = this.tileAt(x, y);
+    if (!t) return;
+    if (withSky) this.clearSky(x, y);
     if (t.buildingId >= 0) {
       this.removeBuilding(t.buildingId);
       return;
     }
     t.road = false;
+    t.roadKind = RoadKind.Street;
     t.zone = ZoneType.None;
     t.level = 0;
     t.abandoned = false;
+    t.wealth = 0;
     t.age = 0;
     this.clearRail(x, y);
     this.removeLinksAt(x, y);
+    this.touch(x, y, x, y);
+  }
+
+  /**
+   * Undo only (EXPANSION §7.7): write a tile's snapshot back (road, road kind, zone, level,
+   * sky bits) and touch it. Ignored on building tiles. Keeps the §2.1 invariants: a lot or
+   * non-zone tile is $, a non-road tile is Street, Alley / Ramp never on water.
+   */
+  restoreTile(i: number, snap: TileSnap) {
+    if (!(i >= 0 && i < N * N)) return;
+    const t = this.tiles[i];
+    if (t.buildingId >= 0) return;
+    const x = i % N;
+    const y = (i / N) | 0;
+    t.road = !!snap.road;
+    t.roadKind = t.road ? storedKind(snap.roadKind, t.terrain) : RoadKind.Street;
+    const zone = t.road || t.terrain === Terrain.Water ? ZoneType.None : snap.zone;
+    t.zone = zone >= 0 && zone <= 3 ? zone : ZoneType.None;
+    t.level = t.zone === ZoneType.None ? 0 : Math.max(0, Math.min(3, snap.level | 0));
+    if (t.level === 0) {
+      t.abandoned = false;
+      t.wealth = 0;
+    }
+    const sky = snap.sky & 31;
+    if (this.sky[i] !== sky) {
+      this.sky[i] = sky;
+      this.skyVersion++;
+    }
+    this.touch(x, y, x, y);
+  }
+
+  /** Set a tile's skyway bits (mask | ramp << 4; 0 removes). Callers keep neighbours consistent (like setRail). */
+  setSky(x: number, y: number, bits: number) {
+    if (!this.inBounds(x, y)) return;
+    const i = y * N + x;
+    const v = bits & 31;
+    if (this.sky[i] === v) return;
+    this.sky[i] = v;
+    this.skyVersion++;
+    this.touch(x, y, x, y);
+  }
+
+  /**
+   * Remove the skyway from a tile and unhook the neighbours that linked to it (like clearRail).
+   * A neighbour left with no link is cleared too, and one left with a ramp bit and other than
+   * exactly one link loses the ramp bit (the same rule the save decoder applies, §2.5).
+   */
+  clearSky(x: number, y: number) {
+    if (!this.inBounds(x, y)) return;
+    const s = this.sky;
+    const i = y * N + x;
+    if (!s[i]) return;
+    s[i] = 0;
+    for (const [, dx, dy, opp] of SKY_DIRS) {
+      const nx = x + dx;
+      const ny = y + dy;
+      if (nx < 0 || ny < 0 || nx >= N || ny >= N) continue;
+      const j = ny * N + nx;
+      if ((s[j] & opp) === 0) continue;
+      s[j] = saneSky(s[j] & ~opp);
+    }
+    this.skyVersion++;
     this.touch(x, y, x, y);
   }
 
@@ -313,9 +506,11 @@ export class World {
         const i = this.idx(x + dx, y + dy);
         const t = this.tiles[i];
         t.road = false;
+        t.roadKind = RoadKind.Street;
         t.zone = ZoneType.None;
         t.level = 0;
         t.abandoned = false;
+        t.wealth = 0;
         t.buildingId = b.id;
         if (!keepTurf && turf.owner[i]) {
           turf.owner[i] = 0;
@@ -467,6 +662,8 @@ export class World {
 
   // ── Persistence ───────────────────────────────────────────────────────────
   serialize(): SaveData {
+    // Tile bits (EXPANSION §2.3): 0 terrain, 1 road, 2-3 zone, 4-5 level, 6 abandoned,
+    // 7-14 variant, 15-17 roadKind (0 without a road), 18-19 wealth (0 on lots), 20+ zero.
     const tiles = this.tiles.map(
       (t) =>
         (t.terrain & 1) |
@@ -474,7 +671,9 @@ export class World {
         ((t.zone & 3) << 2) |
         ((t.level & 3) << 4) |
         ((t.abandoned ? 1 : 0) << 6) |
-        ((t.variant & 255) << 7),
+        ((t.variant & 255) << 7) |
+        ((t.road ? t.roadKind & 7 : 0) << 15) |
+        ((t.zone !== ZoneType.None && t.level >= 1 ? t.wealth & 3 : 0) << 18),
     );
     return {
       version: SAVE_VERSION,
@@ -492,6 +691,8 @@ export class World {
       milestones: [...this.milestones],
       savedAt: Date.now(),
       story: encodeStory(this),
+      sky: encodeRle(this.sky),
+      moments: [...this.moments],
     };
   }
 
@@ -501,6 +702,10 @@ export class World {
    * fails to decode, gets a fresh story with flag `migrated` and empty turf,
    * rail and links. Derived state (mods, layers, ledger, vertical, turf.stats)
    * is rebuilt by the director on construction.
+   *
+   * Expansion (EXPANSION §2.3, §2.5): tile bits 15-19 decode for every version
+   * (old saves read all-Street, all-$); `sky` and `moments` decode for v3 (missing
+   * or malformed → empty, never a throw); port fields are sanitised per type.
    */
   static deserialize(data: SaveData, events?: Emitter<GameEventMap>, opts?: DecodeOptions): World {
     if (
@@ -517,6 +722,7 @@ export class World {
     w.taxRate = Math.max(0, Math.min(20, Number(data.taxRate) || DEFAULT_TAX));
     w.maxPopulation = data.maxPopulation | 0;
     w.nextBuildingId = data.nextBuildingId | 0 || 1;
+    w.loadedVersion = data.version;
     for (let i = 0; i < N * N; i++) {
       const p = data.tiles[i] | 0;
       const t = w.tiles[i];
@@ -527,19 +733,47 @@ export class World {
       t.abandoned = ((p >> 6) & 1) === 1;
       t.variant = (p >> 7) & 255;
       t.age = 9999;
+      // §2.3: kind 0 without a road or out of range; Alley / Ramp never on water.
+      t.roadKind = t.road ? storedKind((p >> 15) & 7, t.terrain) : RoadKind.Street;
+      const tier = (p >> 18) & 3;
+      t.wealth = t.zone === ZoneType.None || t.level === 0 ? 0 : tierOf(tier);
     }
+    const needFacing: Building[] = [];
     for (const b of data.buildings ?? []) {
       if (!BUILDINGS[b.type]) continue;
       const nb: Building = { ...b, size: BUILDINGS[b.type].size, offline: b.offline | 0, powered: !!b.powered };
       // Stage fields are optional and Stratablock-only; keep them only when well-formed.
       if (nb.type !== 'stack') {
         delete nb.stage;
-        delete nb.buildDays;
         delete nb.crown;
+        if (nb.type !== 'spaceport') delete nb.buildDays;
       } else {
         if (nb.stage !== undefined && !(nb.stage === 1 || nb.stage === 2 || nb.stage === 3)) delete nb.stage;
         if (nb.buildDays !== undefined) nb.buildDays = Math.max(0, Number(nb.buildDays) | 0);
         if (nb.crown !== undefined && !isCrownId(nb.crown)) delete nb.crown;
+      }
+      // Expansion port fields (§2.5): facing on seaports only; build timers and launches on the spaceport only.
+      if (nb.type === 'seaport') {
+        const f = nb.facing as unknown;
+        if (!(f === 0 || f === 1 || f === 2 || f === 3)) {
+          delete nb.facing;
+          needFacing.push(nb); // recomputed once rail is decoded (a berth needs open water)
+        }
+      } else delete nb.facing;
+      if (nb.type === 'spaceport') {
+        const maxDays = BUILDINGS.spaceport.buildDays ?? 0;
+        if (nb.buildDays !== undefined) nb.buildDays = Math.min(maxDays, Math.max(0, Number(nb.buildDays) | 0));
+        if (nb.waitSec !== undefined) {
+          const v = Number(nb.waitSec);
+          nb.waitSec = Number.isFinite(v) ? Math.min(SPACEPORT.minBuildSec, Math.max(0, v)) : 0;
+        }
+        if (nb.launches !== undefined) {
+          const v = nb.launches as unknown;
+          nb.launches = typeof v === 'number' && Number.isInteger(v) && v >= 0 ? v : 0;
+        }
+      } else {
+        delete nb.waitSec;
+        delete nb.launches;
       }
       w.buildings.set(nb.id, nb);
       for (let dy = 0; dy < nb.size; dy++)
@@ -561,7 +795,46 @@ export class World {
       st.flags.migrated = true;
       st.waitingSince = st.chapterTick = st.lastWhisperTick = st.lastNoteTick = w.tick;
     }
+    // Expansion (§2.5): skyways and once-per-city moments (v3). Missing or malformed → empty.
+    if (data.version >= 3) {
+      if (decodeRle(data.sky, w.sky, 31)) w.sanitizeSky();
+      if (Array.isArray(data.moments))
+        for (const m of data.moments) if ((MOMENT_IDS as readonly unknown[]).includes(m)) w.moments.add(m as MomentId);
+    }
+    // A seaport without a valid facing takes the first side that faces open water (else S).
+    for (const b of needFacing) {
+      const f = shoreFacing(w, b.x, b.y, b.size);
+      b.facing = f === -1 ? 2 : f;
+    }
     w.version++;
     return w;
+  }
+
+  /**
+   * One pass over world.sky (§2.5): clear link bits that point off the map or at a neighbour
+   * that doesn't link back; keep the ramp bit only with exactly one link (the ground is not
+   * checked: an inactive ramp stays a ramp); a tile left with no link is cleared.
+   */
+  private sanitizeSky() {
+    const s = this.sky;
+    // Links first (judged against the decoded bits), then the ramp / empty rule.
+    const linked = new Uint8Array(N * N);
+    for (let y = 0; y < N; y++)
+      for (let x = 0; x < N; x++) {
+        const i = y * N + x;
+        const v = s[i];
+        if (!v) continue;
+        let m = 0;
+        for (const [bit, dx, dy, opp] of SKY_DIRS) {
+          if ((v & bit) === 0) continue;
+          const nx = x + dx;
+          const ny = y + dy;
+          if (nx < 0 || ny < 0 || nx >= N || ny >= N) continue;
+          if ((s[ny * N + nx] & opp) !== 0) m |= bit;
+        }
+        linked[i] = m | (v & SKY_RAMP);
+      }
+    for (let i = 0; i < N * N; i++) s[i] = saneSky(linked[i]);
+    this.skyVersion++;
   }
 }

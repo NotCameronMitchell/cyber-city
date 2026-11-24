@@ -139,7 +139,7 @@ describe('story save (v2)', () => {
   it('round trip keeps turf, turfMeta, rail, railOut, links, stages and story exactly', () => {
     const w = storied();
     const data = w.serialize();
-    expect(data.version).toBe(2);
+    expect(data.version).toBe(3); // v3 = expansion; the story block is unchanged
     expect(data.story).toBeDefined();
     const l = roundTrip(w);
 

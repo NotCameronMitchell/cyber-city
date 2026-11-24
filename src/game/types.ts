@@ -4,6 +4,10 @@
 //
 // Story layer (docs/STORY.md §4.1, owner-approved): additive unions and
 // optional fields only, so v1 saves keep loading.
+//
+// Expansion "Roads, Wealth and Ports" (docs/EXPANSION.md §2.1): additive
+// unions, `RoadKind`, `WealthTier`, two new Tile fields (saved in tile bits
+// 15-19), new Fields / CityStats / ActionPlan members and SaveData v3.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import type { CrownId, StorySave } from './story/types';
@@ -27,6 +31,22 @@ export enum ZoneType {
   Commercial = 2,
   Industrial = 3,
 }
+
+/**
+ * Ground road kinds (EXPANSION §3.1). Stored in Tile.roadKind (save bits 15-17).
+ * 0 must stay Street: old saves decode as 0.
+ */
+export enum RoadKind {
+  Street = 0,
+  Avenue = 1,
+  Highway = 2,
+  Alley = 3,
+  /** On-ramp: joins a highway to the street grid. Created only by the drag rule (§3.4). */
+  Ramp = 4,
+}
+
+/** Wealth tier of a zone tile: 0 = $, 1 = $$, 2 = $$$. Set by the sim only (§4). */
+export type WealthTier = 0 | 1 | 2;
 
 /** Placeable service / utility / landmark structures (multi-tile footprints). */
 export type BuildingType =
@@ -53,16 +73,42 @@ export type BuildingType =
   /** Commons Hall (Charter Board). */
   | 'commons'
   /** Sunk Memorial (story unlock). */
-  | 'memorial';
+  | 'memorial'
+  // Expansion (EXPANSION §2.8, §5, §6.1).
+  /** Academy (X1): education coverage that lifts wealth. */
+  | 'academy'
+  /** Seaport: 4×4 on a straight shore. */
+  | 'seaport'
+  /** Airport: 6×6, loud, business district. */
+  | 'airport'
+  /** Spaceport: 6×6 late-game megaproject with a slow build. */
+  | 'spaceport';
 
-/** Every selectable tool. Zone tools are 'res' | 'com' | 'ind'. Building tools use the BuildingType id. */
-export type ToolId = 'inspect' | 'bulldoze' | 'road' | 'res' | 'com' | 'ind' | BuildingType | 'skybridge' | 'rail';
+/**
+ * Every selectable tool. Zone tools are 'res' | 'com' | 'ind'. Building tools use the BuildingType id.
+ * 'road' stays the Street tool id (the Ch1 boot, the coach CTA and KeyR depend on it); 'avenue',
+ * 'highway' and 'alley' lay the other ground kinds, 'skyway' the raised road (EXPANSION §2.1).
+ */
+export type ToolId =
+  | 'inspect'
+  | 'bulldoze'
+  | 'road'
+  | 'res'
+  | 'com'
+  | 'ind'
+  | BuildingType
+  | 'skybridge'
+  | 'rail'
+  | 'avenue'
+  | 'highway'
+  | 'alley'
+  | 'skyway';
 
-/** Data-view overlays the renderer can draw. */
-export type OverlayId = 'none' | 'power' | 'landValue' | 'crime' | 'pollution' | 'traffic' | 'services' | 'turf';
+/** Data-view overlays the renderer can draw. 'wealth' and 'noise' are expansion views (§7.3). */
+export type OverlayId = 'none' | 'power' | 'landValue' | 'crime' | 'pollution' | 'traffic' | 'services' | 'turf' | 'wealth' | 'noise';
 
-/** Coverage effect a service building radiates. */
-export type ServiceEffect = 'security' | 'health' | 'net' | 'park' | 'transit' | 'prestige';
+/** Coverage effect a service building radiates. 'education' is the Academy's (X1, feeds only the wealth score). */
+export type ServiceEffect = 'security' | 'health' | 'net' | 'park' | 'transit' | 'prestige' | 'education';
 
 export interface Tile {
   terrain: Terrain;
@@ -81,6 +127,10 @@ export interface Tile {
   powered: boolean;
   /** Ticks since this tile last changed level/state (renderer uses it for construction animation). */
   age: number;
+  /** Ground road kind (EXPANSION §3). Always RoadKind.Street (0) when `road` is false. */
+  roadKind: RoadKind;
+  /** Wealth tier (EXPANSION §4). Always 0 when zone = None or level = 0. Abandonment keeps it. */
+  wealth: WealthTier;
 }
 
 export interface Building {
@@ -100,10 +150,20 @@ export interface Building {
   // ── Stratablock stage fields (optional; survive the save round trip) ──
   /** Highest stage *started* (1 Plinth, 2 Hab Core, 3 Crown). Complete stage = buildDays > 0 ? stage − 1 : stage. */
   stage?: 1 | 2 | 3;
-  /** Days of scaffolding left on the current stage; > 0 means still building. */
+  /**
+   * Days of construction left; > 0 means still building. Stratablocks: the current stage's
+   * scaffolding. Spaceport (EXPANSION §5.3): the build countdown (no effects until 0).
+   */
   buildDays?: number;
   /** Crown picked for stage 3. */
   crown?: CrownId;
+  // ── Expansion port fields (optional; survive the save round trip, EXPANSION §2.5) ──
+  /** Seaport only: the side that faces open water. 0 = N (y−1), 1 = E (x+1), 2 = S (y+1), 3 = W (x−1). */
+  facing?: 0 | 1 | 2 | 3;
+  /** Spaceport only: unpaused real seconds of construction still required (§5.3). Saved. */
+  waitSec?: number;
+  /** Spaceport only: launches seen so far (0 = the next one is the first). Saved. */
+  launches?: number;
 }
 
 /**
@@ -122,6 +182,21 @@ export interface Fields {
   park: Float32Array;
   transit: Float32Array;
   prestige: Float32Array;
+  // ── Expansion (EXPANSION §2.1, §3.9, §4.2). All zeros until the sim fills them. ──
+  /** 0..1, from highways, skyways and noisy buildings (§3.9). */
+  noise: Float32Array;
+  /** 0..1, Academy coverage (X1; all zeros when X1 is cut). */
+  education: Float32Array;
+  /** 0..1, congestion of the skyway network over each skyway tile, 0 elsewhere. */
+  skyTraffic: Float32Array;
+  /** 0..1, the wealth score of each zone tile (§4.2), 0 elsewhere. */
+  wealth: Float32Array;
+  /** 0..1, Airport business-district proximity (§3.9). */
+  hub: Float32Array;
+  /** 0..1, Seaport proximity (§3.9). */
+  sea: Float32Array;
+  /** 1 where a Back Alley lies within Chebyshev 1 (§4.4), else 0. */
+  alleyNear: Uint8Array;
 }
 
 export interface Demand {
@@ -155,6 +230,19 @@ export interface CityStats {
   /** Counts by zone of developed (level ≥ 1, not abandoned) tiles. */
   developed: { res: number; com: number; ind: number };
   abandonedTiles: number;
+  // ── Expansion (EXPANSION §2.1). Zeros until the sim fills them. ──
+  /** Developed (level ≥ 1, not abandoned) zone tiles by tier, all zones: [$, $$, $$$]. */
+  wealth: [number, number, number];
+  /** What tiers change against an all-$ city: residents (negative = fewer) and tax CR per month. */
+  tierEffect: { residents: number; tax: number };
+  /** Mean noise over developed tiles. */
+  avgNoise: number;
+  /** Ground road tiles by kind (bridges included) and skyway tiles. */
+  roads: { street: number; avenue: number; highway: number; alley: number; ramp: number; skyway: number };
+  /** Regional link points (X2; 0 when cut). */
+  edgeLinks: number;
+  /** Visitors per month (X3; 0 when cut). */
+  visitors: number;
 }
 
 export interface BudgetLine {
@@ -225,16 +313,58 @@ export interface ActionPlan {
    * (N1 E2 S4 W8, joined onto existing track) of each entry in `tiles`, in path order.
    */
   railMasks?: number[];
+  // ── Expansion (EXPANSION §2.1, §3.4–§3.7, §5.4, §7.5, §7.7) ──
+  /** Road tools: the resulting RoadKind of each entry in `tiles` (ramps included), for the ghost. */
+  roadKinds?: number[];
+  /** Road tools: tiles that change kind (not new). */
+  upgrades?: number;
+  /** Road tools: on-ramp tiles this plan creates or converts. */
+  ramps?: number;
+  /** Skyway: the resulting sky bits (mask | ramp << 4) of each entry in `tiles`. */
+  skyMasks?: number[];
+  /** Highway drags: developed lots and needsRoad buildings that would lose road access (§3.4). */
+  lostAccess?: number;
+  /** Highway drags: the tile indices of those lots and building footprints, for the ghost. */
+  lostTiles?: number[];
+  /** Noisy buildings: developed Hab Block tiles inside the noise reach (§5.4). */
+  loudTiles?: number[];
+  /** Bulldoze: which layer this drag works on (§3.6). */
+  layer?: 'ground' | 'sky';
+  /** Bulldoze: credits returned for buildings placed under SAFETY.refundSec ago (Game fills it, §7.7). */
+  refund?: number;
+  /** The player must tap ✓ before this plan builds (costly building or lost access, §7.7). */
+  confirm?: boolean;
+  /** A non-blocking note for the action pill, ≤ SAFETY.noteMax (32) characters. `reason` stays for invalid or skipped tiles. */
+  note?: string;
 }
 
 export interface Selection {
   x: number;
   y: number;
+  /** The player tapped the skyway deck over this tile, not the ground (EXPANSION §3.7). */
+  sky?: true;
 }
 
-/** Serialized save (JSON-safe). Version 1 (sandbox) and 2 (story) both load. */
+/**
+ * One tile's undo snapshot (EXPANSION §7.7): the structural fields a road, skyway or
+ * zone drag can change. `i` is the tile index; `sky` the skyway bits (mask | ramp << 4).
+ */
+export interface TileSnap {
+  i: number;
+  road: boolean;
+  roadKind: RoadKind;
+  zone: ZoneType;
+  level: number;
+  sky: number;
+}
+
+/** Once-per-city moments (EXPANSION §5.4), saved in SaveData.moments. */
+export type MomentId = 'seaport' | 'airport' | 'spaceport' | 'launch';
+export const MOMENT_IDS: readonly MomentId[] = ['seaport', 'airport', 'spaceport', 'launch'];
+
+/** Serialized save (JSON-safe). Version 1 (sandbox), 2 (story) and 3 (expansion) all load. */
 export interface SaveData {
-  /** 1 or 2. */
+  /** 1, 2 or 3. */
   version: number;
   cityName: string;
   seed: number;
@@ -243,7 +373,7 @@ export interface SaveData {
   taxRate: number;
   maxPopulation: number;
   nextBuildingId: number;
-  /** Run-length-free compact tile encoding, see World.serialize(). */
+  /** Run-length-free compact tile encoding, see World.serialize() (v3: bits 15-17 roadKind, 18-19 wealth). */
   tiles: number[];
   buildings: Building[];
   news: NewsItem[];
@@ -252,4 +382,8 @@ export interface SaveData {
   savedAt: number;
   /** Story layer (v2). Optional: missing or undecodable → fresh story with flag `migrated`. */
   story?: StorySave;
+  /** v3: world.sky as [value, run] RLE pairs (story/encode.ts encodeRle), values 0..31. Missing → no skyways. */
+  sky?: number[];
+  /** v3: once-per-city moments already shown ('seaport', 'airport', 'spaceport', 'launch'). Missing → none. */
+  moments?: string[];
 }

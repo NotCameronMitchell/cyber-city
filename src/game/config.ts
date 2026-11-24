@@ -1,5 +1,5 @@
 import type { BuildingType, ServiceEffect, StoryPace, ToolId } from './types';
-import { ZoneType } from './types';
+import { RoadKind, ZoneType } from './types';
 import type { BuildingGate, CorpId, CrownId, FactionId, GangId, ModPatch, Unlockable } from './story/types';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -13,6 +13,7 @@ export const DEFAULT_TAX = 9; // percent
 export const MIN_TAX = 0;
 export const MAX_TAX = 20;
 
+// The Street row of ROAD_KINDS (expansion); kept for old callers. A contract test pins them equal.
 export const ROAD_COST = 15;
 export const BRIDGE_COST = 90;
 export const ROAD_UPKEEP = 0.6; // per road tile per month
@@ -99,8 +100,11 @@ export interface BuildingDef {
   type: BuildingType;
   name: string;
   desc: string;
-  /** `vertical` (Stratablock) and `faction` (exclusive buildings) are story-layer categories. */
-  category: 'power' | 'services' | 'landmarks' | 'vertical' | 'faction';
+  /**
+   * `vertical` (Stratablock) and `faction` (exclusive buildings) are story-layer categories;
+   * `transport` (Seaport, Airport, Spaceport) is the expansion's (taxed jobs like landmarks).
+   */
+  category: 'power' | 'services' | 'landmarks' | 'vertical' | 'faction' | 'transport';
   size: number;
   cost: number;
   upkeep: number; // per month
@@ -125,6 +129,25 @@ export interface BuildingDef {
   tall?: boolean;
   /** Counts as a Ribbon Rail station (§4.4). */
   station?: boolean;
+  // ── Expansion (docs/EXPANSION.md §2.8). All optional; absent = the old behaviour. ──
+  /** Fab share of `jobs`; the rest are Market jobs. Default: all Fab for 'power', none otherwise. */
+  jobsInd?: number;
+  /** At most this many on the map ("One Airport per city"). */
+  maxCount?: number;
+  /** 'shore': one full side must face open water (EXPANSION §5.1). */
+  site?: 'shore';
+  /** Noise `v` at the footprint, falling to 0 at `r` tiles from its edge (§3.9). */
+  noise?: { v: number; r: number };
+  /** Days under construction after placement; no effects until done (Spaceport, §5.3). */
+  buildDays?: number;
+  /** Needs a frontable road within ROAD_ACCESS_RANGE of a footprint tile (replaces the `tool === 'stack'` special case). */
+  needsRoad?: boolean;
+  /** A skyway may pass over and dock into it (§3.7). */
+  skyAnchor?: boolean;
+  /** Budget line plural ("Academies"); default name + 's'. */
+  plural?: string;
+  /** Tray card meta line on phones (≤ 22 chars), replacing the generic size · jobs line. */
+  meta?: string;
 }
 
 export const BUILDINGS: Record<BuildingType, BuildingDef> = {
@@ -271,6 +294,7 @@ export const BUILDINGS: Record<BuildingType, BuildingDef> = {
     unlockPop: 5000,
     color: '#ff2bd6',
     tall: true,
+    skyAnchor: true,
   },
   arcology: {
     type: 'arcology',
@@ -290,6 +314,100 @@ export const BUILDINGS: Record<BuildingType, BuildingDef> = {
     unlockPop: 12000,
     color: '#ffb02e',
     tall: true,
+    skyAnchor: true,
+  },
+
+  // ── Expansion (docs/EXPANSION.md §2.8, §5, §6.1). Unlocks sit on the population milestones. ──
+  academy: {
+    type: 'academy',
+    name: 'Academy',
+    desc: 'Night classes and drone labs. Lifts nearby blocks toward $$ and $$$.',
+    category: 'services',
+    size: 2,
+    cost: 3200,
+    upkeep: 140,
+    powerSupply: 0,
+    powerUse: 8,
+    effect: 'education',
+    radius: 12,
+    pollution: 0,
+    residents: 0,
+    jobs: 30,
+    jobsInd: 0,
+    unlockPop: 1500,
+    color: '#ffd0a0',
+    plural: 'Academies',
+    meta: '2×2 · schools',
+  },
+  seaport: {
+    type: 'seaport',
+    name: 'Seaport',
+    desc: 'Cranes, containers and night ships. Fab trade, some noise, and a back door.',
+    category: 'transport',
+    size: 4,
+    cost: 18000,
+    upkeep: 280,
+    powerSupply: 0,
+    powerUse: 30,
+    radius: 0,
+    pollution: 0.3,
+    residents: 0,
+    jobs: 240,
+    jobsInd: 240,
+    unlockPop: 5000,
+    color: '#38c8ff',
+    site: 'shore',
+    maxCount: 2,
+    needsRoad: true,
+    noise: { v: 0.5, r: 6 },
+    meta: '4×4 · shore only',
+  },
+  airport: {
+    type: 'airport',
+    name: 'Airport',
+    desc: 'Runway and terminal. Business and visitors pour in. So does the noise.',
+    category: 'transport',
+    size: 6,
+    cost: 45000,
+    upkeep: 650,
+    powerSupply: 0,
+    powerUse: 80,
+    radius: 0,
+    pollution: 0.15,
+    residents: 0,
+    jobs: 320,
+    jobsInd: 0,
+    unlockPop: 12000,
+    color: '#e9f0ff',
+    maxCount: 1,
+    needsRoad: true,
+    skyAnchor: true,
+    noise: { v: 0.9, r: 10 },
+    meta: '6×6 · loud',
+  },
+  spaceport: {
+    type: 'spaceport',
+    name: 'Spaceport',
+    desc: 'A launch tower that takes minutes to raise. Then night launches and huge prestige.',
+    category: 'transport',
+    size: 6,
+    cost: 150000,
+    upkeep: 1800,
+    powerSupply: 0,
+    powerUse: 300,
+    effect: 'prestige',
+    radius: 20,
+    pollution: 0.2,
+    residents: 0,
+    jobs: 550,
+    jobsInd: 250,
+    unlockPop: 30000,
+    color: '#ff8f6b',
+    maxCount: 1,
+    needsRoad: true,
+    buildDays: 240,
+    noise: { v: 0.7, r: 12 },
+    meta: '6×6 · slow build',
   },
 
   // ── Story layer (§4.2, §4.5) ─────────────────────────────────────────────
@@ -312,6 +430,8 @@ export const BUILDINGS: Record<BuildingType, BuildingDef> = {
     color: '#a9b8ff',
     gate: { unlock: 'stack', fallbackPop: 8000 },
     station: true,
+    needsRoad: true,
+    skyAnchor: true,
   },
   foundry: {
     type: 'foundry',
@@ -438,6 +558,11 @@ export const BUILDING_ORDER: BuildingType[] = [
   'maglev',
   'spire',
   'arcology',
+  // Expansion (EXPANSION §2.8): before 'stack', so slice(-7) stays the story types.
+  'academy',
+  'seaport',
+  'airport',
+  'spaceport',
   'stack',
   'foundry',
   'glarewall',
@@ -476,10 +601,10 @@ export const SAVE_KEY = 'cybercity.save.v1';
 export const SETTINGS_KEY = 'cybercity.settings.v1';
 /** Endings gallery, kept across saves (§6.3). */
 export const GALLERY_KEY = 'cybercity.gallery.v1';
-/** 2 = story layer. World.deserialize accepts 1 and 2. */
-export const SAVE_VERSION = 2;
-/** Every save version World.deserialize accepts. */
-export const SAVE_VERSIONS_SUPPORTED: readonly number[] = [1, 2];
+/** 3 = expansion (road kinds, wealth tiers, skyways, ports; docs/EXPANSION.md §2.5). World.deserialize accepts 1, 2 and 3. */
+export const SAVE_VERSION = 3;
+/** Every save version World.deserialize accepts. A higher version is a newer build's save (Game blocks autosave over it). */
+export const SAVE_VERSIONS_SUPPORTED: readonly number[] = [1, 2, 3];
 
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -684,6 +809,11 @@ export const TURF = {
       security: -0.9,
       ribbonNear: -0.3,
       ribbonRadius: 1,
+      // Expansion (EXPANSION §8.4): back alleys and seaports draw the Undertow.
+      alleyNear: 0.2,
+      alleyRadius: 1,
+      seaportNear: 0.2,
+      seaportRadius: 6,
     },
     kites: {
       base: 0.15,
@@ -697,6 +827,11 @@ export const TURF = {
       security: -0.9,
       glarewallNear: -0.3,
       glarewallRadius: 4,
+      // Expansion (EXPANSION §8.4): alleys and skyway decks draw the Kites.
+      alleyNear: 0.1,
+      alleyRadius: 1,
+      skywayNear: 0.15,
+      skywayRadius: 1,
     },
   },
   crackdown: {
@@ -876,11 +1011,13 @@ export const PATRON_PERK: Record<CorpId, ModPatch> = {
 
 /** Balance-of-power weights (§2.4): power.f = 100 × weight_f / Σ weights. */
 export const POWER_WEIGHTS = {
-  board: { approval: 3, perPrecinct: 40, perClinic: 40, honestTie: 100 },
-  basalt: { jobsIndDiv: 8, perReactor: 60, perFoundry: 80, perCrownFoundry: 80, branded: 80, patron: 300 },
-  nacre: { jobsComDiv: 8, perDatahub: 50, perSpire: 120, perGlarewall: 60, perCrownGlare: 80, patron: 300 },
-  undertow: { perTurfTile: 2, perTidemarket: 100, oneTide: 150 },
-  kites: { perTurfTile: 2, perRoost: 100, perCrownNest: 80, oneTide: 150 },
+  // Expansion terms (EXPANSION §8.2): launchRights (+150 to the holder), seaports, airports, and
+  // the capped alley / skyway terms (weight = min(count × per, max)).
+  board: { approval: 3, perPrecinct: 40, perClinic: 40, honestTie: 100, launchRights: 150 },
+  basalt: { jobsIndDiv: 8, perReactor: 60, perFoundry: 80, perCrownFoundry: 80, branded: 80, patron: 300, perSeaport: 60, launchRights: 150 },
+  nacre: { jobsComDiv: 8, perDatahub: 50, perSpire: 120, perGlarewall: 60, perCrownGlare: 80, patron: 300, perAirport: 80, launchRights: 150 },
+  undertow: { perTurfTile: 2, perTidemarket: 100, oneTide: 150, perAlley: 0.25, alleyMax: 60 },
+  kites: { perTurfTile: 2, perRoost: 100, perCrownNest: 80, oneTide: 150, perSkywayTile: 0.5, skywayMax: 100, launchRights: 150 },
 } as const;
 
 /** One-off favor when the player places a building (§2.6). Only the first BUILD_REACTION_LIMIT of a type count. */
@@ -901,10 +1038,15 @@ export const FACTION_BUILD_REACTIONS: Partial<Record<BuildingType, Partial<Recor
   roost: { kites: 5, nacre: -3 },
   commons: { board: 5 },
   memorial: { undertow: 10, tuning: 5 },
+  // Expansion (EXPANSION §2.8, §8.1).
+  academy: { board: 2, tuning: 2 },
+  seaport: { basalt: 4, undertow: 3 },
+  airport: { nacre: 5, board: 2, kites: -3 },
+  spaceport: { nacre: 4, basalt: 4, board: 3, kites: 2, tuning: -2 },
 };
 export const BUILD_REACTION_LIMIT = 5;
-/** Per-type overrides of BUILD_REACTION_LIMIT (the memorial reacts once). */
-export const BUILD_REACTION_LIMIT_BY_TYPE: Partial<Record<BuildingType, number>> = { memorial: 1 };
+/** Per-type overrides of BUILD_REACTION_LIMIT (the memorial reacts once; ports as many times as they can exist). */
+export const BUILD_REACTION_LIMIT_BY_TYPE: Partial<Record<BuildingType, number>> = { memorial: 1, seaport: 2, airport: 1, spaceport: 1 };
 /** Other favor reactions (§2.6). */
 export const OTHER_REACTIONS = {
   /** Bulldozing ≥ fabTiles developed Fab tiles in one gesture. */
@@ -913,4 +1055,154 @@ export const OTHER_REACTIONS = {
   milestone: { board: 3 } as Partial<Record<FactionId, number>>,
   /** Each random corp grant: + this to the higher-standing corp. */
   corpGrant: 2,
+} as const;
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Expansion "Roads, Wealth and Ports" (docs/EXPANSION.md §2.8). Numbers are
+// tuning knobs (WP-1, then the integration step); names and shapes are contract.
+// Every cadence is in unpaused real seconds (§1.3).
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface RoadKindDef {
+  kind: RoadKind;
+  /** Tool that lays it; null for ramps (made by the drag rule, §3.4). */
+  tool: 'road' | 'avenue' | 'highway' | 'alley' | null;
+  name: string;
+  /** CR per tile on land. */
+  cost: number;
+  /** CR per tile on water (a bridge); null = can't be on water. */
+  bridgeCost: number | null;
+  /** CR per tile per month on land / on water. */
+  upkeep: number;
+  bridgeUpkeep: number;
+  /** Trips at which the road reads ~63% congested (replaces the single TRAFFIC_SCALE per tile). */
+  capacity: number;
+  /** Car speed multiplier (art only). */
+  speed: number;
+  /** Lots within this Chebyshev range can develop from it; 0 = no frontage. */
+  access: number;
+  /** Drag-upgrade order (bigger rank replaces smaller); −1 = never by drag. */
+  rank: number;
+  /** Multiplier on ROAD_POLLUTION. */
+  pollution: number;
+  unlockPop: number;
+  color: string;
+  /** Tray card meta line on phones (≤ 22 chars). */
+  meta: string;
+  desc: string;
+}
+
+/** Indexed by RoadKind (ROAD_KINDS[k].kind === k). */
+export const ROAD_KINDS: readonly RoadKindDef[] = [
+  { kind: RoadKind.Street, tool: 'road', name: 'Street', cost: 15, bridgeCost: 90, upkeep: 0.6, bridgeUpkeep: 3, capacity: 220, speed: 1, access: 3, rank: 1, pollution: 1, unlockPop: 0, color: '#c8d0f0', meta: 'Lots ≤ 3 tiles', desc: 'Streets carry traffic and power. Lots within 3 tiles can grow.' },
+  { kind: RoadKind.Avenue, tool: 'avenue', name: 'Avenue', cost: 40, bridgeCost: 200, upkeep: 1.4, bridgeUpkeep: 6, capacity: 480, speed: 1.25, access: 3, rank: 2, pollution: 1, unlockPop: 1500, color: '#6f9bff', meta: '2× traffic · widens', desc: "Wide and lit: twice a street's traffic. Drag over a street to widen it." },
+  { kind: RoadKind.Highway, tool: 'highway', name: 'Highway', cost: 90, bridgeCost: 360, upkeep: 3.5, bridgeUpkeep: 12, capacity: 1100, speed: 1.8, access: 0, rank: 3, pollution: 1.4, unlockPop: 5000, color: '#ffb547', meta: '5× traffic · no lots', desc: 'Five streets of traffic, but no lot can use it. Cross it with a street for on-ramps.' },
+  { kind: RoadKind.Alley, tool: 'alley', name: 'Back Alley', cost: 6, bridgeCost: null, upkeep: 0.2, bridgeUpkeep: 0, capacity: 90, speed: 0.55, access: 1, rank: 0, pollution: 0.6, unlockPop: 1200, color: '#a07cff', meta: 'Cheap homes · crime', desc: 'Narrow and cheap. Homes beside it stay affordable and hold more people. Crews like the dark.' },
+  { kind: RoadKind.Ramp, tool: null, name: 'On-ramp', cost: 60, bridgeCost: null, upkeep: 1.5, bridgeUpkeep: 0, capacity: 480, speed: 1, access: 3, rank: -1, pollution: 1, unlockPop: 5000, color: '#f4f7ff', meta: '', desc: 'Joins the street grid to a highway.' },
+];
+
+/** Highway load: trips from frontable roads within `reach` (road steps) of an on-ramp move onto that highway (§3.8). */
+export const ROAD_FLOW = { highwayReach: 6, highwayDivert: 0.55 } as const;
+
+/** Static road neighbourhood effects within `radius` (Chebyshev) of the road tile (§3.8). */
+export const ROAD_EFFECTS = { radius: 1, avenueLv: 0.03, avenueCrime: -0.03, alleyLv: -0.04, alleyCrime: 0.06 } as const;
+
+/** Skyways (§3.7). */
+export const SKYWAY = {
+  perTile: 160,
+  rampCost: 120,
+  upkeep: 3,
+  maxDrag: 24,
+  bulldozeCost: 5,
+  unlockPop: 12000,
+  /** Deck height in world px (rail is 28). Pick slab z 46..56 (§3.7). */
+  z: 52,
+  capacity: 700,
+  reach: 5,
+  divert: 0.4,
+  /** Share of a docked building's trips that use the skyway. */
+  anchorShare: 0.5,
+  lvUnder: -0.03,
+  lvRamp: 0.04,
+  lvRampRadius: 2,
+  noise: 0.12,
+  noiseRadius: 1,
+  color: '#ff5fd2',
+  /** Tray card meta line on phones (≤ 22 chars). */
+  meta: 'Cars · ramps',
+  desc: 'A raised road for cars. Land it on a street, or dock it into a megastructure.',
+} as const;
+
+/** Noise effects (§3.9): land value −lv × noise, approval −approval × avgNoise; highway source. */
+export const NOISE = { lv: 0.18, approval: 10, highway: 0.45, highwayRadius: 2 } as const;
+
+/** Wealth tiers (§4). Tables are indexed [ZoneType][tier]; row 0 (ZoneType.None) is unused. */
+export const WEALTH = {
+  /** Score needed to step $→$$ and $$→$$$ (measured start points, §4.2; Step 7 tunes). */
+  up: [0.32, 0.46],
+  /** Score below which $$→$ and $$$→$$. */
+  down: [0.27, 0.4],
+  /** Consecutive sampled evaluations (~6 d apart) before a step (≈ 30 d, §1.3). */
+  streak: 5,
+  capacity: [[1, 1, 1], [1, 0.95, 0.9], [1, 1, 0.95], [1, 0.95, 0.9]],
+  tax: [[1, 1, 1], [1, 1.25, 1.6], [1, 1.25, 1.6], [1, 1.3, 1.8]],
+  power: [[1, 1, 1], [1, 1.1, 1.3], [1, 1.1, 1.3], [1, 1, 0.9]],
+  pollution: [[1, 1, 1], [1, 1, 1], [1, 1, 1], [1, 0.7, 0.35]],
+  /** Residents × for a $ Hab Block with alleyNear ("affordable quarter"). */
+  affordable: 1.1,
+  /**
+   * Caps. res/com: ≤ $$ while crime ≥ highMaxCrime, noise ≥ highMaxNoise or pollution ≥ highMaxPollution;
+   * ≤ $ while crime ≥ midMaxCrime. res with alleyNear: ≤ $$ (alleyMaxTier). ind: ≤ $$ while crime ≥ indHighMaxCrime.
+   */
+  caps: { midMaxCrime: 0.5, highMaxCrime: 0.35, highMaxNoise: 0.5, highMaxPollution: 0.3, indHighMaxCrime: 0.45, alleyMaxTier: 1 },
+  /** Score weights (§4.2): res/com add to land value; ind has its own base. */
+  score: {
+    res: { edu: 0.1, transit: 0.06, noise: -0.2 },
+    com: { edu: 0.08, transit: 0.08, hub: 0.12, noise: -0.1 },
+    ind: { base: 0.2, edu: 0.35, net: 0.2, transit: 0.12, port: 0.1, crime: -0.3 },
+  },
+  /** Approval + prosperity × share of res developed at $$ or $$$ (no squeeze term; Appendix C). */
+  approval: { prosperity: 6 },
+  /** Lens swatches $ / $$ / $$$. */
+  colors: ['#8a93b8', '#22e5ff', '#ffd84d'],
+} as const;
+
+/** Costly or destructive actions (§7.7): confirm at or above confirmCost, undo and refund windows (wall seconds). */
+export const SAFETY = { confirmCost: 10000, undoSec: 10, refundSec: 30, noteMax: 32 } as const;
+
+/** X2 regional links (§3.10): points per border road kind, cap, demand per point, art stubs. */
+export const EDGE_LINKS = { street: 1, avenue: 2, highway: 3, cap: 12, ind: 25, com: 12, stubs: 4 } as const;
+
+/** X3 tourism (§6.3). */
+export const TOURISM = {
+  airport: 1200,
+  spaceport: 3000,
+  perHighCom: 3,
+  perEdgePoint: 40,
+  landmark: { spire: 150, arcology: 100, memorial: 200 } as Partial<Record<BuildingType, number>>,
+  spend: 0.35,
+  comPerVisitor: 0.06,
+  crimeHit: 0.8,
+  approvalRef: 60,
+  moodMin: 0.5,
+  moodMax: 1.3,
+} as const;
+
+/** Seaport (§5.1). */
+export const SEAPORT = { exportJobs: 260, maxCounted: 2, tradeRate: 0.12, tradeCap: 2000, berthDepth: 2, indScoreRadius: 12, shipCycleSec: 80, snapRadius: 2 } as const;
+/** Airport (§5.2). */
+export const AIRPORT = { comJobs: 240, hubNear: 6, hubFar: 16, hubFade: 20, planeCycleSec: 36 } as const;
+/** Spaceport (§5.3). */
+export const SPACEPORT = {
+  indJobs: 200,
+  comJobs: 300,
+  income: 1200,
+  /** Construction needs both buildDays and this many unpaused real seconds (§5.3). */
+  minBuildSec: 240,
+  /** Launches: at night (daylight below nightBelow) and at least launchGapSec unpaused seconds apart. */
+  launchGapSec: 180,
+  nightBelow: 0.3,
+  /** The first launch is announced this many seconds ahead, with a Watch button. */
+  firstLeadSec: 10,
 } as const;

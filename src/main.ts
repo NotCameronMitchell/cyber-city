@@ -2,9 +2,14 @@
 // Boot + frame loop. Wires Game, Camera, Renderer, InputController, UI and
 // AudioEngine together, keeps the canvas sized to the (visual) viewport, runs
 // the rAF loop, autosaves, and supports the artifact hot-reload hooks.
+// Every page load (and the artifact's hot reload) opens on the start screen:
+// the city stays paused behind it and the game is held until the player
+// leaves it (src/ui/start).
 //
 //   frame:  game.update → input.update → renderer.render → ui.update
+//           (on the title: start.update (drift) → renderer.render → ui.update)
 //   saves:  every 3 sim months · every 90 s of unpaused play · page hide
+//           (none while the title is up: nothing changes behind it)
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { AudioEngine } from './audio/audio';
@@ -13,6 +18,7 @@ import type { SaveData } from './game/types';
 import { InputController } from './input/input';
 import { Camera } from './render/camera';
 import { Renderer } from './render/renderer';
+import { StartScreen } from './ui/start/startScreen';
 import { UI } from './ui/ui';
 
 /** Longest frame step fed to the game (s): a long stall must not teleport the sim. */
@@ -21,6 +27,8 @@ const MAX_DT = 0.1;
 const AUTOSAVE_MONTHS = 3;
 /** … and every N seconds of unpaused play. */
 const AUTOSAVE_SECONDS = 90;
+/** The idle title redraws the drifting city at most this often (s): half the work on phones. */
+const TITLE_FRAME = 1 / 30;
 
 interface HotApi {
   data?: unknown;
@@ -38,7 +46,11 @@ function start(data?: unknown): void {
   if (!canvas || !root) throw new Error('Cyber City: #game canvas or #ui root missing');
 
   const game = new Game();
-  if (looksLikeSave(data) && !game.restore(data)) console.warn('[boot] hot-reload snapshot could not be restored');
+  let restored = false;
+  if (looksLikeSave(data)) {
+    restored = game.restore(data);
+    if (!restored) console.warn('[boot] hot-reload snapshot could not be restored');
+  }
 
   const camera = new Camera();
   const renderer = new Renderer(canvas, game, camera);
@@ -46,7 +58,19 @@ function start(data?: unknown): void {
   const ui = new UI(root, game, camera);
   const audio = new AudioEngine(game);
 
-  (window as any).cc = { game, camera, renderer, input, ui, audio };
+  // ── Start screen ──────────────────────────────────────────────────────────
+  // A newer build's save keeps this session on a throwaway city (save blocked): offer New City, not Continue.
+  const blocked = (game as { saveBlocked?: boolean }).saveBlocked === true;
+  let saveNow: (why: string) => void = () => undefined;
+  const title = new StartScreen({
+    game,
+    camera,
+    ui,
+    hasCity: (game.hasSave() && !blocked) || restored,
+    save: () => saveNow('menu'),
+  });
+
+  (window as any).cc = { game, camera, renderer, input, ui, audio, start: title };
   (window as any).claude?.hot?.snapshot?.(() => game.snapshot());
 
   // ── Sizing ────────────────────────────────────────────────────────────────
@@ -74,6 +98,8 @@ function start(data?: unknown): void {
   let monthsSinceSave = 0;
   let playSinceSave = 0;
   const save = (why: string) => {
+    // Nothing changes behind the title, and a first launch that never left it has no city to keep.
+    if (title.holding && why !== 'menu') return;
     monthsSinceSave = 0;
     playSinceSave = 0;
     try {
@@ -90,6 +116,7 @@ function start(data?: unknown): void {
     monthsSinceSave = 0;
     playSinceSave = 0;
   });
+  saveNow = save;
   window.addEventListener('pagehide', () => save('pagehide'));
 
   // ── Frame loop ────────────────────────────────────────────────────────────
@@ -97,6 +124,8 @@ function start(data?: unknown): void {
   let last = 0;
   let time = 0;
   let errors = 0;
+  /** Seconds since the idle title last redrew the city. */
+  let titleAcc = TITLE_FRAME;
 
   const frame = (now: number) => {
     rafId = requestAnimationFrame(frame);
@@ -106,9 +135,20 @@ function start(data?: unknown): void {
     if (dt > MAX_DT) dt = MAX_DT;
     time += dt;
     try {
-      game.update(dt);
-      input.update(dt);
-      renderer.render(dt, time);
+      if (title.holding) {
+        // Title: the city is held (no sim, no story timers, no input); only the drift moves.
+        title.update(dt);
+        titleAcc += dt;
+        if (!title.idle || titleAcc >= TITLE_FRAME * 0.9) {
+          renderer.render(Math.min(titleAcc, MAX_DT), time);
+          titleAcc = 0;
+        }
+      } else {
+        game.update(dt);
+        input.update(dt);
+        renderer.render(dt, time);
+        titleAcc = TITLE_FRAME;
+      }
       ui.update(dt);
     } catch (err) {
       // Keep the loop alive; report the first few so a bad frame is visible.

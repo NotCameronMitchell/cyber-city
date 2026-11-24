@@ -21,6 +21,8 @@ import {
   RIBBON,
   ROAD_COST,
   SAVE_KEY,
+  SAVE_VERSION,
+  SAVE_VERSIONS_SUPPORTED,
   SETTINGS_KEY,
   SKYBRIDGE,
   SPEED_TICKS_PER_SEC,
@@ -57,6 +59,19 @@ export const CITY_NAME_MAX = 24;
 /** Backup slot: "New City" moves the city it replaces here, so the menu can offer "Restore previous city". */
 export const PREV_SAVE_KEY = `${SAVE_KEY}.prev`;
 
+// ── Save safety (docs/EXPANSION.md §2.5) ─────────────────────────────────────
+/** Raw copy of a save written by a newer build (written once, if empty). While it is the stored save, autosave is blocked. */
+export const FUTURE_SAVE_KEY = `${SAVE_KEY}.future`;
+/** Raw copy of a stored save that failed to load for any other reason, taken before the fresh city starts. */
+export const UNREADABLE_SAVE_KEY = `${SAVE_KEY}.unreadable`;
+/** Raw copy of the first v1 / v2 save loaded by a v3 build (once; never overwritten), so a downgrade can recover it. */
+export const V2_SAVE_KEY = `${SAVE_KEY}.v2`;
+/** Shown once when the stored city came from a newer build. */
+export const FUTURE_SAVE_TEXT = 'This city was saved by a newer version. Reload to update.';
+
+/** Visual clock rate by speed (index 0..3): frozen while paused, ×1 / ×1.6 / ×2.4 (EXPANSION §1.3, §2.7). */
+const CLOCK_RATE = [0, 1, 1.6, 2.4] as const;
+
 /** Safe localStorage wrappers (storage may be missing or throw); they live in a leaf module so story code can share them. */
 export { storageGet, storageRemove, storageSet } from './storage';
 
@@ -64,7 +79,12 @@ export interface TileInfo {
   title: string;
   subtitle: string;
   color: string;
+  /** Standard rows: values ≤ 12 characters (EXPANSION §7.4 layout rule). */
   rows: [label: string, value: string][];
+  /** Full-width, wrapping lines under the rows (≤ 60 chars each; at most two lines at 360 px). Expansion. */
+  notes?: { text: string; tone?: 'good' | 'warn' | 'bad' }[];
+  /** Ticks (0..1) drawn on the percent meter of row index `row` (the Wealth row). Expansion. */
+  meter?: { row: number; ticks: number[] };
 }
 
 const pct = (v: number) => `${Math.round(v * 100)}%`;
@@ -101,6 +121,14 @@ export class Game {
   settings: Settings;
   /** Visual clock in seconds (advances with sim speed; drives the day/night cycle). */
   clock = DAY_CYCLE_SECONDS * 0.85;
+  /**
+   * The stored save came from a newer build (EXPANSION §2.5): this session plays a fresh city in
+   * memory and save() writes nothing, so a stale build never overwrites a newer city. Only an
+   * explicit New City clears it.
+   */
+  saveBlocked = false;
+  /** Toasts raised before the UI exists (constructor); emitted on the first update(). */
+  private notices: { text: string; kind: 'info' | 'error' | 'good' }[] = [];
   private tickAcc = 0;
   /** Speed to restore once a blocking story card closes (null = not paused by the story). */
   private storyResumeSpeed: number | null = null;
@@ -109,15 +137,7 @@ export class Game {
     const stored = this.readSettings();
     // Older stored settings have no storyPace (or an unknown one): they read as 'relaxed'.
     this.settings = { ...DEFAULT_SETTINGS, ...stored, storyPace: paceOf(stored.storyPace) };
-    const saved = this.readSave();
-    let world: World | null = null;
-    if (saved) {
-      try {
-        world = World.deserialize(saved, this.events);
-      } catch (err) {
-        console.warn('Save could not be loaded, starting fresh', err);
-      }
-    }
+    const world = this.loadStored();
     this.world = world ?? World.generate(randomSeed(), undefined, this.events);
     this.attachSystems();
     if (!world) this.welcome();
@@ -257,10 +277,14 @@ export class Game {
   /** Advance by real seconds `dt` (clamped). Runs whole sim ticks according to speed. */
   update(dt: number) {
     dt = Math.min(Math.max(dt, 0), 0.25);
+    if (this.notices.length) {
+      const n = this.notices.splice(0);
+      for (const t of n) this.toast(t.text, t.kind);
+    }
     this.story.update(dt, this.speed === 0);
     this.syncStoryPause();
     if (this.speed > 0) {
-      this.clock += dt * (this.speed === 1 ? 1 : this.speed === 2 ? 1.6 : 2.4);
+      this.clock += dt * this.clockRate;
       this.tickAcc += dt * SPEED_TICKS_PER_SEC[this.speed];
       let steps = 0;
       while (this.tickAcc >= 1 && steps < 8) {
@@ -392,6 +416,14 @@ export class Game {
   }
 
   /**
+   * Rate of the visual clock (day / night): 0 while paused, else ×1 / ×1.6 / ×2.4 at speeds
+   * 1 / 2 / 3 (EXPANSION §2.7). "Clock-scaled" FX (ships, planes) advance by dt × clockRate.
+   */
+  get clockRate(): number {
+    return CLOCK_RATE[this.speed] ?? 0;
+  }
+
+  /**
    * Visual time of day in [0, 1): 0 = midnight, 0.25 = dawn, 0.5 = noon, 0.75 = dusk.
    * Locked to 0.92 (late evening) when the day/night cycle is off.
    */
@@ -415,6 +447,10 @@ export class Game {
   /** Start a fresh city. The city it replaces is kept in the backup slot (see loadPrevious). */
   newCity(name?: string, seed = randomSeed()) {
     this.backupCurrent();
+    // An explicit New City is the only thing that lifts the newer-save block (its copy stays in FUTURE_SAVE_KEY);
+    // the "saved by a newer version" notice no longer applies.
+    this.saveBlocked = false;
+    this.notices.length = 0;
     const clean = name?.trim().slice(0, CITY_NAME_MAX);
     this.world = World.generate(seed, clean || randomCityName(seed), this.events);
     this.attachSystems();
@@ -431,20 +467,25 @@ export class Game {
     this.save();
   }
 
+  /** Write the city to storage. Returns false (writing nothing) while saveBlocked (a newer build's save is stored). */
   save(): boolean {
+    if (this.saveBlocked) return false;
     const ok = storageSet(SAVE_KEY, JSON.stringify(this.world.serialize()));
     return ok;
   }
 
-  /** Reload the stored save. Returns false if there is none or it is unreadable. */
+  /** Reload the stored save. Returns false if there is none, it is unreadable or it came from a newer build. */
   load(): boolean {
+    const raw = storageGet(SAVE_KEY);
     const data = this.readSave();
-    if (!data) return false;
+    if (!data || raw === null) return false;
+    if (isFutureSave(data)) return false;
     try {
       this.world = World.deserialize(data, this.events);
     } catch {
       return false;
     }
+    this.keepOldSave(raw, this.world);
     this.attachSystems();
     this.selected = null;
     this.preview = null;
@@ -475,14 +516,16 @@ export class Game {
    * Returns false when there is no readable backup.
    */
   loadPrevious(): boolean {
+    const raw = storageGet(PREV_SAVE_KEY);
     const data = this.readSave(PREV_SAVE_KEY);
-    if (!data) return false;
+    if (!data || raw === null) return false;
     let world: World;
     try {
       world = World.deserialize(data, this.events);
     } catch {
       return false;
     }
+    this.keepOldSave(raw, world);
     const current = worthKeeping(this.world) ? JSON.stringify(this.world.serialize()) : null;
     this.world = world;
     this.attachSystems();
@@ -517,6 +560,44 @@ export class Game {
     this.events.emit('world');
     this.events.emit('stats');
     return true;
+  }
+
+  /**
+   * Load the stored city at startup with the save-safety rules (EXPANSION §2.5): a newer
+   * build's save is copied to FUTURE_SAVE_KEY (if empty) and blocks saving; any other failure
+   * copies the raw string to UNREADABLE_SAVE_KEY; the first v1 / v2 save is copied to V2_SAVE_KEY.
+   * Returns null (start a fresh city) unless the save loaded.
+   */
+  private loadStored(): World | null {
+    const raw = storageGet(SAVE_KEY);
+    if (raw === null) return null;
+    let data: SaveData | null = null;
+    try {
+      data = JSON.parse(raw) as SaveData;
+    } catch {
+      data = null;
+    }
+    if (isFutureSave(data)) {
+      if (storageGet(FUTURE_SAVE_KEY) === null) storageSet(FUTURE_SAVE_KEY, raw);
+      this.saveBlocked = true;
+      this.notices.push({ text: FUTURE_SAVE_TEXT, kind: 'error' });
+      return null;
+    }
+    try {
+      if (!data) throw new Error('Unreadable save');
+      const world = World.deserialize(data, this.events);
+      this.keepOldSave(raw, world);
+      return world;
+    } catch (err) {
+      console.warn('Save could not be loaded, starting fresh', err);
+      storageSet(UNREADABLE_SAVE_KEY, raw);
+      return null;
+    }
+  }
+
+  /** The first v1 / v2 save a v3 build loads is kept raw in V2_SAVE_KEY (never overwritten). */
+  private keepOldSave(raw: string, world: World): void {
+    if (world.loadedVersion < SAVE_VERSION && storageGet(V2_SAVE_KEY) === null) storageSet(V2_SAVE_KEY, raw);
   }
 
   private readSave(key = SAVE_KEY): SaveData | null {
@@ -652,6 +733,13 @@ export class Game {
     if (base > 0) return Math.round(base * this.world.mods.buildCostMul);
     return base;
   }
+}
+
+/** A save written by a newer build (its version is above every supported one). */
+function isFutureSave(data: unknown): boolean {
+  if (!data || typeof data !== 'object') return false;
+  const v = Number((data as { version?: unknown }).version);
+  return Number.isFinite(v) && v > Math.max(...SAVE_VERSIONS_SUPPORTED);
 }
 
 export function randomSeed(): number {

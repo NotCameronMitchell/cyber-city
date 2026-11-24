@@ -32,6 +32,8 @@ const EFFECT_RGB: Record<ServiceEffect, RGB> = {
   park: NEON.green,
   transit: NEON.yellow,
   prestige: NEON.magenta,
+  /** Academy coverage (EXPANSION §6.1): the Services overlay's "Schools" swatch. */
+  education: [255, 208, 160],
 };
 const EFFECTS = Object.keys(EFFECT_RGB) as ServiceEffect[];
 

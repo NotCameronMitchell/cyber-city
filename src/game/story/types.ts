@@ -45,7 +45,14 @@ export type SpotRule =
   | 'waterfrontTurf'
   | 'seam'
   | 'skybridge'
-  | 'random';
+  | 'random'
+  // Expansion (docs/EXPANSION.md §2.2; WP-6 implements them in effects.ts):
+  /** The developed Hab Block within 3 of a Highway tile with the highest noise. */
+  | 'highway'
+  /** The Alley tile with the highest Undertow turf strength, else the lowest-index Alley tile. */
+  | 'alley'
+  /** The developed Hab Block within 2 of water with the highest land value. */
+  | 'shore';
 /** Where an effect lands; resolves to a centre tile plus the effect's `r` (§10.1). */
 export type Target =
   | 'city'
@@ -127,7 +134,16 @@ export type Metric =
   | 'daysInChapter'
   | 'gangActions'
   /** tick − lastCrackdownTick, or 99,999 if there has never been one. */
-  | 'daysSinceCrackdown';
+  | 'daysSinceCrackdown'
+  // Expansion (docs/EXPANSION.md §2.2):
+  /** Share 0..1 of developed zone tiles (all zones) at $$$ / at $. */
+  | 'wealth.high'
+  | 'wealth.low'
+  /** Ground road tiles of that kind (bridges included). */
+  | 'roads.highway'
+  | 'roads.alley'
+  /** Skyway tiles. */
+  | 'skyway.tiles';
 
 /**
  * Condition tree. Text syntax in STORY.md maps 1:1: `a & b` → all, `a | b` → any,
@@ -414,6 +430,11 @@ export interface Card {
   /** §7.1 step 4. */
   seasonal?: boolean;
   queuedOnly?: boolean;
+  /**
+   * The player may open this card from a button (director.openOnDemand, EXPANSION §2.2 / §8.3):
+   * no deck slot, no pacing clock moves. It can still come through the deck as usual.
+   */
+  onDemand?: boolean;
   onShow?: Effect[];
   /** 1..4; 0 for whisper; log and ending cards get an implicit 'Continue.'. */
   choices: Choice[];
@@ -748,12 +769,13 @@ export interface CrownOption {
 
 /** A button in the inspect panel, from `game.inspectActions(x, y)` (§8.8). */
 export interface InspectAction {
-  id: 'crackdown' | 'raise' | 'crown';
+  /** Expansion: 'rights' (Spaceport: open the launch-rights card), 'skyway' (skyway sheet: demolish this segment). */
+  id: 'crackdown' | 'raise' | 'crown' | 'rights' | 'skyway';
   label: string;
   cost: number;
   enabled: boolean;
   reason?: string;
-  /** The building the action applies to (pass to game.crackdown / game.raiseStage). */
+  /** The building the action applies to (pass to game.crackdown / game.raiseStage). −1 for 'skyway' (a tile, see x / y). */
   buildingId: number;
   /** Crackdown radius, for the map preview. */
   radius?: number;
@@ -761,6 +783,9 @@ export interface InspectAction {
   days?: number;
   /** Crown picker rows ('crown' only). */
   crowns?: CrownOption[];
+  /** 'skyway' only (expansion): the skyway tile whose segment the action demolishes. */
+  x?: number;
+  y?: number;
 }
 
 // ── View types for UI (§10.9) ───────────────────────────────────────────────

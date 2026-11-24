@@ -1,0 +1,974 @@
+/* ─────────────────────────────────────────────────────────────────────────────
+   Start screen (src/ui/start). Same language as ui.css: dark glass, 1 px neon
+   frames on chamfered corners, Chakra Petch + Share Tech Mono. The live city
+   canvas is the backdrop; a gradient + vignette keeps text readable.
+   Phone portrait first (390 × 844 and 360 × 640): actions in the bottom half,
+   16 px gutters, 52 px primaries, 44 px secondaries, text ≥ 12 px.
+   Landscape phones (844 × 390): wordmark left, actions right.
+   No backdrop-filter: the canvas behind changes every frame (cheap on phones).
+   ───────────────────────────────────────────────────────────────────────────── */
+
+/* ── Hide the game chrome while the title is up; fade it in on the way out ── */
+
+.cc-ui.cc-start-on > :not(.cc-start):not(.cc-modal-layer):not(.cc-topstack) {
+  visibility: hidden !important;
+}
+
+.cc-ui.cc-start-reveal > .cc-hud,
+.cc-ui.cc-start-reveal > .cc-ticker {
+  animation: cc-start-drop 0.38s var(--cc-ease) both;
+}
+
+.cc-ui.cc-start-reveal > .cc-dock {
+  animation: cc-start-rise 0.38s var(--cc-ease) both;
+}
+
+@keyframes cc-start-drop {
+  from {
+    opacity: 0;
+    translate: 0 -10px;
+  }
+  to {
+    opacity: 1;
+    translate: 0 0;
+  }
+}
+
+@keyframes cc-start-rise {
+  from {
+    opacity: 0;
+    translate: 0 14px;
+  }
+  to {
+    opacity: 1;
+    translate: 0 0;
+  }
+}
+
+/* ── Shell ─────────────────────────────────────────────────────────────── */
+
+.cc-start {
+  --mk: clamp(46px, 15vw, 92px);
+  position: absolute;
+  inset: 0;
+  z-index: 45;
+  pointer-events: auto;
+  touch-action: manipulation;
+  color: var(--cc-ink);
+  overflow: hidden;
+}
+
+.cc-start-shade {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(ellipse 120% 72% at 50% 44%, rgba(7, 6, 13, 0) 0%, rgba(7, 6, 13, 0.2) 55%, rgba(7, 6, 13, 0.8) 100%),
+    linear-gradient(
+      180deg,
+      rgba(7, 6, 13, 0.9) 0%,
+      rgba(7, 6, 13, 0.5) 20%,
+      rgba(7, 6, 13, 0.08) 38%,
+      rgba(7, 6, 13, 0.1) 46%,
+      rgba(7, 6, 13, 0.7) 60%,
+      rgba(7, 6, 13, 0.94) 78%,
+      rgba(7, 6, 13, 0.97) 100%
+    );
+}
+
+.cc-start-shade::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(60% 26% at 50% 14%, rgba(255, 43, 214, 0.12), transparent 70%),
+    radial-gradient(70% 22% at 50% 100%, rgba(34, 229, 255, 0.08), transparent 70%),
+    repeating-linear-gradient(180deg, rgba(255, 255, 255, 0.022) 0 1px, transparent 1px 3px);
+}
+
+.cc-start-layout {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  padding: calc(var(--cc-sat) + clamp(28px, 8vh, 84px)) calc(var(--cc-sar) + 16px) calc(var(--cc-sab) + 12px) calc(var(--cc-sal) + 16px);
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  transition: opacity 0.2s ease;
+}
+
+/* ── Brand ─────────────────────────────────────────────────────────────── */
+
+.cc-start-brand {
+  flex: none;
+  width: 100%;
+  max-width: 560px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  text-align: center;
+}
+
+.cc-start-sys {
+  font: 12px/1.2 var(--cc-mono);
+  letter-spacing: 0.08em;
+  color: rgba(34, 229, 255, 0.78);
+  text-shadow: 0 0 8px rgba(34, 229, 255, 0.4);
+}
+
+.cc-start-mark {
+  --c: 0.3em;
+  position: relative;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  padding: 0.2em 0.36em 0.24em;
+  font-size: var(--mk);
+  font-weight: 700;
+  line-height: 0.95;
+  white-space: nowrap;
+}
+
+/* Glass inside the frame: the wordmark reads over any part of the city. */
+.cc-start-mark::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, rgba(10, 9, 24, 0.62), rgba(10, 9, 24, 0.34));
+  clip-path: polygon(0 var(--c), var(--c) 0, 100% 0, 100% calc(100% - var(--c)), calc(100% - var(--c)) 100%, 0 100%);
+}
+
+/* The frame is clipped; its glow comes from the unclipped wrapper's filter. */
+.cc-start-glow {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  filter: drop-shadow(0 0 5px rgba(34, 229, 255, 0.55)) drop-shadow(0 0 16px rgba(255, 43, 214, 0.25));
+}
+
+.cc-start-frame {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(115deg, var(--cc-cyan) 0%, rgba(34, 229, 255, 0.45) 32%, rgba(123, 92, 255, 0.45) 58%, var(--cc-magenta) 100%);
+  clip-path: polygon(
+    evenodd,
+    0 var(--c),
+    var(--c) 0,
+    100% 0,
+    100% calc(100% - var(--c)),
+    calc(100% - var(--c)) 100%,
+    0 100%,
+    0 var(--c),
+    2px calc(var(--c) + 0.83px),
+    calc(var(--c) + 0.83px) 2px,
+    calc(100% - 2px) 2px,
+    calc(100% - 2px) calc(100% - var(--c) - 0.83px),
+    calc(100% - var(--c) - 0.83px) calc(100% - 2px),
+    2px calc(100% - 2px),
+    2px calc(var(--c) + 0.83px)
+  );
+}
+
+/* Bracket accents on the two square corners. */
+.cc-start-corner {
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  pointer-events: none;
+}
+
+.cc-start-corner.is-tr {
+  top: -7px;
+  right: -7px;
+  border-top: 2px solid var(--cc-cyan);
+  border-right: 2px solid var(--cc-cyan);
+  box-shadow: 3px -3px 10px -4px rgba(34, 229, 255, 0.8);
+}
+
+.cc-start-corner.is-bl {
+  bottom: -7px;
+  left: -7px;
+  border-bottom: 2px solid var(--cc-magenta);
+  border-left: 2px solid var(--cc-magenta);
+  box-shadow: -3px 3px 10px -4px rgba(255, 43, 214, 0.8);
+}
+
+.cc-start-w1 {
+  position: relative;
+  display: block;
+  padding-left: 0.07em;
+  letter-spacing: 0.07em;
+  text-align: center;
+  color: #f2fdff;
+  text-shadow:
+    0 0 1px #fff,
+    0 0 6px rgba(34, 229, 255, 0.95),
+    0 0 16px rgba(34, 229, 255, 0.6),
+    0 0 38px rgba(34, 229, 255, 0.35);
+}
+
+/* Glitch: two colour slices of the word, shown for a few frames every few seconds. */
+.cc-start-w1::before,
+.cc-start-w1::after {
+  content: attr(data-text);
+  position: absolute;
+  inset: 0;
+  padding-left: 0.07em;
+  text-align: center;
+  opacity: 0;
+  pointer-events: none;
+  text-shadow: none;
+}
+
+.cc-start-w1::before {
+  color: var(--cc-magenta);
+  animation: cc-start-glitch-a 7.4s steps(1, end) 2.4s infinite;
+}
+
+.cc-start-w1::after {
+  color: var(--cc-cyan);
+  animation: cc-start-glitch-b 7.4s steps(1, end) 2.4s infinite;
+}
+
+@keyframes cc-start-glitch-a {
+  0%,
+  88% {
+    opacity: 0;
+    transform: none;
+    clip-path: inset(0 0 100% 0);
+  }
+  89% {
+    opacity: 0.85;
+    transform: translateX(-0.05em);
+    clip-path: inset(14% 0 62% 0);
+  }
+  90% {
+    opacity: 0.85;
+    transform: translateX(0.04em);
+    clip-path: inset(58% 0 18% 0);
+  }
+  91%,
+  100% {
+    opacity: 0;
+    transform: none;
+    clip-path: inset(0 0 100% 0);
+  }
+}
+
+@keyframes cc-start-glitch-b {
+  0%,
+  88.5% {
+    opacity: 0;
+    transform: none;
+    clip-path: inset(0 0 100% 0);
+  }
+  89.5% {
+    opacity: 0.75;
+    transform: translateX(0.05em);
+    clip-path: inset(40% 0 38% 0);
+  }
+  90.5%,
+  100% {
+    opacity: 0;
+    transform: none;
+    clip-path: inset(0 0 100% 0);
+  }
+}
+
+.cc-start-w2 {
+  display: flex;
+  align-items: center;
+  gap: 0.5em;
+  margin-top: 0.16em;
+  font-size: 0.4em;
+  line-height: 1;
+}
+
+.cc-start-w2t {
+  padding-left: 0.62em;
+  letter-spacing: 0.62em;
+  color: #ffe6fa;
+  text-shadow:
+    0 0 1px #fff,
+    0 0 6px rgba(255, 43, 214, 0.95),
+    0 0 16px rgba(255, 43, 214, 0.55);
+}
+
+.cc-start-rule {
+  flex: 1 1 0;
+  height: 2px;
+  min-width: 0.6em;
+  background: linear-gradient(90deg, transparent, rgba(255, 43, 214, 0.9));
+  box-shadow: 0 0 8px rgba(255, 43, 214, 0.6);
+}
+
+.cc-start-rule:last-child {
+  background: linear-gradient(90deg, rgba(255, 43, 214, 0.9), transparent);
+}
+
+/* One tired tube in each word. */
+.cc-start-flk {
+  animation: cc-start-flicker 6.3s linear 1.6s infinite;
+}
+
+.cc-start-flk.is-2 {
+  animation-duration: 9.1s;
+  animation-delay: 3.8s;
+}
+
+@keyframes cc-start-flicker {
+  0%,
+  70%,
+  73%,
+  75.5%,
+  100% {
+    opacity: 1;
+  }
+  71% {
+    opacity: 0.3;
+    text-shadow: none;
+  }
+  74.5% {
+    opacity: 0.55;
+    text-shadow: none;
+  }
+}
+
+.cc-start-line {
+  max-width: 32ch;
+  margin: 0;
+  font-size: 16px;
+  font-weight: 500;
+  line-height: 1.35;
+  letter-spacing: 0.02em;
+  color: #d4d8f4;
+  text-shadow: 0 1px 10px rgba(0, 0, 0, 0.95), 0 0 2px rgba(0, 0, 0, 0.9);
+}
+
+/* ── Actions ───────────────────────────────────────────────────────────── */
+
+.cc-start-actions {
+  flex: none;
+  width: 100%;
+  max-width: 440px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.cc-start-actions .cc-btn {
+  width: 100%;
+}
+
+.cc-start .cc-start-big {
+  min-height: 52px;
+  font-size: 15px;
+  letter-spacing: 0.18em;
+}
+
+.cc-start .cc-btn.is-primary {
+  background: linear-gradient(180deg, rgba(34, 229, 255, 0.42), rgba(34, 229, 255, 0.17));
+  text-shadow: 0 0 10px rgba(34, 229, 255, 0.75);
+}
+
+.cc-start .cc-btn:not(.is-primary) {
+  --edge: rgba(255, 255, 255, 0.22);
+  --accent: var(--cc-magenta);
+  background: rgba(12, 11, 28, 0.82);
+}
+
+.cc-start-btn-ico {
+  display: grid;
+  place-items: center;
+}
+
+.cc-start .cc-start-btn-ico .cc-i {
+  width: 18px;
+  height: 18px;
+}
+
+/* Continue card: the saved city, then its button. */
+.cc-start-slot {
+  --c: 12px;
+  --accent: var(--cc-cyan);
+  --accent-2: rgba(255, 43, 214, 0.55);
+  --edge: rgba(138, 152, 255, 0.3);
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  background: linear-gradient(180deg, rgba(14, 12, 32, 0.9), rgba(9, 8, 22, 0.92));
+  clip-path: polygon(0 var(--c), var(--c) 0, 100% 0, 100% calc(100% - var(--c)), calc(100% - var(--c)) 100%, 0 100%);
+}
+
+.cc-start-slot::before,
+.cc-start-mini::before,
+.cc-start-sheet::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  pointer-events: none;
+  background: linear-gradient(
+    135deg,
+    var(--accent, var(--cc-cyan)) 0,
+    var(--accent, var(--cc-cyan)) calc(var(--c) + 3px),
+    var(--edge, var(--cc-edge)) calc(var(--c) + 30px),
+    var(--edge, var(--cc-edge)) calc(100% - var(--c) - 30px),
+    var(--accent-2, var(--edge, var(--cc-edge))) 100%
+  );
+  clip-path: polygon(
+    evenodd,
+    0 var(--c),
+    var(--c) 0,
+    100% 0,
+    100% calc(100% - var(--c)),
+    calc(100% - var(--c)) 100%,
+    0 100%,
+    0 var(--c),
+    1px calc(var(--c) + 0.42px),
+    calc(var(--c) + 0.42px) 1px,
+    calc(100% - 1px) 1px,
+    calc(100% - 1px) calc(100% - var(--c) - 0.42px),
+    calc(100% - var(--c) - 0.42px) calc(100% - 1px),
+    1px calc(100% - 1px),
+    1px calc(var(--c) + 0.42px)
+  );
+}
+
+.cc-start-slot-info {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  padding: 12px 16px 10px;
+}
+
+.cc-start-slot-k {
+  font: 12px/1.2 var(--cc-mono);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--cc-amber);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cc-start-slot-k.is-sandbox {
+  color: var(--cc-green);
+}
+
+.cc-start-slot-name {
+  font-size: 21px;
+  font-weight: 700;
+  line-height: 1.15;
+  letter-spacing: 0.03em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cc-start-slot-meta {
+  font: 13px/1.25 var(--cc-mono);
+  letter-spacing: 0.04em;
+  color: var(--cc-ink-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cc-start-slot > .cc-btn {
+  width: auto;
+  margin: 2px 8px 8px;
+}
+
+/* Settings · How to play · About */
+.cc-start-row {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.cc-start-mini {
+  --c: 7px;
+  --accent: rgba(34, 229, 255, 0.7);
+  --edge: rgba(255, 255, 255, 0.14);
+  position: relative;
+  min-width: 0;
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 6px;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  white-space: nowrap;
+  color: var(--cc-ink-2);
+  background: rgba(12, 11, 28, 0.78);
+  clip-path: polygon(0 var(--c), var(--c) 0, 100% 0, 100% calc(100% - var(--c)), calc(100% - var(--c)) 100%, 0 100%);
+  transition: color 0.15s, background 0.15s;
+}
+
+.cc-start-mini:active {
+  color: var(--cc-ink);
+  background: rgba(34, 229, 255, 0.14);
+}
+
+.cc-start-mini .cc-i {
+  width: 17px;
+  height: 17px;
+  color: var(--cc-cyan);
+}
+
+.cc-start-mini > span:last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Previous city (backup slot): a quiet text button. */
+.cc-start-prev {
+  align-self: center;
+  max-width: 100%;
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px;
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: 0.03em;
+  color: var(--cc-ink-2);
+}
+
+.cc-start-prev .cc-i {
+  width: 16px;
+  height: 16px;
+  color: var(--cc-magenta);
+}
+
+.cc-start-prev-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-decoration: underline;
+  text-decoration-color: rgba(255, 43, 214, 0.5);
+  text-underline-offset: 4px;
+}
+
+.cc-start-prev:active {
+  color: var(--cc-ink);
+}
+
+/* Optional install tip (touch devices, not installed). */
+.cc-start-hint {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 44px;
+  padding-left: 12px;
+  font-size: 12px;
+  line-height: 1.3;
+  color: var(--cc-ink-2);
+  background: rgba(12, 11, 28, 0.7);
+  border-left: 2px solid rgba(34, 229, 255, 0.6);
+}
+
+.cc-start-hint-text {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.cc-start-hint-x {
+  flex: none;
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  color: var(--cc-ink-3);
+}
+
+.cc-start-hint-x .cc-i {
+  width: 16px;
+  height: 16px;
+}
+
+.cc-start-foot {
+  font: 12px/1.2 var(--cc-mono);
+  letter-spacing: 0.06em;
+  text-align: center;
+  color: var(--cc-ink-3);
+}
+
+/* ── New city sheet ────────────────────────────────────────────────────── */
+
+.cc-start.is-setup .cc-start-layout {
+  opacity: 0.24;
+}
+
+.cc-start-sheet {
+  --c: 14px;
+  --accent: var(--cc-cyan);
+  --accent-2: rgba(255, 43, 214, 0.5);
+  --edge: rgba(138, 152, 255, 0.28);
+  position: absolute;
+  z-index: 2;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  width: 100%;
+  max-width: 480px;
+  max-height: calc(100% - var(--cc-sat) - 16px);
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  padding-bottom: var(--cc-sab);
+  background: linear-gradient(180deg, rgba(16, 14, 36, 0.98), rgba(10, 9, 24, 0.99));
+  clip-path: polygon(0 var(--c), var(--c) 0, 100% 0, 100% calc(100% - var(--c)), calc(100% - var(--c)) 100%, 0 100%);
+  outline: none;
+}
+
+.cc-start-sheet.is-in {
+  animation: cc-start-sheet-in 0.32s var(--cc-ease) both;
+}
+
+@keyframes cc-start-sheet-in {
+  from {
+    opacity: 0;
+    translate: 0 28px;
+  }
+  to {
+    opacity: 1;
+    translate: 0 0;
+  }
+}
+
+.cc-start-sheet-head {
+  flex: none;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 14px 6px 2px calc(var(--cc-sal) + 16px);
+}
+
+.cc-start-sheet-head .cc-start-sys {
+  text-align: left;
+}
+
+.cc-start-sheet-t {
+  margin: 4px 0 0;
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.cc-start-sheet-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 10px 16px 6px;
+}
+
+.cc-start-field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.cc-start-k {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--cc-ink-2);
+}
+
+.cc-start .cc-start-input {
+  height: 46px;
+}
+
+.cc-start-seg {
+  width: 100%;
+}
+
+.cc-start-seg .cc-seg-btn {
+  flex: 1 1 0;
+  min-width: 0;
+  font-size: 13px;
+}
+
+.cc-start-desc {
+  min-height: 2.6em;
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.3;
+  color: var(--cc-ink-2);
+}
+
+.cc-start-note {
+  margin: 0;
+  padding: 10px 12px;
+  font-size: 13px;
+  line-height: 1.4;
+  color: #ffdca6;
+  background: rgba(255, 176, 46, 0.08);
+  border-left: 2px solid var(--cc-amber);
+}
+
+.cc-start-sheet-foot {
+  flex: none;
+  padding: 10px 16px 16px;
+}
+
+.cc-start-sheet-foot .cc-btn {
+  width: 100%;
+}
+
+/* ── Entrances and exit ────────────────────────────────────────────────── */
+
+.cc-start.is-boot .cc-start-shade {
+  animation: cc-start-fade 0.5s ease-out both;
+}
+
+.cc-start.is-boot .cc-start-sys {
+  animation: cc-start-fade 0.4s ease-out 0.1s both;
+}
+
+.cc-start.is-boot .cc-start-mark {
+  animation: cc-start-ignite 0.9s linear 0.05s both;
+}
+
+.cc-start.is-boot .cc-start-line {
+  animation: cc-start-up 0.5s var(--cc-ease) 0.45s both;
+}
+
+.cc-start.is-boot .cc-start-actions {
+  animation: cc-start-up 0.45s var(--cc-ease) 0.3s both;
+}
+
+.cc-start.is-back {
+  animation: cc-start-fade 0.3s ease-out both;
+}
+
+@keyframes cc-start-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes cc-start-up {
+  from {
+    opacity: 0;
+    translate: 0 14px;
+  }
+  to {
+    opacity: 1;
+    translate: 0 0;
+  }
+}
+
+/* A neon sign striking: a couple of stutters, then on. */
+@keyframes cc-start-ignite {
+  0% {
+    opacity: 0;
+  }
+  14% {
+    opacity: 0.7;
+  }
+  20% {
+    opacity: 0.1;
+  }
+  34% {
+    opacity: 0.9;
+  }
+  40% {
+    opacity: 0.35;
+  }
+  58%,
+  100% {
+    opacity: 1;
+  }
+}
+
+.cc-start.is-leaving {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.38s ease;
+}
+
+.cc-start.is-leaving .cc-start-brand {
+  transform: scale(1.06);
+  transition: transform 0.38s var(--cc-ease);
+}
+
+.cc-start.is-leaving .cc-start-actions {
+  transform: translateY(16px);
+  transition: transform 0.38s var(--cc-ease);
+}
+
+/* ── Short portrait phones (360 × 640) ─────────────────────────────────── */
+
+@media (max-height: 700px) and (orientation: portrait) {
+  .cc-start {
+    --mk: clamp(40px, 13.5vw, 64px);
+  }
+  .cc-start-layout {
+    gap: 14px;
+    padding-top: calc(var(--cc-sat) + clamp(16px, 4vh, 32px));
+  }
+  .cc-start-brand {
+    gap: 10px;
+  }
+  .cc-start-line {
+    font-size: 15px;
+  }
+  .cc-start-actions {
+    gap: 8px;
+  }
+  .cc-start-slot-info {
+    padding: 10px 14px 8px;
+    gap: 3px;
+  }
+  .cc-start-slot-name {
+    font-size: 19px;
+  }
+}
+
+/* Narrow phones (360 px): the labels need the room more than the icons do. */
+@media (max-width: 379px) {
+  .cc-start-mini .cc-i {
+    display: none;
+  }
+}
+
+/* ── Landscape phones (844 × 390): wordmark left, actions right ───────── */
+
+@media (orientation: landscape) and (max-height: 520px) {
+  .cc-start {
+    --mk: clamp(40px, 13vh, 66px);
+  }
+  .cc-start-shade {
+    background:
+      radial-gradient(ellipse 80% 110% at 50% 50%, rgba(7, 6, 13, 0) 0%, rgba(7, 6, 13, 0.25) 60%, rgba(7, 6, 13, 0.8) 100%),
+      linear-gradient(
+        90deg,
+        rgba(7, 6, 13, 0.78) 0%,
+        rgba(7, 6, 13, 0.5) 30%,
+        rgba(7, 6, 13, 0.12) 46%,
+        rgba(7, 6, 13, 0.55) 58%,
+        rgba(7, 6, 13, 0.92) 72%,
+        rgba(7, 6, 13, 0.96) 100%
+      );
+  }
+  .cc-start-layout {
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    gap: 20px;
+    padding: calc(var(--cc-sat) + 10px) calc(var(--cc-sar) + 20px) calc(var(--cc-sab) + 10px) calc(var(--cc-sal) + 20px);
+  }
+  .cc-start-brand {
+    flex: 1 1 0;
+    min-width: 0;
+    max-width: none;
+    gap: 12px;
+  }
+  .cc-start-line {
+    font-size: 15px;
+  }
+  .cc-start-actions {
+    flex: 0 0 auto;
+    width: min(380px, 47vw);
+    max-height: 100%;
+    gap: 8px;
+  }
+  .cc-start-slot-info {
+    padding: 9px 14px 7px;
+    gap: 2px;
+  }
+  .cc-start-slot-name {
+    font-size: 18px;
+  }
+  .cc-start-prev {
+    min-height: 40px;
+  }
+  .cc-start-foot {
+    display: none;
+  }
+  .cc-start-sheet {
+    left: auto;
+    right: calc(var(--cc-sar) + 20px);
+    top: calc(var(--cc-sat) + 10px);
+    bottom: calc(var(--cc-sab) + 10px);
+    width: min(420px, 52vw);
+    max-height: none;
+    padding-bottom: 0;
+  }
+  .cc-start-sheet-head {
+    padding-top: 10px;
+  }
+  .cc-start-sheet-body {
+    gap: 12px;
+  }
+  .cc-start-desc {
+    min-height: 0;
+  }
+  .cc-start-sheet-foot {
+    padding: 8px 16px 12px;
+  }
+  .cc-start.is-leaving .cc-start-actions {
+    transform: translateX(16px);
+  }
+}
+
+/* ── Tablets and desktop: a centred sheet, a bigger wordmark ──────────── */
+
+@media (min-width: 720px) and (min-height: 600px) {
+  .cc-start {
+    --mk: clamp(72px, 10vw, 112px);
+  }
+  .cc-start-actions {
+    max-width: 400px;
+  }
+  .cc-start-line {
+    font-size: 17px;
+  }
+  .cc-start-sheet {
+    top: 0;
+    bottom: 0;
+    height: fit-content;
+    margin: auto;
+    max-height: calc(100% - 48px);
+    padding-bottom: 0;
+  }
+}
+
+/* ── Reduced motion: no drift (JS), no flicker, no glitch, instant fades ── */
+
+@media (prefers-reduced-motion: reduce) {
+  .cc-start,
+  .cc-start *,
+  .cc-start *::before,
+  .cc-start *::after,
+  .cc-ui.cc-start-reveal > * {
+    animation: none !important;
+    transition: none !important;
+  }
+}

@@ -41,7 +41,8 @@ const PANEL_INTERVAL = 0.3;
 const COMPACT_QUERY = '(max-width: 639px)';
 
 export class UI {
-  private readonly ctx: UIContext;
+  /** Public for the start screen (src/ui/start): shared dialogs, menu views and the story hold. */
+  readonly ctx: UIContext;
   private readonly modals: Modals;
   private readonly hud: Hud;
   private readonly ticker: Ticker;
@@ -55,9 +56,9 @@ export class UI {
   private readonly budget: BudgetPanel;
   private readonly report: CityReport;
   private readonly news: NewsLog;
-  private readonly menu: Menu;
+  readonly menu: Menu;
   private readonly confirm: ConfirmDialog;
-  private readonly story: StoryUI;
+  readonly story: StoryUI;
 
   private hudAcc = 0;
   private panelAcc = 0;

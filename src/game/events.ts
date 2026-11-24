@@ -1,4 +1,4 @@
-import type { NewsItem, Selection, ToolId, OverlayId } from './types';
+import type { MomentId, NewsItem, Selection, ToolId, OverlayId } from './types';
 import type { EndingId, FactionId, Unlockable } from './story/types';
 
 /** Typed event map for the game-wide bus. */
@@ -8,8 +8,11 @@ export interface GameEventMap {
   /** Sim speed changed (0..3). */
   speed: number;
   overlay: OverlayId;
-  /** Short-lived on-screen message. */
-  toast: { text: string; kind: 'info' | 'error' | 'good' };
+  /**
+   * Short-lived on-screen message. `action` (expansion, §7.7 / §5.3) adds a 44 px button for
+   * `sec` seconds: 'undo' calls game.undo(), 'watch' centres the camera on the launch pad.
+   */
+  toast: { text: string; kind: 'info' | 'error' | 'good'; action?: ToastAction };
   /** New ticker item (already appended to world.news). */
   news: NewsItem;
   /** Stats/budget/funds changed (fired at most once per sim tick and after actions). */
@@ -58,7 +61,25 @@ export interface GameEventMap {
   vertical: void;
   /** The StoryView changed for any other reason (markDirty): re-read game.story.view(). Step 0 addition. */
   story: void;
+
+  // ── Expansion (docs/EXPANSION.md §2.9). No new sfx kinds. ──
+  /** Game: a visible Spaceport launch starts now (render, audio, news). `id` = the spaceport's building id. */
+  liftoff: { id: number; first: boolean };
+  /** Sim → UI first-use tips (§7.6), shown once per device. */
+  hint: { id: HintId };
+  /** Once-per-city banner (§5.4): ports opening and the first launch. Recorded in world.moments. */
+  moment: { id: MomentId; title: string; sub: string };
 }
+
+/** Button on a toast (EXPANSION §2.9): label shown for `sec` seconds. */
+export interface ToastAction {
+  id: 'undo' | 'watch';
+  label: string;
+  sec: number;
+}
+
+/** Sim-side first-use tip ids (EXPANSION §7.6). */
+export type HintId = 'wealth' | 'ramps' | 'noise';
 
 type Handler<T> = (payload: T) => void;
 

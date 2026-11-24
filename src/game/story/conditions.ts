@@ -196,6 +196,8 @@ const STAT_METRICS = new Set<string>([
   'jobs.com', 'jobs.ind', 'stacks.stage2', 'stacks.stage3', 'crowns', 'skybridges', 'rail.tiles', 'rail.maxStations',
   'turf.share', 'standing.patron', 'standing.rival', 'power.gangs', 'friendlyCount', 'security.avg', 'trace', 'logs',
   'chapter', 'daysInChapter', 'gangActions', 'daysSinceCrackdown',
+  // Expansion (docs/EXPANSION.md §2.2).
+  'wealth.high', 'wealth.low', 'roads.highway', 'roads.alley', 'skyway.tiles',
 ]);
 const CROWN_KEYS: readonly CrownId[] = ['foundry', 'glare', 'nest', 'commons'];
 
@@ -349,6 +351,19 @@ export function metric(world: World, m: Metric | string): number {
       return st.gangActions;
     case 'daysSinceCrackdown':
       return Math.min(99999, world.tick - st.lastCrackdownTick);
+    // Expansion (docs/EXPANSION.md §2.2): shares of developed zone tiles (all zones) by tier, road counts.
+    case 'wealth.high':
+    case 'wealth.low': {
+      const wt = s.wealth;
+      const total = wt[0] + wt[1] + wt[2];
+      return (m === 'wealth.high' ? wt[2] : wt[0]) / Math.max(1, total);
+    }
+    case 'roads.highway':
+      return s.roads.highway;
+    case 'roads.alley':
+      return s.roads.alley;
+    case 'skyway.tiles':
+      return s.roads.skyway;
   }
   const dot = m.indexOf('.');
   if (dot < 0) return 0;
@@ -504,7 +519,11 @@ export function metricsIn(c: Condition | undefined | null, out: Set<string> = ne
 /** Metric display format: share-type metrics (0..1) as %, power as % of 100, margins as ×. */
 export type MetricFmt = 'int' | 'pct' | 'x' | 'share';
 
-const PCT_METRICS = new Set<string>(['unemployment', 'avgCrime', 'avgPollution', 'avgLandValue', 'avgTraffic', 'turf.share', 'security.avg']);
+const PCT_METRICS = new Set<string>([
+  'unemployment', 'avgCrime', 'avgPollution', 'avgLandValue', 'avgTraffic', 'turf.share', 'security.avg',
+  // Expansion shares.
+  'wealth.high', 'wealth.low',
+]);
 
 /** The natural display format of a metric. */
 export function metricFmt(m: string): MetricFmt {

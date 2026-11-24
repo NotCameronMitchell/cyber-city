@@ -20,6 +20,8 @@
 // trigger the one-shot surfaces (title card, banner, Charter Night, ending).
 // Reading budget (§8.11): nothing here queues extra modals; a banner that
 // arrives under a card waits until the card closes, then shows once.
+// Start screen hold (setHold): while the title is up nothing here syncs or
+// shows; a chapter title, the resume toast and toasts wait for the release.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import type { StoryView } from '../../game/story/types';
@@ -27,7 +29,7 @@ import type { UIContext } from '../context';
 import { h, setClass } from '../dom';
 import { clock } from '../format';
 import { CharterNight } from './charterNight';
-import { ChapterTitle } from './chapterTitle';
+import { ChapterTitle, type TitleData } from './chapterTitle';
 import { Comms } from './comms';
 import { EndingScreen } from './endingScreen';
 import { FactionSheet } from './factionSheet';
@@ -65,6 +67,13 @@ export class StoryUI {
   /** Real seconds since the last banner for the waiting story message (gentle re-cue). */
   private cueAge = 0;
   private offs: (() => void)[] = [];
+  /** The start screen is up (setHold): every story surface waits. */
+  private held = false;
+  /** The resume toast came due while held: it runs once the hold ends. */
+  private resumeOwed = false;
+  /** A chapter title that came due (or was showing) while held: it shows once the hold ends. */
+  private titleOwed: TitleData | null = null;
+  private titleData: TitleData | null = null;
   /** Called when a surface opens or closes (the root collapses the coach / tray). */
   onChange: (() => void) | null = null;
   /** Called whenever the StoryView changes (the root re-checks story-gated tool groups). */
@@ -176,18 +185,16 @@ export class StoryUI {
     on('chapter', (c) => {
       const v = this.view();
       const t = v.titleCard;
-      this.closeSheets();
-      this.title.show({
+      const d: TitleData = {
         numeral: t?.numeral || v.chapter.numeral,
         title: t?.title || c.title || v.chapter.title,
         epigraph: t?.epigraph ?? '',
         question: t?.question || v.chapter.question,
         coherence: t?.coherence ?? v.coherence,
         summary: t?.summary ?? v.chapter.summary ?? '',
-      });
-      // One modal at a time: the chapter's first card waits until the title closes.
-      this.ctx.game.story.holdTitle(true);
-      this.layout();
+      };
+      if (this.held) this.titleOwed = d;
+      else this.showTitle(d);
     });
     on('incoming', (e) => this.queueBanner(e.id));
     on('charterNight', () => {
@@ -200,7 +207,47 @@ export class StoryUI {
     on('world', () => this.onWorld());
   }
 
+  private showTitle(d: TitleData): void {
+    this.titleData = d;
+    this.closeSheets();
+    this.title.show(d);
+    // One modal at a time: the chapter's first card waits until the title closes.
+    this.ctx.game.story.holdTitle(true);
+    this.layout();
+  }
+
+  /**
+   * Start screen hold. On: sheets and the banner close, a chapter title that is up
+   * steps back (it shows again afterwards), and nothing syncs, opens or toasts.
+   * Off: everything picks up where boot would have (title card first, then cards).
+   */
+  setHold(on: boolean): void {
+    if (this.held === on) return;
+    this.held = on;
+    if (on) {
+      this.closeSheets();
+      this.banner.hide(true);
+      if (this.title.isOpen && this.titleData) {
+        this.titleOwed = this.titleData;
+        this.title.hide();
+      }
+      this.layout();
+      return;
+    }
+    this.lastView = null; // re-sync the card and rail on the next frame
+    const d = this.titleOwed;
+    this.titleOwed = null;
+    if (d) this.showTitle(d);
+    else this.layout();
+    if (this.resumeOwed) {
+      this.resumeOwed = false;
+      window.clearTimeout(this.resumeTimer);
+      this.resumeTimer = window.setTimeout(() => this.resumeToast(), 1600);
+    }
+  }
+
   private onWorld(): void {
+    this.titleOwed = null;
     this.title.hide();
     this.card.hide();
     this.banner.hide(true);
@@ -220,6 +267,10 @@ export class StoryUI {
 
   /** On load: pulse the goal chip and toast where the chapter stands (§8.10). */
   private resumeToast(): void {
+    if (this.held) {
+      this.resumeOwed = true;
+      return;
+    }
     const v = this.view();
     // Never over a card, sheet, title, Charter Night or the ending screen (they carry their own context).
     if (!StoryRail.hasStory(v) || this.busy) return;
@@ -253,7 +304,7 @@ export class StoryUI {
   }
 
   private queueBanner(id: string): void {
-    if (this.card.isOpen || this.title.isOpen || this.sheet === 'comms' || this.charter.isOpen || this.ending.isOpen) {
+    if (this.held || this.card.isOpen || this.title.isOpen || this.sheet === 'comms' || this.charter.isOpen || this.ending.isOpen) {
       this.bannerWaiting = id;
       return;
     }
@@ -331,7 +382,7 @@ export class StoryUI {
 
   /** True while any story surface covers the map. */
   get busy(): boolean {
-    return this.card.isOpen || this.sheet !== null || this.title.isOpen || this.charter.isOpen || this.ending.isOpen;
+    return this.held || this.card.isOpen || this.sheet !== null || this.title.isOpen || this.charter.isOpen || this.ending.isOpen;
   }
 
   /** True while a full-screen story surface is up (chapter title, Charter Night, ending). */
@@ -344,10 +395,11 @@ export class StoryUI {
    * (a toast printed over the card's header hides who is speaking).
    */
   get holdsToasts(): boolean {
-    return this.fullscreen || this.card.isOpen;
+    return this.held || this.fullscreen || this.card.isOpen;
   }
 
   update(dt: number): void {
+    if (this.held) return;
     const story = this.ctx.game.story;
     const v = story.view();
     if (v !== this.lastView || story !== this.lastStory) {
@@ -436,6 +488,7 @@ export class StoryUI {
 
   /** Esc: title → charter confirm/preview → sheet → Later on a faction card. Returns whether something closed. */
   closeTop(): boolean {
+    if (this.held) return false;
     if (this.title.isOpen) {
       this.title.hide();
       return true;

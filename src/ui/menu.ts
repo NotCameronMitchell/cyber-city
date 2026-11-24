@@ -1,7 +1,9 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // Main menu: resume / save / load / new city plus the Settings, How to Play
 // and About pages (sub-views of the same dialog). Opening the menu pauses the
-// simulation; closing it resumes at the previous speed.
+// simulation; closing it resumes at the previous speed. The start screen opens
+// the sub-views on their own (open(view, true): Back closes) and sets
+// onMainMenu, which adds the "Main menu" row.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { BUILDINGS, ZONES } from '../game/config';
@@ -33,7 +35,7 @@ const TOGGLES: Toggle[] = [
 const TITLES: Record<View, string> = { main: '', settings: 'Settings', help: 'How to play', about: 'About' };
 
 /** Story pace (docs/PACING.md): label and the one line that explains the selected pace. */
-const PACE: Record<StoryPace, { label: string; desc: string }> = {
+export const PACE: Record<StoryPace, { label: string; desc: string }> = {
   relaxed: { label: 'Relaxed', desc: 'Most time to build: a chapter every 20+ min, few messages' },
   normal: { label: 'Normal', desc: 'A chapter about every 15 min, a message every few minutes' },
   brisk: { label: 'Brisk', desc: 'The original pace: a chapter every 10 min, frequent messages' },
@@ -52,8 +54,13 @@ export class Menu {
   private readonly quality: HTMLButtonElement[] = [];
   private readonly paces: HTMLButtonElement[] = [];
   private readonly paceDesc: HTMLElement;
+  private readonly mainMenuBtn: HTMLButtonElement;
   private view: View = 'main';
   private resumeSpeed = 0;
+  /** Opened straight on a sub-view from the start screen: Back closes the dialog. */
+  private solo = false;
+  /** Set by the start screen: the "Main menu" row saves, pauses and shows the title. */
+  onMainMenu: (() => void) | null = null;
 
   constructor(private readonly ctx: UIContext) {
     const d = buildDialog({ id: 'cc-menu', title: '', icon: icon('logo') });
@@ -76,6 +83,7 @@ export class Menu {
     this.loadBtn = item('load', 'load', 'Load saved city', 'Return to your last save');
     this.restoreBtn = item('restore', 'back', 'Restore previous city', 'The city New City replaced');
     this.restoreDesc = this.restoreBtn.querySelector('.cc-menu-text span') as HTMLElement;
+    this.mainMenuBtn = item('mainmenu', 'logo', 'Main menu', 'Save and go to the title screen');
     const resume = item('resume', 'play', 'Resume', 'Back to the streets', 'is-primary');
     resume.setAttribute('data-autofocus', '');
     const main = h(
@@ -86,6 +94,7 @@ export class Menu {
       this.loadBtn,
       item('new', 'newCity', 'New city', 'Fresh map, fresh charter'),
       this.restoreBtn,
+      this.mainMenuBtn,
       h('div', { class: 'cc-menu-sep' }),
       item('view:settings', 'gear', 'Settings', 'Story pace, sound, weather, quality'),
       item('view:help', 'help', 'How to play', 'Roads, zones, power, the story'),
@@ -205,8 +214,10 @@ export class Menu {
     return this.ctx.modals.isOpen(this.el);
   }
 
-  open(view: View = 'main'): void {
+  /** `solo`: from the start screen, on one sub-view only (Back and ✕ return to the title). */
+  open(view: View = 'main', solo = false): void {
     const { game, modals } = this.ctx;
+    this.solo = solo && view !== 'main';
     if (!this.isOpen) {
       this.resumeSpeed = game.speed;
       if (game.speed > 0) game.setSpeed(0);
@@ -239,8 +250,9 @@ export class Menu {
       setText(this.sub, `${w.dateLabel()} · ${groupInt(w.stats.population)} residents · Paused`);
     } else {
       setText(this.title, TITLES[this.view]);
-      setText(this.sub, w.cityName);
+      setText(this.sub, this.solo ? '' : w.cityName);
     }
+    setHidden(this.mainMenuBtn, !this.onMainMenu);
     setHidden(this.loadBtn, !game.hasSave());
     // WP-C's backup slot: guarded so an older Game without it simply hides the row.
     const g = game as typeof game & { hasPreviousSave?: () => boolean; previousSaveInfo?: () => { cityName: string; maxPopulation: number } | null };
@@ -295,8 +307,15 @@ export class Menu {
     }
     const act = closestData(t, 'act', this.el)?.dataset.act;
     if (!act) return;
-    if (act === 'back') this.show('main');
-    else if (act.startsWith('view:')) this.show(act.slice(5) as View);
+    if (act === 'back') {
+      if (this.solo) modals.close(this.el);
+      else this.show('main');
+    } else if (act === 'mainmenu') {
+      const go = this.onMainMenu;
+      this.resumeSpeed = 0; // the start screen holds the game; Continue resumes at 1×
+      modals.closeAll();
+      go?.();
+    } else if (act.startsWith('view:')) this.show(act.slice(5) as View);
     else if (act === 'resume') modals.close(this.el);
     else if (act === 'save') {
       const ok = game.save();

@@ -65,6 +65,12 @@ const PLAIN_METRICS = [
   'daysInChapter',
   'gangActions',
   'daysSinceCrackdown',
+  // Expansion (docs/EXPANSION.md §2.2).
+  'wealth.high',
+  'wealth.low',
+  'roads.highway',
+  'roads.alley',
+  'skyway.tiles',
 ] as const satisfies readonly PlainMetric[];
 /** Compile-time: every non-templated Metric is listed. */
 export type PlainMetricsComplete = Complete<Exclude<PlainMetric, (typeof PLAIN_METRICS)[number]>>;
@@ -144,6 +150,10 @@ const SPOT_RULE_LIST = [
   'seam',
   'skybridge',
   'random',
+  // Expansion (docs/EXPANSION.md §2.2): WP-6 implements them in effects.ts (spotAvailable / findSpot).
+  'highway',
+  'alley',
+  'shore',
 ] as const satisfies readonly SpotRule[];
 export type SpotRulesComplete = Complete<Exclude<SpotRule, (typeof SPOT_RULE_LIST)[number]>>;
 export const SPOT_RULES_COMPLETE: SpotRulesComplete = true;

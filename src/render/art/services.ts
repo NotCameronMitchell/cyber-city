@@ -53,6 +53,11 @@ export const SERVICE_PALS: Record<BuildingType, ArtPal> = {
   roost: pal([201, 162, 255], NEON.violet, [180, 140, 255], 0.3, 0.5),
   commons: pal([207, 227, 255], NEON.green, [180, 210, 255], 0.5, 0.3),
   memorial: pal([143, 227, 255], [255, 243, 196], [120, 210, 255], 0.6, 0.2),
+  // Expansion placeholders (docs/EXPANSION.md §11 Step 0); WP-4 replaces them with real art.
+  academy: pal([255, 208, 160], NEON.amber, [240, 190, 140], 0.5, 0.3),
+  seaport: pal([56, 200, 255], NEON.amber, [40, 170, 230], 0.4, 0.4),
+  airport: pal([233, 240, 255], NEON.cyan, [200, 215, 255], 0.3, 0.5),
+  spaceport: pal([255, 143, 107], NEON.amber, [240, 120, 90], 0.4, 0.4),
 };
 
 /** Red warning light that blinks when the building is offline / unpowered. */
@@ -521,5 +526,10 @@ export const SERVICE_RECIPES: Record<BuildingType, Recipe> = {
   roost: datahub,
   commons: clinic,
   memorial: plaza,
+  // Expansion placeholders (Step 0): existing recipes until WP-4 paints the real ones.
+  academy: clinic,
+  seaport: precinct,
+  airport: arcology,
+  spaceport: reactor,
 };
 

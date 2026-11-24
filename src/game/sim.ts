@@ -30,6 +30,7 @@ import { FieldSystem } from './sim/fields';
 import { SimGrid } from './sim/grid';
 import { GrowthSystem } from './sim/growth';
 import { IncidentSystem } from './sim/incidents';
+import { PortSystem, type PortView } from './sim/ports';
 import { PowerGrid } from './sim/power';
 import { DEMAND_SMOOTH, FIELD_STAGGER } from './sim/tuning';
 
@@ -51,6 +52,8 @@ export class Simulation {
   private readonly growth = new GrowthSystem();
   private readonly incidents = new IncidentSystem();
   private readonly advisor = new Advisor();
+  /** Ports (EXPANSION §5; Step 0 stub, WP-1 fills it). Read through `ports`. */
+  private readonly portSystem: PortSystem;
   /** Smoothed demand (what the UI shows and growth reacts to). */
   private readonly demand: Demand = { res: 0, com: 0, ind: 0 };
   private readonly target: Demand = { res: 0, com: 0, ind: 0 };
@@ -60,6 +63,21 @@ export class Simulation {
   constructor(world: World) {
     this.world = world;
     this.grid = new SimGrid(world);
+    this.portSystem = new PortSystem(world);
+  }
+
+  /** Read-only port numbers (visitors, trade, demand adds, spaceport progress; EXPANSION §2.7). */
+  get ports(): PortView {
+    return this.portSystem;
+  }
+
+  /**
+   * Old saves settle their wealth tiers once (EXPANSION §4.3): Game calls this exactly once,
+   * after the first recomputeAll of a world whose loadedVersion < 3, then recomputeAll again.
+   * Returns the number of tier steps taken. **Step 0 stub** (returns 0); WP-1 fills it.
+   */
+  settleWealth(): number {
+    return 0;
   }
 
   /** Advance one day. */

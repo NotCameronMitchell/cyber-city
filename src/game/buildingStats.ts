@@ -4,6 +4,11 @@
 // instead of BUILDINGS[b.type] so Stratablocks count only their complete
 // stages. For every other type the result equals the BUILDINGS entry.
 // Owner: WP-B.
+//
+// Expansion (docs/EXPANSION.md §2.8, §5.3): jobs split by `def.jobsInd`
+// (default: all Fab for power plants, none otherwise), and a non-stack
+// building with buildDays > 0 (the Spaceport under construction) has no
+// residents, jobs, trips, power, upkeep, effect or pollution yet.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { BUILDINGS, CROWNS, STACK_INTERNAL, STACK_STAGES } from './config';
@@ -51,12 +56,28 @@ export function blankStats(): BuildingStats {
 export function buildingStats(b: Building, out: BuildingStats = blankStats()): BuildingStats {
   const def = BUILDINGS[b.type];
   if (b.type !== 'stack') {
+    out.tall = !!def?.tall;
+    out.station = !!def?.station;
+    if ((b.buildDays ?? 0) > 0) {
+      // Under construction (Spaceport, §5.3): nothing counts until it is finished.
+      out.residents = 0;
+      out.jobsCom = 0;
+      out.jobsInd = 0;
+      out.powerUse = 0;
+      out.powerSupply = 0;
+      out.upkeep = 0;
+      out.effect = null;
+      out.radius = 0;
+      out.pollution = 0;
+      out.trips = 0;
+      return out;
+    }
     const jobs = def?.jobs ?? 0;
     const residents = def?.residents ?? 0;
-    const ind = def?.category === 'power';
+    const ind = Math.max(0, Math.min(jobs, def?.jobsInd ?? (def?.category === 'power' ? jobs : 0)));
     out.residents = residents;
-    out.jobsCom = ind ? 0 : jobs;
-    out.jobsInd = ind ? jobs : 0;
+    out.jobsCom = jobs - ind;
+    out.jobsInd = ind;
     out.powerUse = def?.powerUse ?? 0;
     out.powerSupply = def?.powerSupply ?? 0;
     out.upkeep = def?.upkeep ?? 0;
@@ -64,8 +85,6 @@ export function buildingStats(b: Building, out: BuildingStats = blankStats()): B
     out.radius = def?.radius ?? 0;
     out.pollution = def?.pollution ?? 0;
     out.trips = (jobs + residents) * BUILDING_TRIPS;
-    out.tall = !!def?.tall;
-    out.station = !!def?.station;
     return out;
   }
 

@@ -245,6 +245,30 @@ const CASES: Record<string, () => void> = {
     w.story.lastCrackdownTick = 250;
     expect(metric(w, 'daysSinceCrackdown')).toBe(150);
   },
+  // Expansion metrics (docs/EXPANSION.md §2.2): shares of developed tiles by tier, road and skyway counts.
+  'wealth.high': () => {
+    expect(metric(w, 'wealth.high')).toBe(0); // no developed tiles: max(1, Σ) guards the division
+    w.stats.wealth = [60, 25, 15];
+    expect(metric(w, 'wealth.high')).toBeCloseTo(0.15, 6);
+    expect(metricFmt('wealth.high')).toBe('pct');
+  },
+  'wealth.low': () => {
+    w.stats.wealth = [60, 25, 15];
+    expect(metric(w, 'wealth.low')).toBeCloseTo(0.6, 6);
+    expect(metricFmt('wealth.low')).toBe('pct');
+  },
+  'roads.highway': () => {
+    w.stats.roads.highway = 42;
+    expect(metric(w, 'roads.highway')).toBe(42);
+  },
+  'roads.alley': () => {
+    w.stats.roads.alley = 31;
+    expect(metric(w, 'roads.alley')).toBe(31);
+  },
+  'skyway.tiles': () => {
+    w.stats.roads.skyway = 20;
+    expect(metric(w, 'skyway.tiles')).toBe(20);
+  },
   'count.*': () => {
     w.addBuilding('plaza', 5, 5);
     w.addBuilding('plaza', 8, 5);

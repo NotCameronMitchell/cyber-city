@@ -57,7 +57,7 @@ describe('save compatibility', () => {
     act(w, 'road', { x: 20, y: 30 }, { x: 40, y: 30 });
     const v2 = JSON.parse(JSON.stringify(w.serialize())) as SaveData;
     expect(v2.version).toBe(SAVE_VERSION);
-    expect(SAVE_VERSION).toBe(2);
+    expect(SAVE_VERSION).toBe(3); // expansion (docs/EXPANSION.md §2.5)
 
     const v1 = { ...v2, version: 1 } as SaveData;
     delete v1.story;
@@ -66,7 +66,7 @@ describe('save compatibility', () => {
     expect(loaded.story.chapter).toBe(1);
     expect(loaded.story.flags.migrated).toBe(true);
 
-    expect(() => World.deserialize({ ...v2, version: 3 })).toThrow();
+    expect(() => World.deserialize({ ...v2, version: 4 })).toThrow();
   });
 
   it('keeps Stratablock stage fields through a round trip', () => {
