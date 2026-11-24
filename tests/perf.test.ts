@@ -29,7 +29,7 @@ describe('performance', () => {
   it('step() and recomputeAll() stay inside their budgets on a fully built map', () => {
     const w = fullyBuiltWorld();
     const sim = makeSim(w, true);
-    expect(w.stats.population).toBeGreaterThan(20000);
+    expect(w.stats.population).toBeGreaterThan(200_000);
     expect(w.buildings.size).toBeGreaterThan(30);
     const { stepMs, recomputeMs } = measure(sim);
     console.info(`[perf] step ${stepMs.toFixed(3)} ms · recomputeAll ${recomputeMs.toFixed(3)} ms`);

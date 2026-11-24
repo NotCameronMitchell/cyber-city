@@ -102,7 +102,7 @@ describe('monthly budget', () => {
 
 describe('milestones', () => {
   it('awards each population milestone exactly once', () => {
-    const w = hamlet(10); // 140 residents > first milestone
+    const w = hamlet(10); // 1,400 residents > first milestone (1,000)
     const sim = makeSim(w);
     const fired: number[] = [];
     const sfx: string[] = [];
@@ -123,11 +123,11 @@ describe('milestones', () => {
   it('tracks the population high-water mark for unlocks', () => {
     const w = hamlet(10);
     const sim = makeSim(w);
-    expect(w.maxPopulation).toBe(140);
+    expect(w.maxPopulation).toBe(1400);
     for (let i = 0; i < 10; i++) w.clearTile(12 + i, 11);
     sim.recomputeAll();
     expect(w.stats.population).toBe(0);
-    expect(w.maxPopulation).toBe(140);
+    expect(w.maxPopulation).toBe(1400);
   });
 
   it('does not grant milestones from recomputeAll', () => {

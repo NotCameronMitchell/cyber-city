@@ -566,7 +566,7 @@ describe('inspect (§7.4)', () => {
     const w = g.world;
     const air = w.addBuilding('airport', 10, 10)!;
     let info = fits(g, 10, 10);
-    expect(Object.fromEntries(info.rows)).toMatchObject({ Business: `+${AIRPORT.comJobs} jobs`, Noise: '10 tiles' });
+    expect(Object.fromEntries(info.rows)).toMatchObject({ Business: `+${AIRPORT.comJobs.toLocaleString('en-US')} jobs`, Noise: '10 tiles' });
     expect(info.notes?.[0].text).toBe('Shops 8-16 tiles out do better business');
     const sp = w.addBuilding('spaceport', 30, 30)!;
     sp.buildDays = 120;
@@ -594,7 +594,7 @@ describe('inspect (§7.4)', () => {
     expect(fits(g, 30, 30).rows[0][0]).toBe('Next launch');
     const sea = w.addBuilding('seaport', 50, 10)!;
     sea.facing = 2;
-    expect(Object.fromEntries(fits(g, 50, 10).rows)).toMatchObject({ Trade: '+0/mo', Exports: '+260 jobs', Noise: '6 tiles' });
+    expect(Object.fromEntries(fits(g, 50, 10).rows)).toMatchObject({ Trade: '+0/mo', Exports: '+2,600 jobs', Noise: '6 tiles' });
     w.addBuilding('academy', 50, 50);
     expect(fits(g, 50, 50).notes?.[0].text).toBe('Lifts nearby blocks toward $$ and $$$');
   });

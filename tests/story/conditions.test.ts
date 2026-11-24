@@ -559,13 +559,13 @@ describe('standing and tiers (§2.1)', () => {
 
   it('power weights follow §2.4 and shares sum to 100', () => {
     w.stats.approval = 50;
-    w.stats.jobsInd = 800;
+    w.stats.jobsInd = 8000; // ×10 units: the Fab-jobs term reads 8000 / 80 = v3's 800 / 8
     w.addBuilding('reactor', 4, 4);
     w.story.flags.honestTie = true;
     w.story.flags.patron = 'basalt';
     w.story.flags.branded = 2;
     expect(powerWeight(w, 'board')).toBe(3 * 50 + 100);
-    expect(powerWeight(w, 'basalt')).toBe(800 / 8 + 60 + 2 * 80 + 300);
+    expect(powerWeight(w, 'basalt')).toBe(8000 / 80 + 60 + 2 * 80 + 300);
     w.turf.stats.tiles = { undertow: 10, kites: 0 };
     w.story.flags.oneTide = 'undertow';
     expect(powerWeight(w, 'undertow')).toBe(20 + 150);

@@ -17,7 +17,7 @@ describe('save / load', () => {
       mayor.turn();
     }
     sim.recomputeAll();
-    expect(w.stats.population).toBeGreaterThan(300);
+    expect(w.stats.population).toBeGreaterThan(3000);
 
     const data = JSON.parse(JSON.stringify(w.serialize())) as SaveData;
     const loaded = World.deserialize(data);

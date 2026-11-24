@@ -454,7 +454,7 @@ export class MilestoneBanner {
       setText(this.kicker, 'Milestone reached');
       this.sub.innerHTML =
         `<span>${groupInt(m.pop)} residents</span>` +
-        (def ? `<i class="cc-banner-dot">·</i><span>Charter grant <b>+${credits(def.grant)}</b></span>` : '');
+        (def ? `<i class="cc-banner-dot">·</i><span>Board bonus <b>+${credits(def.grant)}</b></span>` : '');
       const unlocked = bannerUnlocks(prevPop, m.pop);
       setText(this.unlocks, unlocked.length ? `Now available: ${unlocked.join(', ')}` : '');
       setHidden(this.unlocks, unlocked.length === 0);

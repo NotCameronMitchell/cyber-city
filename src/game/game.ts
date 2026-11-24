@@ -67,7 +67,7 @@ import {
   type ToolId,
 } from './types';
 import { TIER_LABEL, wealthInfo, zoneCapacity } from './wealth';
-import { World } from './world';
+import { World, savePopScale } from './world';
 
 export const DEFAULT_SETTINGS: Settings = {
   sound: true,
@@ -1077,7 +1077,9 @@ export class Game {
   previousSaveInfo(): { cityName: string; maxPopulation: number; savedAt: number } | null {
     const data = this.readSave(PREV_SAVE_KEY);
     if (!data) return null;
-    return { cityName: String(data.cityName ?? ''), maxPopulation: data.maxPopulation | 0, savedAt: Number(data.savedAt) || 0 };
+    // A v3 backup counts v3 people: show it in today's units, as loading it would (MEGACITY §4.4).
+    const peak = Math.max(0, Math.floor(Number(data.maxPopulation) || 0)) * savePopScale(data);
+    return { cityName: String(data.cityName ?? ''), maxPopulation: Math.round(peak), savedAt: Number(data.savedAt) || 0 };
   }
 
   /**
@@ -1226,7 +1228,7 @@ export class Game {
 
   private welcome() {
     this.world.addNews(`Charter granted: ${this.world.cityName} is open for settlers.`, 'good');
-    this.world.addNews('Lay roads, zone Hab Blocks near Fab Districts, and power it all up.', 'info');
+    this.world.addNews('Lay roads, zone Hab Blocks near Fab Yards, and power it all up.', 'info');
   }
 
   // ── Inspect info ──────────────────────────────────────────────────────────
@@ -1261,8 +1263,9 @@ export class Game {
       if (b.type === 'stack') rows.push(['Stage', this.stageLabel(b)]);
       if (s.effect) rows.push(['Radius', `${s.radius} tiles`]);
       const jobs = s.jobsCom + s.jobsInd;
-      if (jobs || def.jobs) rows.push(['Jobs', `${jobs}`]);
-      if (s.residents || def.residents) rows.push(['Residents', `${s.residents}`]);
+      // Head counts in ×10 units read grouped ("30,000", MEGACITY §4.6).
+      if (jobs || def.jobs) rows.push(['Jobs', num(jobs)]);
+      if (s.residents || def.residents) rows.push(['Residents', num(s.residents)]);
       rows.push(['Upkeep', `${s.upkeep} ${CURRENCY}/mo`]);
       if (b.offline > 0) rows.push(['Status', `Offline ${b.offline}d`]);
       this.portRows(b, rows, notes);
@@ -1280,7 +1283,7 @@ export class Game {
       const rows: [string, string][] = [
         ['Status', t.abandoned ? 'ABANDONED' : levelName],
         ['Wealth', wi.lot ? `opens ${TIER_LABEL[wi.potential]}` : `${TIER_LABEL[wi.tier]}${arrow} ${pct(wi.score)}`],
-        [t.zone === ZoneType.Residential ? 'Residents' : 'Jobs', t.abandoned ? '0' : `${cap}`],
+        [t.zone === ZoneType.Residential ? 'Residents' : 'Jobs', t.abandoned ? '0' : num(cap)],
         ['Power', t.level === 0 ? '—' : t.powered ? 'Online' : 'NO POWER'],
         ['Road access', access ? 'Yes' : highwayOnly ? 'none' : 'NO ROAD'],
         ...common,

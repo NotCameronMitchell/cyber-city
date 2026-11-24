@@ -350,7 +350,7 @@ export class Dock {
         if (def.powerSupply) meta.push(`${def.powerSupply} MW`);
         else if (def.radius) meta.push(`r${def.radius}`);
         if (def.residents) meta.push(`${abbr(def.residents)} homes`);
-        else if (def.jobs >= 100) meta.push(`${abbr(def.jobs)} jobs`);
+        else if (def.jobs >= 1000) meta.push(`${abbr(def.jobs)} jobs`); // ×10 units (MEGACITY §4.4): v3's 100
       }
       const el = h(
         'button',

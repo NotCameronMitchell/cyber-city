@@ -37,16 +37,16 @@ describe('balance', () => {
     expect(spent).toBeLessThan(4000);
     run(sim, DAYS_PER_MONTH * 4);
     const last = w.budget.history.at(-1)!;
-    expect(w.stats.population).toBeGreaterThan(150);
+    expect(w.stats.population).toBeGreaterThan(1500); // ×10 units (MEGACITY §4)
     expect(last).toBeGreaterThan(0);
     // "Mildly": the city is not a money printer.
     expect(last).toBeLessThan(400);
   });
 
-  it('five scripted years on a flat map: grows past 1,000 without going broke', () => {
+  it('five scripted years on a flat map: grows past 10,000 without going broke', () => {
     const w = flatWorld(2091);
     const { mayor } = playthrough(w, 5, true);
-    expect(w.stats.population).toBeGreaterThan(1000);
+    expect(w.stats.population).toBeGreaterThan(10000);
     expect(mayor.lowestFunds).toBeGreaterThan(-2000);
     expect(w.milestones.length).toBeGreaterThanOrEqual(3);
     // A healthy city mixes all three zones and some density.
@@ -61,7 +61,7 @@ describe('balance', () => {
     for (const seed of [42, 1337]) {
       const w = World.generate(seed, 'Balance Bay');
       const { mayor } = playthrough(w, 5, true);
-      expect(w.stats.population).toBeGreaterThan(1000);
+      expect(w.stats.population).toBeGreaterThan(10000);
       expect(mayor.lowestFunds).toBeGreaterThan(-2000);
       expect(Number.isFinite(w.funds)).toBe(true);
       for (const v of w.fields.landValue) expect(v >= 0 && v <= 1).toBe(true);

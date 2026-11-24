@@ -206,16 +206,16 @@ export function expansionFixture(w: World, opts: FixtureOptions = {}): Expansion
 export interface ExpansionMayorOptions {
   /** M2: academies, plazas, clinics and precincts as they unlock, well beyond the plain mayor. */
   richServices?: boolean;
-  /** M3: widen the two central cross streets into avenues from 1,500 residents. */
+  /** M3: widen the two central cross streets into avenues from 15,000 residents. */
   avenues?: boolean;
-  /** M4: a highway ring on the grid with 4 on-ramps from 5,000 residents (`rampless` leaves the ramps out). */
+  /** M4: a highway ring on the grid with 4 on-ramps from 50,000 residents (`rampless` leaves the ramps out). */
   highwayRing?: boolean | 'rampless';
   /**
-   * M5: back alleys behind homes (from 1,200 residents): the street between two residential
+   * M5: back alleys behind homes (from 12,000 residents): the street between two residential
    * blocks becomes an alley (intersections stay streets, so every lot keeps a street within 3).
    */
   alleys?: boolean;
-  /** M6: a Seaport on the first valid shore site from 5,000 residents. */
+  /** M6: a Seaport on the first valid shore site from 50,000 residents. */
   seaport?: boolean;
   /** M7: an Airport at the start of this year index (e.g. 3), on the first clear site by a road. */
   airport?: number;
@@ -223,8 +223,8 @@ export interface ExpansionMayorOptions {
   liftLocks?: { year: number; pop: number }[];
 }
 
-/** M2's service rates: one per this many residents (maglevPer 0 = none). Step 7 tunes them with §10.3. */
-export const RICH = { academyPer: 2500, plazaPer: 250, clinicPer: 2500, precinctPer: 3000, maglevPer: 0, reserve: 7000 };
+/** M2's service rates: one per this many residents (maglevPer 0 = none; ×10 units, MEGACITY §4). Step 7 tunes them with §10.3. */
+export const RICH = { academyPer: 25000, plazaPer: 2500, clinicPer: 25000, precinctPer: 30000, maglevPer: 0, reserve: 7000 };
 
 /** ScriptedMayor plus the §10.4 options. Call opening() once, then turn() monthly (like ScriptedMayor). */
 export class ExpansionMayor {
@@ -292,9 +292,9 @@ export class ExpansionMayor {
     const w = this.world;
     const want: [BuildingType, number, number][] = [];
     if (w.maxPopulation >= BUILDINGS.academy.unlockPop) want.push(['academy', 1 + Math.floor(pop / RICH.academyPer), RICH.reserve]);
-    if (pop >= 200) want.push(['plaza', Math.floor(pop / RICH.plazaPer), RICH.reserve]);
-    if (pop >= 400) want.push(['clinic', 1 + Math.floor(pop / RICH.clinicPer), RICH.reserve]);
-    if (pop >= 200) want.push(['precinct', 1 + Math.floor(pop / RICH.precinctPer), RICH.reserve]);
+    if (pop >= 2000) want.push(['plaza', Math.floor(pop / RICH.plazaPer), RICH.reserve]);
+    if (pop >= 4000) want.push(['clinic', 1 + Math.floor(pop / RICH.clinicPer), RICH.reserve]);
+    if (pop >= 2000) want.push(['precinct', 1 + Math.floor(pop / RICH.precinctPer), RICH.reserve]);
     if (RICH.maglevPer > 0 && w.maxPopulation >= BUILDINGS.maglev.unlockPop) want.push(['maglev', Math.floor(pop / RICH.maglevPer), RICH.reserve]);
     for (const [type, n, reserve] of want) if (this.count(type) < n) this.pack(type, reserve);
   }
@@ -327,10 +327,10 @@ export class ExpansionMayor {
     // for its own services at this population, take a new block; otherwise fill free cells first.
     const pop = w.stats.population;
     const parity =
-      (pop >= 300 ? Math.floor(pop / 400) : 0) +
-      (pop >= 500 ? Math.floor(pop / 3000) + 1 : 0) +
-      (pop >= 200 ? Math.floor(pop / 3500) + 1 : 0) +
-      (pop >= 1200 ? Math.floor(pop / 5000) + 1 : 0);
+      (pop >= 3000 ? Math.floor(pop / 4000) : 0) +
+      (pop >= 5000 ? Math.floor(pop / 30000) + 1 : 0) +
+      (pop >= 2000 ? Math.floor(pop / 35000) + 1 : 0) +
+      (pop >= 12000 ? Math.floor(pop / 50000) + 1 : 0);
     let serviceBlocks = 0;
     for (const b of this.base.blocks) if (b.used && b.building && !BUILDINGS[b.building].powerSupply) serviceBlocks++;
     // Where the service is missing: the block with the most zoned tiles in its radius whose
@@ -346,7 +346,7 @@ export class ExpansionMayor {
         for (let x = Math.max(0, cx - r); x <= Math.min(N - 1, cx + r); x++) {
           const i = y * N + x;
           const z = w.tiles[i].zone;
-          // Schools matter most to Fab Districts (their score weight is 3.5× a home's, §4.2).
+          // Schools matter most to Fab Yards (their score weight is 3.5× a home's, §4.2).
           if (z !== ZoneType.None && field[i] < 0.5) n += def.effect === 'education' && z === ZoneType.Industrial ? 3 : 1;
         }
       return n;
@@ -584,7 +584,7 @@ export function fabUpShare(r: ScenarioResult): number {
 }
 
 /** Play `years` with an ExpansionMayor and measure. Deterministic for the same world and options. */
-export function playScenario(world: World, years: number, opts: ExpansionMayorOptions = {}, goals: readonly number[] = [3000, 7000]): ScenarioResult & { sim: Simulation; mayor: ExpansionMayor } {
+export function playScenario(world: World, years: number, opts: ExpansionMayorOptions = {}, goals: readonly number[] = [30000, 70000]): ScenarioResult & { sim: Simulation; mayor: ExpansionMayor } {
   const sim = new Simulation(world);
   sim.options.events = false;
   sim.recomputeAll();

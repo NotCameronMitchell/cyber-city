@@ -1,4 +1,4 @@
-import { BUILDINGS, DEFAULT_TAX, ROAD_ACCESS_RANGE, SAVE_VERSION, SAVE_VERSIONS_SUPPORTED, SPACEPORT, START_FUNDS } from './config';
+import { BUILDINGS, DEFAULT_TAX, POP_SCALE, ROAD_ACCESS_RANGE, SAVE_VERSION, SAVE_VERSIONS_SUPPORTED, SPACEPORT, START_FUNDS } from './config';
 import { Emitter, type GameEventMap } from './events';
 import { shoreFacing } from './ports';
 import { Rng, fbm, hash2 } from './rng';
@@ -135,6 +135,22 @@ function blankTile(): Tile {
     roadKind: RoadKind.Street,
     wealth: 0,
   };
+}
+
+/** A stored head count as a whole number ≥ 0 (no int32 wrap: a 25-district city passes 10 M). */
+function wholeCount(v: unknown): number {
+  const n = Number(v);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
+}
+
+/**
+ * What a save's head counts (maxPopulation, milestones) are multiplied by at load (MEGACITY
+ * §4.4): POP_SCALE for a save without `scale` (every v1–v3 save counts v3 people), 1 for one
+ * written in today's units (`scale: POP_SCALE`, never multiplied again).
+ */
+export function savePopScale(data: { scale?: unknown }): number {
+  const s = Number(data.scale);
+  return Number.isFinite(s) && s > 0 ? POP_SCALE / s : POP_SCALE;
 }
 
 /**
@@ -687,6 +703,7 @@ export class World {
       funds: Math.round(this.funds),
       taxRate: this.taxRate,
       maxPopulation: this.maxPopulation,
+      scale: POP_SCALE,
       nextBuildingId: this.nextBuildingId,
       tiles,
       buildings: [...this.buildings.values()].map((b) => ({ ...b })),
@@ -710,6 +727,9 @@ export class World {
    * Expansion (EXPANSION §2.3, §2.5): tile bits 15-19 decode for every version
    * (old saves read all-Street, all-$); `sky` and `moments` decode for v3 (missing
    * or malformed → empty, never a throw); port fields are sanitised per type.
+   *
+   * Megacity units (MEGACITY §4.4): `maxPopulation` and `milestones` of a save without `scale`
+   * are × POP_SCALE (savePopScale); serialize() writes `scale: POP_SCALE`.
    */
   static deserialize(data: SaveData, events?: Emitter<GameEventMap>, opts?: DecodeOptions): World {
     if (
@@ -724,7 +744,9 @@ export class World {
     w.tick = data.tick | 0;
     w.funds = Number(data.funds) || 0;
     w.taxRate = Math.max(0, Math.min(20, Number(data.taxRate) || DEFAULT_TAX));
-    w.maxPopulation = data.maxPopulation | 0;
+    // Megacity units (MEGACITY §4.1, §4.4): a save without `scale` counts v3 people (×1).
+    const popMul = savePopScale(data);
+    w.maxPopulation = Math.round(wholeCount(data.maxPopulation) * popMul);
     w.nextBuildingId = data.nextBuildingId | 0 || 1;
     w.loadedVersion = data.version;
     for (let i = 0; i < N * N; i++) {
@@ -789,7 +811,10 @@ export class World {
     }
     w.news = Array.isArray(data.news) ? data.news.slice(-20) : [];
     w.budget.history = Array.isArray(data.history) ? data.history.slice(-12) : [];
-    w.milestones = Array.isArray(data.milestones) ? data.milestones.slice() : [];
+    // v3 milestones ×10 are exactly today's first six thresholds (§4.5).
+    w.milestones = Array.isArray(data.milestones)
+      ? [...new Set(data.milestones.map((p) => Math.round(wholeCount(p) * popMul)).filter((p) => p > 0))]
+      : [];
     // Story (§10.8): v2 decodes data.story; v1, or a missing / undecodable block, keeps the
     // constructor's fresh story (empty turf, rail, links) and is marked migrated.
     if (!(data.version >= 2 && decodeStory(data.story, w, opts))) {

@@ -145,9 +145,9 @@ describe('headless playthroughs (§13)', () => {
     ['brisk', 40, 0.5],
     ['relaxed', 50, 1.5],
   ] as const) {
-    it(`a city that never passes 800 residents still reaches Ch6 (${pace}: 1,440-day fallbacks, beat time-outs, waivers)`, () => {
+    it(`a city that never passes 8,000 residents still reaches Ch6 (${pace}: 1,440-day fallbacks, beat time-outs, waivers)`, () => {
       const { game, log } = playStory({ seed: 77, years, secPerDay, pace, builder: 'low', answerPending: 0.3 });
-      expect(game.world.maxPopulation).toBeLessThanOrEqual(800);
+      expect(game.world.maxPopulation).toBeLessThanOrEqual(8000);
       expect(log.maxChapter).toBeGreaterThanOrEqual(6);
       expect(game.world.story.chapter).toBe(7); // and an ending was held
       expect(log.endings).toContain('quiet');
@@ -423,14 +423,14 @@ describe('deals, pacts and salt', () => {
     st.chapter = 4;
     st.phase = 'waiting';
     st.waitingSince = 0;
-    g.world.stats.population = 5000;
+    g.world.stats.population = 50000;
     return g;
   }
 
   it('a deal needs the unlock, Friendly, no active deal and no cooldown', () => {
     const g = midGame();
     const st = g.world.story;
-    expect(g.story.takeDeal('board').reason).toBe('Locked: reach 8,000 residents');
+    expect(g.story.takeDeal('board').reason).toBe('Locked: reach 80,000 residents');
     st.unlocks.push('deals');
     expect(g.story.takeDeal('board').reason).toBe('Needs Board Friendly');
     st.favor.board = 25;
@@ -452,7 +452,7 @@ describe('deals, pacts and salt', () => {
   it('a pact is the gang deal: Friendly, renewable, no cooldown; the String Pact eases traffic', () => {
     const g = midGame();
     const st = g.world.story;
-    expect(g.story.signPact('kites').reason).toBe('Locked: reach 6,000 residents');
+    expect(g.story.signPact('kites').reason).toBe('Locked: reach 60,000 residents');
     st.unlocks.push('pact');
     expect(g.story.signPact('kites').reason).toBe('Needs Kites Friendly');
     st.favor.kites = 25;
@@ -482,7 +482,7 @@ describe('deals, pacts and salt', () => {
     const toasts: string[] = [];
     g.world.events.on('toast', (t) => toasts.push(t.text));
     g.world.funds = 0;
-    expect(g.story.saltCost()).toBe(1000); // round100(600 + 0.08 × 5,000)
+    expect(g.story.saltCost()).toBe(1000); // round100(600 + 0.008 × 50,000)
     g.world.funds = 250000;
     expect(g.story.saltCost()).toBe(1000); // a rich treasury doesn't raise the price: money is the reward
     g.world.funds = -9000;

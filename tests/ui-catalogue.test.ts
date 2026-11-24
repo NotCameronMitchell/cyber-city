@@ -186,14 +186,14 @@ describe('Road button (§7.2)', () => {
     expect(roadButton('inspect', false, 'road', unlockedIn(w))).toEqual({ tool: 'road', tray: 'keep' });
     // A locked last tool falls back to Street.
     expect(roadButton('inspect', false, 'highway', unlockedIn(w))).toEqual({ tool: 'road', tray: 'keep' });
-    w.maxPopulation = 1500; // Back Alley + Avenue
+    w.maxPopulation = 15000; // Back Alley + Avenue
     expect(roadButton('res', false, 'avenue', unlockedIn(w))).toEqual({ tool: 'avenue', tray: 'open' });
     expect(roadButton('inspect', false, 'highway', unlockedIn(w))).toEqual({ tool: 'road', tray: 'open' });
   });
 
   it('rules 2 and 3: a road tool active → the button toggles the tray, the tool stays', () => {
     const w = flat();
-    w.maxPopulation = 6000;
+    w.maxPopulation = 60000;
     for (const t of ROAD_TOOLS) {
       expect(roadButton(t, false, 'road', unlockedIn(w))).toEqual({ tool: null, tray: 'open' });
       expect(roadButton(t, true, 'road', unlockedIn(w))).toEqual({ tool: null, tray: 'close' });
@@ -202,7 +202,7 @@ describe('Road button (§7.2)', () => {
 
   it('one tap on Road lays a street; Street → Avenue takes two taps (Road, Avenue)', () => {
     const w = flat();
-    w.maxPopulation = 2000;
+    w.maxPopulation = 20000;
     // Tap 1 (no tool): Street is selected and the tray opens; tap 2 is the Avenue card.
     const first = roadButton('inspect', false, 'road', unlockedIn(w));
     expect(first.tool).toBe('road');
@@ -215,11 +215,11 @@ describe('Road button (§7.2)', () => {
     const u = unlockedIn(w);
     expect(nextRoadTool('inspect', u)).toBe('road');
     expect(nextRoadTool('road', u)).toBe('inspect');
-    w.maxPopulation = 1500;
+    w.maxPopulation = 15000;
     expect(nextRoadTool('road', u)).toBe('alley');
     expect(nextRoadTool('alley', u)).toBe('avenue');
     expect(nextRoadTool('avenue', u)).toBe('road');
-    w.maxPopulation = 5000;
+    w.maxPopulation = 50000;
     expect(nextRoadTool('avenue', u)).toBe('highway');
     expect(nextRoadTool('highway', u)).toBe('road');
     expect(nextRoadTool('bulldoze', u)).toBe('road');
@@ -234,22 +234,23 @@ describe('Infra relabel (§7.1)', () => {
     expect(categoryChrome(power, INFRA_POP)).toEqual({ label: 'Power & Ports', short: 'Infra', icon: 'infra' });
     expect(categoryChrome(power, INFRA_POP).short.length).toBeLessThanOrEqual(5);
     const road = CATEGORIES.find((c) => c.id === 'road')!;
-    expect(categoryChrome(road, 99999).label).toBe('Road');
+    expect(categoryChrome(road, 999_999).label).toBe('Road');
   });
 
   it('the banner names trays the way the unlock news does', () => {
     expect(trayName(BUILDINGS.reactor, INFRA_POP - 1)).toBe('Power');
     expect(trayName(BUILDINGS.reactor, INFRA_POP)).toBe('Infra');
     expect(trayName(BUILDINGS.seaport, INFRA_POP)).toBe('Infra');
-    expect(trayName(BUILDINGS.academy, 1500)).toBe('Civic');
-    expect(trayName(BUILDINGS.spire, 12000)).toBe('Sky');
-    expect(bannerUnlocks(500, 1500)).toEqual(expect.arrayContaining(['Academy (Civic)', 'Avenue (Road)', 'Back Alley (Road)']));
-    expect(bannerUnlocks(1500, 5000)).toEqual(expect.arrayContaining(['Seaport (Infra)', 'Highway (Road)']));
-    expect(bannerUnlocks(5000, 12000)).toEqual(expect.arrayContaining(['Airport (Infra)', 'Skyway (Sky)']));
-    expect(bannerUnlocks(12000, 30000)).toContain('Spaceport (Infra)');
+    // ×10 units (MEGACITY §4.4).
+    expect(trayName(BUILDINGS.academy, 15000)).toBe('Civic');
+    expect(trayName(BUILDINGS.spire, 120_000)).toBe('Sky');
+    expect(bannerUnlocks(5000, 15000)).toEqual(expect.arrayContaining(['Academy (Civic)', 'Avenue (Road)', 'Back Alley (Road)']));
+    expect(bannerUnlocks(15000, 50000)).toEqual(expect.arrayContaining(['Seaport (Infra)', 'Highway (Road)']));
+    expect(bannerUnlocks(50000, 120_000)).toEqual(expect.arrayContaining(['Airport (Infra)', 'Skyway (Sky)']));
+    expect(bannerUnlocks(120_000, 300_000)).toContain('Spaceport (Infra)');
     // No On-ramp line (it comes with the Highway) and no gated story buildings.
-    for (const s of bannerUnlocks(0, 99999)) expect(s.startsWith('On-ramp')).toBe(false);
-    for (const t of BUILDING_ORDER) if (BUILDINGS[t].gate) expect(bannerUnlocks(0, 99999).some((s) => s.startsWith(BUILDINGS[t].name + ' ('))).toBe(false);
+    for (const s of bannerUnlocks(0, 999_999)) expect(s.startsWith('On-ramp')).toBe(false);
+    for (const t of BUILDING_ORDER) if (BUILDINGS[t].gate) expect(bannerUnlocks(0, 999_999).some((s) => s.startsWith(BUILDINGS[t].name + ' ('))).toBe(false);
   });
 });
 
@@ -257,7 +258,7 @@ describe('action pill (§7.5)', () => {
   it('folds counts into the name: Street ×12, Avenue ×6 · 6 widened, Demolish skyway ×n', () => {
     const w = flat();
     w.funds = 1e7;
-    w.maxPopulation = 13000;
+    w.maxPopulation = 130_000;
     const street = planAction(w, 'road', { x: 10, y: 10 }, { x: 21, y: 10 });
     expect(street.valid).toBe(true);
     expect(pillLabel(w, street)).toBe('Street ×12');

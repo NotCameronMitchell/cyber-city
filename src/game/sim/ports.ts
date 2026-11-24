@@ -13,7 +13,7 @@
 // only once complete. The `PortView` interface is frozen (Step 0).
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { AIRPORT, BUILDINGS, SEAPORT, SPACEPORT, TOURISM } from '../config';
+import { AIRPORT, BUILDINGS, POP_SCALE, SEAPORT, SPACEPORT, TOURISM } from '../config';
 import type { Building } from '../types';
 import type { World } from '../world';
 import type { Census } from './census';
@@ -123,7 +123,8 @@ export class PortSystem implements PortView {
     let mood = approval / TOURISM.approvalRef;
     mood = mood < TOURISM.moodMin ? TOURISM.moodMin : mood > TOURISM.moodMax ? TOURISM.moodMax : mood;
     mood *= 1 - TOURISM.crimeHit * census.avgCrime;
-    this.visitors = raw > 0 ? Math.max(0, Math.round(raw * mood)) : 0;
+    // Whole tens of visitors (POP_SCALE), like every head count (MEGACITY §4.1).
+    this.visitors = raw > 0 ? Math.max(0, Math.round((raw * mood) / POP_SCALE) * POP_SCALE) : 0;
   }
 
   /**

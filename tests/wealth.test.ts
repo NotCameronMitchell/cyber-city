@@ -324,7 +324,7 @@ describe('effects per tier (§4.4)', () => {
     expect(tierCap(RES, 0, 0, 0, plain.fields.alleyNear[plain.idx(12, 11)])).toBe(2);
   });
 
-  it('a clean $$$ Fab District pollutes far less', () => {
+  it('a clean $$$ Fab Yards tile pollutes far less', () => {
     const make = (tier: WealthTier) => {
       const w = street(48);
       for (let x = 10; x <= 19; x++) {
@@ -350,7 +350,7 @@ describe('effects per tier (§4.4)', () => {
     act(w, 'solar', { x: 35, y: 22 });
     sim.recomputeAll();
     run(sim, DAYS_PER_MONTH * 6);
-    expect(w.stats.population).toBeGreaterThan(150);
+    expect(w.stats.population).toBeGreaterThan(1500);
     expect(w.stats.wealth[1] + w.stats.wealth[2]).toBe(0);
   });
 });

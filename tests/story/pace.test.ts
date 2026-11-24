@@ -221,7 +221,7 @@ describe('story messages wait; the game keeps running', () => {
     st.beatsShown = ['ch2.sallow', 'ch2.oduya', 'ch2.vote'];
     st.goalsDone = ['c2.pop', 'c2.jobs', 'c2.power'];
     g.story.update(STORY_PACE.relaxed.chapterMinSec, false);
-    g.world.stats.population = 5000;
+    g.world.stats.population = 50000;
     days(g, 1);
     expect(st.chapter).toBe(3);
     expect(st.phase).toBe('waiting');

@@ -53,7 +53,7 @@ function row(name: string, r: ScenarioResult): string {
     `sky ${f3(r.skyLoad)}`,
     `tierΔ/tile/yr ${r.tierChangesPerTileYear.toFixed(3)} (max ${r.maxTierChanges2y} in 2y)`,
     `tierFx ${r.tierEffect.residents}/${r.tierEffect.tax >= 0 ? '+' : ''}${r.tierEffect.tax}`,
-    `3k@${r.reach[3000]} 7k@${r.reach[7000]}`,
+    `30k@${r.reach[30000]} 70k@${r.reach[70000]}`,
   ].join(' · ');
 }
 
@@ -109,7 +109,7 @@ describe.skipIf(!env.MEASURE)('expansion measurement (§10.4)', () => {
         const late = (g: number) => (m2.reach[g] < 0 ? 'never' : m1.reach[g] < 0 ? `${m2.reach[g]} (M1 never)` : signed(m2.reach[g] - m1.reach[g]) + ' d');
         lines.push(
           `${seed} B4 M2 vs M1: net ${signed((100 * (m2.net - m1.net)) / Math.abs(m1.net || 1))}% (≥ +20), pop ${signed((100 * (m2.pop - m1.pop)) / m1.pop, 1)}% (≥ −3), ` +
-            `approval ${signed(m2.approval - m1.approval)} (≥ −2), 3k ${late(3000)}, 7k ${late(7000)} (≤ +30 d)`,
+            `approval ${signed(m2.approval - m1.approval)} (≥ −2), 30k ${late(30000)}, 70k ${late(70000)} (≤ +30 d)`,
         );
         lines.push(`${seed} B10 max tier changes per tile in years ${YEARS - 1}-${YEARS}: M1 ${m1.maxTierChanges2y}, M2 ${m2.maxTierChanges2y} (≤ 4)`);
       }
@@ -236,7 +236,7 @@ function measureFixture(): string[] {
   const near = ring(sp, 0, BUILDINGS.spaceport.radius);
   const lvNear = (wd: World) => near.reduce((a, i) => a + wd.fields.landValue[i], 0) / Math.max(1, near.length);
   out.push(
-    `B11 spaceport ${sp.buildDays ? 'building' : 'complete'}: visitors ${s.visitors} vs 3,000 × mood ${mood.toFixed(2)} = ${Math.round(3000 * mood)}; ` +
+    `B11 spaceport ${sp.buildDays ? 'building' : 'complete'}: visitors ${s.visitors} vs 30,000 × mood ${mood.toFixed(2)} = ${Math.round(30000 * mood)}; ` +
       `land value within r${BUILDINGS.spaceport.radius} ${signed(lvNear(w) - lvNear(building.w), 3)}; ` +
       `avgLandValue ${signed(s.avgLandValue - building.w.stats.avgLandValue, 3)} vs still building (≥ +0.03); net ${Math.round(net)}/mo incl. its ${upkeep} upkeep ` +
       `(vs ${Math.round(building.w.budget.history.slice(-3).reduce((a, b) => a + b, 0) / 3)} building)`,

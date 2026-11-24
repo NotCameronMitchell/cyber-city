@@ -9,10 +9,11 @@ export type CardToken = keyof typeof CARD_TOKEN_MAX;
 
 /**
  * MOTH note variables (§7.9): `{lit}` road tiles, `{dark}` unpowered developed tiles,
- * `{pop}` population, `{crime}` %, `{district}`, `{trace}`, `{n}` = 150 × active skybridges.
- * Lengths are formatted worst cases ('4,096', '9,999,999', '100').
+ * `{pop}` population, `{crime}` %, `{district}`, `{trace}`, `{n}` = 1,500 × active skybridges.
+ * Lengths are formatted worst cases ('4,096', '99,999,999', '100', '9,999,999'): ×10 units
+ * (MEGACITY §4) put a 25-district city past 10 M residents.
  */
-export const NOTE_TOKEN_MAX = { lit: 5, dark: 5, pop: 9, crime: 3, district: 15, trace: 3, n: 6 } as const;
+export const NOTE_TOKEN_MAX = { lit: 5, dark: 5, pop: 10, crime: 3, district: 15, trace: 3, n: 9 } as const;
 
 /**
  * System-line variables (§7.10): `{gang}` ≤ 15 ('the Glass Kites'), `{stage}` a stage or

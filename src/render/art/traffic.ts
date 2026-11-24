@@ -213,7 +213,7 @@ export class StreetTraffic {
       this.visWalk.push(i);
     }
     const pop = world.stats.population;
-    const popK = Math.pow(Math.min(1, pop / 1200), 0.7);
+    const popK = Math.pow(Math.min(1, pop / 12000), 0.7); // ×10 units (MEGACITY §4.4)
     const cap = this.quality === 'low' ? 90 : 260;
     this.targetCars = Math.min(cap, Math.round(sum * popK));
     this.targetWalkers = this.quality === 'low' ? 0 : Math.min(140, Math.round(this.visWalk.length * 1.6 * popK));

@@ -175,7 +175,7 @@ describe('Game story API', () => {
     const p = w.addBuilding('precinct', 30, 30)!;
     let [a] = g.inspectActions(30, 30);
     expect(a).toMatchObject({ id: 'crackdown', label: 'Crackdown · 2,000 CR', cost: 2000, enabled: false, buildingId: p.id, radius: 13 });
-    expect(a.reason).toMatch(/6,000/);
+    expect(a.reason).toMatch(/60,000/);
     w.story.unlocks.push('crackdown');
     p.powered = true;
     own(w, 28, 28, 1, 40);

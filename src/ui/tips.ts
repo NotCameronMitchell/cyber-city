@@ -34,7 +34,7 @@ export const TIPS: Record<TipId, { text: string; icon: IconName }> = {
   seaport: { icon: 'seaport', text: 'Pick a highlighted shore: one side on open water. Ships bring Fab trade, and some noise.' },
   airport: { icon: 'airport', text: 'Runways are loud: keep homes back. Shops 8 to 16 tiles away do better business.' },
   spaceport: { icon: 'spaceport', text: 'The tower takes 240 days and at least 4 minutes to rise. Tap it to choose who holds launch rights.' },
-  academy: { icon: 'academy', text: 'Schools lift nearby blocks toward $$ and $$$, and turn Fab Districts clean.' },
+  academy: { icon: 'academy', text: 'Schools lift nearby blocks toward $$ and $$$, and turn Fab Yards clean.' },
   wealth: { icon: 'tiers', text: 'Blocks are getting richer. Data → Wealth shows $, $$ and $$$; tap a block to see what lifts it.' },
   ramps: { icon: 'highway', text: 'Your highway has no on-ramps, so nothing uses it. Drag a street across it.' },
   noise: { icon: 'noise', text: 'Noise from highways and runways is pulling homes down. Tap a block to see why.' },

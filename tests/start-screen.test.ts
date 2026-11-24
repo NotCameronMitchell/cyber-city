@@ -363,7 +363,7 @@ describe('first-launch showcase backdrop', () => {
     expect(w.buildings.size).toBeGreaterThanOrEqual(5);
     expect(dark).toBe(0); // no unpowered glyphs
     expect(young).toBe(0); // no construction scaffolds
-    expect(w.stats.population).toBeGreaterThan(1000); // street and sky traffic scale with it
+    expect(w.stats.population).toBeGreaterThan(10000); // street and sky traffic scale with it
     expect(ms).toBeLessThan(1000);
     const again = buildShowcase();
     expect(again.serialize().tiles).toEqual(w.serialize().tiles);

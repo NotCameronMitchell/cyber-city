@@ -199,7 +199,7 @@ describe('street traffic kinds (§3.11)', () => {
       w.setRoad(x, 30, H);
       w.setRoad(x, 50, S);
     }
-    w.stats.population = 5000;
+    w.stats.population = 50000;
     for (let i = 0; i < AREA; i++) if (w.tiles[i].road) w.fields.traffic[i] = 0.6;
     let alley = 0;
     let alleyBikes = 0;
@@ -229,7 +229,7 @@ describe('street traffic kinds (§3.11)', () => {
     // A street with alley side branches every few tiles.
     for (let x = 2; x < 60; x++) w.setRoad(x, 32, S);
     for (let x = 4; x < 60; x += 4) for (let y = 33; y < 40; y++) w.setRoad(x, y, L);
-    w.stats.population = 5000;
+    w.stats.population = 50000;
     for (let i = 0; i < AREA; i++) if (w.tiles[i].road) w.fields.traffic[i] = 0.8;
     for (let rep = 0; rep < 4; rep++)
       for (const c of run(w, 5)) if (w.tiles[c.y * N + c.x].roadKind === L) expect(c.kind).toBe(3);

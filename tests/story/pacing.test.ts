@@ -109,9 +109,9 @@ describe('eligibility and weight', () => {
   });
 
   it('when, once and cooldowns (default 360, ★ retry 240)', () => {
-    const census = card('nc.census'); // when pop >= 3000, once
+    const census = card('nc.census'); // when pop >= 30,000, once
     expect(cardEligible(w, census)).toBe(false);
-    w.stats.population = 3000;
+    w.stats.population = 30000;
     expect(cardEligible(w, census)).toBe(true);
     w.story.seen['nc.census'] = 10;
     expect(cardEligible(w, census)).toBe(false); // once
@@ -220,7 +220,7 @@ describe('the five draw steps', () => {
   });
 
   it('3. a ⚑ never takes two deck slots running: a faction that stays Hostile leaves room for the deck', () => {
-    w.stats.population = 3000; // nc.census eligible for the random draw
+    w.stats.population = 30000; // nc.census eligible for the random draw
     w.story.favor.kites = -80;
     w.story.favor.basalt = -95;
     // The last deck delivery was Basalt's ⚑, long ago: both ⚑ are due again, but the slot goes to the deck.
@@ -236,7 +236,7 @@ describe('the five draw steps', () => {
 
   it('4. a seasonal card never takes a slot it took in the last 3 deck cards (slow paces open slots in the same month)', () => {
     w.tick = 30 * 10 + 360 * 8; // a November
-    w.stats.population = 3000;
+    w.stats.population = 30000;
     w.story.chapter = 3;
     w.story.lastCardTick = w.tick - 720;
     w.story.seen['bd.ballot'] = w.tick - 720;
@@ -248,7 +248,7 @@ describe('the five draw steps', () => {
 
   it('4. a seasonal card skips the chance roll but not the 60-day gap; 300 d between showings', () => {
     w.tick = 30 * 10 + 360 * 8; // a November
-    w.stats.population = 3000;
+    w.stats.population = 30000;
     w.story.chapter = 3;
     w.story.lastCardTick = w.tick - 59;
     expect(drawCard(w, rng, true, 0).pick).toBeNull();
@@ -259,7 +259,7 @@ describe('the five draw steps', () => {
   });
 
   it('5. a weighted random draw at 0.35 × cardRateMul, only 60 d after the last card', () => {
-    w.stats.population = 3000; // nc.census eligible
+    w.stats.population = 30000; // nc.census eligible
     expect(drawCard(w, rng, true, 0).pick).toBeNull(); // rate 0: never
     const r = drawCard(w, rng, true, 100);
     expect(r.pick).toMatchObject({ step: 'random' });
@@ -470,7 +470,7 @@ describe('beats (§5.0)', () => {
   it('a conditional beat fires once its chapter has run 360 d', () => {
     const g = inChapter(1, ['ch1.boot', 'ch1.minutes']);
     g.world.tick = 358;
-    days(g, 1); // tick 359, pop 0: ch1.lark (pop >= 300) not due
+    days(g, 1); // tick 359, pop 0: ch1.lark (pop >= 3,000) not due
     g.story.update(11, false);
     expect(openId(g)).toBeNull();
     days(g, 1); // tick 360
@@ -636,7 +636,7 @@ describe('triggers, fallbacks and waivers (§5.0)', () => {
     st.phase = 'waiting';
     st.waitingSince = 0;
     g.world.tick = 718;
-    g.world.stats.population = 1200; // fallback gate: pop >= 1000
+    g.world.stats.population = 12000; // fallback gate: pop >= 10,000
     g.story.onDay();
     expect(st.phase).toBe('waiting');
     g.world.tick = 720;
@@ -839,12 +839,12 @@ describe('faction cards: pending, Later, the no-answer default (§7.1)', () => {
     st.chapter = 1;
     st.phase = 'active';
     st.beatsShown = ['ch1.boot', 'ch1.minutes', 'ch1.lark'];
-    g.world.stats.population = 3000;
-    g.world.maxPopulation = 1400; // below the comms fallback
+    g.world.stats.population = 30000;
+    g.world.maxPopulation = 14000; // below the comms fallback
     g.story.update(500, false);
     for (let m = 1; m <= 24; m++) {
       g.world.tick = m * 30 - 1;
-      g.world.stats.population = 3000;
+      g.world.stats.population = 30000;
       g.story.update(200, false);
       g.story.onDay();
       g.world.tick++;

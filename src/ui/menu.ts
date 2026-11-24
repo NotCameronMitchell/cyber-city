@@ -190,7 +190,7 @@ export class Menu {
         // EXPANSION §7.6: two steps after step 7; the later steps renumber.
         step('avenue', '8 · Grow your roads', 'Avenues and Highways carry more traffic. Cross a highway with a street for on-ramps. Back alleys keep homes cheap.', '#6f9bff'),
         step('tiers', '9 · Read wealth', 'Blocks turn $, $$ or $$$ by themselves: land value, schools, transit and quiet lift them; noise, crime and alleys hold them back. Data → Wealth shows it.', '#ffd84d'),
-        step('star', '10 · Hit milestones', 'Population milestones pay a charter grant and unlock bigger buildings: reactors, data hubs, spires and arcologies.', '#ffb02e'),
+        step('star', '10 · Hit milestones', 'Population milestones pay a bonus and unlock bigger buildings: reactors, data hubs, spires and arcologies.', '#ffb02e'),
         step('flag', '11 · Follow the chapter', "Once the story starts, the chip above the toolbar shows the chapter goals. Tap it for the list, what's happening, the story so far and a glossary (?).", '#ffb02e'),
         step('comms', '12 · Read messages', 'Story messages and faction cards arrive with a banner and wait for you; the game keeps running. Tap to read. The chapter goes on once its messages are read; faction cards take their default answer when the ring runs out.', '#22e5ff'),
         step('eye', '13 · Read the choices', 'Under each choice, a line says what it does: "Basalt ++" means Basalt will like it, Trace is how close anyone is to finding you. Hold a choice for the exact effects. Tap a speaker to see who they are.', '#ff2bd6'),

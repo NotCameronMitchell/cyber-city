@@ -77,7 +77,7 @@ export interface MothNote {
 /**
  * Rotation order as listed in §7.9. Variables: `{lit}` road tiles, `{dark}` unpowered
  * developed tiles, `{pop}` population, `{crime}` % and `{district}` of the most
- * crime-ridden developed tile, `{trace}` Trace, `{n}` = 150 × active skybridges.
+ * crime-ridden developed tile, `{trace}` Trace, `{n}` = NOTE_CROSSINGS_PER_BRIDGE × active skybridges.
  */
 export const MOTH_NOTES: readonly MothNote[] = [
   { text: '> lamps {lit} · dark {dark} · fixing.' },
@@ -94,5 +94,8 @@ export const MOTH_NOTES: readonly MothNote[] = [
   { when: m('chapter', '>=', 7), text: '> charter held. lights on. still here.' },
 ];
 
-/** People counted per active skybridge in the `{n}` note variable. */
-export const NOTE_CROSSINGS_PER_BRIDGE = 150;
+/**
+ * People counted per active skybridge in the `{n}` note variable, in ×10 units (MEGACITY §4.4:
+ * v3's 150). Skybridges v2 replaces it with Σ BridgePayoff.walkers over active bridges.
+ */
+export const NOTE_CROSSINGS_PER_BRIDGE = 1500;

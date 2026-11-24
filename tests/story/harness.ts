@@ -239,7 +239,7 @@ export function playStory(opts: RunOptions): { game: Game; log: RunLog } {
     if (dd > log.worstDayMs) log.worstDayMs = dd;
     answerAll(g, rng, log, opts);
     if (mayor && w.tick % DAYS_PER_MONTH === 0) {
-      if (builder === 'greedy' || w.stats.population < 450) mayor.turn();
+      if (builder === 'greedy' || w.stats.population < 4500) mayor.turn();
       mayor.observe();
     }
     if (opts.each?.(g, day)) break;

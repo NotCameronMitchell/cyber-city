@@ -10,7 +10,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { blankStats, buildingStats } from '../buildingStats';
-import { NOISE, WEALTH } from '../config';
+import { NOISE, POP_SCALE, WEALTH } from '../config';
 import { ZoneType, type CityStats, type Demand } from '../types';
 import type { World } from '../world';
 import type { SimGrid } from './grid';
@@ -145,7 +145,8 @@ export class Census {
     this.jobsInd = jobsInd;
     this.noRoad = noRoad;
     this.abandoned = aband;
-    const workforce = Math.round(pop * T.WORKFORCE_SHARE);
+    // Whole tens of people (POP_SCALE), like every head count: the unit change stays exact (MEGACITY §4.1).
+    const workforce = Math.round((pop * T.WORKFORCE_SHARE) / POP_SCALE) * POP_SCALE;
     const jobs = jobsCom + jobsInd;
     this.workforce = workforce;
     this.employed = Math.min(workforce, jobs);

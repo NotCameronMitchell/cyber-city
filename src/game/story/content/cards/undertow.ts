@@ -34,7 +34,7 @@ export const UNDERTOW_CARDS: readonly Card[] = [
     kind: 'faction',
     speaker: 'undertow',
     title: 'STORM SURGE',
-    when: all(m('pop', '>=', 2000), m('turf.undertow', '>=', 10)),
+    when: all(m('pop', '>=', 20000), m('turf.undertow', '>=', 10)),
     spot: 'waterfrontTurf',
     weight: 10,
     cooldown: 360,

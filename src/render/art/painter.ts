@@ -172,7 +172,7 @@ const TINTS: Tint[][][] = [
   ],
 ];
 const KIND_INDEX: Record<MatKind, number> = { wall: 0, roof: 1, tarp: 2, rust: 3 };
-/** Cleanroom ribbon glazing of a $$$ Fab District. */
+/** Cleanroom ribbon glazing of a $$$ Fab Yards tile. */
 const CLEAN_GLASS: Mat = { day: [120, 170, 182], night: [10, 26, 34] };
 
 // ── Colours ────────────────────────────────────────────────────────────────
@@ -244,7 +244,7 @@ export class Painter {
   /** Multiplier on emissive glow strength at night. */
   glowBoost = 1;
   /**
-   * Zone of the sprite being painted (1 Hab Blocks, 2 Market Strip, 3 Fab District), or 0 for
+   * Zone of the sprite being painted (1 Hab Blocks, 2 Market Strip, 3 Fab Yards), or 0 for
    * every other sprite. Only zone sprites are restyled by `tier`.
    */
   zone = 0;

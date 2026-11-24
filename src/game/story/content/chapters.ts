@@ -35,11 +35,11 @@ export const CHAPTERS: readonly Chapter[] = [
     fallback: ALWAYS,
     beats: [
       { card: 'ch1.boot', after: 'trigger' },
-      { card: 'ch1.minutes', after: { cond: any(m('pop', '>=', 100), m('daysInChapter', '>=', 30)) } },
-      { card: 'ch1.lark', after: { cond: m('pop', '>=', 300) } },
+      { card: 'ch1.minutes', after: { cond: any(m('pop', '>=', 1000), m('daysInChapter', '>=', 30)) } },
+      { card: 'ch1.lark', after: { cond: m('pop', '>=', 3000) } },
     ],
     goals: [
-      { id: 'c1.pop', label: 'Reach 600 residents', cond: m('pop', '>=', 600), show: { m: 'pop', target: 600, fmt: 'int' } },
+      { id: 'c1.pop', label: 'Reach 6,000 residents', cond: m('pop', '>=', 6000), show: { m: 'pop', target: 6000, fmt: 'int' } },
       {
         id: 'c1.lit',
         label: 'Keep every block lit for 20 days',
@@ -58,8 +58,8 @@ export const CHAPTERS: readonly Chapter[] = [
     question: '> query: who do I serve?',
     summary: 'Two megacorps are bidding to shape the city: Basalt builds factories and power, Nacre runs shops, screens and data. The Charter Board will vote, and it trusts your numbers. Meanwhile keep growing, keep people in work and build spare power.',
     recap: 'Basalt and Nacre bid for the city. The Board split down the middle, and your forecast decided how the vote fell.',
-    trigger: m('pop', '>=', 1500),
-    fallback: m('pop', '>=', 1000),
+    trigger: m('pop', '>=', 15000),
+    fallback: m('pop', '>=', 10000),
     beats: [
       { card: 'ch2.sallow', after: 'trigger' },
       { card: 'ch2.oduya', after: 'chain' },
@@ -68,11 +68,11 @@ export const CHAPTERS: readonly Chapter[] = [
       { card: 'ch2.tiebreak', after: { days: 90 }, optional: true },
     ],
     goals: [
-      { id: 'c2.pop', label: 'Reach 3,000 residents', cond: m('pop', '>=', 3000), show: { m: 'pop', target: 3000, fmt: 'int' } },
+      { id: 'c2.pop', label: 'Reach 30,000 residents', cond: m('pop', '>=', 30000), show: { m: 'pop', target: 30000, fmt: 'int' } },
       {
         id: 'c2.jobs',
         label: 'Unemployment at or under 15%',
-        cond: all(m('unemployment', '<=', 0.15), m('pop', '>=', 1000)),
+        cond: all(m('unemployment', '<=', 0.15), m('pop', '>=', 10000)),
         show: { m: 'unemployment', target: 0.15, fmt: 'pct' },
       },
       {
@@ -93,8 +93,8 @@ export const CHAPTERS: readonly Chapter[] = [
     question: '> query: whose streets?',
     summary: 'Two gangs now claim streets: the Undertow on the waterfront and the Glass Kites up on the rooftops. Where their turf meets, trouble starts. Bring crime down, keep growing, and either crack down on a gang or sign a pact with one.',
     recap: "The gangs clashed at the Seam, and you chose the city's answer: a citywide sweep, a truce between the crews, or one gang's win.",
-    trigger: m('pop', '>=', 5000),
-    fallback: m('pop', '>=', 3500),
+    trigger: m('pop', '>=', 50000),
+    fallback: m('pop', '>=', 35000),
     onStart: [unlock('crackdown'), unlock('pact'), unlock('turfOverlay')],
     beats: [
       { card: 'ch3.clash', after: 'trigger' },
@@ -109,7 +109,7 @@ export const CHAPTERS: readonly Chapter[] = [
         cond: m('avgCrime', '<=', 0.3),
         show: { m: 'avgCrime', target: 0.3, fmt: 'pct' },
       },
-      { id: 'c3.pop', label: 'Reach 7,000 residents', cond: m('pop', '>=', 7000), show: { m: 'pop', target: 7000, fmt: 'int' } },
+      { id: 'c3.pop', label: 'Reach 70,000 residents', cond: m('pop', '>=', 70000), show: { m: 'pop', target: 70000, fmt: 'int' } },
       {
         id: 'c3.gang',
         label: 'Run a Crackdown or sign a Pact',
@@ -128,15 +128,15 @@ export const CHAPTERS: readonly Chapter[] = [
     question: '> query: what did I do?',
     summary: 'Your patron corp is pumping out the Sunk, the flooded old wards, to build there, and long-buried things are surfacing. Keep building upward: raise a Stratablock to its Hab Core and link towers by skybridge or Ribbon Rail.',
     recap: 'The drained Sunk gave up your storm logs: in 2084 you carried out the order to seal the lower gates. Old Brine made you decide what the city would learn.',
-    trigger: m('pop', '>=', 9000),
-    fallback: m('pop', '>=', 6000),
+    trigger: m('pop', '>=', 90000),
+    fallback: m('pop', '>=', 60000),
     beats: [
       { card: 'ch4.drain', after: 'trigger' },
       { card: 'ch4.logs', after: 'chain' },
       { card: 'ch4.brine', after: 'chain' },
     ],
     goals: [
-      { id: 'c4.pop', label: 'Reach 12,000 residents', cond: m('pop', '>=', 12000), show: { m: 'pop', target: 12000, fmt: 'int' } },
+      { id: 'c4.pop', label: 'Reach 120,000 residents', cond: m('pop', '>=', 120_000), show: { m: 'pop', target: 120_000, fmt: 'int' } },
       {
         id: 'c4.core',
         label: 'Raise a Stratablock to Hab Core',
@@ -156,7 +156,7 @@ export const CHAPTERS: readonly Chapter[] = [
     question: '> query: can I be replaced?',
     summary: "The rival corp is rolling out LURE, software built to replace you, and it goes live soon. You'll have to choose how to survive it. Meanwhile grow the city, make two factions your friends and join three stations by live rail.",
     recap: 'The rival corp tried to replace you with LURE, a copy that only knows how to obey. You chose how to survive it, and what that cost.',
-    trigger: any(m('pop', '>=', 15000), m('trace', '>=', 70)),
+    trigger: any(m('pop', '>=', 150_000), m('trace', '>=', 70)),
     fallback: ALWAYS,
     beats: [
       { card: 'ch5.install', after: 'trigger' },
@@ -167,7 +167,7 @@ export const CHAPTERS: readonly Chapter[] = [
       { card: 'ch5.hidden', after: 'chain', optional: true },
     ],
     goals: [
-      { id: 'c5.pop', label: 'Reach 18,000 residents', cond: m('pop', '>=', 18000), show: { m: 'pop', target: 18000, fmt: 'int' } },
+      { id: 'c5.pop', label: 'Reach 180,000 residents', cond: m('pop', '>=', 180_000), show: { m: 'pop', target: 180_000, fmt: 'int' } },
       {
         id: 'c5.friends',
         label: 'Two factions Friendly or better',
@@ -192,7 +192,7 @@ export const CHAPTERS: readonly Chapter[] = [
     question: '> query: what will I be?',
     summary: "The city will vote on who holds its charter, and the count runs through you. Each ending has conditions you'll see on Charter Night. Until the count, build up the side you want to win, or keep everyone in balance.",
     recap: 'On Charter Night you decided who would hold the city, or kept the scales level yourself.',
-    trigger: m('pop', '>=', 22000),
+    trigger: m('pop', '>=', 220_000),
     fallback: ALWAYS,
     beats: [
       { card: 'ch6.eve', after: 'trigger' },

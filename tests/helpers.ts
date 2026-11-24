@@ -179,11 +179,11 @@ export class ScriptedMayor {
       if (!lockedReason(w, 'reactor') && w.funds > 9000) this.place('reactor', 800);
       else if (s.powerSupply < 600 || lockedReason(w, 'reactor')) this.place('solar', 300);
     }
-    // Services as the city grows (only when comfortably funded).
-    if (this.services && pop >= 200 && this.count('precinct') < 1 + Math.floor(pop / 3500)) this.place('precinct', 3000);
-    if (this.services && pop >= 500 && this.count('clinic') < Math.floor(pop / 3000) + 1) this.place('clinic', 4000);
-    if (this.services && pop >= 300 && this.count('plaza') < Math.floor(pop / 400)) this.place('plaza', 2500);
-    if (this.services && pop >= 1200 && this.count('datahub') < Math.floor(pop / 5000) + 1) this.place('datahub', 5000);
+    // Services as the city grows (only when comfortably funded). Head counts in ×10 units (MEGACITY §4).
+    if (this.services && pop >= 2000 && this.count('precinct') < 1 + Math.floor(pop / 35000)) this.place('precinct', 3000);
+    if (this.services && pop >= 5000 && this.count('clinic') < Math.floor(pop / 30000) + 1) this.place('clinic', 4000);
+    if (this.services && pop >= 3000 && this.count('plaza') < Math.floor(pop / 4000)) this.place('plaza', 2500);
+    if (this.services && pop >= 12000 && this.count('datahub') < Math.floor(pop / 50000) + 1) this.place('datahub', 5000);
 
     // Zones: add a block where demand is positive and spare lots run low.
     const d = s.demand;

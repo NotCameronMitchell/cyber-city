@@ -73,7 +73,7 @@ export const FACTIONS: Record<FactionId, Faction> = {
     visible: ALWAYS,
     inPowerBar: true,
     mood: [
-      { label: 'Fab Districts', m: 'dev.ind', mul: 1 / 15, min: 0, max: 12 },
+      { label: 'Fab Yards', m: 'dev.ind', mul: 1 / 15, min: 0, max: 12 },
       { label: 'Reactors', m: ['count.reactor', 'count.foundry'], mul: 4, min: 0, max: 8 },
       { label: 'Stratablocks', m: 'count.stack', mul: 3, min: 0, max: 9 },
       { label: 'Tax', m: 'tax', offset: 12, mul: -2, min: -10, max: 0 },
@@ -150,7 +150,7 @@ export const FACTIONS: Record<FactionId, Faction> = {
     inPowerBar: true,
     mood: [
       { label: 'Dark lots', m: 'abandoned', mul: 1 / 10, min: 0, max: 6 },
-      { label: 'Fab Districts', m: 'dev.ind', mul: 1 / 25, min: 0, max: 6 },
+      { label: 'Fab Yards', m: 'dev.ind', mul: 1 / 25, min: 0, max: 6 },
       { label: 'Own turf', m: 'turf.undertow', mul: 1 / 20, min: 0, max: 6 },
       { label: 'Secured turf', m: 'turfSecured.undertow', mul: -10, min: -10, max: 0 },
       { label: 'Ribbon on turf', m: 'railOnTurf.undertow', mul: -1 / 10, min: -6, max: 0 },

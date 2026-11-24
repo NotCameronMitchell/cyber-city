@@ -135,7 +135,7 @@ describe('an old city loaded as v1 does not rush the early chapters', () => {
   ] as const) it(`Ch1 waits for its 20 s load delay and every chapter waits out the ${pace} floor`, () => {
     const floor = STORY_PACE[pace as StoryPace].chapterMinSec;
     const { game } = playStory({ seed: 2091, years: 4, pace: 'brisk' });
-    expect(game.world.stats.population).toBeGreaterThan(5000);
+    expect(game.world.stats.population).toBeGreaterThan(50000);
     const data = clone(game.world.serialize()) as SaveData;
     data.version = 1;
     delete data.story;

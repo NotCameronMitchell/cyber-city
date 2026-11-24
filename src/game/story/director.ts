@@ -101,7 +101,7 @@ import {
   tierOf,
   updateMoods,
 } from './factions';
-import { STORY_CONTENT } from './content';
+import { NOTE_CROSSINGS_PER_BRIDGE, STORY_CONTENT } from './content';
 import { composeLayers } from './mods';
 import { cardEligible, cardFaction, deckGate, defaultChoice, drawCard, FRONT_KINDS, pendingExpired, URGENT_SYSTEM } from './pacing';
 import { resolveMods, tierPatches } from './resolve';
@@ -1216,7 +1216,7 @@ export class StoryDirector implements EffectHost {
     return { ok: true, cost: Math.max(0, Math.round(funds - w.funds)) };
   }
 
-  /** Salt cost now: round100(600 + 0.08 × pop). Never scales with the treasury (money is the reward). */
+  /** Salt cost now: round100(600 + 0.008 × pop). Never scales with the treasury (money is the reward). */
   saltCost(): number {
     const w = this.world;
     return round100(SALT.base + SALT.perPop * w.stats.population);
@@ -1596,7 +1596,7 @@ export class StoryDirector implements EffectHost {
       pop: num(w.stats.population),
       crime: String(Math.round((worst >= 0 ? w.fields.crime[worst] : 0) * 100)),
       trace: String(Math.round(w.story.trace)),
-      n: num(150 * w.vertical.metrics.skybridges),
+      n: num(NOTE_CROSSINGS_PER_BRIDGE * w.vertical.metrics.skybridges),
     });
   }
 

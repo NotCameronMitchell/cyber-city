@@ -25,7 +25,7 @@ export const NACRE_CARDS: readonly Card[] = [
     kind: 'faction',
     speaker: 'nacre',
     title: 'LOYALTY PROGRAMME',
-    when: m('pop', '>=', 3000),
+    when: m('pop', '>=', 30000),
     once: true,
     body: "Nacre wants the full census 'for the loyalty programme': names, faces, routines. 5,000 CR and a warm thank-you card. Oduya swears it's anonymised. It isn't. You checked.",
     brief: "Nacre wants your residents' private data for a shopping loyalty scheme, and pays well. It isn't anonymous. Selling it angers the street. A fake keeps Nacre happy for now, but they may notice. Refusing pleases the Board.",

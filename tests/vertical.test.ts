@@ -30,14 +30,14 @@ function powered(b: Building | null): Building {
 }
 
 describe('skybridge validation', () => {
-  it('needs the unlock (or 9,000 residents)', () => {
+  it('needs the unlock (or 90,000 residents)', () => {
     const w = flatWorld();
     tallTile(w, 10, 10);
     tallTile(w, 14, 10);
     const p = planAction(w, 'skybridge', { x: 10, y: 10 }, { x: 14, y: 10 });
     expect(p.valid).toBe(false);
-    expect(p.reason).toMatch(/9,000/);
-    w.maxPopulation = 9000;
+    expect(p.reason).toMatch(/90,000/);
+    w.maxPopulation = 90000;
     expect(planAction(w, 'skybridge', { x: 10, y: 10 }, { x: 14, y: 10 }).valid).toBe(true);
   });
 
@@ -340,7 +340,7 @@ describe('Stratablock stages', () => {
     expect(w.vertical.metrics.stacksStage2).toBe(1);
     expect(vertical.isTallAt(w, 12, 12)).toBe(true);
 
-    expect(raiseStage(w, b.id, 'glare').reason).toMatch(/20,000/);
+    expect(raiseStage(w, b.id, 'glare').reason).toMatch(/200,000/);
     w.story.unlocks.push('crowns');
     expect(raiseStage(w, b.id, 'glare').reason).toBe('Needs a live skybridge, ribbon station or skyway');
     tallTile(w, 17, 12);

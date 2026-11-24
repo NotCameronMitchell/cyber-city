@@ -178,7 +178,7 @@ describe('overlays and previews (§7.3, §7.5)', () => {
     const g = new M.Game();
     scene(g.world);
     g.sim.recomputeAll();
-    g.world.maxPopulation = 60000;
+    g.world.maxPopulation = 600_000;
     g.world.funds = 1e6;
     const env = { time: 1, night: 0.5, zoom: 1, quality: 'high' as const };
     const cases: [string, { x: number; y: number }, { x: number; y: number }][] = [
@@ -224,7 +224,7 @@ describe('street traffic draws on every kind (§3.11)', () => {
   it('runs and draws cars, trucks and bikes by day and night without errors', () => {
     const w = new M.World(8);
     scene(w);
-    w.stats.population = 9000;
+    w.stats.population = 90000;
     const t = new M.traffic.StreetTraffic();
     const b = { x0: 0, y0: 0, x1: N - 1, y1: N - 1 };
     const ctx = mockContext();

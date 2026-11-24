@@ -145,7 +145,8 @@ describe('config', () => {
     expect(BUILDINGS.stack.category).toBe('vertical');
     expect(STACK_STAGES.map((s) => s.cost)).toEqual([12000, 16000, 22000]);
     expect(Object.keys(CROWNS).sort()).toEqual(['commons', 'foundry', 'glare', 'nest']);
-    expect(UNLOCK_FALLBACK_POP).toMatchObject({ factions: 3000, comms: 3000, stack: 8000, crackdown: 6000, skybridge: 9000, crowns: 20000 });
+    // ×10 units (MEGACITY §4.4).
+    expect(UNLOCK_FALLBACK_POP).toMatchObject({ factions: 30000, comms: 30000, stack: 80000, crackdown: 60000, skybridge: 90000, crowns: 200_000 });
   });
 
   it('story buildings stay locked in the sandbox until their gate opens', () => {
@@ -155,11 +156,11 @@ describe('config', () => {
       expect(lockedReason(w, t)).toMatch(/Locked/);
     }
     expect(lockedReason(w, 'foundry')).toBe('Locked: Basalt Friendly');
-    expect(lockedReason(w, 'stack')).toBeNull(); // pop fallback 8,000
+    expect(lockedReason(w, 'stack')).toBeNull(); // pop fallback 80,000
     expect(lockedReason(w, 'skybridge')).toBeNull();
-    w.maxPopulation = 100;
-    expect(lockedReason(w, 'stack')).toMatch(/8,000/);
-    expect(lockedReason(w, 'rail')).toMatch(/9,000/);
+    w.maxPopulation = 1000;
+    expect(lockedReason(w, 'stack')).toMatch(/80,000/);
+    expect(lockedReason(w, 'rail')).toMatch(/90,000/);
     w.story.unlocks.push('stack', 'memorial');
     expect(lockedReason(w, 'stack')).toBeNull();
     expect(lockedReason(w, 'memorial')).toBeNull();
@@ -185,31 +186,31 @@ describe('buildingStats', () => {
   it('matches BUILDINGS for ordinary types', () => {
     const b: Building = { id: 1, type: 'reactor', x: 0, y: 0, size: 3, builtTick: 0, offline: 0, powered: true };
     const s = buildingStats(b);
-    expect(s).toMatchObject({ powerSupply: 1200, jobsInd: 40, jobsCom: 0, upkeep: 220, pollution: 0.5, tall: false });
-    expect(buildingStats({ ...b, type: 'spire', size: 2 })).toMatchObject({ jobsCom: 600, effect: 'prestige', radius: 16, tall: true });
+    expect(s).toMatchObject({ powerSupply: 1200, jobsInd: 400, jobsCom: 0, upkeep: 220, pollution: 0.5, tall: false });
+    expect(buildingStats({ ...b, type: 'spire', size: 2 })).toMatchObject({ jobsCom: 6000, effect: 'prestige', radius: 16, tall: true });
     expect(buildingStats({ ...b, type: 'maglev', size: 2 }).station).toBe(true);
   });
 
   it('counts only complete, powered Stratablock stages', () => {
     expect(completeStage(stack(1, 60))).toBe(0);
     expect(buildingStats(stack(1, 60))).toMatchObject({ residents: 0, jobsCom: 0, powerUse: 0, upkeep: 0, tall: false, station: true });
-    expect(buildingStats(stack(1, 0))).toMatchObject({ jobsCom: 300, jobsInd: 100, powerUse: 40, upkeep: 120, tall: false });
+    expect(buildingStats(stack(1, 0))).toMatchObject({ jobsCom: 3000, jobsInd: 1000, powerUse: 40, upkeep: 120, tall: false });
     expect(buildingStats(stack(1, 0, false))).toMatchObject({ jobsCom: 0, powerUse: 40, upkeep: 0 });
-    expect(buildingStats(stack(2, 30))).toMatchObject({ residents: 0, jobsCom: 300, tall: false });
+    expect(buildingStats(stack(2, 30))).toMatchObject({ residents: 0, jobsCom: 3000, tall: false });
     const s2 = buildingStats(stack(2, 0));
-    expect(s2).toMatchObject({ residents: 1600, jobsCom: 300, jobsInd: 100, powerUse: 120, upkeep: 300, tall: true });
-    // Internal life: 60 % of matched residents work inside.
-    expect(s2.trips).toBeCloseTo((1600 + 400 - 2 * 0.6 * 400) * 0.5, 6);
+    expect(s2).toMatchObject({ residents: 16000, jobsCom: 3000, jobsInd: 1000, powerUse: 120, upkeep: 300, tall: true });
+    // Internal life: 60 % of matched residents work inside (trips per head ÷ 10 with the ×10 units).
+    expect(s2.trips).toBeCloseTo((16000 + 4000 - 2 * 0.6 * 4000) * 0.05, 6);
     const s3 = buildingStats(stack(3, 0, true, 'commons'));
-    expect(s3).toMatchObject({ residents: 2600, jobsCom: 600, effect: 'prestige', radius: 10, powerUse: 200, upkeep: 520 });
-    expect(buildingStats(stack(3, 0, true, 'foundry'))).toMatchObject({ jobsInd: 350, pollution: 0.15 });
+    expect(s3).toMatchObject({ residents: 26000, jobsCom: 6000, effect: 'prestige', radius: 10, powerUse: 200, upkeep: 520 });
+    expect(buildingStats(stack(3, 0, true, 'foundry'))).toMatchObject({ jobsInd: 3500, pollution: 0.15 });
   });
 
   it('reuses an out object', () => {
     const out = buildingStats(stack(1, 0));
     const again = buildingStats(stack(2, 0), out);
     expect(again).toBe(out);
-    expect(out.residents).toBe(1600);
+    expect(out.residents).toBe(16000);
   });
 });
 

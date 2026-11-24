@@ -478,24 +478,25 @@ describe('advisor (§7.1, §7.6, Appendix B)', () => {
         w.maxPopulation = pop;
         sim.step();
       }).texts.filter((t) => t.startsWith('Unlocked: '));
-    expect(at(500)).toEqual([
+    // Thresholds in ×10 units (MEGACITY §4.4).
+    expect(at(5000)).toEqual([
       `Unlocked: ${BUILDINGS.precinct.name} (Civic). ${BUILDINGS.precinct.desc}`,
       `Unlocked: ${BUILDINGS.clinic.name} (Civic). ${BUILDINGS.clinic.desc}`,
     ]);
-    expect(at(700)).toEqual([`Unlocked: ${BUILDINGS.reactor.name} (Power). ${BUILDINGS.reactor.desc}`]);
-    expect(at(1300)).toEqual([`Unlocked: Back Alley (Road). ${ROAD_KINDS[L].desc}`, `Unlocked: ${BUILDINGS.datahub.name} (Civic). ${BUILDINGS.datahub.desc}`]);
-    expect(at(1600)).toEqual([`Unlocked: Avenue (Road). ${ROAD_KINDS[A].desc}`, `Unlocked: Academy (Civic). ${BUILDINGS.academy.desc}`]);
-    const at5k = at(5200);
+    expect(at(7000)).toEqual([`Unlocked: ${BUILDINGS.reactor.name} (Power). ${BUILDINGS.reactor.desc}`]);
+    expect(at(13000)).toEqual([`Unlocked: Back Alley (Road). ${ROAD_KINDS[L].desc}`, `Unlocked: ${BUILDINGS.datahub.name} (Civic). ${BUILDINGS.datahub.desc}`]);
+    expect(at(16000)).toEqual([`Unlocked: Avenue (Road). ${ROAD_KINDS[A].desc}`, `Unlocked: Academy (Civic). ${BUILDINGS.academy.desc}`]);
+    const at5k = at(52000);
     expect(at5k[0]).toBe(`Unlocked: Highway (Road). ${ROAD_KINDS[H].desc}`); // road kinds first
     expect(at5k).toContain(`Unlocked: ${BUILDINGS.maglev.name} (Civic). ${BUILDINGS.maglev.desc}`);
     expect(at5k).toContain(`Unlocked: Seaport (Infra). ${BUILDINGS.seaport.desc}`);
     expect(at5k).toContain(`Unlocked: ${BUILDINGS.spire.name} (Sky). ${BUILDINGS.spire.desc}`);
     expect(at5k.some((t) => t.includes('On-ramp'))).toBe(false); // ramps come with the highway
-    const at12k = at(12500);
+    const at12k = at(125_000);
     expect(at12k).toContain(`Unlocked: Skyway (Sky). ${SKYWAY.desc}`);
     expect(at12k).toContain(`Unlocked: Airport (Infra). ${BUILDINGS.airport.desc}`);
-    expect(at(31000)).toEqual([`Unlocked: Spaceport (Infra). ${BUILDINGS.spaceport.desc}`]);
-    expect(at(40000)).toEqual([]);
+    expect(at(310_000)).toEqual([`Unlocked: Spaceport (Infra). ${BUILDINGS.spaceport.desc}`]);
+    expect(at(400_000)).toEqual([]);
   });
 
   it('the six first-tier highlights post once each, with the wealth hint on the first step up; a loaded city never replays them', () => {
@@ -512,8 +513,8 @@ describe('advisor (§7.1, §7.6, Appendix B)', () => {
       'Glass balconies, private lifts: the first $$$ Hab Blocks in Lumen. Land value did that.',
       'The noodle bars get real chairs. First $$ Market Strip.',
       'A boutique with no prices on anything: the first $$$ Market Strip.',
-      'Cleaner lines, better pay: the first $$ Fab District.',
-      'A fab so clean it has a lobby: the first $$$ Fab District. The smog lifts a little.',
+      'Cleaner lines, better pay: the first $$ Fab Yards.',
+      'A fab so clean it has a lobby: the first $$$ Fab Yards. The smog lifts a little.',
     ]);
     expect(first.news[4].kind).toBe('info');
     expect(first.hints).toEqual(['wealth']);
@@ -569,7 +570,7 @@ describe('advisor (§7.1, §7.6, Appendix B)', () => {
     const adv = new Advisor();
     const demand = { res: 0, com: 0, ind: 0 };
     w.tick = 0;
-    w.maxPopulation = 2000;
+    w.maxPopulation = 20000;
     const a = listen(w, () => adv.warnings(w, census, power, demand, g));
     expect(a.news).toContainEqual({ text: 'Advisor: a highway with no on-ramps carries nothing. Drag a street across it to add them.', kind: 'warn' });
     expect(a.news).toContainEqual({ text: 'Advisor: a skyway that lands nowhere carries nothing. End it on a street or run it into a megastructure.', kind: 'info' });
@@ -584,13 +585,13 @@ describe('advisor (§7.1, §7.6, Appendix B)', () => {
     expect(listen(w, () => adv.warnings(w, census, power, demand, g)).hints).toEqual([]);
     // Past the cooldowns, with highways unlocked: the traffic line adds the highway clause.
     w.tick = 600;
-    w.maxPopulation = 6000;
+    w.maxPopulation = 60000;
     expect(listen(w, () => adv.warnings(w, census, power, demand, g)).texts).toContain(
       'Advisor: gridlock on the main drags. Widen them into Avenues, or run a Highway with on-ramps.',
     );
     // Before avenues the old fallback stays.
     const early = new Advisor();
-    w.maxPopulation = 500;
+    w.maxPopulation = 5000;
     expect(listen(w, () => early.warnings(w, census, power, demand)).texts).toContain('Advisor: gridlock on the main drags. Add parallel roads and spread zones out.');
     // Ramps on the highway and a ramp under the deck: neither line.
     w.setRoad(20, 21, R);

@@ -219,7 +219,7 @@ describe('the expansion fixture (§10.4)', () => {
   it('ExpansionMayor applies its options (avenues, a ramped highway ring, back alleys, an airport on a lifted lock)', () => {
     const w = flatWorld(2091);
     w.funds = 100000; // the ring costs ~10,000 CR; a scripted town rarely has that by year 3
-    const { sim } = playExpansion(w, 3, { avenues: true, highwayRing: true, alleys: true, airport: 1, liftLocks: [{ year: 1, pop: 12000 }] });
+    const { sim } = playExpansion(w, 3, { avenues: true, highwayRing: true, alleys: true, airport: 1, liftLocks: [{ year: 1, pop: 120_000 }] });
     const r = w.stats.roads;
     expect(r.avenue).toBeGreaterThan(10);
     expect(r.highway).toBeGreaterThan(40);
@@ -228,6 +228,6 @@ describe('the expansion fixture (§10.4)', () => {
     const air = [...w.buildings.values()].find((b) => b.type === 'airport');
     expect(air?.powered).toBe(true);
     expect(sim.ports.comJobs).toBe(AIRPORT.comJobs);
-    expect(w.stats.population).toBeGreaterThan(1000);
+    expect(w.stats.population).toBeGreaterThan(10000);
   });
 });

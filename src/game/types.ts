@@ -372,6 +372,11 @@ export interface SaveData {
   funds: number;
   taxRate: number;
   maxPopulation: number;
+  /**
+   * People per v3 person in this save's head counts (MEGACITY §4.1): POP_SCALE (10) when written
+   * by a Megacity build. Missing (every v1–v3 save of the earlier builds) → ×POP_SCALE at load.
+   */
+  scale?: number;
   nextBuildingId: number;
   /** Run-length-free compact tile encoding, see World.serialize() (v3: bits 15-17 roadKind, 18-19 wealth). */
   tiles: number[];

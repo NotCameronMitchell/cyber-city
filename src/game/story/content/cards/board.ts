@@ -46,7 +46,7 @@ export const BOARD_CARDS: readonly Card[] = [
     speaker: 'board',
     title: 'BALLOT NIGHT',
     // month 10 = NOV (world.month is 0..11).
-    when: all(m('month', '==', 10), m('pop', '>=', 3000), m('chapter', '>=', 2), m('chapter', '<=', 5)),
+    when: all(m('month', '==', 10), m('pop', '>=', 30000), m('chapter', '>=', 2), m('chapter', '<=', 5)),
     seasonal: true,
     cooldown: 360,
     body: 'Election night for three Board seats. One keystroke and the reform slate wins: cleaner air, higher taxes, fewer favours. Nobody would ever know. Probably.',

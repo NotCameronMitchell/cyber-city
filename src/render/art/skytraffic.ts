@@ -175,7 +175,7 @@ export class SkyTraffic {
   update(dt: number, world: World, quality: 'low' | 'high', b: Bounds | null, night: number) {
     if (world !== this.worldRef) this.setup(world);
     const pop = world.stats.population;
-    const popK = Math.pow(Math.min(1, pop / 3000), 0.8);
+    const popK = Math.pow(Math.min(1, pop / 30000), 0.8); // ×10 units (MEGACITY §4.4)
     this.target = Math.round(popK * (quality === 'low' ? 14 : 40));
     // Advance flyers.
     for (let i = this.flyers.length - 1; i >= 0; i--) {
@@ -211,7 +211,7 @@ export class SkyTraffic {
     if (this.blimp) {
       this.blimp.s += this.blimp.speed * dt;
       if (this.blimp.s < -12 || this.blimp.s > N + 12) this.blimp = null;
-    } else if (pop > 600) {
+    } else if (pop > 6000) {
       this.blimpTimer -= dt;
       if (this.blimpTimer <= 0) {
         this.blimpTimer = 35 + Math.random() * 40;

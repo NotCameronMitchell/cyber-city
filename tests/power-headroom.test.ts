@@ -22,7 +22,7 @@ describe('power headroom', () => {
       if (world.stats.powerDemand > world.stats.powerSupply) deficitDays++;
     });
     const abandoned = world.tiles.filter((t) => t.abandoned).length;
-    expect(world.stats.population).toBeGreaterThan(100);
+    expect(world.stats.population).toBeGreaterThan(1000);
     expect(world.stats.powerDemand).toBeLessThanOrEqual(world.stats.powerSupply);
     expect(deficitDays).toBe(0);
     expect(abandoned).toBe(0);

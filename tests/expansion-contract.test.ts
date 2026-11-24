@@ -83,10 +83,11 @@ describe('config (§2.8, §10.2 #9)', () => {
       const d = BUILDINGS[t];
       return [d.category, d.size, d.cost, d.upkeep, d.powerUse, d.effect ?? null, d.radius, d.jobs, d.jobsInd, d.pollution, d.noise ?? null, d.unlockPop, d.meta];
     };
-    expect(row('academy')).toEqual(['services', 2, 3200, 140, 8, 'education', 12, 30, 0, 0, null, 1500, '2×2 · schools']);
-    expect(row('seaport')).toEqual(['transport', 4, 18000, 280, 30, null, 0, 240, 240, 0.3, { v: 0.5, r: 6 }, 5000, '4×4 · shore only']);
-    expect(row('airport')).toEqual(['transport', 6, 45000, 650, 80, null, 0, 320, 0, 0.15, { v: 0.9, r: 10 }, 12000, '6×6 · loud']);
-    expect(row('spaceport')).toEqual(['transport', 6, 150000, 1800, 300, 'prestige', 20, 550, 250, 0.2, { v: 0.5, r: 8 }, 30000, '6×6 · slow build']);
+    // Head counts in ×10 units (MEGACITY §4.4).
+    expect(row('academy')).toEqual(['services', 2, 3200, 140, 8, 'education', 12, 300, 0, 0, null, 15000, '2×2 · schools']);
+    expect(row('seaport')).toEqual(['transport', 4, 18000, 280, 30, null, 0, 2400, 2400, 0.3, { v: 0.5, r: 6 }, 50000, '4×4 · shore only']);
+    expect(row('airport')).toEqual(['transport', 6, 45000, 650, 80, null, 0, 3200, 0, 0.15, { v: 0.9, r: 10 }, 120000, '6×6 · loud']);
+    expect(row('spaceport')).toEqual(['transport', 6, 150000, 1800, 300, 'prestige', 20, 5500, 2500, 0.2, { v: 0.5, r: 8 }, 300000, '6×6 · slow build']);
     expect(BUILDINGS.academy.plural).toBe('Academies');
     expect([BUILDINGS.seaport.site, BUILDINGS.seaport.maxCount, BUILDINGS.airport.maxCount, BUILDINGS.spaceport.maxCount]).toEqual(['shore', 2, 1, 1]);
     expect(BUILDINGS.spaceport.buildDays).toBe(240);
@@ -308,10 +309,10 @@ describe('wealth helpers (§4)', () => {
         expect(zoneTaxMul(zd.zone, 0)).toBe(1);
         expect(zonePowerMul(zd.zone, 0)).toBe(1);
       }
-    expect(zoneCapacity(ZoneType.Residential, 3, 2)).toBe(135);
-    expect(zoneCapacity(ZoneType.Residential, 3, 0, true)).toBe(165);
-    expect(zoneCapacity(ZoneType.Residential, 3, 1, true)).toBe(Math.round(150 * 0.95)); // affordable only at $
-    expect(zoneCapacity(ZoneType.Commercial, 3, 0, true)).toBe(90);
+    expect(zoneCapacity(ZoneType.Residential, 3, 2)).toBe(1350);
+    expect(zoneCapacity(ZoneType.Residential, 3, 0, true)).toBe(1650);
+    expect(zoneCapacity(ZoneType.Residential, 3, 1, true)).toBe(Math.round(150 * 0.95) * 10); // affordable only at $; whole tens (×10 units)
+    expect(zoneCapacity(ZoneType.Commercial, 3, 0, true)).toBe(900);
     expect(zoneTaxMul(ZoneType.Industrial, 2)).toBe(1.8);
     expect(zonePowerMul(ZoneType.Industrial, 2)).toBe(0.9);
     expect(zonePollution(ZoneType.Industrial, 3, 2)).toBeCloseTo(0.85 * 0.35, 6);
@@ -598,19 +599,19 @@ describe('buildingStats (§2.8, §5.3)', () => {
   });
 
   it('splits jobs by jobsInd (all Fab for power plants by default)', () => {
-    expect(buildingStats(b('seaport'))).toMatchObject({ jobsInd: 240, jobsCom: 0, pollution: 0.3, upkeep: 280, powerUse: 30 });
-    expect(buildingStats(b('airport'))).toMatchObject({ jobsInd: 0, jobsCom: 320 });
-    expect(buildingStats(b('spaceport'))).toMatchObject({ jobsInd: 250, jobsCom: 300, effect: 'prestige', radius: 20, upkeep: 1800 });
-    expect(buildingStats(b('academy'))).toMatchObject({ jobsInd: 0, jobsCom: 30, effect: 'education', radius: 12 });
-    expect(buildingStats(b('reactor'))).toMatchObject({ jobsInd: 40, jobsCom: 0 });
-    expect(buildingStats(b('foundry'))).toMatchObject({ jobsInd: 250, jobsCom: 0 });
-    expect(buildingStats(b('spire'))).toMatchObject({ jobsInd: 0, jobsCom: 600 });
+    expect(buildingStats(b('seaport'))).toMatchObject({ jobsInd: 2400, jobsCom: 0, pollution: 0.3, upkeep: 280, powerUse: 30 });
+    expect(buildingStats(b('airport'))).toMatchObject({ jobsInd: 0, jobsCom: 3200 });
+    expect(buildingStats(b('spaceport'))).toMatchObject({ jobsInd: 2500, jobsCom: 3000, effect: 'prestige', radius: 20, upkeep: 1800 });
+    expect(buildingStats(b('academy'))).toMatchObject({ jobsInd: 0, jobsCom: 300, effect: 'education', radius: 12 });
+    expect(buildingStats(b('reactor'))).toMatchObject({ jobsInd: 400, jobsCom: 0 });
+    expect(buildingStats(b('foundry'))).toMatchObject({ jobsInd: 2500, jobsCom: 0 });
+    expect(buildingStats(b('spire'))).toMatchObject({ jobsInd: 0, jobsCom: 6000 });
   });
 
   it('a building under construction (buildDays > 0, non-stack) has no effects', () => {
     const s = buildingStats(b('spaceport', { buildDays: 12 }));
     expect(s).toMatchObject({ residents: 0, jobsCom: 0, jobsInd: 0, trips: 0, powerUse: 0, powerSupply: 0, upkeep: 0, effect: null, radius: 0, pollution: 0 });
-    expect(buildingStats(b('spaceport', { buildDays: 0 })).jobsInd).toBe(250);
+    expect(buildingStats(b('spaceport', { buildDays: 0 })).jobsInd).toBe(2500);
     // Stratablocks keep their own stage rules.
     expect(buildingStats(b('stack', { stage: 1, buildDays: 60 })).station).toBe(true);
   });

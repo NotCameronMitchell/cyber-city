@@ -232,14 +232,14 @@ describe('road kinds: prices, upgrades, shrinking, water and locks', () => {
     const w = flatWorld();
     expect(lockedReason(w, 'road')).toBeNull();
     const want: [ToolId, string][] = [
-      ['alley', 'Locked: reach 1,200 residents'],
-      ['avenue', 'Locked: reach 1,500 residents'],
-      ['highway', 'Locked: reach 5,000 residents'],
-      ['skyway', 'Locked: reach 12,000 residents'],
-      ['seaport', 'Locked: reach 5,000 residents'],
-      ['airport', 'Locked: reach 12,000 residents'],
-      ['spaceport', 'Locked: reach 30,000 residents'],
-      ['academy', 'Locked: reach 1,500 residents'],
+      ['alley', 'Locked: reach 12,000 residents'],
+      ['avenue', 'Locked: reach 15,000 residents'],
+      ['highway', 'Locked: reach 50,000 residents'],
+      ['skyway', 'Locked: reach 120,000 residents'],
+      ['seaport', 'Locked: reach 50,000 residents'],
+      ['airport', 'Locked: reach 120,000 residents'],
+      ['spaceport', 'Locked: reach 300,000 residents'],
+      ['academy', 'Locked: reach 15,000 residents'],
     ];
     for (const [tool, reason] of want) {
       expect(lockedReason(w, tool)).toBe(reason);

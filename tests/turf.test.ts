@@ -47,12 +47,12 @@ function quietSeeded(w: World): void {
 }
 
 describe('seeding and spread', () => {
-  it('seeds the Undertow at 1,200 and the Kites at 2,500, near the city', () => {
+  it('seeds the Undertow at 12,000 and the Kites at 25,000, near the city', () => {
     const w = turfWorld();
-    w.maxPopulation = 1100;
+    w.maxPopulation = 11000;
     month(w);
     expect(w.turf.seeded.undertow).toBe(false);
-    w.maxPopulation = 1300;
+    w.maxPopulation = 13000;
     month(w);
     expect(w.turf.seeded.undertow).toBe(true);
     expect(w.turf.seeded.kites).toBe(false);
@@ -61,7 +61,7 @@ describe('seeding and spread', () => {
     // Every turf tile is within reach of the road grid (rows/cols 4..59, ±3 plus spread).
     const s = w.turf.stats.strongest.undertow;
     expect(s).toBeGreaterThanOrEqual(0);
-    w.maxPopulation = 2600;
+    w.maxPopulation = 26000;
     month(w);
     expect(w.turf.seeded.kites).toBe(true);
     expect(w.news.some((n) => n.text.endsWith('a diamond kite, drawn in one line.'))).toBe(true);
@@ -70,7 +70,7 @@ describe('seeding and spread', () => {
   it('is deterministic for a seed', () => {
     const a = turfWorld(77, 0.9);
     const b = turfWorld(77, 0.9);
-    a.maxPopulation = b.maxPopulation = 3000;
+    a.maxPopulation = b.maxPopulation = 30000;
     month(a, 24);
     month(b, 24);
     expect(Array.from(a.turf.owner)).toEqual(Array.from(b.turf.owner));
@@ -81,7 +81,7 @@ describe('seeding and spread', () => {
     // A different story RNG state gives a different spread.
     const c = turfWorld(77, 0.9);
     c.story.rng = 12345;
-    c.maxPopulation = 3000;
+    c.maxPopulation = 30000;
     month(c, 24);
     expect(Array.from(c.turf.owner)).not.toEqual(Array.from(a.turf.owner));
   });
@@ -89,7 +89,7 @@ describe('seeding and spread', () => {
   it('holds the 8% cap', () => {
     const w = turfWorld(5, 1);
     w.fields.traffic.fill(0.5);
-    w.maxPopulation = 5000;
+    w.maxPopulation = 50000;
     const cap = turf.capFor(w);
     expect(cap).toBe(Math.floor(TURF.capShare * 64 * 64));
     for (let m = 0; m < 120; m++) {
@@ -211,7 +211,7 @@ describe('crackdown, scatter and the truce', () => {
   it('refuses without the unlock, power, turf or funds', () => {
     const w = turfWorld();
     const p = w.addBuilding('precinct', 30, 30)!;
-    expect(crackdown(w, p.id).reason).toMatch(/6,000/);
+    expect(crackdown(w, p.id).reason).toMatch(/60,000/);
     w.story.unlocks.push('crackdown');
     expect(crackdown(w, p.id).reason).toBe('Precinct has no power');
     p.powered = true;

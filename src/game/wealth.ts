@@ -10,7 +10,7 @@
 //   wealthInfo                                                 the inspect meter and notes (§4.5)
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { BUILDINGS, NOISE, WEALTH, zoneDefFor } from './config';
+import { BUILDINGS, NOISE, POP_SCALE, WEALTH, zoneDefFor } from './config';
 import { ZoneType, type WealthTier } from './types';
 import type { World } from './world';
 
@@ -25,7 +25,8 @@ const clamp01 = (v: number) => (v < 0 ? 0 : v > 1 ? 1 : v);
 
 /**
  * Residents (Hab Blocks) or jobs (Market / Fab) a tile holds at this level and tier,
- * rounded to whole people. `affordable` (a $ Hab Block with an alley within 1, §4.4)
+ * rounded to whole tens of people (POP_SCALE: the v3 build's whole people, so the Megacity
+ * unit change is exact, MEGACITY §4.1; "1,430" not "1,425"). `affordable` (a $ Hab Block with an alley within 1, §4.4)
  * multiplies by WEALTH.affordable. At tier 0 without an alley this equals the old table.
  */
 export function zoneCapacity(zone: ZoneType, level: number, tier: WealthTier | number, affordable = false): number {
@@ -35,7 +36,7 @@ export function zoneCapacity(zone: ZoneType, level: number, tier: WealthTier | n
   const t = tierOf(tier);
   let mul = WEALTH.capacity[zone][t];
   if (affordable && zone === ZoneType.Residential && t === 0) mul *= WEALTH.affordable;
-  return Math.round(zd.capacity[l] * mul);
+  return Math.round((zd.capacity[l] * mul) / POP_SCALE) * POP_SCALE;
 }
 
 /** Tax per resident / job multiplier. */
@@ -48,7 +49,7 @@ export function zonePowerMul(zone: ZoneType, tier: WealthTier | number): number 
   return zone >= 1 && zone <= 3 ? WEALTH.power[zone][tierOf(tier)] : 1;
 }
 
-/** Pollution a zone tile emits at this level and tier (only Fab Districts clean up with tier). */
+/** Pollution a zone tile emits at this level and tier (only Fab Yards clean up with tier). */
 export function zonePollution(zone: ZoneType, level: number, tier: WealthTier | number): number {
   const zd = zoneDefFor(zone);
   if (!zd) return 0;
@@ -58,7 +59,7 @@ export function zonePollution(zone: ZoneType, level: number, tier: WealthTier | 
 
 /** The signed parts of a tile's wealth score (§4.5): they sum to the unclamped score. */
 export interface WealthTerms {
-  /** Fab Districts' base (0.20); 0 for homes and shops. */
+  /** Fab Yards' base (0.20); 0 for homes and shops. */
   base: number;
   /** Land value with its noise part moved into `noise` (homes and shops only). */
   landValue: number;

@@ -28,8 +28,8 @@ describe(`expansion balance, flat seed ${SEED}, ${YEARS} years (§10.3)`, () => 
     const { m1, m2 } = runs();
     // Population ≥ M1 − 3%.
     expect(m2.pop).toBeGreaterThanOrEqual(Math.floor(m1.pop * 0.97));
-    // Every chapter population goal M1 reaches (3,000 and 7,000 on a flat map), M2 reaches no more than 30 days later.
-    for (const goal of [3000, 7000]) {
+    // Every chapter population goal M1 reaches (30,000 and 70,000 on a flat map), M2 reaches no more than 30 days later.
+    for (const goal of [30000, 70000]) {
       expect(m1.reach[goal], `M1 reaches ${goal}`).toBeGreaterThan(0);
       expect(m2.reach[goal], `M2 reaches ${goal}`).toBeGreaterThan(0);
       expect(m2.reach[goal] - m1.reach[goal], `days behind M1 at ${goal}`).toBeLessThanOrEqual(30);
