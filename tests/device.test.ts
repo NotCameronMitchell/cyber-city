@@ -1,7 +1,8 @@
 // The device class and the region default (docs/MEGACITY.md §3.11, §11.2 item 15).
 
 import { afterEach, describe, expect, it } from 'vitest';
-import { BENCH_MIN_RUN_MS, defaultRegion, deviceClass, deviceProfile, measureBench, readProfile, resetDeviceProfile, type DeviceProfile } from '../src/game/device';
+import { BENCH_MIN_RUN_MS, BENCH_NODE_MS, BENCH_WARM_MS, benchWork, defaultRegion, deviceClass, deviceProfile, measureBench, readProfile, resetDeviceProfile, type DeviceProfile } from '../src/game/device';
+import { SLEEP } from '../src/game/config';
 import { Game } from '../src/game/game';
 
 type Env = { fine: boolean; ua?: string; platform?: string; uaPlatform?: string; touch?: number; w: number; h: number; cores?: number; mem?: number };
@@ -134,12 +135,12 @@ describe('device class and region default (§3.11)', () => {
 
 describe('the micro-benchmark (§3.11)', () => {
   it('returns null with a 16 ms timer and a factor within 5% of the truth with a 1 ms one', () => {
-    // A fake clock: each `work` call costs 3 ms of fake time (half the 6 ms Node reference: factor 0.5).
+    // A fake clock: each `work` call costs half the Node reference in fake time (factor 0.5).
     const make = (step: number) => {
       let t = 0;
       let real = 0;
       const now = () => Math.floor((t += 0.0001) / step) * step + Math.floor(real / step) * step;
-      const work = () => void (real += 3);
+      const work = () => void (real += BENCH_NODE_MS / 2);
       return { now, work };
     };
     const coarse = make(16);
@@ -150,3 +151,16 @@ describe('the micro-benchmark (§3.11)', () => {
     expect(BENCH_MIN_RUN_MS).toBe(50);
   });
 });
+
+describe("the device check's decisions (§12 Step 0b, §11.6, proxy)", () => {
+  it('the micro-benchmark reference is the measured Node time; the tripped p95 rule runs 3×3 cities on handhelds in auto', () => {
+    expect(BENCH_NODE_MS).toBe(3.5);
+    expect(BENCH_WARM_MS).toBeGreaterThan(0);
+    // p95 day at 9 districts on the phone proxy > 12 ms → 'auto'; the PC proxy factor < 2.0 → strainCapShare stays 0.8.
+    expect(SLEEP.region3Handheld).toBe('auto');
+    expect(SLEEP.strainCapShare).toBe(0.8);
+    // benchWork stays a deterministic, side-effect-free unit (its checksum is the same every call).
+    expect(benchWork()).toBe(benchWork());
+  });
+});
+

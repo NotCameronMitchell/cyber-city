@@ -2495,8 +2495,23 @@ export const REGION = {
   5: { epilogueGrantMul: 0.5, turfBands: 8, autosaveMinSec: 60, mirrorEverySec: 300 },
 } as const;
 
-/** O8 sleeping districts (§3.3): when a slot may sleep, and every how many field cycles an asleep slot's field rows run. */
-export const SLEEP = { idleSec: 120, quietDays: 60, cadence: 4, strainWindowSec: 10, strainCapShare: 0.8, recoverSec: 60 } as const;
+/**
+ * O8 sleeping districts (§3.3): when a slot may sleep, and every how many field cycles an asleep slot's field rows run.
+ * `region3Handheld` is the mode of a 3×3 city on a handheld device: 'off' unless Step 0b's device check tripped §3.3's
+ * rule (phone factor > 4.5 or a p95 day > 12 ms at 9 districts). It tripped on the proxy (Chrome with 4× CPU
+ * throttling: p95 day 31 ms with today's code and 19 ms with the O2–O4 prototype at 9 districts; factor 4.3 and 3.8;
+ * MEGACITY §11.6), so it is 'auto' until the owner's phone run says otherwise. WP-2's frame guard reads it.
+ * `strainCapShare` stays 0.8: the PC proxy factor is 0.8–1.0, under §12's 2.0.
+ */
+export const SLEEP = {
+  idleSec: 120,
+  quietDays: 60,
+  cadence: 4,
+  strainWindowSec: 10,
+  strainCapShare: 0.8,
+  recoverSec: 60,
+  region3Handheld: 'auto' as 'off' | 'auto',
+} as const;
 
 /** Tick slicing (§3.3): sim ms per frame by device class, the row band a resumable pass stops at, the largest unit allowed in Node at 25 districts. */
 export const SLICE = { capHandheldMs: 6, capPcMs: 10, bandRows: 8, unitMaxNodeMs: 1.5 } as const;

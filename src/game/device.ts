@@ -36,12 +36,21 @@ export type DeviceClass = 'pc' | 'handheld';
 /** localStorage key of the cached micro-benchmark factor (30 days). */
 export const BENCH_KEY = 'cybercity.device.v1';
 export const BENCH_TTL_MS = 30 * 24 * 3600 * 1000;
-/** The micro-benchmark's reference time in Node (ms per run of `benchWork`), fixed by Step 0b on the dev container. */
-export const BENCH_NODE_MS = 6;
+/**
+ * The micro-benchmark's reference time in Node (ms per run of `benchWork` as `measureBench` times it, in a fresh
+ * process), fixed by Step 0b's device check on the dev container (Node 22, 4 shared cores): median 3.5 ms over 12 fresh
+ * processes (2.85–4.29). §3.11's planned ≈ 6 ms was an estimate (MEGACITY §11.6).
+ */
+export const BENCH_NODE_MS = 3.5;
 /** Above this timer step (ms) the benchmark returns null and the cores and memory rule decides. */
 export const BENCH_MAX_TIMER_MS = 1;
 /** Each timed run repeats the work until it lasts at least this long (ms); the median of 3 runs counts. */
 export const BENCH_MIN_RUN_MS = 50;
+/**
+ * Untimed warm-up before the runs (ms): the JIT tiers up on every engine first, so the factor compares warm code with
+ * warm code (the device check measured a cold first run at ≈ 1.5× the warm time in Node, Step 0b, §11.6).
+ */
+export const BENCH_WARM_MS = 30;
 
 type Nav = {
   hardwareConcurrency?: number;
@@ -186,11 +195,15 @@ export function timerResolution(now: () => number, samples = 50): number {
 
 /**
  * Measure the factor (device ms ÷ BENCH_NODE_MS) with a clock and a work function (both injectable for tests):
- * null when the timer step is above BENCH_MAX_TIMER_MS; otherwise each of 3 runs repeats the work until it lasts
+ * null when the timer step is above BENCH_MAX_TIMER_MS; otherwise, after BENCH_WARM_MS of untimed warm-up, each of 3 runs repeats the work until it lasts
  * ≥ BENCH_MIN_RUN_MS, and the median per-work time counts, so a 1 ms clamp costs at most 2%.
  */
 export function measureBench(now: () => number, work: () => unknown = benchWork, nodeMs = BENCH_NODE_MS): number | null {
   if (timerResolution(now) > BENCH_MAX_TIMER_MS) return null;
+  const w0 = now();
+  let warm = 0;
+  do work();
+  while (now() - w0 < BENCH_WARM_MS && ++warm < 10000);
   const runs: number[] = [];
   for (let r = 0; r < 3; r++) {
     let reps = 0;
