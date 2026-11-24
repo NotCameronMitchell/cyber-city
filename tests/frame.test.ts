@@ -24,7 +24,7 @@ import { Game } from '../src/game/game';
 import { buildShowcase } from '../src/ui/start/showcase';
 import { Camera } from '../src/render/camera';
 import { RoadAccessMap } from '../src/render/overlay';
-import { ScriptedMayor } from './helpers';
+import { ScriptedMayor, ownedWorld, startWorld, sx, sy } from './helpers';
 
 /** Every source file under src/, raw. */
 const SOURCES = import.meta.glob(['../src/**/*.ts'], { query: '?raw', import: 'default', eager: true }) as Record<string, string>;
@@ -373,6 +373,21 @@ describe('the title Showcase beside a 5×5 city (§11.2 item 13, the Showcase ca
     expect(together.show === digest(solo)).toBe(true);
     expect(JSON.parse(together.game).d.region).toBe(5);
   }, 60000);
+});
+
+describe('the region test helpers (§11.5)', () => {
+  it('sx / sy place slot-local tiles in the start slot; startWorld owns one slot, ownedWorld all', () => {
+    for (const r of [3, 5] as const) {
+      const w = startWorld(r);
+      const rect = w.ownedBox;
+      expect([sx(0, r), sy(63, r)]).toEqual([rect.x0, rect.y1]);
+      expect(w.slotOwned.reduce((a, b) => a + b, 0)).toBe(1);
+      expect(w.isOwned(sx(10, r), sy(10, r))).toBe(true);
+      expect(w.isOwned(sx(-1, r), sy(10, r))).toBe(false);
+      expect(ownedWorld(r).slotOwned.every((v) => v === 1)).toBe(true);
+    }
+    expect(sx(5, LEGACY_REGION)).toBe(5);
+  });
 });
 
 describe('the render side reads the frame from the world it shows', () => {

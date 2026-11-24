@@ -3,6 +3,7 @@
 //
 // Query: ?auto=1 runs everything at once; ?quick=1 uses the short sizes; ?only=r3-9,r5-25 picks scenarios;
 // ?quota=1 also probes the localStorage quota (it fills and then clears this page's storage).
+import { PINNED, SEEDS, terrainHash } from '../terrain-hash';
 import { FULL, QUICK, SCENARIOS, measureMicro, measureSetItem, runScenario, type ScenarioResult } from './scenarios';
 
 const out = document.getElementById('out') as HTMLPreElement;
@@ -50,6 +51,8 @@ interface Report {
   micro: ReturnType<typeof measureMicro>[];
   setItem: ReturnType<typeof measureSetItem>;
   quota: { chars: number; note: string } | null;
+  /** §11.2 item 17: the terrain golden hashes on this engine, and whether they equal the ones pinned in Node. */
+  terrain: { hashes: string[][]; match: boolean } | null;
   results: ScenarioResult[];
   done: boolean;
   error?: string;
@@ -68,6 +71,7 @@ async function run(): Promise<void> {
     micro: [],
     setItem: {},
     quota: null,
+    terrain: null,
     results: [],
     done: false,
   };
@@ -79,6 +83,11 @@ async function run(): Promise<void> {
     log('micro-benchmark…');
     await pause();
     for (let i = 0; i < 3; i++) report.micro.push(measureMicro(now));
+    show();
+    log('terrain hashes…');
+    await pause();
+    const hashes = SEEDS.map((sd) => [terrainHash(sd, 3), terrainHash(sd, 5)]);
+    report.terrain = { hashes, match: JSON.stringify(hashes) === JSON.stringify(PINNED) };
     show();
     log('localStorage.setItem…');
     await pause();

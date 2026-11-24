@@ -7,7 +7,29 @@ import { BUILDINGS } from '../src/game/config';
 import { Simulation } from '../src/game/sim';
 import { Terrain, type BuildingType, type ToolId } from '../src/game/types';
 import { World } from '../src/game/world';
-import { LEGACY_REGION } from '../src/game/types';
+import { LEGACY_REGION, SLOT, type FrameRegion, type Region } from '../src/game/types';
+
+// ── Regions (MEGACITY §11.5, Step 0b) ────────────────────────────────────────
+// The legacy 64×64 frame (LEGACY_REGION) is what most suites still build; these place a test on a real region.
+
+/** Slot-local x (0..63) → world x in the start slot of a region (3 → +64, 5 → +128). */
+export function sx(x: number, region: FrameRegion = 3): number {
+  return x + ((region - 1) >> 1) * SLOT;
+}
+/** Slot-local y (0..63) → world y in the start slot of a region. */
+export const sy = sx;
+
+/** A region world owning only its start slot (a new city's shape). */
+export function startWorld(region: Region = 3, seed = 1234, name = 'Testopolis'): World {
+  return new World(seed, name, undefined, region);
+}
+
+/** A region world owning every slot (the spec's `flatWorld(region)`; `flatWorld` below keeps its legacy meaning). */
+export function ownedWorld(region: Region = 3, seed = 1234, name = 'Testopolis'): World {
+  const w = new World(seed, name, undefined, region);
+  for (let s = 0; s < region * region; s++) if (!w.slotOwned[s]) w.annex(s);
+  return w;
+}
 
 /** A flat, all-land world (no generated water) for deterministic tests. */
 export function flatWorld(seed = 1234, name = 'Testopolis'): World {
