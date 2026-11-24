@@ -339,6 +339,14 @@ export class StoryUI {
     return this.title.isOpen || this.charter.isOpen || this.ending.isOpen;
   }
 
+  /**
+   * True while toasts must wait: a full-screen surface, or an open story card
+   * (a toast printed over the card's header hides who is speaking).
+   */
+  get holdsToasts(): boolean {
+    return this.fullscreen || this.card.isOpen;
+  }
+
   update(dt: number): void {
     const story = this.ctx.game.story;
     const v = story.view();

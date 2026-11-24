@@ -974,6 +974,8 @@
 
 .cc-chtitle.is-out {
   animation: cc-dialog-out 0.28s ease-in forwards;
+  /* Fading out: a tap goes to the card that opens beneath it. */
+  pointer-events: none;
 }
 
 .cc-cht-inner {
@@ -3459,7 +3461,8 @@ button.cc-scard-who[aria-expanded='true'] .cc-scard-whohint {
   }
 }
 
-/* Landscape phones: the title card summary sits beside nothing; keep it compact. */
+/* Landscape phones: the title card summary sits beside nothing; keep it compact, and keep
+   "Tap to continue" clear of it (a smaller numeral and title, the hint lower). */
 @media (orientation: landscape) and (max-height: 520px) {
   .cc-cht-sum {
     margin-top: 6px;
@@ -3469,5 +3472,18 @@ button.cc-scard-who[aria-expanded='true'] .cc-scard-whohint {
   .cc-cht-sumtext {
     font-size: 14px;
     line-height: 19px;
+  }
+  .cc-chtitle.has-summary {
+    padding-top: 12px;
+    padding-bottom: 34px;
+  }
+  .cc-chtitle.has-summary .cc-cht-num {
+    font-size: 44px;
+  }
+  .cc-chtitle.has-summary .cc-cht-title {
+    font-size: 22px;
+  }
+  .cc-chtitle.has-summary .cc-cht-skip {
+    bottom: calc(var(--cc-sab) + 10px);
   }
 }

@@ -1446,7 +1446,7 @@ The rail hides while a sheet or card is open.
   - "a Silt Log" for logs, "depends on the city" inside an `if`;
   - "buildings go offline" (`offline`), "empties blocks" (`abandon`), "opens Charter Night" (`charterNight`), and "leads to a follow-up" for a queued card the player will read (not a whisper).
 
-  Only a choice that changes nothing at all (or only sets flags) reads "no visible effect".
+  Only a choice that changes nothing at all (or only sets flags) reads "no visible effect". The hidden Tuning (§2.2) is left out of the chips, the summary and the exact effects until it shows itself.
 
   A long-press (400 ms) shows the exact effects popover. A locked choice is greyed out, its hint line shows the reason, and a tap on it shakes it and repeats the reason as a toast (long-press alone is not discoverable). The default ‡ choice carries a small clock glyph.
 - **Typewriter:** 60 characters per second; tapping the body completes it. Choices ignore taps for the first 600 ms, to stop mis-taps.

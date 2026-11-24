@@ -646,6 +646,8 @@ export class StoryDirector implements EffectHost {
     this.titleUntil = this.realSec + TITLE_SEC;
     if (n === 3) turf.forceSeed(w); // §5 Ch3 on start: both gangs seed, the Seam is set
     applyEffects(this, ch.onStart, { spot: -1 });
+    // The story UI reads the view inside the 'chapter' handler (title card, summary): rebuild it first.
+    this.cached = null;
     w.events.emit('chapter', { n, title: ch.title });
     this.markChanged();
   }

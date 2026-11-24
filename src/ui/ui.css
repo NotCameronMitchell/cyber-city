@@ -1023,7 +1023,7 @@ body {
   width: 100%;
 }
 
-/* A chapter title, Charter Night or the ending is up: only errors print over it. */
+/* A chapter title, Charter Night, the ending or a story card is up: only errors print over it. */
 .cc-toasts.is-held .cc-toast:not([data-kind='error']) {
   display: none;
 }

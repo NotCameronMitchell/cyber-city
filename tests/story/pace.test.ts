@@ -311,7 +311,12 @@ describe('clarity: brief, who is this, summary, story so far', () => {
       // Not before its title card: a chapter waiting to start keeps its summary to itself.
       expect(g.story.view().chapter.n).toBe(2);
       expect(g.story.view().chapter.summary).toBeUndefined();
+      // The story UI reads the view inside the 'chapter' handler: the title card and summary are there already.
+      let atTitle: ReturnType<typeof g.story.view> | null = null;
+      g.world.events.on('chapter', () => (atTitle = g.story.view()));
       days(g, 1);
+      expect(atTitle!.titleCard?.summary).toBe('Two corporations bid for Harness Bay.');
+      expect(atTitle!.chapter.summary).toBe('Two corporations bid for Harness Bay.');
       const v = g.story.view();
       expect(st.phase).toBe('active');
       expect(v.titleCard?.summary).toBe('Two corporations bid for Harness Bay.');

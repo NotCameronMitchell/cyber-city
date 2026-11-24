@@ -478,9 +478,19 @@ describe('tokens, hints and effect text', () => {
     expect(effectsText(w, [{ t: 'queue', card: 'wh.clerk', days: 180 }])).toBe('No effect.');
   });
 
+  it('the hidden Tuning is never named on a choice (chips, summary or exact effects) until it shows itself', () => {
+    const fx: Effect[] = [{ t: 'favor', f: 'tuning', v: -5 }, { t: 'favor', f: 'board', v: 5 }];
+    expect(hintsFor(w, fx)).toEqual([{ k: 'favor', f: 'board', dir: 1, pips: 1 }]);
+    expect(effectsText(w, fx)).toBe('Board +5');
+    w.story.flags.tuningActive = true;
+    expect(hintsFor(w, fx).map((x) => (x.k === 'favor' ? x.f : x.k))).toEqual(['board', 'tuning']);
+    expect(effectsText(w, fx)).toBe('Tuning −5 · Board +5');
+  });
+
   it('every story choice that does something says so under its label (no "no visible effect" over a real effect)', () => {
     // Effects a player can't see on the choice line, and that do nothing visible on their own.
     const silent = new Set<Effect['t']>(['flag', 'news']);
+    w.story.flags.tuningActive = true; // the Tuning's own cards only come once it shows itself
     const bad: string[] = [];
     for (const c of STORY_CONTENT.cards) {
       if (c.choices.length < 2) continue; // a lone "Continue." shows no summary

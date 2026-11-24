@@ -20,7 +20,7 @@ import type { Rng } from '../rng';
 import { DAYS_PER_MONTH, MAP_SIZE, Terrain, ZoneType, type Building, type BuildingType } from '../types';
 import type { World } from '../world';
 import { evalCond, storyContent } from './conditions';
-import { changeFavor, endingRules, patronOf, resolveRef, rivalOf } from './factions';
+import { changeFavor, endingRules, isVisible, patronOf, resolveRef, rivalOf } from './factions';
 import { composeLayers, resetLayers } from './mods';
 import { coherenceFor } from './state';
 import * as turf from './turf';
@@ -753,7 +753,8 @@ export function hintsFor(world: World, fx: readonly Effect[] | undefined): Hint[
   for (const e of fx) {
     switch (e.t) {
       case 'favor':
-        for (const f of resolveRef(world, e.f)) favor[f] = (favor[f] ?? 0) + e.v;
+        // A hidden faction (the Tuning, §2.2) is never named before it shows itself.
+        for (const f of resolveRef(world, e.f)) if (isVisible(world, f)) favor[f] = (favor[f] ?? 0) + e.v;
         break;
       case 'funds':
         cr += e.v;
@@ -889,6 +890,7 @@ export function effectText(world: World, e: Effect): string {
       return cr(e.v);
     case 'favor':
       return resolveRef(world, e.f)
+        .filter((f) => isVisible(world, f)) // the hidden Tuning stays unnamed (§2.2)
         .map((f) => `${short(f)} ${signed(e.v)}`)
         .join(', ');
     case 'trace':

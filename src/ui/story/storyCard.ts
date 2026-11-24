@@ -399,7 +399,7 @@ export class StoryCard {
     const c = this.card.choices[i];
     if (c?.locked) {
       replayClass(btn, 'is-shake');
-      this.ctx.game.toast(c.locked, 'info');
+      this.ctx.game.toast(c.locked, 'error'); // 'error' so it prints over the open card
       this.ctx.sfx('error');
       return;
     }

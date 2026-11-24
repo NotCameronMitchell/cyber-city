@@ -29,7 +29,8 @@ resets nor skips a gap.
 
 Pace-independent: urgent system cards (bailout, the Clip) need only 120 s since
 the last deck card (`STORY_PACING.systemGapSec`) and may come inside the quiet
-window. Goal waivers start once a chapter has run 720 d **and** its floor is met
+window and while a story message waits unread (a message may wait for ever; the
+bailout can't). Faction, ⚑ and other deck cards still wait for the message. Goal waivers start once a chapter has run 720 d **and** its floor is met
 (so no goal is waived while the chapter still has minutes to run), then one per
 360 d. A seasonal card never takes a deck slot it took in the last three deck
 cards (on slow paces a slot opens about every two sim years, always in the same
@@ -82,7 +83,11 @@ Everything else arrives as a **message** and the game keeps running:
   their ‡ default after 20 sim days and the pace's `pendingMinSec`.
 
 An opened message pauses while it is on screen and has **Later** (it goes back
-to waiting; a COMMS card keeps its timer). One modal at a time, as before.
+to waiting; a COMMS card keeps its timer). One modal at a time, as before: while
+the chapter title card is on screen the story UI holds the director
+(`holdTitle`), so no story card or urgent card opens under it (at most 20 s after
+the chapter starts), and a card already open waits behind it unshown. On a new
+game the boot card opens once the title is tapped or times out.
 
 ## Clarity surfaces
 
@@ -92,13 +97,20 @@ to waiting; a COMMS card keeps its timer). One modal at a time, as before.
   footer never move, so all choices stay visible at 360 × 640 and 844 × 390.
 - **Who is this?**: the speaker line on a faction's card is a button. The first
   card a faction speaks on opens it (saved in `story.met`): name, leader, tier and
-  standing, what they call you, and `Faction.about`.
+  standing, what they call you, and `Faction.about`. It sits under "What's going
+  on", so a first card still opens on its title and brief; the one-time hint
+  legend waits for a later card. A save from before `story.met` counts every
+  faction that already spoke on a card as met (no "New contact" mid-story).
 - **Choice summaries**: under every choice a plain line built from its hints,
-  e.g. "Basalt ++ · Nacre − · Trace +3 · −1,200 CR" (signs repeat by strength).
-  Holding a choice still shows its exact effects.
+  e.g. "Basalt ++ · Nacre − · Trace +3 · −1,200 CR" (signs repeat by strength),
+  plus "buildings go offline", "empties blocks", "opens Charter Night" and "leads
+  to a follow-up" (a queued card the player will read). "No visible effect" only
+  for a choice that changes nothing (or only sets flags). The hidden Tuning is
+  never named on a choice before it shows itself. Holding a choice still shows
+  its exact effects.
 - **Chapter summary** (`Chapter.summary`): on the chapter title card ("What's
   happening", the card stays ~14 s or until tapped) and at the top of the goal
-  drawer.
+  drawer once the chapter has started (not while it waits for its trigger).
 - **Story so far**: the goal drawer lists every finished chapter with its
   `Chapter.recap` and the key choice made ("You chose: …"), and the ending held.
 - **Glossary**: the "?" in the goal drawer's header lists `GLOSSARY`
@@ -122,3 +134,12 @@ the reading-time model above. Headless tests in `tests/story/pace.test.ts`,
 `pacing.test.ts` and `playthrough.test.ts` check the pace setting, the quiet
 window, the gaps, which cards may open by themselves, that every pace reaches
 every chapter and an ending, and save continuity.
+
+## Time words
+
+Story copy avoids fixed spans ("thirty days", "a year") where the pace stretches
+them: the chapter floors are real seconds, so on Relaxed the time between
+`ch5.install` and `ch5.choice`, or between `ch6.eve` and the count, runs to
+hundreds or thousands of sim days. `ch5.install`, `ch6.eve`, and the Ch5 and Ch6
+summaries say "soon", "when its count runs out" and "until the count" instead.
+`bd.grant` (which names the storm-order signer) waits for a flag `ch4.brine` sets.

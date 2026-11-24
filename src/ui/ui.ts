@@ -124,7 +124,7 @@ export class UI {
     this.confirm = new ConfirmDialog(this.ctx);
     this.story = new StoryUI(this.ctx);
     this.banner.held = () => this.story.busy || this.modals.depth > 0;
-    this.toasts.held = () => this.story.fullscreen;
+    this.toasts.held = () => this.story.holdsToasts;
 
     this.dock.stack.prepend(this.coach.el);
     this.dock.sheetSlot.append(this.inspect.el);
