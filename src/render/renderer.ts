@@ -309,7 +309,13 @@ export class Renderer {
     ctx.globalAlpha = 1;
     ctx.globalCompositeOperation = 'source-over';
     ctx.imageSmoothingEnabled = true;
-    this.backdrop.drawSky(ctx, this.cssW, this.cssH, dpr, cam.x, cam.y, zoom, night, time);
+    // The slab under the map, its rim and the sky's parallax follow the owned box when it is square (one district,
+    // MEGACITY §3.9): a migrated start slot sits 64 tiles in, and the backdrop reads its camera as on the 64 map.
+    const ob = world.ownedBox;
+    const square = ob.x1 - ob.x0 === ob.y1 - ob.y0 && ob.x0 === ob.y0;
+    const slabN = square ? ob.x1 - ob.x0 + 1 : world.N;
+    const slabDy = square ? 2 * ob.x0 * HALF_H : 0;
+    this.backdrop.drawSky(ctx, this.cssW, this.cssH, dpr, cam.x, cam.y - slabDy, zoom, night, time);
 
     // 2. World space from here on.
     const wa = dpr * zoom;
@@ -317,11 +323,6 @@ export class Renderer {
     const wf = (this.cssH / 2 - cam.y * zoom) * dpr;
     const setWorld = (c: CanvasRenderingContext2D) => c.setTransform(wa, 0, 0, wa, we, wf);
     setWorld(ctx);
-    // The slab under the map and its rim follow the owned box when it is square (one district, MEGACITY §3.9).
-    const ob = world.ownedBox;
-    const square = ob.x1 - ob.x0 === ob.y1 - ob.y0 && ob.x0 === ob.y0;
-    const slabN = square ? ob.x1 - ob.x0 + 1 : world.N;
-    const slabDy = square ? 2 * ob.x0 * HALF_H : 0;
     if (slabDy) ctx.translate(0, slabDy);
     this.backdrop.drawUnderMap(ctx, night, time, zoom, slabDy ? { ...view, y0: view.y0 - slabDy, y1: view.y1 - slabDy } : view, slabN);
     if (slabDy) setWorld(ctx);
