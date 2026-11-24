@@ -10,6 +10,7 @@ import { adjacentLocked, ringKey, ringOf, slotAtRingKey, slotNeighbours, slotRec
 import { KIND_WATER, startParams } from '../src/game/districts/terrain';
 import { Rng } from '../src/game/rng';
 import { Simulation } from '../src/game/sim';
+import { Advisor } from '../src/game/sim/advisor';
 import { newStoryState } from '../src/game/story/state';
 import { BUILDING_ORDER } from '../src/game/config';
 import { DISTRICT_KINDS, Ground, LEGACY_REGION, MAX_MAP_SIZE, RoadKind, SLOT, Terrain, ZoneType, startSlot, type Region, type SaveData } from '../src/game/types';
@@ -330,6 +331,15 @@ describe('config tables (§3.2, §3.7, §4.5)', () => {
     expect(REGION[5].epilogueGrantMul).toBe(0.5);
     expect(milestonesFor(3).length).toBe(MILESTONES.length - 2);
     expect(milestonesFor(5).length).toBe(MILESTONES.length);
+  });
+
+  it.each(REGIONS)('%i×%i: the advisor pays the 5×5-only milestones only on a 5×5 region', (R) => {
+    const w = new World(5, 'Milestones', undefined, R);
+    const adv = new Advisor();
+    adv.milestones(w, 9_000_000);
+    const want = milestonesFor(R).map((m) => m.pop);
+    expect(w.milestones).toEqual(want);
+    expect(w.milestones.includes(6_000_000)).toBe(R === 5);
   });
 });
 

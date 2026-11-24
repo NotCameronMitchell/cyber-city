@@ -231,6 +231,52 @@ describe('layers', () => {
     expect(turf.crimeAdd[10]).toBeCloseTo(0.1, 6);
   });
 
+  it('the district part and the parkAdd / pollutionAdd layers (MEGACITY §3.3, frozen in Step 0b)', () => {
+    const world = { layers: makeLayers(AREA), layerParts: makeLayerParts(AREA) };
+    const { turf, vertical, local, district } = world.layerParts;
+    expect(Object.keys(world.layerParts).sort()).toEqual(['district', 'local', 'turf', 'vertical']);
+    for (const l of [world.layers, turf, district]) {
+      expect(l.parkAdd.length).toBe(AREA);
+      expect(l.pollutionAdd.length).toBe(AREA);
+      expect(l.parkAdd.every((v) => v === 0) && l.pollutionAdd.every((v) => v === 0)).toBe(true);
+    }
+    // At identity the district part changes nothing.
+    turf.crimeAdd[10] = 0.1;
+    vertical.lvAdd[11] = 0.05;
+    local.transitAdd[12] = 0.4;
+    composeLayers(world);
+    const before = JSON.stringify(Object.values(world.layers).map((a) => Array.from(a as Float32Array)));
+    // It merges like the story parts: crime, land value and pollution add; park and transit take the max; multipliers multiply.
+    district.crimeAdd[10] = 0.05;
+    district.lvAdd[11] = -0.04;
+    district.transitAdd[12] = 0.6;
+    district.tripMul[13] = 0.5;
+    district.parkAdd[14] = 0.5;
+    local.parkAdd[14] = 0.3;
+    district.pollutionAdd[15] = 0.15;
+    turf.pollutionAdd[15] = 0.07;
+    district.parkAdd[16] = 4;
+    composeLayers(world);
+    const L = world.layers;
+    expect(L.crimeAdd[10]).toBeCloseTo(0.15, 6);
+    expect(L.lvAdd[11]).toBeCloseTo(0.01, 6);
+    expect(L.transitAdd[12]).toBeCloseTo(0.6, 6);
+    expect(L.tripMul[13]).toBeCloseTo(0.5, 6);
+    expect(L.parkAdd[14]).toBeCloseTo(0.5, 6);
+    expect(L.pollutionAdd[15]).toBeCloseTo(0.22, 6);
+    expect(L.parkAdd[16]).toBe(1);
+    resetLayers(district);
+    expect(district.parkAdd[14]).toBe(0);
+    expect(district.tripMul[13]).toBe(1);
+    composeLayers(world);
+    world.layers.parkAdd[14] = 0; // local's 0.3 still stands; compare the rest
+    world.layers.pollutionAdd[15] = 0;
+    local.parkAdd[14] = 0;
+    turf.pollutionAdd[15] = 0;
+    composeLayers(world);
+    expect(JSON.stringify(Object.values(world.layers).map((a) => Array.from(a as Float32Array)))).toBe(before);
+  });
+
   it('composeLayers is idempotent and re-running after a part changes overwrites', () => {
     const world = { layers: makeLayers(AREA), layerParts: makeLayerParts(AREA) };
     world.layerParts.turf.crimeAdd[3] = 0.2;

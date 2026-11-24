@@ -12,7 +12,7 @@
 // lines with their `hint` events; the revised roads and traffic lines.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { BUILDINGS, BUILDING_ORDER, CURRENCY, MILESTONES, ROAD_KINDS, SKYWAY, ZONES, type BuildingDef } from '../config';
+import { BUILDINGS, BUILDING_ORDER, CURRENCY, ROAD_KINDS, SKYWAY, ZONES, milestonesFor, type BuildingDef } from '../config';
 import type { HintId } from '../events';
 import { HeadlineDeck } from '../news';
 import { ZoneType, type Demand, type NewsItem } from '../types';
@@ -127,7 +127,8 @@ export class Advisor {
 
   /** Population milestones (a Board bonus, once each) and building unlocks. Mutates funds; step() only. */
   milestones(world: World, population: number): void {
-    for (const m of MILESTONES) {
+    // The 5×5-only rows (Electric Tide, Glass Horizon) count only on a 5×5 region (MEGACITY §4.5).
+    for (const m of milestonesFor(world.region)) {
       if (population < m.pop || world.milestones.includes(m.pop)) continue;
       world.milestones.push(m.pop);
       world.funds += m.grant;

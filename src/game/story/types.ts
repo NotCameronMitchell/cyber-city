@@ -339,17 +339,23 @@ export interface SimLayers {
   abandonMul: Float32Array;
   /** Multiplicative per-tile tax yield (identity 1). */
   taxMul: Float32Array;
+  /** Max-combined into fields.park by coverage (identity 0; MEGACITY §3.3, e.g. unbuilt reed tiles). */
+  parkAdd: Float32Array;
+  /** Added to the pollution sources (identity 0; MEGACITY §3.3, e.g. brownfield). */
+  pollutionAdd: Float32Array;
 }
 
 /**
- * The three partial layer sets, each written only by its owner, then merged
+ * The partial layer sets, each written only by its owner, then merged
  * into `world.layers` by `composeLayers(world)`:
- * `turf` → story/turf.ts, `vertical` → story/vertical.ts, `local` → the director.
+ * `turf` → story/turf.ts, `vertical` → story/vertical.ts, `local` → the director,
+ * `district` → districts/effects.ts (MEGACITY §3.3, WP-2; identity until then).
  */
 export interface LayerParts {
   turf: SimLayers;
   vertical: SimLayers;
   local: SimLayers;
+  district: SimLayers;
 }
 
 /** Extra budget lines the story appends to the monthly budget (`world.ledger`). Amounts are positive. */

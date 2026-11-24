@@ -20,6 +20,8 @@ import * as vertical from '../src/game/story/vertical';
 import * as types from '../src/game/types';
 import { LEGACY_REGION, LEGACY_SIZE, MAX_MAP_SIZE, SLOT, Terrain, ZoneType, type FrameRegion } from '../src/game/types';
 import { World } from '../src/game/world';
+import { Game } from '../src/game/game';
+import { buildShowcase } from '../src/ui/start/showcase';
 import { Camera } from '../src/render/camera';
 import { RoadAccessMap } from '../src/render/overlay';
 import { ScriptedMayor } from './helpers';
@@ -322,6 +324,55 @@ describe('worlds of different sides side by side (the Showcase case)', () => {
     expect(w.stats.population).toBeGreaterThan(0);
     expect(w.tiles[w.idx(311, 315)].level).toBeGreaterThan(0);
   }, 120000);
+});
+
+describe('the title Showcase beside a 5×5 city (§11.2 item 13, the Showcase case)', () => {
+  /** Everything a world holds that the sim or a save can see. */
+  const digest = (w: World) => {
+    const d = w.serialize() as unknown as Record<string, unknown>;
+    delete d.savedAt;
+    return JSON.stringify({ d, f: Object.entries(w.fields).map(([k, a]) => [k, Array.from(a as Float32Array)]) });
+  };
+  /** A 5×5 game city with two blocks in its start slot, stepped 60 days; the Showcase recomputed beside it each day. */
+  function run(withShowcase: boolean): { game: string; show: string | null; showRegion: number; owned: number } {
+    const g = new Game();
+    g.newCity('Wide', 77, 5);
+    const w = g.world;
+    w.funds = 1e7;
+    const c = w.N >> 1;
+    block(w, c - 8, c - 6);
+    block(w, c + 2, c + 2);
+    g.sim.options.events = false;
+    g.sim.recomputeAll();
+    const show = withShowcase ? buildShowcase() : null;
+    const showSim = show ? new Simulation(show) : null;
+    if (showSim) showSim.options.events = false;
+    for (let d = 0; d < 60; d++) {
+      g.sim.step();
+      showSim?.recomputeAll();
+    }
+    return {
+      game: digest(w),
+      show: show ? digest(show) : null,
+      showRegion: show?.region ?? 0,
+      owned: show ? show.slotOwned.reduce((a, b) => a + b, 0) : 0,
+    };
+  }
+
+  it('a 3×3 Showcase with locked slots and a 5×5 World + Simulation never touch each other', () => {
+    const together = run(true);
+    const alone = run(false);
+    expect(together.showRegion).toBe(3);
+    expect(together.owned).toBe(1); // the Showcase lives in its start slot; the other 8 slots are locked
+    expect(together.game === alone.game).toBe(true);
+    // The Showcase alone, recomputed as often, ends where it ended beside the game.
+    const solo = buildShowcase();
+    const soloSim = new Simulation(solo);
+    soloSim.options.events = false;
+    for (let d = 0; d < 60; d++) soloSim.recomputeAll();
+    expect(together.show === digest(solo)).toBe(true);
+    expect(JSON.parse(together.game).d.region).toBe(5);
+  }, 60000);
 });
 
 describe('the render side reads the frame from the world it shows', () => {

@@ -199,6 +199,8 @@ export function makeLayers(area: number): SimLayers {
     tripMul: new Float32Array(area).fill(1),
     abandonMul: new Float32Array(area).fill(1),
     taxMul: new Float32Array(area).fill(1),
+    parkAdd: new Float32Array(area),
+    pollutionAdd: new Float32Array(area),
   };
 }
 
@@ -210,22 +212,26 @@ export function resetLayers(l: SimLayers): void {
   l.tripMul.fill(1);
   l.abandonMul.fill(1);
   l.taxMul.fill(1);
+  l.parkAdd.fill(0);
+  l.pollutionAdd.fill(0);
 }
 
 /** Fresh `world.layerParts` for a world of `area` tiles. */
 export function makeLayerParts(area: number): LayerParts {
-  return { turf: makeLayers(area), vertical: makeLayers(area), local: makeLayers(area) };
+  return { turf: makeLayers(area), vertical: makeLayers(area), local: makeLayers(area), district: makeLayers(area) };
 }
 
 /**
- * Merge the three partial sets into `world.layers` (in place, no allocation):
- * crimeAdd / lvAdd add, transitAdd takes the max, tripMul / abandonMul /
- * taxMul multiply. Results are kept sane: additive layers ±1, transitAdd 0..1,
- * multipliers ≥ 0. Call after any owner rewrites its part (~0.1 ms).
+ * Merge the four partial sets into `world.layers` (in place, no allocation):
+ * crimeAdd / lvAdd / pollutionAdd add, transitAdd / parkAdd take the max,
+ * tripMul / abandonMul / taxMul multiply. Results are kept sane: additive layers
+ * ±1, transitAdd and parkAdd 0..1, multipliers ≥ 0. The district part (MEGACITY
+ * §3.3) merges like the story parts; at identity it changes nothing. Call after
+ * any owner rewrites its part (~0.1 ms).
  */
 export function composeLayers(world: Pick<World, 'layers' | 'layerParts'>): void {
   const out = world.layers;
-  const { turf: a, vertical: b, local: c } = world.layerParts;
+  const { turf: a, vertical: b, local: c, district: d } = world.layerParts;
   const n = out.crimeAdd.length;
   const oc = out.crimeAdd;
   const ol = out.lvAdd;
@@ -233,26 +239,38 @@ export function composeLayers(world: Pick<World, 'layers' | 'layerParts'>): void
   const otr = out.tripMul;
   const oab = out.abandonMul;
   const otx = out.taxMul;
-  const ac = a.crimeAdd, bc = b.crimeAdd, cc = c.crimeAdd;
-  const al = a.lvAdd, bl = b.lvAdd, cl = c.lvAdd;
-  const at = a.transitAdd, bt = b.transitAdd, ct = c.transitAdd;
-  const atr = a.tripMul, btr = b.tripMul, ctr = c.tripMul;
-  const aab = a.abandonMul, bab = b.abandonMul, cab = c.abandonMul;
-  const atx = a.taxMul, btx = b.taxMul, ctx = c.taxMul;
+  const op = out.parkAdd;
+  const opo = out.pollutionAdd;
+  const ac = a.crimeAdd, bc = b.crimeAdd, cc = c.crimeAdd, dc = d.crimeAdd;
+  const al = a.lvAdd, bl = b.lvAdd, cl = c.lvAdd, dl = d.lvAdd;
+  const at = a.transitAdd, bt = b.transitAdd, ct = c.transitAdd, dt = d.transitAdd;
+  const atr = a.tripMul, btr = b.tripMul, ctr = c.tripMul, dtr = d.tripMul;
+  const aab = a.abandonMul, bab = b.abandonMul, cab = c.abandonMul, dab = d.abandonMul;
+  const atx = a.taxMul, btx = b.taxMul, ctx = c.taxMul, dtx = d.taxMul;
+  const ap = a.parkAdd, bp = b.parkAdd, cp = c.parkAdd, dp = d.parkAdd;
+  const apo = a.pollutionAdd, bpo = b.pollutionAdd, cpo = c.pollutionAdd, dpo = d.pollutionAdd;
   for (let i = 0; i < n; i++) {
-    const cr = ac[i] + bc[i] + cc[i];
+    const cr = ac[i] + bc[i] + cc[i] + dc[i];
     oc[i] = cr < -1 ? -1 : cr > 1 ? 1 : cr;
-    const lv = al[i] + bl[i] + cl[i];
+    const lv = al[i] + bl[i] + cl[i] + dl[i];
     ol[i] = lv < -1 ? -1 : lv > 1 ? 1 : lv;
     let t = at[i];
     if (bt[i] > t) t = bt[i];
     if (ct[i] > t) t = ct[i];
+    if (dt[i] > t) t = dt[i];
     ot[i] = t < 0 ? 0 : t > 1 ? 1 : t;
-    const tr = atr[i] * btr[i] * ctr[i];
+    const tr = atr[i] * btr[i] * ctr[i] * dtr[i];
     otr[i] = tr > 0 ? tr : 0;
-    const ab = aab[i] * bab[i] * cab[i];
+    const ab = aab[i] * bab[i] * cab[i] * dab[i];
     oab[i] = ab > 0 ? ab : 0;
-    const tx = atx[i] * btx[i] * ctx[i];
+    const tx = atx[i] * btx[i] * ctx[i] * dtx[i];
     otx[i] = tx > 0 ? tx : 0;
+    let p = ap[i];
+    if (bp[i] > p) p = bp[i];
+    if (cp[i] > p) p = cp[i];
+    if (dp[i] > p) p = dp[i];
+    op[i] = p < 0 ? 0 : p > 1 ? 1 : p;
+    const po = apo[i] + bpo[i] + cpo[i] + dpo[i];
+    opo[i] = po < -1 ? -1 : po > 1 ? 1 : po;
   }
 }

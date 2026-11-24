@@ -382,6 +382,36 @@ describe('first-launch showcase backdrop', () => {
   });
 });
 
+describe('the Showcase is released when the title closes (MEGACITY §11.2 item 13, §12 Step 0b)', () => {
+  const SRC = import.meta.glob(['../src/ui/start/startScreen.ts', '../src/ui/start/showcase.ts'], { query: '?raw', import: 'default', eager: true }) as Record<string, string>;
+  const screen = SRC['../src/ui/start/startScreen.ts'];
+  const show = SRC['../src/ui/start/showcase.ts'];
+  /** The body of a method `name(...): void {` (up to the next method at the same indent). */
+  const body = (src: string, name: string) => {
+    const at = src.search(new RegExp(`\\n  (private |public )?${name}\\([^)]*\\)(: [A-Za-z]+)? \\{`));
+    expect(at, name).toBeGreaterThan(0);
+    const end = src.indexOf('\n  }\n', at);
+    return src.slice(at, end);
+  };
+
+  it('leave() drops the Showcase: destroyed, then no reference kept; the backdrop then reads the game renderer', () => {
+    // One Showcase, built only on first launch, held only in `this.showcase`.
+    expect(screen.match(/new Showcase\(/g)).toHaveLength(1);
+    expect(screen).toMatch(/this\.showcase = new Showcase\(this\.game, o\.canvas\)/);
+    expect(body(screen, 'leave')).toContain('this.dropShowcase();');
+    expect(body(screen, 'dropShowcase')).toMatch(/this\.showcase\.destroy\(\);\s*this\.showcase = null;/);
+    // main.ts renders `backdrop ?? renderer`: null once dropped.
+    expect(screen).toMatch(/get backdrop\(\): Renderer \| null \{\s*return this\.showcase\?\.renderer \?\? null;/);
+    // destroy() unhooks the settings listener and the renderer (its caches and listeners).
+    const destroy = body(show, 'destroy');
+    expect(destroy).toContain('this.off();');
+    expect(destroy).toContain('this.renderer.destroy();');
+    // And it is always a 3×3 world.
+    expect(show).toMatch(/World\.generate\(seed, 'Showcase', undefined, 3\)/);
+    expect(buildShowcase().region).toBe(3);
+  });
+});
+
 describe('hold contract with a real Game', () => {
   /** A horizontal run of land tiles near the middle of the map. */
   function landRun(g: Game, len: number): { x: number; y: number } | null {

@@ -8,6 +8,7 @@ import { BASALT_CARDS } from './basalt';
 import { BEAT_CARDS } from './beats';
 import { BOARD_CARDS } from './board';
 import { ENDING_CARDS, EPILOGUE_CARDS } from './endings';
+import { EPILOGUE_DECK } from './epilogue';
 import { EXPANSION_CARDS } from './expansion';
 import { KITES_CARDS } from './kites';
 import { LOG_CARDS } from './logs';
@@ -17,7 +18,7 @@ import { TUNING_CARDS } from './tuning';
 import { UNDERTOW_CARDS } from './undertow';
 import { WHISPER_CARDS } from './whispers';
 
-export { BASALT_CARDS, BEAT_CARDS, BOARD_CARDS, ENDING_CARDS, EPILOGUE_CARDS, EXPANSION_CARDS, KITES_CARDS, LOG_CARDS };
+export { BASALT_CARDS, BEAT_CARDS, BOARD_CARDS, ENDING_CARDS, EPILOGUE_CARDS, EPILOGUE_DECK, EXPANSION_CARDS, KITES_CARDS, LOG_CARDS };
 export { MULTI_CARDS, NACRE_CARDS, SYSTEM_CARDS, TUNING_CARDS, UNDERTOW_CARDS, WHISPER_CARDS };
 export { SILT_LOGS, logCardId } from './logs';
 export type { SiltLog } from './logs';
@@ -34,7 +35,8 @@ export const FACTION_DECKS: Record<FactionId, readonly Card[]> = {
 
 /**
  * The faction deck (§7): 43 cards plus the 11 expansion cards (EXPANSION §8.3), kinds
- * `faction` | `hostile` | `system`. Includes the queued-only follow-ups (`nc.fake`,
+ * `faction` | `hostile` | `system`, plus the epilogue deck cards (MEGACITY §9.4; empty
+ * until WP-8 fills `EPILOGUE_DECK`). Includes the queued-only follow-ups (`nc.fake`,
  * `kt.probe`, `tu.hymn`): the draw must skip `queuedOnly` cards. Excludes beats, logs,
  * endings, `ep.review` and the coda.
  */
@@ -48,6 +50,7 @@ export const DECK: readonly Card[] = [
   ...MULTI_CARDS,
   ...SYSTEM_CARDS,
   ...EXPANSION_CARDS,
+  ...EPILOGUE_DECK,
 ];
 
 /** Every card in the game, in a stable order (beats, deck, logs, endings, epilogue, whispers). */
