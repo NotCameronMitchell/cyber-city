@@ -587,7 +587,9 @@ describe('S2: the ScriptedMayor against its pinned v3 run (§11.3)', () => {
   // read on the mean of the three pinned seeds (population every year, funds once the build-out
   // is done, years 5–8, when the treasury is no longer spent to the bone), and each single run
   // stays inside the dice noise.
-  it('three pinned seeds, 8 years: mean population ×10 within −5% / +25% every year; mean funds from year 5', () => {
+  // OPEN (docs/MEGACITY.md §11.6): this is a relaxed reading of S2 (the mean of the seeds, single runs ≥ 0.85), not
+  // §11.3's per-run band. The owner or Step 9 restates S2 or tunes the density table.
+  it('three pinned seeds, 8 years (relaxed reading, §11.6: open): mean population ×10 within −5% / +25% every year; mean funds from year 5', () => {
     const pop: number[][] = [];
     const funds: number[][] = [];
     for (const seed of PINNED) {
@@ -666,7 +668,9 @@ describe('S4: the density pass (§4.1, §4.2, §11.3)', () => {
   // with the density pass undone (unitsOnly): the plain district (homes mostly reach L2: land
   // value ≈ 0.36) and a downtown (+0.3 land value everywhere: homes reach L3, the balanced L3
   // city of §4.1). MEASURE=1 runs seeds 2091, 7 and 31 and prints the tables.
-  it('demand-led mayor, one district, 12 years: land use, traffic, residents and the Balance of Power', () => {
+  // OPEN (docs/MEGACITY.md §11.6): a relaxed reading of S4 (land use downtown only, unemployment ≤ 14%, downtown traffic
+  // ≤ +0.08), not §11.3's numbers. The owner or Step 9 restates S4 or tunes the density table / the per-level trip factor.
+  it('demand-led mayor, one district, 12 years (relaxed reading, §11.6: open): land use, traffic, residents and the Balance of Power', () => {
     const seed = 2091;
     const plain = demandLedRun(seed);
     const plain0 = unitsOnly(() => demandLedRun(seed));

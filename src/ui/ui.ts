@@ -16,6 +16,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import './ui.css';
+import type { ToastAction } from '../game/events';
 import type { Game } from '../game/game';
 import { pointerActivity } from '../input/gestures';
 import type { Camera } from '../render/camera';
@@ -47,6 +48,10 @@ const COMPACT_QUERY = '(max-width: 639px)';
 const WATCH_Y = 0.66;
 /** Watch: the view is eased out to at most this zoom so the tower and the climb fit. */
 const WATCH_ZOOM = 0.85;
+
+
+/** Toast actions this UI handles (Undo, Watch). WP-9 adds 'export' with its Export city handler, the City map adds 'map'. */
+const TOAST_HANDLED: ReadonlySet<ToastAction['id']> = new Set<ToastAction['id']>(['undo', 'watch']);
 
 export class UI {
   /** Public for the start screen (src/ui/start): shared dialogs, menu views and the story hold. */
@@ -211,7 +216,9 @@ export class UI {
       this.ticker.push(item);
       this.news.refresh();
     });
-    on('toast', (t) => this.toasts.push(t.text, t.kind, t.action));
+    // An action without a handler yet ('export' until WP-9's Export city, 'map' until the City map) shows as plain
+    // text: its button would be dropped on the next frame (alive() is false for it) and take the message with it.
+    on('toast', (t) => this.toasts.push(t.text, t.kind, t.action && TOAST_HANDLED.has(t.action.id) ? t.action : undefined));
     on('milestone', (m) => this.banner.show(m));
     on('moment', (m) => this.banner.showMoment(m));
     on('hint', (e) => this.tips.onHint(e.id));

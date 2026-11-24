@@ -355,7 +355,7 @@ export class Menu {
           if (ok) {
             this.resumeSpeed = 0;
             modals.closeAll();
-          }
+          } else if (game.keepCopyFailed !== null || game.lastSaveFailed) modals.closeAll(); // its Export toast shows over the city
         },
       });
     } else if (act === 'new' && this.onNewCity) {
