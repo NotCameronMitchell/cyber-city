@@ -312,7 +312,9 @@ describe('wealth helpers (§4)', () => {
     expect(zoneCapacity(ZoneType.Residential, 3, 2)).toBe(1350);
     expect(zoneCapacity(ZoneType.Residential, 3, 0, true)).toBe(1650);
     expect(zoneCapacity(ZoneType.Residential, 3, 1, true)).toBe(Math.round(150 * 0.95) * 10); // affordable only at $; whole tens (×10 units)
-    expect(zoneCapacity(ZoneType.Commercial, 3, 0, true)).toBe(900);
+    expect(zoneCapacity(ZoneType.Commercial, 3, 0, true)).toBe(1250); // the density pass (MEGACITY §4.2); no affordable bonus for shops
+    expect(zoneCapacity(ZoneType.Commercial, 3, 2)).toBe(1190);
+    expect(zoneCapacity(ZoneType.Industrial, 3, 2)).toBe(1080);
     expect(zoneTaxMul(ZoneType.Industrial, 2)).toBe(1.8);
     expect(zonePowerMul(ZoneType.Industrial, 2)).toBe(0.9);
     expect(zonePollution(ZoneType.Industrial, 3, 2)).toBeCloseTo(0.85 * 0.35, 6);
@@ -605,7 +607,7 @@ describe('buildingStats (§2.8, §5.3)', () => {
     expect(buildingStats(b('academy'))).toMatchObject({ jobsInd: 0, jobsCom: 300, effect: 'education', radius: 12 });
     expect(buildingStats(b('reactor'))).toMatchObject({ jobsInd: 400, jobsCom: 0 });
     expect(buildingStats(b('foundry'))).toMatchObject({ jobsInd: 2500, jobsCom: 0 });
-    expect(buildingStats(b('spire'))).toMatchObject({ jobsInd: 0, jobsCom: 6000 });
+    expect(buildingStats(b('spire'))).toMatchObject({ jobsInd: 0, jobsCom: 8000 }); // density premium (MEGACITY §4.2)
   });
 
   it('a building under construction (buildDays > 0, non-stack) has no effects', () => {

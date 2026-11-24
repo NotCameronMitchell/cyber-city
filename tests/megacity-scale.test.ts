@@ -7,6 +7,11 @@
 //                 their condition; every unlockPop is a multiple of 10; every per-tile-count
 //                 term (/per100|perTile|per 100/i) in config.ts and story/ is a reviewed one.
 //   Saves         serialize writes `scale: POP_SCALE`; a save without it loads ×10.
+//   S2, S4        the density pass (part 2): the ScriptedMayor against its pinned v3 run, the
+//                 balanced-L3 arithmetic, the megastructure premium, and a demand-led mayor's
+//                 land use, traffic and Balance of Power against the same run with the density
+//                 pass undone (tests/megacity-density.ts). MEASURE=1 adds the 3-seed and 12-seed
+//                 tables and the story-harness chapter starts (docs/MEGACITY.md §11.6 records them).
 //   S1            the pinned v3 saves (tests/fixtures, measured by the v3 build in
 //                 v3-baseline.json) loaded by this build: residents and jobs ×10, money,
 //                 fields, power, salt and the Balance of Power unchanged, at load and after a
@@ -41,10 +46,14 @@ import { HEADLINES } from '../src/game/news';
 import * as T from '../src/game/sim/tuning';
 import { CHAPTERS, NOTE_CROSSINGS_PER_BRIDGE } from '../src/game/story/content';
 import type { Condition } from '../src/game/story/types';
-import { DAYS_PER_MONTH, MONTHS_PER_YEAR, type BuildingType, type SaveData } from '../src/game/types';
+import { DAYS_PER_MONTH, MONTHS_PER_YEAR, type Building, type BuildingType, type SaveData, type StoryPace } from '../src/game/types';
 import { World, savePopScale } from '../src/game/world';
+import { blankStats, buildingStats } from '../src/game/buildingStats';
+import type { Game as GameT } from '../src/game/game';
 import { ScriptedMayor, flatWorld, makeSim } from './helpers';
+import { demandLedRun, scriptedMayorYears, unitsOnly, type S4Run } from './megacity-density';
 import { measureSave, type S1Snapshot } from './megacity-s1';
+import { playStory } from './story/harness';
 
 const S = POP_SCALE;
 
@@ -139,10 +148,20 @@ const V3 = {
 
 /**
  * The density pass and the megastructure premium (§4.1 step 2, §4.2): rows whose head counts are
- * NOT v3 × 10, with their expected values. Empty in Step 0a part 1 (the pure unit change); part 2
- * fills it (e.g. 'ZONES.com.capacity': [0, 80, 380, 1250]) and S1 below then skips.
+ * NOT v3 × 10, with their expected values. Empty in Step 0a part 1 (the pure unit change, when S1
+ * below ran exact); part 2 fills it, so S1 skips and the static half checks everything else.
  */
-const DENSITY: Record<string, number | readonly number[]> = {};
+const DENSITY: Record<string, number | readonly number[]> = {
+  // Businesses provide enough jobs: Market and Fab L2–L3 (×10 units would be 280 / 900, 340 / 750).
+  'ZONES.com.capacity': [0, 80, 380, 1250],
+  'ZONES.ind.capacity': [0, 120, 450, 1200],
+  // Megastructures out-house the towers beside them (×10 units: 16,000; 4,000; 6,000; 30,000; 6,000).
+  'STACK_STAGES.1.res': 32000,
+  'STACK_STAGES.2.res': 6000,
+  'CROWNS.commons.residents': 10000,
+  'BUILDINGS.arcology.residents': 40000,
+  'BUILDINGS.spire.jobs': 8000,
+};
 
 /** Expected value of a head-count row: the density override if listed, else v3 × POP_SCALE. */
 function want(key: string, v3: number): number;
@@ -249,16 +268,33 @@ describe('Megacity scale: the units (§4.1, §4.3, §4.4)', () => {
     expect(POWER_WEIGHTS.nacre.jobsComDiv).toBe(r.jobsComDiv * S);
   });
 
-  it('unchanged on purpose: money, caps and per-building numbers (§4.1)', () => {
+  it('unchanged on purpose: money, caps and per-building numbers (§4.1); the premium\'s power and upkeep (§4.2)', () => {
     expect(SEAPORT.tradeCap).toBe(2000);
     expect(SALT.base).toBe(600);
     expect(SPACEPORT.income).toBe(1200);
+    // Costs stay. The premium raises the Hab Core's power 80 → 150 and upkeep 180 → 260, the
+    // Spire's power 60 → 80 and the Arcology's 220 → 290, so running costs per head stay near
+    // a Hab L3 tile's; everything else is the v3 value.
     expect(STACK_STAGES.map((s) => [s.cost, s.power, s.upkeep])).toEqual([
       [12000, 40, 120],
-      [16000, 80, 180],
+      [16000, 150, 260],
       [22000, 80, 220],
     ]);
-    expect([BUILDINGS.spire.cost, BUILDINGS.spire.powerUse, BUILDINGS.arcology.cost, BUILDINGS.arcology.powerUse]).toEqual([25000, 60, 60000, 220]);
+    expect([BUILDINGS.spire.cost, BUILDINGS.spire.powerUse, BUILDINGS.arcology.cost, BUILDINGS.arcology.powerUse]).toEqual([25000, 80, 60000, 290]);
+    expect([BUILDINGS.spire.upkeep, BUILDINGS.arcology.upkeep, BUILDINGS.arcology.jobs]).toEqual([400, 700, 1200]);
+    // Zone power, pollution and cost per tile are unchanged by the density pass (§4.1).
+    expect([ZONES.res.power, ZONES.com.power, ZONES.ind.power]).toEqual([
+      [0, 1, 3, 8],
+      [0, 2, 5, 12],
+      [0, 3, 7, 14],
+    ]);
+    expect([ZONES.res.cost, ZONES.com.cost, ZONES.ind.cost]).toEqual([20, 30, 25]);
+  });
+
+  it('descriptions quote the premium numbers', () => {
+    expect(BUILDINGS.spire.desc).toContain(`${BUILDINGS.spire.jobs.toLocaleString('en-US')} office jobs`);
+    expect(BUILDINGS.arcology.desc).toContain(`for ${BUILDINGS.arcology.residents.toLocaleString('en-US')} residents`);
+    expect(CROWNS.commons.summary).toBe('+10,000 residents in cheap floors, approval +3.');
   });
 
   it('news gates, the MOTH crossing count and the in-code thresholds are ×10', async () => {
@@ -518,4 +554,223 @@ describe.skipIf(!UNITS_ONLY)('S1: the unit change is invisible (pinned v3 saves,
     expect(w.maxPopulation).toBe(b.maxPopulation * S);
     expect(w.milestones).toEqual(b.milestones.map((p) => p * S));
   }, 120_000);
+});
+
+// ── S2 and S4: the density pass (§4.1 step 2, §4.2, §11.3) ──────────────────
+
+const env: Record<string, string | undefined> = (globalThis as { process?: { env: Record<string, string | undefined> } }).process?.env ?? {};
+const MEASURE = env.MEASURE === '1';
+const mean = (a: readonly number[]) => a.reduce((x, y) => x + y, 0) / a.length;
+const PINNED = [2091, 7, 31] as const;
+const last = (r: S4Run) => r.years[r.years.length - 1];
+
+/** Ratio of each run's year-end population to the pinned v3 run × 10, and of its funds. */
+function againstV3(seed: number, years: ReturnType<typeof scriptedMayorYears>) {
+  const b = BASELINE.mayor[String(seed)].months;
+  return {
+    pop: years.map((y, i) => y.pop / (b[i * MONTHS_PER_YEAR + MONTHS_PER_YEAR - 1].pop * S)),
+    funds: years.map((y, i) => y.funds / b[i * MONTHS_PER_YEAR + MONTHS_PER_YEAR - 1].funds),
+  };
+}
+
+describe('S2: the ScriptedMayor against its pinned v3 run (§11.3)', () => {
+  // §11.3 S2: population ×10 within −5% / +25% and funds within −5% / +25%. One scripted run is
+  // chaotic: in the v3 build, the same city with its dice shifted by one draw moves population
+  // by 0.83–1.16× and funds by 0.20–3.1× at a year end (12 seeds, MEASURE=1). So the bands are
+  // read on the mean of the three pinned seeds (population every year, funds once the build-out
+  // is done, years 5–8, when the treasury is no longer spent to the bone), and each single run
+  // stays inside the dice noise.
+  it('three pinned seeds, 8 years: mean population ×10 within −5% / +25% every year; mean funds from year 5', () => {
+    const pop: number[][] = [];
+    const funds: number[][] = [];
+    for (const seed of PINNED) {
+      const r = againstV3(seed, scriptedMayorYears(seed));
+      pop.push(r.pop);
+      funds.push(r.funds);
+      for (const [y, v] of r.pop.entries()) {
+        expect(v, `seed ${seed} year ${y + 1} population`).toBeGreaterThanOrEqual(0.85);
+        expect(v, `seed ${seed} year ${y + 1} population`).toBeLessThanOrEqual(1.25);
+      }
+    }
+    for (let y = 0; y < 8; y++) {
+      const p = mean(pop.map((r) => r[y]));
+      expect(p, `year ${y + 1} mean population`).toBeGreaterThanOrEqual(0.95);
+      expect(p, `year ${y + 1} mean population`).toBeLessThanOrEqual(1.25);
+      if (y < 4) continue;
+      const f = mean(funds.map((r) => r[y]));
+      expect(f, `year ${y + 1} mean funds`).toBeGreaterThanOrEqual(0.95);
+      expect(f, `year ${y + 1} mean funds`).toBeLessThanOrEqual(1.25);
+    }
+  }, 120_000);
+});
+
+/** Stats of a building as built and complete (a full Stratablock with an optional crown). */
+function fullStats(type: BuildingType, crown?: Building['crown']) {
+  const b: Building = { id: 1, type, x: 0, y: 0, size: BUILDINGS[type].size, builtTick: 0, offline: 0, powered: true, ...(type === 'stack' ? { stage: 3, buildDays: 0, crown } : {}) };
+  return buildingStats(b, blankStats());
+}
+
+describe('S4: the density pass (§4.1, §4.2, §11.3)', () => {
+  it('a balanced L3 city is ≈ 60% Hab, 20% Market, 20% Fab land (the demand ratios over the L3 capacities)', () => {
+    // Per L3 Hab tile: Market jobs per resident (COM_PER_RES, plus COM_PER_IND of the Fab jobs)
+    // and Fab jobs per resident (IND_PER_WORKER of the workforce), over the L3 capacities.
+    const res = ZONES.res.capacity[3];
+    const fabPerRes = T.WORKFORCE_SHARE * T.IND_PER_WORKER;
+    const mktPerRes = T.COM_PER_RES + fabPerRes * T.COM_PER_IND;
+    const mkt = (res * mktPerRes) / ZONES.com.capacity[3];
+    const fab = (res * fabPerRes) / ZONES.ind.capacity[3];
+    expect(mkt).toBeCloseTo(0.33, 2);
+    expect(fab).toBeCloseTo(0.34, 2);
+    const all = 1 + mkt + fab;
+    expect(1 / all).toBeGreaterThan(0.55);
+    expect(1 / all).toBeLessThan(0.65);
+    for (const share of [mkt / all, fab / all]) {
+      expect(share).toBeGreaterThan(0.15);
+      expect(share).toBeLessThan(0.25);
+    }
+    // By units alone it was half shops and fabs (§4.1: ≈ 50% / 23% / 27%).
+    const mkt0 = (res * mktPerRes) / 900;
+    const fab0 = (res * fabPerRes) / 750;
+    expect(1 / (1 + mkt0 + fab0)).toBeLessThan(0.52);
+  });
+
+  it('every megastructure houses or employs ≥ 1.5× its footprint in L3 zone tiles of its kind (§4.2)', () => {
+    const tiles = (t: BuildingType) => BUILDINGS[t].size * BUILDINGS[t].size;
+    const stack = fullStats('stack');
+    expect([stack.residents, stack.jobsCom + stack.jobsInd]).toEqual([38000, 7000]);
+    expect(stack.residents).toBeGreaterThanOrEqual(1.5 * tiles('stack') * ZONES.res.capacity[3]);
+    expect(fullStats('stack', 'commons').residents).toBe(48000);
+    expect(fullStats('arcology').residents).toBeGreaterThanOrEqual(1.5 * tiles('arcology') * ZONES.res.capacity[3]);
+    expect(fullStats('spire').jobsCom).toBeGreaterThanOrEqual(1.5 * tiles('spire') * ZONES.com.capacity[3]);
+    // §6.3's faction megastructures, once Step 0b adds their rows (Fab and office jobs).
+    const later: Record<string, 'ind' | 'com'> = { hexworks: 'ind', pearlatrium: 'com' };
+    for (const [t, kind] of Object.entries(later)) {
+      if (!(t in BUILDINGS)) continue;
+      const st = fullStats(t as BuildingType);
+      expect(st.jobsCom + st.jobsInd, t).toBeGreaterThanOrEqual(1.5 * tiles(t as BuildingType) * ZONES[kind].capacity[3]);
+    }
+    // Running costs per resident stay near a Hab L3 tile's (8 power per 1,500 residents).
+    const perHab = ZONES.res.power[3] / ZONES.res.capacity[3];
+    expect(STACK_STAGES[1].power / STACK_STAGES[1].res / perHab).toBeLessThan(1.0);
+    expect(BUILDINGS.arcology.powerUse / BUILDINGS.arcology.residents / perHab).toBeLessThan(1.4);
+  });
+
+  // The demand-led mayor of §11.3 S4 on one district, 12 years, seed 2091, against the same run
+  // with the density pass undone (unitsOnly): the plain district (homes mostly reach L2: land
+  // value ≈ 0.36) and a downtown (+0.3 land value everywhere: homes reach L3, the balanced L3
+  // city of §4.1). MEASURE=1 runs seeds 2091, 7 and 31 and prints the tables.
+  it('demand-led mayor, one district, 12 years: land use, traffic, residents and the Balance of Power', () => {
+    const seed = 2091;
+    const plain = demandLedRun(seed);
+    const plain0 = unitsOnly(() => demandLedRun(seed));
+    const down = demandLedRun(seed, 12, 0.3);
+    const down0 = unitsOnly(() => demandLedRun(seed, 12, 0.3));
+    const [p, p0, d, d0] = [plain, plain0, down, down0].map(last);
+    // Downtown (L3 homes): §4.1's land use, Hab +5 points or more against units alone.
+    expect(d.share.res).toBeGreaterThanOrEqual(0.55);
+    expect(d.share.res).toBeLessThanOrEqual(0.65);
+    for (const z of ['com', 'ind'] as const) {
+      expect(d.share[z], z).toBeGreaterThanOrEqual(0.15);
+      expect(d.share[z], z).toBeLessThanOrEqual(0.25);
+    }
+    expect(d.share.res - d0.share.res).toBeGreaterThanOrEqual(0.05);
+    // The plain district: more of it is homes, and it holds more people ("about a fifth").
+    expect(p.share.res - p0.share.res).toBeGreaterThanOrEqual(0.02);
+    expect(p.pop / p0.pop).toBeGreaterThanOrEqual(1.0);
+    expect(p.pop / p0.pop).toBeLessThanOrEqual(1.3);
+    // Traffic: within +0.03 on the plain district. Downtown, where Market and Fab L3 tiles make
+    // ×1.39 and ×1.6 the trips, it reads ≈ +0.06 (§4.1: Step 9's per-level trip factor if kept).
+    expect(p.avgTraffic - p0.avgTraffic).toBeLessThanOrEqual(0.03);
+    expect(d.avgTraffic - d0.avgTraffic).toBeLessThanOrEqual(0.08);
+    // The Balance of Power at the downtown's balanced city: within ±2 points.
+    for (const f of ['board', 'basalt', 'nacre'] as const) expect(Math.abs(d.power[f] - d0.power[f]), f).toBeLessThanOrEqual(2);
+    // Unemployment sits at the demand model's equilibrium (residents follow jobs × RES_PER_JOB:
+    // 1 − 1 / 1.15 ≈ 13%) in both builds; §11.3's "≤ 5%" is not this sim's balance (specGaps).
+    for (const r of [p, p0, d, d0]) expect(r.unemployment).toBeLessThanOrEqual(0.14);
+    expect(Math.abs(p.unemployment - p0.unemployment)).toBeLessThanOrEqual(0.02);
+    // Money stays the reward: the denser district ends richer.
+    expect(p.funds).toBeGreaterThan(p0.funds);
+    expect(d.funds).toBeGreaterThan(d0.funds);
+  }, 120_000);
+});
+
+// ── MEASURE=1: the tables §11.6 records ─────────────────────────────────────
+
+const pct = (v: number) => `${(100 * v).toFixed(1)}%`;
+const f3 = (v: number) => v.toFixed(3);
+
+// Each `it` stays well under a minute of synchronous work (a longer one starves Vitest's worker
+// RPC), so the runs are split per seed and the tables printed by a last `it`.
+describe.skipIf(!MEASURE)('MEASURE: S2 and S4 tables (docs/MEGACITY.md §11.6)', () => {
+  const ENSEMBLE = [2091, 7, 31, 1, 2, 3, 4, 5, 6, 8, 9, 10];
+  type Years = ReturnType<typeof scriptedMayorYears>;
+  const runs: { seed: number; v4: Years; cf: Years; dice: Years }[] = [];
+  for (const seed of ENSEMBLE)
+    it(`S2 ensemble: seed ${seed}`, () => {
+      runs.push({ seed, v4: scriptedMayorYears(seed), cf: unitsOnly(() => scriptedMayorYears(seed)), dice: unitsOnly(() => scriptedMayorYears(seed, 8, 1)) });
+    }, 120_000);
+  it('S2: 12 seeds, the density pass and a dice shift against units alone', () => {
+    const row = (k: 'v4' | 'dice', key: 'pop' | 'funds', y: number) => {
+      const r = runs.map((x) => x[k][y][key] / x.cf[y][key]);
+      return `${f3(mean(r))} [${f3(Math.min(...r))}–${f3(Math.max(...r))}]`;
+    };
+    const lines = ['year | pop density/units | pop dice/units | funds density/units | funds dice/units'];
+    for (let y = 0; y < 8; y++) lines.push(`${y + 1} | ${row('v4', 'pop', y)} | ${row('dice', 'pop', y)} | ${row('v4', 'funds', y)} | ${row('dice', 'funds', y)}`);
+    const y8 = (k: 'v4' | 'cf', f: (s: Years[number]) => number) => mean(runs.map((x) => f(x[k][7])));
+    lines.push(`y8 traffic ${f3(y8('v4', (s) => s.avgTraffic))} vs ${f3(y8('cf', (s) => s.avgTraffic))}; unemployment ${pct(y8('v4', (s) => s.unemployment))} vs ${pct(y8('cf', (s) => s.unemployment))}; board ${y8('v4', (s) => s.power.board).toFixed(1)} vs ${y8('cf', (s) => s.power.board).toFixed(1)}, basalt ${y8('v4', (s) => s.power.basalt).toFixed(1)} vs ${y8('cf', (s) => s.power.basalt).toFixed(1)}, nacre ${y8('v4', (s) => s.power.nacre).toFixed(1)} vs ${y8('cf', (s) => s.power.nacre).toFixed(1)}`);
+    for (const seed of PINNED) {
+      const r = againstV3(seed, runs.find((x) => x.seed === seed)!.v4);
+      lines.push(`seed ${seed} vs pinned v3: pop ${r.pop.map(f3).join(' ')}; funds ${r.funds.map(f3).join(' ')}`);
+    }
+    console.log(`S2\n${lines.join('\n')}`);
+  });
+
+  const s4: string[] = ['seed variant | build | pop | Hab / Market / Fab land | levels res, com, ind (L1/L2/L3) | unemployment | traffic | LV | board / basalt / nacre | funds'];
+  for (const seed of PINNED)
+    it(`S4: demand-led mayor, seed ${seed}, plain and downtown`, () => {
+      for (const lv of [0, 0.3]) {
+        for (const [name, run] of [
+          ['density', () => demandLedRun(seed, 12, lv)],
+          ['units', () => unitsOnly(() => demandLedRun(seed, 12, lv))],
+        ] as const) {
+          const y = last(run());
+          const L = (a: number[]) => a.join('/');
+          s4.push(`${seed} ${lv ? 'downtown' : 'plain'} | ${name} | ${y.pop} | ${pct(y.share.res)} / ${pct(y.share.com)} / ${pct(y.share.ind)} | ${L(y.levels.res)}, ${L(y.levels.com)}, ${L(y.levels.ind)} | ${pct(y.unemployment)} | ${f3(y.avgTraffic)} | ${f3(y.avgLandValue)} | ${y.power.board.toFixed(1)} / ${y.power.basalt.toFixed(1)} / ${y.power.nacre.toFixed(1)} | ${y.funds}`);
+        }
+      }
+    }, 120_000);
+  it('S4: the table', () => console.log(`S4\n${s4.join('\n')}`));
+
+  type Harness = Record<StoryPace, Record<string, { chapters: { n: number; tick: number }[] }>>;
+  const harness: string[] = ['pace seed | density − v3 (d), Ch1..Ch6 | dice-shifted v3 − v3 (d)'];
+  const done = (g: GameT) => g.world.story.chapter >= 7 && !g.story.blocking && !g.world.story.waiting;
+  const storyRun = (seed: number, pace: StoryPace, shift: number) => {
+    let first = true;
+    const { log } = playStory({
+      seed,
+      years: pace === 'relaxed' ? 62 : 40,
+      pace,
+      answerPending: 0.5,
+      readDelaySec: 20,
+      each: (g) => {
+        if (first) {
+          first = false;
+          for (let i = 0; i < shift; i++) g.world.rng.next();
+        }
+        return done(g);
+      },
+    });
+    return log.chapters.map((c) => c.tick);
+  };
+  for (const pace of ['relaxed', 'normal', 'brisk'] as const)
+    for (const seed of PINNED)
+      it(`S2 harness: ${pace}, seed ${seed}`, () => {
+        const v3 = (BASELINE as unknown as { harness: Harness }).harness[pace][String(seed)].chapters.map((c) => c.tick);
+        const v4 = storyRun(seed, pace, 0);
+        const dice = unitsOnly(() => storyRun(seed, pace, 1));
+        harness.push(`${pace} ${seed} | ${v4.map((t, i) => t - v3[i]).join(' ')} | ${dice.map((t, i) => t - v3[i]).join(' ')}`);
+        // Chapters I–III start on the same day; later ones move only by goal-waiver periods.
+        for (let i = 0; i < 3; i++) expect(Math.abs(v4[i] - v3[i]), `${pace} ${seed} Ch${i + 1}`).toBeLessThanOrEqual(30);
+      }, 120_000);
+  it('S2 harness: the table', () => console.log(`S2 harness\n${harness.join('\n')}`));
 });

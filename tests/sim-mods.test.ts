@@ -317,7 +317,8 @@ describe('stage-aware buildings in the sim', () => {
   it('crowns: Commons adds homes and prestige coverage; Foundry adds Fab jobs and smoke', () => {
     const base = modded();
     const commons = withStack(3, 0, 'commons');
-    expect(commons.stats.population).toBe(base.stats.population + 16000 + 4000 + 6000);
+    // Hab Core + Crown + Commons, with the density premium (MEGACITY §4.2).
+    expect(commons.stats.population).toBe(base.stats.population + 32000 + 6000 + 10000);
     expect(at(commons, 'prestige', 36, 33)).toBeGreaterThan(0.8);
     const foundry = withStack(3, 0, 'foundry');
     expect(foundry.stats.jobsInd).toBe(base.stats.jobsInd + 1000 + 2500);

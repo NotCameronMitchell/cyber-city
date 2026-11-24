@@ -15,6 +15,10 @@ export const CURRENCY = 'CR';
  * stage and crown; every population threshold) is × this, every per-head rate ÷ this, so
  * everything per tile and per building (tax, traffic, power, growth, upkeep, prices) is
  * unchanged (§4.1). Saves carry it as SaveData.scale; one without it is × this at load.
+ * On top of the units, the density pass raises Market and Fab jobs per tile at L2–L3 and the
+ * megastructure premium raises the Hab Core, Crown, Commons crown, Arcology and Corp Spire
+ * (§4.1 step 2, §4.2), so a balanced city is about 60% homes; demand per head, tax per job and
+ * power per zone tile stay as they were.
  */
 export const POP_SCALE = 10;
 /**
@@ -75,7 +79,8 @@ export const ZONES: Record<'res' | 'com' | 'ind', ZoneDef> = {
     name: 'Market Strip',
     short: 'C',
     cost: 30,
-    capacity: [0, 80, 280, 900],
+    // Density pass (MEGACITY §4.1 step 2, §4.2): offices are denser than v3's ×10 (280 / 900).
+    capacity: [0, 80, 380, 1250],
     power: [0, 2, 5, 12],
     pollution: [0, 0.02, 0.05, 0.08],
     levelLandValue: [0.4, 0.65],
@@ -88,7 +93,8 @@ export const ZONES: Record<'res' | 'com' | 'ind', ZoneDef> = {
     name: 'Fab Yards',
     short: 'I',
     cost: 25,
-    capacity: [0, 120, 340, 750],
+    // Density pass (MEGACITY §4.1 step 2, §4.2): modern fabs are denser than v3's ×10 (340 / 750).
+    capacity: [0, 120, 450, 1200],
     power: [0, 3, 7, 14],
     pollution: [0, 0.35, 0.6, 0.85],
     levelLandValue: [0, 0],
@@ -293,18 +299,18 @@ export const BUILDINGS: Record<BuildingType, BuildingDef> = {
   spire: {
     type: 'spire',
     name: 'Corp Spire',
-    desc: 'Megacorp HQ. 6,000 office jobs, huge prestige.',
+    desc: 'Megacorp HQ. 8,000 office jobs, huge prestige.',
     category: 'landmarks',
     size: 2,
     cost: 25000,
     upkeep: 400,
     powerSupply: 0,
-    powerUse: 60,
+    powerUse: 80, // density premium (MEGACITY §4.2): 60 → 80 with 8,000 jobs
     effect: 'prestige',
     radius: 16,
     pollution: 0,
     residents: 0,
-    jobs: 6000,
+    jobs: 8000, // density premium (MEGACITY §4.2): v3 600 × 10 = 6,000 → 8,000
     unlockPop: 50000,
     color: '#ff2bd6',
     tall: true,
@@ -313,17 +319,17 @@ export const BUILDINGS: Record<BuildingType, BuildingDef> = {
   arcology: {
     type: 'arcology',
     name: 'Arcology',
-    desc: 'Self-contained mega-hab for 30,000 residents.',
+    desc: 'Self-contained mega-hab for 40,000 residents.',
     category: 'landmarks',
     size: 3,
     cost: 60000,
     upkeep: 700,
     powerSupply: 0,
-    powerUse: 220,
+    powerUse: 290, // density premium (MEGACITY §4.2): 220 → 290 with 40,000 residents
     effect: 'prestige',
     radius: 12,
     pollution: 0.05,
-    residents: 30000,
+    residents: 40000, // density premium (MEGACITY §4.2): v3 3,000 × 10 = 30,000 → 40,000
     jobs: 1200,
     unlockPop: 120_000,
     color: '#ffb02e',
@@ -902,11 +908,16 @@ export interface StackStageDef {
   unlock?: Unlockable;
 }
 
-/** Stage 1 Plinth, 2 Hab Core, 3 Crown. Index = stage − 1. */
+/**
+ * Stage 1 Plinth, 2 Hab Core, 3 Crown. Index = stage − 1. Density premium (MEGACITY §4.2): the
+ * Hab Core houses 32,000 (v3 ×10: 16,000; power 80 → 150, upkeep 180 → 260 so the running cost
+ * per resident stays near a Hab L3 tile's) and the Crown 6,000 (×10: 4,000), so a full block of
+ * 16 tiles houses 38,000 against 24,000 for 16 plain L3 Hab tiles.
+ */
 export const STACK_STAGES: readonly StackStageDef[] = [
   { name: 'Plinth', cost: 12000, days: 60, res: 0, jobsCom: 3000, jobsInd: 1000, power: 40, upkeep: 120, unlock: 'stack' },
-  { name: 'Hab Core', cost: 16000, days: 90, res: 16000, jobsCom: 0, jobsInd: 0, power: 80, upkeep: 180, minLandValue: 0.4 },
-  { name: 'Crown', cost: 22000, days: 120, res: 4000, jobsCom: 3000, jobsInd: 0, power: 80, upkeep: 220, prestigeRadius: 10, unlock: 'crowns' },
+  { name: 'Hab Core', cost: 16000, days: 90, res: 32000, jobsCom: 0, jobsInd: 0, power: 150, upkeep: 260, minLandValue: 0.4 },
+  { name: 'Crown', cost: 22000, days: 120, res: 6000, jobsCom: 3000, jobsInd: 0, power: 80, upkeep: 220, prestigeRadius: 10, unlock: 'crowns' },
 ];
 /** Each existing stack multiplies the plinth cost by this. */
 export const STACK_COST_SCALE = 1.15;
@@ -972,8 +983,8 @@ export const CROWNS: Record<CrownId, CrownDef> = {
   commons: {
     id: 'commons',
     name: 'Commons',
-    summary: '+6,000 residents in cheap floors, approval +3.',
-    residents: 6000,
+    summary: '+10,000 residents in cheap floors, approval +3.',
+    residents: 10000, // density premium (MEGACITY §4.2): v3 600 × 10 = 6,000 → 10,000
     mods: { approvalAdd: 3 },
     favor: { board: 8, tuning: 4 },
   },

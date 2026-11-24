@@ -187,7 +187,7 @@ describe('buildingStats', () => {
     const b: Building = { id: 1, type: 'reactor', x: 0, y: 0, size: 3, builtTick: 0, offline: 0, powered: true };
     const s = buildingStats(b);
     expect(s).toMatchObject({ powerSupply: 1200, jobsInd: 400, jobsCom: 0, upkeep: 220, pollution: 0.5, tall: false });
-    expect(buildingStats({ ...b, type: 'spire', size: 2 })).toMatchObject({ jobsCom: 6000, effect: 'prestige', radius: 16, tall: true });
+    expect(buildingStats({ ...b, type: 'spire', size: 2 })).toMatchObject({ jobsCom: 8000, effect: 'prestige', radius: 16, tall: true });
     expect(buildingStats({ ...b, type: 'maglev', size: 2 }).station).toBe(true);
   });
 
@@ -198,11 +198,12 @@ describe('buildingStats', () => {
     expect(buildingStats(stack(1, 0, false))).toMatchObject({ jobsCom: 0, powerUse: 40, upkeep: 0 });
     expect(buildingStats(stack(2, 30))).toMatchObject({ residents: 0, jobsCom: 3000, tall: false });
     const s2 = buildingStats(stack(2, 0));
-    expect(s2).toMatchObject({ residents: 16000, jobsCom: 3000, jobsInd: 1000, powerUse: 120, upkeep: 300, tall: true });
+    // The Hab Core with the density premium (MEGACITY §4.2): 32,000 residents, power 150, upkeep 260.
+    expect(s2).toMatchObject({ residents: 32000, jobsCom: 3000, jobsInd: 1000, powerUse: 190, upkeep: 380, tall: true });
     // Internal life: 60 % of matched residents work inside (trips per head ÷ 10 with the ×10 units).
-    expect(s2.trips).toBeCloseTo((16000 + 4000 - 2 * 0.6 * 4000) * 0.05, 6);
+    expect(s2.trips).toBeCloseTo((32000 + 4000 - 2 * 0.6 * 4000) * 0.05, 6);
     const s3 = buildingStats(stack(3, 0, true, 'commons'));
-    expect(s3).toMatchObject({ residents: 26000, jobsCom: 6000, effect: 'prestige', radius: 10, powerUse: 200, upkeep: 520 });
+    expect(s3).toMatchObject({ residents: 48000, jobsCom: 6000, effect: 'prestige', radius: 10, powerUse: 270, upkeep: 600 });
     expect(buildingStats(stack(3, 0, true, 'foundry'))).toMatchObject({ jobsInd: 3500, pollution: 0.15 });
   });
 
@@ -210,7 +211,7 @@ describe('buildingStats', () => {
     const out = buildingStats(stack(1, 0));
     const again = buildingStats(stack(2, 0), out);
     expect(again).toBe(out);
-    expect(out.residents).toBe(16000);
+    expect(out.residents).toBe(32000);
   });
 });
 
