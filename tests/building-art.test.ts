@@ -2,12 +2,13 @@
 // (3 zones × 3 levels × 8 forms × 3 wealth tiers × 2 palettes) and every service, story and
 // port model paints through the real sprite cache and painter against a strict mock canvas:
 // no throw, no NaN or negative radius, something drawn. The model ids and tops follow the spec.
-import { beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { BUILDINGS, BUILDING_ORDER } from '../src/game/config';
 import { ZoneType, type Building, type BuildingType, type Tile } from '../src/game/types';
 import { installCanvasMock, mockContext, mockStats, resetMockStats } from './canvas-mock';
 
-installCanvasMock();
+const uninstall = installCanvasMock();
+afterAll(() => uninstall());
 type Art = typeof import('../src/render/buildings');
 type Ports = typeof import('../src/render/art/ports');
 let art: Art;

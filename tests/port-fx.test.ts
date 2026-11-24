@@ -2,7 +2,7 @@
 // planes run on the visual clock (dt × game.clockRate) and freeze while paused; the first ship
 // or plane starts when its port opens; a launch plays only when Game emits 'liftoff', runs 14
 // unpaused real seconds and empties the pad sprite meanwhile.
-import { beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { AIRPORT, BUILDINGS, SEAPORT, SPACEPORT } from '../src/game/config';
 import { Game } from '../src/game/game';
 import { shoreFacing, shoreSites } from '../src/game/ports';
@@ -11,7 +11,8 @@ import { World } from '../src/game/world';
 import { flatWorld } from './helpers';
 import { installCanvasMock, mockContext, mockStats, resetMockStats } from './canvas-mock';
 
-installCanvasMock();
+const uninstall = installCanvasMock();
+afterAll(() => uninstall());
 type Ports = typeof import('../src/render/art/ports');
 let P: Ports;
 beforeAll(async () => {

@@ -203,9 +203,15 @@ class MockCanvas {
   }
 }
 
-/** Install the mock `document` (createElement('canvas') only) and `Path2D` on globalThis. */
-export function installCanvasMock(): void {
+/**
+ * Install the mock `document` (createElement('canvas') only) and `Path2D` on globalThis.
+ * Returns a function that puts the previous globals back; call it in afterAll so the mock
+ * never leaks into other test files that share the worker.
+ */
+export function installCanvasMock(): () => void {
   const g = globalThis as Record<string, unknown>;
+  const had = { document: 'document' in g, Path2D: 'Path2D' in g };
+  const prev = { document: g.document, Path2D: g.Path2D };
   if (!g.document) {
     g.document = {
       createElement: (tag: string) => {
@@ -216,6 +222,12 @@ export function installCanvasMock(): void {
     };
   }
   if (!g.Path2D) g.Path2D = MockPath;
+  return () => {
+    if (had.document) g.document = prev.document;
+    else delete g.document;
+    if (had.Path2D) g.Path2D = prev.Path2D;
+    else delete g.Path2D;
+  };
 }
 
 /** A fresh mock 2D context (a main canvas of the given size). */

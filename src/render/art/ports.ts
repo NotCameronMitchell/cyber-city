@@ -415,8 +415,19 @@ const airport: Recipe = (p) => {
   }
   p.neon([u0, v1, h, u1, v1, h, u1, v0, h], p.pal.neon2, 0.6);
   // The hall glows warm through the glass at night.
-  p.glow(2.2, v1, 7, [255, 220, 170], 70, p.glowA() * 0.45);
-  p.glow(3.9, v1, 7, [255, 220, 170], 70, p.glowA() * 0.45);
+  const ga = p.glowA();
+  if (p.g && ga > 0.05) {
+    p.g.globalCompositeOperation = 'lighter';
+    p.begin_();
+    p.quad(u0 + 0.05, v1, 1.5, u1 - 0.05, v1, 1.5, u1 - 0.05, v1, h - 1.5, u0 + 0.05, v1, h - 1.5);
+    p.fill(css([255, 206, 140], 0.3 * Math.min(1, ga)));
+    p.begin_();
+    p.quad(u1, v0 + 0.05, 1.5, u1, v1 - 0.05, 1.5, u1, v1 - 0.05, h - 1.5, u1, v0 + 0.05, h - 1.5);
+    p.fill(css([255, 206, 140], 0.22 * Math.min(1, ga)));
+    p.g.globalCompositeOperation = 'source-over';
+  }
+  p.glow(2.2, v1, 7, [255, 220, 170], 70, ga * 0.45);
+  p.glow(3.9, v1, 7, [255, 220, 170], 70, ga * 0.45);
   // Entrance canopy and a lit sign on the landside face.
   p.box(2.4, v1, 3.6, v1 + 0.16, 6, 7, WHITE, { uplight: false });
   p.glow(3, v1 + 0.1, 3, p.pal.neon, 40, p.glowA() * 0.7);
