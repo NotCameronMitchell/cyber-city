@@ -8,7 +8,7 @@ This is the binding implementation spec for the owner's feedback after a nearly 
 > I love the corp towers and the other similar structures but they need more personality, different architecture, etc.
 > More variety is the biggest thing I think."
 
-It covers **districts** (a 3×3 grid of 64×64 areas; the player annexes one with each chapter's **land grant**, keeps receiving grants after the ending, and can buy districts with credits in the sandbox), **megacity scale** (ten times the people per building, denser offices and fabs so a balanced city is about 60% homes, megastructures that out-house the towers around them, every threshold rescaled), a **skybridge rework** (tap a tower, tap a partner; one height rule drawn on the map; visible payoff; faction skins; Sky Lobbies), **variety** (merged parcels and a modular building kit with 44 templates, per-district styles with their own silhouettes, six faction architecture languages, new landmarks and civic buildings, crowds, weather, vehicles, city life), and **choices that last** (§9: each ending reshapes the post-ending skyline and opens its own landmark; key story choices leave named places, plaques and building variants; epilogue cards and Charter Review lines call them back). It ends with the phone UI, story hooks, performance, saves, balance and the work packages. Section 2 holds the measurements every size and budget decision rests on; Appendix C lists the alternatives this spec rejected; Appendix E records how the two reviews of the draft were resolved.
+It covers **districts** (a **region** of 64×64 areas, 3×3 on phones and 5×5 on computers by default, chosen per city at New City, and a 3×3 city can later grow once into a 5×5; the player annexes one with each chapter's **land grant**, keeps receiving grants after the ending, and can buy districts with credits in the sandbox), **megacity scale** (ten times the people per building, denser offices and fabs so a balanced city is about 60% homes, megastructures that out-house the towers around them, every threshold rescaled), a **skybridge rework** (tap a tower, tap a partner; one height rule drawn on the map; visible payoff; faction skins; Sky Lobbies), **variety** (merged parcels and a modular building kit with 44 templates, per-district styles with their own silhouettes, six faction architecture languages, new landmarks and civic buildings, crowds, weather, vehicles, city life), and **choices that last** (§9: each ending reshapes the post-ending skyline and opens its own landmark; key story choices leave named places, plaques and building variants; epilogue cards and Charter Review lines call them back). It ends with the phone UI, story hooks, performance, saves, balance and the work packages, followed by two sections from the owner's second interview: **city transfer** (§13: export a city to a small file and import it on another device) and **desktop polish** (§14: side panels, hover tooltips and shortcut hints on wide screens). Section 2 holds the measurements every size and budget decision rests on (§2.8 for the 5×5 region); Appendix C lists the alternatives this spec rejected; Appendix E records how the reviews were resolved (two of the draft, one of the 5×5 revision) and the owner's answers to its open questions.
 
 **Precedence.** `docs/DESIGN.md` (owner decisions) wins over this doc. `docs/STORY.md` stays the binding story spec, `docs/EXPANSION.md` the binding spec for roads, wealth and ports; this doc only adds to them (deck cards, metrics, effects, mood rows, build reactions, power terms) and rescales their population numbers (§4). `docs/CONTRACTS.md`, `docs/STORY-CONTRACT.md` and `docs/PACING.md` still hold; §3.2 and §12 list the additive changes.
 
@@ -23,14 +23,18 @@ It covers **districts** (a 3×3 grid of 64×64 areas; the player annexes one wit
 | Standing decisions | No losing. Late-game money is the reward (no levies, no treasury-scaled prices). Story cadences are unpaused real seconds (docs/PACING.md) and nothing here adds an interruption. Calendar and growth speed are fine. Phone first (390×844, 360×640, 844×390; 44 px targets; one thumb; the toolbar keeps its 9 categories). Performance on mid-range phones is a hard constraint. |
 | Choices that last (owner request after the draft) | "Even if the story ends, you should be able to keep building your city, making it your own. Adds more weight to your choices." Post-ending play exists today; §9 makes the choices visible and permanent in the city the player keeps building, and districts keep coming after the ending. |
 | How "price is rescaled" is read | Head counts and population gates are rescaled; **money is kept at per-building parity** (a tower costs and pays what it did, because per-head rates fall ×10 with the units). A single `CR_SCALE` knob (default 1, §4.1) can scale every price later without a contract change. To confirm with the owner at Step 9 (DESIGN.md records it as "prices kept at per-building parity"). |
+| Hills (second interview) | "Painted first." Highstep Terraces ship with painted terraces (contour shading, retaining walls, stairs); real raised steps stay the optional package after Step 9 (§3.7, §12). |
+| Region size (second interview) | The owner wants the game played on phones **and** available on PCs. The region is chosen **per city** at New City: phones default to **3×3** (9 districts, 192×192 tiles, ≈ 4–5 M people), PCs to **5×5** (25 districts, 320×320 tiles, ≈ 12 M). The device sets the default, the player can override it, and a phone that picks 5×5 gets a clear warning and runs it in a lower-detail mode. Far districts may rest ("sleep") when a PC struggles (§3.1, §3.11, §7.9). |
+| City transfer (second interview) | "Export/import file." Menu → **Export city** saves a small file; **Import city** on another device loads it. No accounts, no servers. A 5×5 city opened on a phone runs in lower detail, with a warning. The save safety (newer-save block, backups, mirror) stays intact (§13). |
+| Desktop polish (second interview) | All three: on wide screens with a mouse, inspect, story and reports open as a **side panel** so the city stays visible; **hover tooltips** on tools and buildings (names, costs, key numbers); **shortcut hints** on tool buttons plus a **?** sheet. The phone layout does not change (§14). |
 
-**Preconditions.** Implementation starts after the expansion (docs/EXPANSION.md, save v3) has fully landed, including its Step 7. Every edit here to a file the expansion or the pacing workflow owns is **additive** (new union members, new rows, new keys, new optional fields) except the explicitly listed rescaled numbers (§4.4) and `MAP_SIZE` (§3.1). This update writes **save version 4**.
+**Preconditions.** Implementation starts after the expansion (docs/EXPANSION.md, save v3) has fully landed, including its Step 7 (it has, and its bug-fix pass too). Every edit here to a file the expansion or the pacing workflow owns is **additive** (new union members, new rows, new keys, new optional fields) except the explicitly listed rescaled numbers (§4.4), the removal of the `MAP_SIZE` constant for a per-world frame (§3.1) and the widened `SimGrid` index lists (§3.1). This update writes **save version 4**.
 
 **IP and copy.** Every new name is original or a generic term (District, Land Grant, Skybridge, Sky Lobby, Pump House, Floodwatch Station, Metro Station, Arena, Beacon…). Player-facing copy in any file follows STORY.md §1.4 (voice and the banned-term list, which bans *deck*, *shell*, *ghost*, *construct*, *delta* and others as whole words, so no screen name uses them) and EXPANSION's copy rules (no `$` in story bodies). Internal art words in this doc (impostor, kit, skin, deck…) never reach the screen. **Spoiler guard:** the story's reveal is Chapter IV (`ch4.drain` → `ch4.logs` → `ch4.brine`), so no new text that can show before `ch4.logs` mentions gates, sealing, "complying", the death toll or the pump station by number; the Sunk itself opens for annexing only after `ch4.brine` (§3.7), so all of its copy is written after the reveal. §8.6 adds the lint.
 
-**Words.** On screen a **District** is one 64×64 area (owner's word) with a proper name ("Kessel Flats"). The token that annexes one is a **Land Grant** (✦; "grant" in code), not a "charter": *Charter* stays the story's own object (The Charter, Charter Night, the Charter Board, Charter Shore, Charter Hall). The industrial zone is renamed on screen from "Fab District" to **Fab Yards** (Step 0a), so "District" means only the 64×64 area. The existing `{district}` story token keeps naming the small 8×8 neighbourhoods ("Rivet Row") and is called a *neighbourhood* in this doc. In code the 64×64 unit is a **slot** (`SlotId`), its archetype a `DistrictKind`.
+**Words.** On screen a **District** is one 64×64 area (owner's word) with a proper name ("Kessel Flats"). The token that annexes one is a **Land Grant** (✦; "grant" in code), not a "charter": *Charter* stays the story's own object (The Charter, Charter Night, the Charter Board, Charter Shore, Charter Hall). Milestone money is on screen as a grant today (the banner's "Charter grant +X" in `feedback.ts`, the advisor's "The Charter Board wires a X CR grant." in `advisor.ts`, help step 10's "pay a charter grant" in `menu.ts`); Step 0a's string pass makes it a **bonus** ("Board bonus +X", "wires a X CR bonus", "pay a bonus"), and the naming lint keeps the noun "grant" on screen for the ✦ token only. The industrial zone is renamed on screen from "Fab District" to **Fab Yards** (Step 0a), so "District" means only the 64×64 area. The existing `{district}` story token keeps naming the small 8×8 neighbourhoods ("Rivet Row") and is called a *neighbourhood* in this doc. In code the 64×64 unit is a **slot** (`SlotId`), its archetype a `DistrictKind`. The R×R set of slots a city can own is its **region** (`world.region`, 3 or 5, chosen at New City; a 3×3 region can grow once into a 5×5, never back, §3.11; on screen "a 5×5 region · 25 districts"), and a kind's repeats on a 5×5 region are its **variants**, each with its own name (§3.7).
 
-**Notation.** As EXPANSION: CR credits, d sim days (speed 1 = 2 d/s, speed 3 = 16 d/s), r a Chebyshev radius in tiles, story effects in STORY.md §0 notation. "×10 units" marks a number already multiplied by `POP_SCALE` (§4). Measured times are Node 22 on the shared 4-core dev container (§2.1); "phone" estimates multiply them by 3.5, an assumption **Step 0b's device benchmark** replaces with a measured factor before the frame is frozen (§12).
+**Notation.** As EXPANSION: CR credits, d sim days (speed 1 = 2 d/s, speed 3 = 16 d/s), r a Chebyshev radius in tiles, story effects in STORY.md §0 notation. "×10 units" marks a number already multiplied by `POP_SCALE` (§4). Measured times are Node 22 on the shared 4-core dev container (§2.1); "phone" estimates multiply them by 3.5, an assumption **Step 0b's device benchmark** replaces with a measured factor before the frame is frozen (§12). "PC" estimates use a factor of 1.0 (a desktop browser runs the sim at about Node speed, §2.8), which the same benchmark checks on a reference laptop (the owner runs it; an agent's headless Chrome in this container is only a proxy, §11.6). **R** is a city's region side in slots (3 or 5). A **handheld** device and a **PC** are the two device classes of §3.11 (one rule, computed once a session); "coarse pointer" below means the input, never the class.
 
 ---
 
@@ -40,7 +44,7 @@ It covers **districts** (a 3×3 grid of 64×64 areas; the player annexes one wit
 
 | Feature | Player fantasy | What the player does |
 |---|---|---|
-| **Districts** | "My city spills over the bay onto the islands, down into the drowned quarter, up the stepped hills. I chose each step, and every district feels like a different place." | After each chapter a **land grant** (✦) arrives with the chapter reward. Open the **City map**, look at the districts next to the city (a night vignette of its buildings, terrain, perks, hazards, who lobbies for it), tap **Annex**. The fog lifts and new land joins the city. Each district has 2–3 optional district goals. After the ending, grants keep coming on the chapter cadence, and credits can buy districts sooner. |
+| **Districts** | "My city spills over the bay onto the islands, down into the drowned quarter, up the stepped hills. I chose each step, and every district feels like a different place." | At New City, pick the region: 3×3 (9 districts, the phone default) or 5×5 (25, the computer default); a 3×3 city can grow to 5×5 later. After each chapter a **land grant** (✦) arrives with the chapter reward. Open the **City map**, look at the districts next to the city (a night vignette of its buildings, terrain, perks, hazards, who lobbies for it), tap **Annex**. The fog lifts and new land joins the city. Each district has 2–3 optional district goals. After the ending, grants keep coming, and credits can buy districts sooner. |
 | **Megacity scale** | "A tower of 1,500 people, an office tower of 1,250 jobs, a 2×2 block of 6,000, a Stratablock of 38,000, a city of millions." | Nothing new to learn: every head count is ten times bigger; offices and fabs hold more jobs per lot, so a balanced city is about 60% homes instead of half; megastructures hold far more than the towers around them. Inspect shows floors, homes and jobs per building; the City map shows each district's census. |
 | **Skybridges v2** | "Glass walkways between my towers, crowded at night, each one built by a different faction. Three towers linked make a Sky Lobby and tourists come to walk it." | Pick Skybridge, tap a tower: a ghost tube shows each lane at bridge height, buildings in the way turn see-through, and every valid partner glows with its price; tap a partner. One rule: anything lower than the bridge passes under. Towers that don't line up get a two-bridge route. The pill and inspect show walkers, cars saved and land value. |
 | **Building variety** | "No two blocks look alike. Dense corners merge into podium towers; each district has its own materials, roofs and building types." | Nothing to do: zone tiles that match merge into 2×1, 1×2 and 2×2 parcels; 44 kit templates plus today's 72 hand-drawn buildings give every cell at least 6 single-lot bodies and 4 merged ones; each district style adds its own silhouettes (stilt houses, hull-roof shacks, courtyard shophouses…). |
@@ -48,6 +52,8 @@ It covers **districts** (a 3×3 grid of 64×64 areas; the player annexes one wit
 | **Landmarks and civic** | "A lighthouse on the islands, an arena that fills on match nights, a lookout ring on my tallest towers." | Ten unique landmarks with unlock conditions, five ending landmarks (§9), ten new repeatable service and utility types (§6.3). |
 | **Life and atmosphere** | "Crowds under umbrellas, fog on the marsh at dawn, buses and water taxis, a night market lighting up the alleys." | Settings → Weather (Full / Light / Off), Crowds and City life; night markets, lantern nights and match nights happen by themselves now and then, announced by one ticker line. |
 | **Choices that last** | "My city remembers what I did: the Truce Wall at the Seam, the open pump hall in the Sunk, Basalt's furnace towers taking over the skyline after Ironwork." | Keep building after the ending: the ending's faction architecture spreads over the skyline, its own landmark can be built, choices across the chapters leave named places and plaques, and epilogue cards and Charter Reviews mention them by name (§9). |
+| **Take the city along** (§13) | "I started my city on the train and carry on at my desk tonight." | Menu → **Export city** saves one small file (the share sheet on a phone, a download on a computer); **Import city** on the other device shows what the file holds and replaces the current city after a confirm, keeping it as Previous city. On the computer, **Grow to 25 districts** turns the phone's 3×3 city into a 5×5 one (§3.11). |
+| **At a desk** (§14) | "On my monitor the city fills the screen; reports sit beside it, and I can hover over anything." | On a wide screen with a mouse, inspect, story cards and reports open in a side panel; hovering a tool or building shows its name, cost and key numbers; tool buttons show their keys; **?** lists every shortcut. |
 
 ### 1.2 How they interlock
 
@@ -79,8 +85,8 @@ The loops the player feels:
 
 | | First 10 minutes | Middle (Ch2–Ch5) | Late game and sandbox |
 |---|---|---|---|
-| Map | **Exactly today's start map** (Charter Shore, same generator). Just past each edge the neighbouring districts show as fog with a dashed border: there is more out there. | One land grant per chapter: 5 more districts by the end of Ch5 (the Sunk opens once Chapter IV's reveal has played). | The ending grants a sixth (7 districts); the epilogue grants one more every chapter floor (24 min on Relaxed) until all 9 are owned, or credits buy them sooner. |
-| Numbers | ×10 units from the first lot: "Reach 6,000 residents", an L1 walk-up holds 140, a corner shop 80 jobs. Growth speed is unchanged. | Towers of 1,500, office towers of 1,250 jobs, 2×2 parcels of 6,000, Stratablocks of 38,000. | 1–5 M residents; milestones Night Harbour (600k), Million Windows (1M), Neon Coast (2M), Endless City (4M). |
+| Map | **Exactly today's start map** (Charter Shore, same generator). Just past each edge the neighbouring districts show as fog with a dashed border: there is more out there. | One land grant per chapter: 5 more districts by the end of Ch5 (the Sunk opens once Chapter IV's reveal has played). | The ending grants a sixth (7 districts on either region). On a 3×3 region the epilogue grants one more every chapter floor (24 min on Relaxed) until all 9 are owned; on a 5×5 region one every half floor (12 min) until all 25 are owned; credits buy them sooner. |
+| Numbers | ×10 units from the first lot: "Reach 6,000 residents", an L1 walk-up holds 140, a corner shop 80 jobs. Growth speed is unchanged. | Towers of 1,500, office towers of 1,250 jobs, 2×2 parcels of 6,000, Stratablocks of 38,000. | 1–5 M residents on a 3×3 region, up to ≈ 12 M on a 5×5; milestones Night Harbour (600k), Million Windows (1M), Neon Coast (2M), Endless City (4M) and, on a 5×5 region, Electric Tide (6M) and Glass Horizon (8M). |
 | Buildings | The kit and parcels from the first block; floors, homes and jobs in inspect. | Faction crowns with three looks each; Spire sponsors and looks; district styles. | Faction landmarks (Charter Hall, Hexworks, Pearl Atrium, Kite Mast…), Arena, Halo Lookout, the ending's landmark. |
 | Links | (Skybridges unlock at the Ch3 reward as today.) | Skybridge v2 tap flow, Sky Lobbies. | Lobby of 5+ unlocks the Halo Lookout. |
 | Life | Crowds, more vehicle kinds, fog mornings and rain, from the start. | City life begins after 10 minutes of play (one ticker line each). | Arena nights, lantern nights, boats in every canal. |
@@ -93,7 +99,7 @@ Every new cadence, in unpaused real seconds unless it is a sim-world process (st
 | What | Rule | Speed 1 | Speed 3 | Reads as |
 |---|---|---|---|---|
 | Land grant (story) | with each chapter reward message (chapter floor 1,440 s on Relaxed) | ≥ 24 min apart | ≥ 24 min apart | a reward, waiting in the message the player opens |
-| Land grant (epilogue) | every `pace.chapterMinSec` unpaused seconds after the ending while a slot is locked (1,440 / 840 / 600 s on Relaxed / Normal / Brisk); one ticker line and the ✦ token, no card or banner | 24 min | 24 min | the city keeps growing |
+| Land grant (epilogue) | every `pace.chapterMinSec × REGION[R].epilogueGrantMul` unpaused seconds after the ending while a slot is locked: 1,440 / 840 / 600 s on Relaxed / Normal / Brisk on a 3×3 region, half that (720 / 420 / 300 s) on a 5×5; one ticker line and the ✦ token, no card or banner | 24 min (12 on 5×5) | 24 min (12 on 5×5) | the city keeps growing |
 | Annex | player-initiated; camera fly 1.2 s (tap skips), fog lift 1.5 s, then the once-per-district banner | — | — | a celebration, never an interruption |
 | District goal done | checked monthly; one ticker line and a stamp on the City map | — | — | a small reward |
 | Pump House reclamation | 3 rings × 30 sim d | 45 s | 6 s | land rising out of the canals |
@@ -210,7 +216,7 @@ Art heights (world px above the ground, all 16 variants × 3 tiers): Hab L1 19�
 
 ### 2.7 Decisions these numbers make
 
-1. **The world is a fixed 3×3 grid of 64×64 slots, 192×192 tiles** (§3.1). Fully built (9 districts) the prototype sim takes 4.1–4.9 ms a step in Node, ≈ 15 ms on a phone at the assumed ×3.5: at speed 3 (16 steps a second) about 25% of a phone core. A 4×4 grid (256×256) costs 14–15 ms today and ≈ 8 ms optimised, ≈ 28 ms on a phone, 45% of a core at speed 3, plus 23 ms `recomputeAll`s: rejected. The ×3.5 factor is measured on a device in **Step 0b** before the frame is frozen (§12).
+1. **The world is a region of 64×64 slots, chosen per city: 3×3 (192×192 tiles) or 5×5 (320×320), and a 3×3 city can grow into a 5×5** (§3.1; the 5×5 measurements and their decisions are §2.8). Fully built (9 districts) the prototype sim takes 4.1–4.9 ms a step in Node, ≈ 15 ms on a phone at the assumed ×3.5: at speed 3 (16 steps a second) about 25% of a phone core. A 4×4 grid (256×256) costs 14–15 ms today and ≈ 8 ms optimised, ≈ 28 ms on a phone, 45% of a core at speed 3, plus 23 ms `recomputeAll`s: rejected for phones, which therefore default to 3×3; the owner's second interview adds the 5×5 region as the computer default instead. The ×3.5 factor is measured on a device in **Step 0b** before the frame is frozen (§12).
 2. **Locked slots cost nothing**: a locked tile is out of bounds for every loop and stencil in the sim, the turf and layer code (§3.3, O1).
 3. **Caches and staggering** as prototyped (O2–O4), with the power fill and the coverage key specified exactly (the prototype was not equivalence-safe): −40 to −47%.
 4. **No atomic spike over a frame:** averages are not enough (§2.6: p95 7.4 ms, max 13 ms, month end 26 ms in Node). A day is **sliced** across frames, the month-end work is spread over the month's first days, and autosave moves to an idle frame (§3.3). Budgets are p95 and max, per frame (§11.1).
@@ -219,47 +225,125 @@ Art heights (world px above the ground, all 16 variants × 3 tiers): Hab L1 19�
 7. **Render caches go incremental** (R0, §3.9): the whole-map rebuilds above are 2.7 ms per `tiles` event at 9 districts and appear in no draft budget.
 8. **Saves store each owned slot's tiles as a base64 block** of 3 bytes a tile: ≈ 190–240 KB for 9 districts, written in an idle frame (§3.10).
 9. **Render:** a multi-district city keeps real sprites down to zoom 0.22 in a **skyline view** (L3 towers, parcels and every building as sprites; L1–L2 as roof tints in the ground cache); pinching out past it snaps to the City map, the only place the low-resolution atlas is drawn (§3.9).
-10. **Sleeping districts** (O8) are a **planned contingency with a trigger**: built in WP-1 if Step 0b's device factor exceeds 4.5 (§3.3).
+10. **Sleeping districts** (O8) are **core** since the 5×5 region (§2.8): built in WP-1 in every case, adaptive on PCs, forced in a phone's lower-detail mode; on a 3×3 region they are on by default only if Step 0b's device factor exceeds 4.5 (§3.3). They throttle only the field-pass rows of resting districts, never growth (§2.8, §3.3).
+11. **Slices are small and resumable** (§2.8 per-pass profile): a day runs as units of at most ≈ 1.5 ms in Node at 25 districts (one field pass per unit, resumable by row band), so a phone's 6 ms frame cap holds (§3.3).
+
+### 2.8 The 5×5 region (measured for the second interview)
+
+**Method.** Scripts in `/tmp/claude-megacity2/` (Appendix D) rebuild §2.1's method from today's `src/` (the expansion landed and bug-fixed): `run.sh` copies `src/`, patches `MAP_SIZE` to 64, 192 or 320, and for 320 widens `SimGrid`'s 16-bit index and component arrays to 32 bits (a 320 frame overflows them, §3.1), then bundles with esbuild for Node 22. Slots are filled per 64×64 slot as in §2.1, with tiers (`fill.ts`); "1 of 25" fills the centre slot, "9 of 25" the centre 3×3, "25 of 25" all. Step and `recomputeAll` are **best of 8 batches** (60 steps, 5 recomputes) with the median beside; game-day frames (`step()` + `story.onDay()`, as `Game.update` runs them) and month-end frames are percentiles over 720 days after a 90-day warm-up. The container was quiet this time (load 0.0–0.2, against 5–9 for §2.2), so 64 and 192 were re-measured as baselines: 64 full gives 0.72 / 1.02 ms against §2.2's 0.78 / 1.05, so the minima are comparable and the medians are lower here.
+
+| World | Built | Residents (×1) | `step()` min / median ms | `recomputeAll()` min / median | Game day p50 / p95 / max | Month-end frame p50 / max |
+|---|---|---|---|---|---|---|
+| 64×64 | full | 48,438 | 0.72 / 1.02 | 1.29 / 1.69 | 0.69 / 0.81 / 1.56 | 2.07 / 2.61 |
+| 192×192 | 1 of 9 | 48,656 | 3.20 / 4.27 | 7.12 / 12.23 | 3.26 / 5.75 / 12.91 | 12.57 / 21.84 |
+| 192×192 | 9 of 9 | 433,794 | 6.59 / 6.98 | 11.56 / 11.67 | 6.69 / 11.08 / 20.02 | 16.67 / 34.66 |
+| 320×320 | 1 of 25 | 48,474 | **8.06** / 8.40 | 18.18 / 21.16 | 8.22 / 10.53 / 16.34 | 33.47 / 56.57 |
+| 320×320 | 9 of 25 | 434,890 | 11.85 / 13.74 | 22.89 / 27.73 | 11.41 / 18.76 / 22.98 | 37.18 / 62.59 |
+| 320×320 | 25 of 25 | **1,205,630** | **19.79** / 20.51 | **33.51** / 36.11 | 18.57 / **27.64 / 37.10** | **45.03 / 56.19** |
+
+Saves, loading, memory and render caches (ms are min / median unless stated):
+
+| | 64 full | 192, 9 of 9 | 320, 1 of 25 | 320, 9 of 25 | 320, 25 of 25 |
+|---|---|---|---|---|---|
+| `serialize` + `stringify` (today's number arrays) | 0.22 / 0.26 | 1.90 / 2.22 | 2.84 / 3.57 | 3.52 / 6.03 | **5.11 / 5.60** |
+| `parse` + `deserialize`, median of 30 runs (`pd.ts`, Appendix D; the best-of-8 figures first measured here were noise) | 0.11 + 1.10 | 1.41 + 6.92 | 1.41 + 10.69 | 1.58 + 9.01 | **2.46 + 9.05** |
+| `Game.restore` alone, median (deserialize, Simulation, first `recomputeAll`, director; `restore.ts`) | — | 32.5 (30.9 for 1 of 9) | 86.9 | 95.3 | **99.9** |
+| of which Simulation constructor / first `recomputeAll` | — | 8.3 / 13.2 | 24.9 / 22.2 | 17.7 / 26.8 | 23.8 / 33.7 |
+| `World.generate` of the whole frame (median of 6 seeds) | — | 19–29 | 58–84 | | |
+| Save JSON today (number arrays, whole map) | 33 KB | 259 KB | 225 KB | 387 KB | 712 KB |
+| v4 save (§3.10: one 3-byte base64 block per owned slot, tier and ground bits on half the land) | 26 KB | **198 KB** | 26 KB | 198 KB | **543 KB** |
+| v4 round trip: `stringify` + `parse` + base64-decoding the blocks | 0.09 / 0.10 | 0.54 / 0.59 | 0.12 / 0.16 | 0.50 / 0.56 | **2.58 / 2.69** |
+| v4 save gzipped / gzipped + base64 (Node zlib, level 6) | 12 / 16 KB | 85 / 114 KB | 12 / 16 KB | 85 / 114 KB | **230 / 306 KB** |
+| gzip time (median) | 0.6 | 5.6 | 0.8 | 5.3 | 19.2 |
+| World + Simulation retained (`--expose-gc`, any fill) | — | 5.0 MB heap + 11.0 MB typed arrays | **12.6 MB heap + 32.1 MB typed arrays** | same | same |
+| R0 render rebuilds per `tiles` event: `RoadAccessMap` + `StreetTraffic.rebuild` (median) | — | 1.58 + 0.89 | — | 2.43 + 1.29 | **4.42 + 2.94** |
+
+Every 320 fill parses and deserializes in ≈ 10–12 ms: `deserialize` is dominated by allocating 102,400 `Tile` objects whatever the fill. (`bench.ts`' own `gameRestore` field, 219–247 ms at 320, includes `new Game()` generating a fresh 320 world before the restore; `restore.ts` is the "restore alone" source.)
+
+**Per pass and per slice** (the third review's profile, re-run here on an idle container: `rb/prof.ts`, 400 steps after 150 of warm-up; ms per call, p50 / p95; the field passes run every other day today):
+
+| Pass (320, 25 of 25) | Today's code | O2–O4 prototype at 320 | 192, 9 of 9, today (p50) |
+|---|---|---|---|
+| `grid.scan` | 1.16 / 1.24 | 1.16 / 1.21 | 0.42 |
+| `power.compute` | 4.91 / 5.06 (max 33) | **2.21 / 2.27** (labels cached; the per-tick supply, demand and flag pass remains) | 1.78 |
+| `fields.coverage` | 1.56 / 1.61 | 0.01 / 0.01 (cached) | 0.59 |
+| `census.count` (twice a day) | 0.69 / 0.79 | 0.70 / 0.74 | 0.25 |
+| `fields.traffic` | 2.91 / 3.00 | 2.91 / 2.96 | 1.02 |
+| `fields.pollution` + `noise` | 3.06 / 3.18 | 3.07 / 3.23 | 1.08 |
+| `fields.neighbourhood` + `landValue` (O4 phase 2) | **4.60 / 4.71** | 4.60 / 4.78 | 1.62 |
+| `fields.crime` + `wealthScore` | 1.95 / 2.02 | 1.95 / 2.01 | 0.71 |
+| `census.averages` | 0.52 / 1.41 | 0.53 / 1.36 | 0.20 |
+| `growth.run` | 0.98 / 1.15 | 0.96 / 1.02 | 0.35 |
+| whole `step()`, best-of-8 min / median | 19.79 / 20.51 | **11.63 / 12.61** | 6.59 / 6.98 |
+| one unsliced day p50 / p95 / max | 18.6 / 27.6 / 37.1 | 10.7 / 15.0 / 21.9 | 6.7 / 11.1 / 20.0 |
+
+The O2–O4 prototype (`/tmp/claude-megacity/opt/src`, still on disk though it predates the expansion's bug-fix pass) was re-run at 320 for this revision (`opt320/best.ts`, Appendix D): a fully built 5×5 day is **11.6–12.6 ms**, confirming the ≈ 12 ms that §2.8's first version extrapolated; 9 of 25 is 7.2–7.6 ms. What it also shows: the draft's slices are too coarse. Slice A (scan, power, coverage, census) is still ≈ 4.1 ms after O2–O3, and phase 2 alone is 4.6 ms: ×3.5 that is 14–16 ms on a phone, against a 6 ms frame cap. At 192 the same phase is 1.6 ms (5.7 ms on a phone), already at the cap. Hence §3.3's finer, resumable units. The throttleable rows (pollution, noise, neighbourhood, land value, crime, wealth score) cost 9.6 ms per 4-day cycle, ≈ 2.4 ms a day; growth is ≈ 1 ms a day.
+
+**Desktop ≈ Node (the PC assumption).** Chrome and Edge run the same V8 engine as Node 22, so on the same machine the sim (pure typed-array JavaScript, no DOM) runs at about Node speed; Safari (JavaScriptCore) and Firefox (SpiderMonkey) are usually within about 1.5× on loops like these, and the dev container's 4 shared cores are close to a mid-range laptop's. So PC budgets are the Node numbers with a factor of 1.0. **Step 0b checks it:** its `bench.html` page runs the same bundle and scenarios (25 of 25 included) in the browser on a reference PC (a mid-range 4-core laptop, in Chrome and in Safari or Firefox) and records the **PC factor** (browser ms ÷ Node ms) beside the phone factor in §11.6. Both factors are **owner-measured** (the owner opens the `bench.html` link on a real laptop and phone, §11.6); an agent records only **proxies** (headless Chrome in the dev container for the PC, which measures ≈ Node by construction, and Chrome with 4× CPU throttling for the phone) and marks them as such. The 5×5 budgets of §11.1 assume a PC factor ≤ 1.5; above 2.0, adaptive sleeping starts at a lower strain threshold and the 5×5 default needs the in-game micro-benchmark factor ≤ 2.0 (§3.11).
+
+**Decisions these numbers make:**
+
+1. **The region is per city; the frame is not a fixed 5×5.** A 320 frame costs +7.6 MB heap and +21 MB typed arrays over a 192 one for World + Simulation (12.6 + 32.1 MB against 5 + 11 MB), 58–84 ms of terrain generation at every new city, and 7.3 ms a step of empty area in today's code (8.06 against 0.72 ms for the same one district). A phone playing 3×3 would carry all of that, and the title Showcase's world beside it, for nothing. So `MAP_SIZE` becomes the world's own side, `N = 64 × R` (§3.1), and a phone's 3×3 city costs exactly what §2.2–§2.6 measured.
+2. **A 5×5 city fits a PC.** 25 districts cost 19.8–20.5 ms a whole day today; the O2–O4 prototype re-run at 320 takes **11.6–12.6 ms** (above), and a fully built region has no locked land for O1 to skip: at speed 3 (16 days a second) about 19% of one desktop core, sliced into frames under the 10 ms PC cap. On a phone the same day is ≈ 42 ms at ×3.5, 67% of a core at speed 3: not playable as is, hence the lower-detail mode (§3.11).
+3. **O8 sleeping districts become core** (WP-1, built in every case): adaptive on PCs (on only while the frame guard sees strain), forced on in the phone lower-detail mode with a slower cadence (an asleep slot's field rows every 8th field cycle instead of every 4th). They skip only those rows (≈ 2.4 ms a day of throttleable work at 25 districts), staggered by slot; growth and tile ages keep their normal rate, so the city grows the same wherever the camera is. With 16 of 25 asleep at cadence 8 that saves ≈ 1.3 ms a day (≈ 12 → ≈ 10.7 ms in Node), ≈ 1.7 ms with 24 asleep at cadence 4 (estimates; M3 measures). The larger phone lever is the top-speed cap (`LOW_DETAIL.maxDaysPerSec`, §3.11), which keeps the sim near a quarter of a core.
+4. **The month end at 25 districts** is 45 ms p50 and 56 ms max today (the turf and story passes scale with area): O6's turf banding runs in **8 bands over days 1–8** on a 5×5 region (`REGION[5].turfBands`), 4 over days 1–4 on 3×3.
+5. **Index widths:** a 320 frame has 102,400 tiles and up to 51,200 components, beyond `Uint16Array` / `Int16Array`; Step 0b widens `SimGrid`'s lists (§3.1). The 320 rows above were measured with them widened.
+6. **Saves:** a full 5×5 city is 543 KB as a v4 save with tile blocks, 306 KB gzipped and base64-encoded. Main save, mirror and the Previous city slot as plain JSON would reach ≈ 1.7 M characters, close to the 2.5 M-character planning floor of `localStorage` (5 MB counted as UTF-16, WebKit's limit), so backups of big saves are stored compressed and the main save stays plain and synchronous (§3.10).
+7. **Loading:** `Game.restore` of a 25-district city takes ≈ 100 ms in Node today; a one-district 5×5 city adds the generation of its 24 locked slots (≈ 56–80 ms). Budget ≤ 200 ms in Node (§11.1).
+8. **Render caches** (R0) cost 7.4 ms per `tiles` event at 25 districts: the dirty-rect rule of §3.9 is required, not an optimisation.
+9. **Export files** (§13) are the gzipped save in base64 text: ≈ 114 KB for a full 3×3 city and ≈ 306 KB for a full 5×5, small enough for any share sheet, download or clipboard.
+10. **Slices:** a day is cut into units of ≤ 1.5 ms in Node at 25 districts (≈ 5 ms on a phone): one field pass per unit, each resumable by row band, power's per-tick pass and scan banded the same way when they exceed it (§3.3). WP-1's first task re-runs the prototype on today's code with those units and confirms the 12 ms day and the per-frame p95 before §11.1's 25-district rows are frozen.
 
 ---
 ## 3. Districts
 
-### 3.1 World model: a fixed 3×3 grid of slots
+### 3.1 World model: a region of R×R slots, chosen per city
 
-The world is **3×3 slots of 64×64 tiles: `MAP_SIZE` = 192**, index `y * 192 + x` as today. The start district is the **centre slot** (slot 4, tiles 64..127 in both axes), so the first annex can go any of four ways and every slot is reachable through edge-adjacency. Slots the player does not own are **locked**: terrain only, generated from the seed, never saved, never simulated (§3.3), drawn as fog (§3.9).
+Every city is a **region of R×R slots of 64×64 tiles, R = 3 or 5**, chosen at New City (§3.11) and stored in the save; a 3×3 city can grow once into a 5×5 (§3.11, a save transform like migration), never back. The world's side is the world's own `N = 64 × R` (192 or 320 tiles), index `y * N + x` as today. The start district is the **centre slot** (`startSlot(R) = (R² − 1) / 2`: slot 4, tiles 64..127 in both axes, on a 3×3 region; slot 12, tiles 128..191, on a 5×5), so the first annex can go any of four ways and every slot is reachable through edge-adjacency. Slots the player does not own are **locked**: terrain only, generated from the seed, never saved, never simulated (§3.3), drawn as fog (§3.9). The start slot is generated **bit-identically to today's map for the same seed on either region** (§3.6.1), so switching the region on the New City sheet never changes the start map.
 
 Why this and not the alternatives (numbers from §2):
 
 | Option | Verdict |
 |---|---|
-| **Fixed 3×3 grid, locked slots inert** (chosen) | Indices, saves and every `y * N + x` loop keep one stride for the life of a city; a migrated v3 city sits at a fixed offset (64, 64). With owned-segment loops (O1) a 1-district city costs what it costs today (0.41–0.78 ms a step); 9 fully built districts cost 4.1–4.9 ms in Node (≈ 15 ms phone). |
+| **A region per city, R = 3 or 5, locked slots inert** (chosen) | Indices, saves and every `y * N + x` loop keep one stride for the life of a World; a migrated v3 city is a 3×3 region at a fixed offset (64, 64), and a 3×3 city grown to 5×5 is the same city at a further offset (64, 64), built as a new World from the transformed save (§3.11). With owned-segment loops (O1) a 1-district city costs what it costs today (0.41–0.78 ms a step); 9 fully built districts cost 4.1–4.9 ms in Node (≈ 15 ms phone); 25 cost ≈ 12 ms after O1–O7 (§2.8), and only cities that chose 5×5 pay for them. |
+| One fixed 5×5 frame (320) for every city, a 3×3 city using its centre 9 slots | `MAP_SIZE` would stay a compile-time constant and a 3×3 city could grow to 5×5 without a remap (the remap costs one pure save transform instead, §3.11), but every city would pay the 320 frame: +7.6 MB heap and +21 MB typed arrays for World + Simulation, 58–84 ms of terrain generation per new city, and every area-bound loop not yet clipped to owned segments (render caches, overlays, the title Showcase's own world), measured in §2.8. A phone would carry it for nothing. Rejected. |
 | Growing world (arrays resized on annex) | Every annex would change the stride: all typed arrays reallocated, every stored tile index (turf, rail, sky, story spots, seam, locals, railOut, links, buildings) remapped mid-game, every cache rebuilt. A migration bug would corrupt a live city. Rejected. |
-| 4×4 grid (256×256), start off-centre | 16 slots = 7 story + 9 to buy, but 14–15 ms a step fully built today, ≈ 8 ms optimised (≈ 28 ms phone, 45% of a core at speed 3), 23 ms `recomputeAll`, 454 KB saves. Rejected for phones. |
+| 4×4 grid (256×256), start off-centre | 16 slots = 7 story + 9 to buy, but 14–15 ms a step fully built today, ≈ 8 ms optimised (≈ 28 ms phone, 45% of a core at speed 3), 23 ms `recomputeAll`, 454 KB saves; an even side has no centre slot. Rejected for phones; the 5×5 region is the computer-sized option instead. |
 | Slot-major indexing (each slot a contiguous 4096 block) | Old indices would map by a constant offset, but every neighbour access (i ± 1, i ± N) in the sim and renderer would need slot arithmetic. Rejected. |
 | Separate 64×64 sims per district | Roads, power, services, traffic, turf and skybridges all cross borders; separate sims would need border exchange for each. Rejected. |
 
-**Nine districts in all:** the start, five land grants from chapters I–V, one from the ending, and **two more after the ending**, from epilogue grants or bought with credits (§3.8). The owner asked for "after each chapter"; Chapter VI ends in the ending, so its grant comes with the ending. Whether the sandbox should grow past nine is an open owner question (Appendix E).
+**Districts in all.** A **3×3 region holds 9**: the start, five land grants from chapters I–V, one from the ending, and **two more after the ending**, from epilogue grants or bought with credits (§3.8). A **5×5 region holds 25**: the same seven by Charter Night, then **eighteen more after the ending** on a faster epilogue cadence or bought (§3.8). The owner asked for "after each chapter"; Chapter VI ends in the ending, so its grant comes with the ending. The owner settled the size question in the second interview: per city, with a device default (Appendix E).
 
-**Frame limits.** `SimGrid` stores tile indices in `Uint16Array` lists (`hwList`, `hwReachList`, `skyList`, `skyReachList`) and component ids in `Int16Array` (`hwComp`, `skyComp`, `reachBfs`). 36,864 tiles fit, but a larger frame would overflow silently, so Step 0b adds a static assertion (`MAP_SIZE ** 2 <= 65_535` and `AREA / 2 <= 32_767`) next to `MAP_SIZE` with a comment pointing to Appendix C.
+**The frame is per world, not per build** (Step 0b, part 1). Today 25 modules capture `const N = MAP_SIZE` when they load and about 120 typed arrays are sized from it, several at module scope as scratch (`actions.ts`, `roads.ts`, `skyway.ts`, `story/turf.ts` with 17, `story/vertical.ts`, `story/effects.ts`, `render/art/skyway.ts`, `ui/grid.ts`). Step 0b removes the `MAP_SIZE` export, so the compiler finds every use; systems read the side from their world (`world.N`, `world.area`, copied into the system at construction), and module-scope scratch becomes per-size scratch that grows on demand (`scratchFor(area)`), because the title Showcase (always a 3×3 world, §3.9) and a 5×5 city can exist at the same time. `LEGACY_SIZE` (64) stays for the migration and `MAX_MAP_SIZE` (320) for the assertions. A contract test fails if any module-scope typed array is sized from a frame constant, and the contract suites run at both region sizes (§11.2).
+
+**Frame limits.** `SimGrid` stores tile indices in `Uint16Array` lists (`hwList`, `hwReachList`, `skyList`, `skyReachList`) and component ids in `Int16Array` (`hwComp`, `hwReach`, `skyComp`, `skyReach`, up to `MAX_COMP = AREA >> 1`). A 192 frame fits (36,864 tiles); a 320 frame does not (102,400 tiles > 65,535, up to 51,200 components > 32,767) and would overflow silently. Step 0b widens them to `Uint32Array` / `Int32Array` (eight arrays, +1.6 MB at 320; §2.8 measured with them widened) and adds a static assertion next to `MAX_MAP_SIZE` (`MAX_MAP_SIZE ** 2 < 2 ** 31`) with a comment pointing to Appendix C. The other 16-bit arrays (`story/encode.ts`' turf packing, growth's `unpoweredDays`) hold values, not tile indices, and stay.
 
 ### 3.2 Data model (Step 0b)
 
-#### `src/game/types.ts` (additive except `MAP_SIZE`)
+#### `src/game/types.ts` (additive except `MAP_SIZE`, which is removed)
 
 ```ts
 /** District slots (MEGACITY §3.1). */
 export const SLOT = 64;
-export const SLOTS = 3;
-/** World side in tiles (was 64). Index = y * MAP_SIZE + x. */
-export const MAP_SIZE = SLOT * SLOTS; // 192
+/** Region side in slots, chosen per city at New City (§3.11) and saved. */
+export type Region = 3 | 5;
+export const REGIONS: readonly Region[] = [3, 5];
+/**
+ * `MAP_SIZE` is gone: the side is per world, `world.N = SLOT * world.region` (192 or 320), index = y * N + x.
+ * MAX_MAP_SIZE only feeds the index-width assertions (§3.1).
+ */
+export const MAX_MAP_SIZE = SLOT * 5; // 320
 /** Map side of v1–v3 saves. */
 export const LEGACY_SIZE = 64;
-/** Slot id = sy * SLOTS + sx. */
-export type SlotId = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8;
-export const START_SLOT: SlotId = 4;
+/** Slot id = sy * region + sx, 0 .. region² − 1. */
+export type SlotId = number;
+/** The centre slot: 4 on a 3×3 region, 12 on a 5×5. */
+export const startSlot = (r: Region): SlotId => (r * r - 1) / 2;
 
 export type DistrictKind = 'shore' | 'shoals' | 'sunk' | 'flats' | 'terraces' | 'reedmere' | 'skeleton' | 'tarmac' | 'bazaar';
 export const DISTRICT_KINDS: readonly DistrictKind[] = ['shore', 'shoals', 'sunk', 'flats', 'terraces', 'reedmere', 'skeleton', 'tarmac', 'bazaar'];
+/** Which repeat of its kind a slot is (§3.7): 0 = the kind's own district (every 3×3 slot), 1..3 = its 5×5 variants. */
+export type DistrictVariant = 0 | 1 | 2 | 3;
 
 /**
  * Ground feature of a land tile (tile bits 22-23). What it does depends on the district (§3.7).
@@ -312,7 +396,7 @@ export interface Fields {
   filter: Float32Array;
 }
 
-export interface DistrictCensus { slot: SlotId; kind: DistrictKind; residents: number; jobs: number; developed: number; avgLandValue: number; ruins: number }
+export interface DistrictCensus { slot: SlotId; kind: DistrictKind; variant: DistrictVariant; residents: number; jobs: number; developed: number; avgLandValue: number; ruins: number }
 
 export interface CityStats {
   /* …existing… */
@@ -360,18 +444,21 @@ export interface ActionPlan {
 }
 
 export interface DistrictSave {
+  /** Length region², indexed by SlotId. */
   kinds: DistrictKind[];
+  /** Length region², indexed by SlotId: each slot's variant of its kind (§3.6.2). Missing or malformed → the seed's layout. */
+  variants?: DistrictVariant[];
   owned: SlotId[];
   /** Unspent land grants. */
   grants: number;
   bought: number;
-  /** Length 9, indexed by SlotId: the tick the slot was annexed, −1 while locked. */
+  /** Length region², indexed by SlotId: the tick the slot was annexed, −1 while locked. */
   annexedAt: number[];
-  /** The annex-sheet lease (Tarmac Reach only, §3.7). */
+  /** The annex-sheet lease (Tarmac Reach, variant 0, only, §3.7). */
   leases?: { tarmac?: 'nacre' | 'basalt' };
   /** Unpaused real seconds since the ending or the last epilogue grant (§3.8). Missing → 0. */
   epilogueSec?: number;
-  /** District goals completed (§3.7), by id. Missing → none. */
+  /** District goals completed (§3.7), as `goalId@slot` (goals are per district). Missing → none. */
   goalsDone?: string[];
   /** Ruins restored since annex (§3.7). Missing → 0. */
   ruinsRestored?: number;
@@ -382,16 +469,30 @@ export interface SaveData {
   /* …existing… */
   /** POP_SCALE the head counts in this save are in (10). Missing → ×1 (v1–v3, multiplied at load). */
   scale?: number;
-  /** World side (192). Missing on v1–v3 (migrated, §3.10); any other value on a v4 save → treated as a future save. */
+  /** v4: the region side in slots, 3 or 5. Missing on v1–v3 (migrated as 3, §3.10); any other value on a v4 save → a future save. `upgradeRegion` turns a 3 into a 5 (§3.11). */
+  region?: number;
+  /** World side, 64 × region (192 or 320). Missing on v1–v3; a v4 save whose size is not 64 × region → a future save. */
   size?: number;
   /** v4 district state. */
   districts?: DistrictSave;
   /** v4: one base64 block per owned slot, in districts.owned order: 4096 tiles × 3 bytes (bits 0-23, little-endian), row-major inside the slot. v4 saves have no `tiles`. */
   tileBlocks?: string[];
 }
+
+export interface Settings {
+  /* …existing… */
+  /**
+   * Lower-detail mode for a 5×5 city (§3.11). Missing until the first 5×5 city loads on this device; then written once
+   * from the device class (on for a handheld, off for a PC), so it never flips mid-session. Ignored on a 3×3 region.
+   */
+  lowerDetail?: boolean;
+}
+
+/** Once-per-city moments (EXPANSION §5.4): + 'region', the "region is whole" banner (§3.8). */
+export type MomentId = /* …existing… */ | 'region';
 ```
 
-`blankTile()` gains `elev: 0, ground: Ground.Plain`; `makeFields()` the two arrays; `emptyStats()` `districts: []`, `skyLobbies: { count: 0, largest: 0, visitors: 0 }`, `ruins: 0`, `ruinsRestored: 0`.
+`blankTile()` gains `elev: 0, ground: Ground.Plain`; `makeFields()` the two arrays; `emptyStats()` `districts: []`, `skyLobbies: { count: 0, largest: 0, visitors: 0 }`, `ruins: 0`, `ruinsRestored: 0`. `StoryState` (story/types.ts) gains `pace?: StoryPace`, the story pace this city was last played at (§3.10, §13.2).
 
 #### Shared game-side modules (Step 0b, frozen)
 
@@ -401,12 +502,17 @@ export interface SaveData {
 #### `src/game/world.ts` additions
 
 ```ts
+/** Region side in slots (3 or 5), fixed for this World: `new World(seed, name, events, region = 3)`, `World.generate(seed, name, events, region)`. Growing a 3×3 city builds a new World from `upgradeRegion(save)` (§3.11). */
+readonly region: Region;
+/** Side in tiles (64 × region) and tile count. Every system reads these (copied at construction) instead of a module constant. */
+readonly N: number;
+readonly area: number;
 /** District state (saved as SaveData.districts). Written by world.annex() and Game only. */
-districts: DistrictSave;            // { kinds, owned, grants, bought, annexedAt, leases, epilogueSec, goalsDone, ruinsRestored }
+districts: DistrictSave;            // { kinds, variants, owned, grants, bought, annexedAt, leases, epilogueSec, goalsDone, ruinsRestored }
 /** 1 = owned, index SlotId. */
-slotOwned = new Uint8Array(9);
+slotOwned = new Uint8Array(region * region);
 /** Owned row segments as [start, end) index pairs, ascending; owned slots side by side in a row merge into one segment. */
-segs = new Int32Array(SLOTS * MAP_SIZE * 2);
+segs = new Int32Array(region * N * 2);
 segCount = 0;                       // number of ints used (2 per segment)
 /** ++ on every annex (renderer, SimGrid and turf compare it). */
 slotsVersion = 0;
@@ -423,12 +529,13 @@ tide = 0;
 
 isOwned(x: number, y: number): boolean;     // in bounds and its slot is owned
 ownedAt(i: number): boolean;
-slotAt(x: number, y: number): SlotId;       // SLOT_OF[y * N + x]
+slotAt(x: number, y: number): SlotId;       // (y >> 6) * region + (x >> 6)
 kindAt(x: number, y: number): DistrictKind; // districts.kinds[slotAt]
 /**
  * Structural annex: mark owned, place the district's content (districts/annex.ts) with per-tile events
  * suspended, rebuild segs and ownedBox, then emit one 'tiles' touch for the slot rect and 'annex'. No cost, no rules.
- * Content draws from `new Rng(seed ^ ANNEX_SALT[slot])` and hashes, never world.rng, so later growth rolls don't shift.
+ * Content draws from `new Rng(seed ^ ANNEX_SALT[ringKey(slot)])` and hashes, never world.rng, so later growth rolls
+ * don't shift. ringKey is the slot's offset from the start slot (§3.6.1), so a slot's content is the same on both regions.
  */
 annex(slot: SlotId): void;
 /** Pump House reclamation: water → land on an **owned** tile only (a bridge becomes a road of its kind; Alley/Ramp rules hold). Bumps conductorVersion and terrainVersion, emits 'terrain'. */
@@ -436,7 +543,7 @@ setTerrain(x: number, y: number, terrain: Terrain): void;
 setGround(x: number, y: number, g: Ground): void;
 ```
 
-Static tables in new `src/game/districts/slots.ts`: `SLOT_OF: Uint8Array(36864)`, `slotRect(s)`, `slotNeighbours(s)` (4-adjacent), `adjacentLocked(world): SlotId[]` (the annex candidates), `rebuildSegments(world)`, `artXY(x, y)` (= `x − 64, y − 64`, one global offset, so it is continuous across slot borders and equals today's coordinates on the start slot: render hashes, the `SimGrid.computeTerrainValue` noise, ground `TerrainInfo` hashes and the start slot's neighbourhood names all use it, so a migrated city keeps its land values, puddles, cracks and names).
+Helpers in new `src/game/districts/slots.ts` (all take the world or its region; no 36,864-entry table any more): `slotRect(world, s)`, `slotNeighbours(region, s)` (4-adjacent), `ringKey(region, s)` (the slot's offset from the start slot as `(dy + 2) * 5 + (dx + 2)`, 0..24, the same number for the same place on both regions; generator salts and annex content key on it), `adjacentLocked(world): SlotId[]` (the annex candidates), `rebuildSegments(world)`, `artXY(world, x, y)` (= `x − o, y − o` with `o = 64 × (region − 1) / 2`, i.e. 64 or 128: one global offset, so it is continuous across slot borders and equals today's coordinates on the start slot of either region: render hashes, the `SimGrid.computeTerrainValue` noise, ground `TerrainInfo` hashes, `skylineLang` (§9) and the start slot's neighbourhood names all use it, so a migrated city keeps its land values, puddles, cracks and names, a 5×5 city's start slot looks exactly like a 3×3 city's for the same seed, and a 3×3 city grown to 5×5 looks exactly as it did: its tiles move by (64, 64) and `o` grows by 64).
 
 **Invariants** (Step 0b enforces them in every mutator; the contract test runs every mutator in random order, with random annexes, and checks after each call): no road, zone, building, rail, sky, link anchor or turf on a locked tile; terrain changes only on owned tiles; `elev = 0` and `ground = Plain` on water; `segs` covers exactly the owned slots; EXPANSION §2.1's invariants still hold.
 
@@ -489,30 +596,74 @@ export interface DistrictDef {
   /** Building and ground style (§6.1); one style per kind, so the style id is the kind. */
   style: DistrictKind;
   neighbourhoods: string[];// 12 names ≤ 15 chars: the {district} token inside it
-  /** 2–3 optional goals shown on the City map once owned (§3.7). */
+  /** 2–3 optional goals shown on the City map once owned (§3.7); each district of the kind has its own copy, except `once` goals. */
   goals: DistrictGoal[];
   mods: DistrictMods;
+  /**
+   * Repeats on a 5×5 region (§3.7), index = variant − 1. Each has its own name, short name, tagline, terrain preset,
+   * accent and one goal of its own; perks, hazards, mods, lobby, style and the kind's goals (minus `once` ones and
+   * `skipGoals`) are the kind's. Neighbourhood lists for variants live in `src/game/districts/names.ts` (WP-7).
+   * Empty for 'shore' and 'sunk' (unique).
+   */
+  variants: { name: string; short: string; tagline: string; terrain: string; accent: string; goal: DistrictGoal; skipGoals?: string[] }[];
 }
 
-/** A district goal: checked on the month tick by `districts/goals.ts` (a check function per id, WP-2); reward paid once, one ticker line, a stamp on the City map. */
-export interface DistrictGoal { id: string; label: string /* ≤ 40 */; reward: number; /** hidden while this building type is hidden or locked */ needs?: BuildingType }
+/**
+ * A district goal: checked on the month tick by `districts/goals.ts` (a check function per id, WP-2); reward paid once,
+ * one ticker line, a stamp on the City map. Completed after an ending, it pays max(reward, GOAL_LATE_SHARE × districtPrice(owned)).
+ */
+export interface DistrictGoal {
+  id: string;
+  /** ≤ 40 chars; never names its district (the sheet and the ticker line already do, §3.7). */
+  label: string;
+  reward: number;
+  /** hidden while this building type is hidden or locked */
+  needs?: BuildingType;
+  /** Only the kind's own district (variant 0) carries it: a unique or limited building (Harbour Beacon, a second Airport, two Seaports). */
+  once?: true;
+}
+
+/** Share of the next district's price a district goal pays when completed after an ending (§3.7): fixed, never scaled with funds. */
+export const GOAL_LATE_SHARE = 0.25;
 
 export const DISTRICTS: Record<DistrictKind, DistrictDef> = { /* §3.7 */ };
 
 /**
- * Price of the next district by districts owned (index 1..8), after an ending only. Fixed numbers, never scaled
- * with funds. Placeholders: Step 9 sets the last two so each is 8–12 unpaused minutes of the D1 median
- * 7-district city's net income at speed 1 (§11.3); the lower rows only matter for a city whose grants were lost.
+ * Credits for the next district, after an ending only, by districts owned before buying (§3.8). Fixed numbers,
+ * never scaled with funds, one rule for both regions: income grows about linearly with districts, so each purchase
+ * costs about the same real time. Placeholder step: 2.52 M for the 8th district, 2.88 M for the 9th, 8.64 M for the
+ * 25th. Step 9 sets the step so a purchase is 8–12 unpaused minutes of the median city's net income at speed 1 at
+ * that size (D1 at 7 districts, D1-5 at 7, 12, 18 and 24, §11.3); lower counts only matter for a city whose grants were lost.
  */
-export const DISTRICT_PRICES: readonly number[] = [0, 1_000_000, 1_200_000, 1_400_000, 1_600_000, 1_800_000, 2_000_000, 2_500_000, 4_000_000];
+export const DISTRICT_PRICE_STEP = 360_000;
+export const districtPrice = (owned: number): number => DISTRICT_PRICE_STEP * owned;
 
 export const ANNEX = {
   lobbyFavor: 6, rivalLobbyFavor: -2,
+  /** The second and later district of a kind (5×5 repeats): smaller reactions, so 24 annexes don't swing the factions. */
+  repeatLobbyFavor: 2, repeatRivalLobbyFavor: -1,
   leaseFavor: 8, leaseRivalFavor: -4,
   flyInSec: 1.2, fogLiftSec: 1.5,
   /** Tiles of locked land the camera may show past the owned box. */
   peek: 6,
+  /** Annex pins drawn at once, nearest the view centre (a 5×5 region can have 10+ candidates). */
+  maxPins: 4,
 } as const;
+
+/** Per-region numbers (§3.3, §3.8, §3.11). */
+export const REGION = {
+  3: { epilogueGrantMul: 1, turfBands: 4, autosaveMinSec: 60, mirrorEverySec: 0 },     // 0: the mirror follows every save (plain)
+  5: { epilogueGrantMul: 0.5, turfBands: 8, autosaveMinSec: 60, mirrorEverySec: 300 },  // the compressed mirror, at most every 300 s
+} as const;
+
+/** O8 sleeping districts (§3.3): when a slot may sleep, and every how many field cycles an asleep slot's field rows run. */
+export const SLEEP = { idleSec: 120, quietDays: 60, cadence: 4, strainWindowSec: 10, strainCapShare: 0.8, recoverSec: 60 } as const;
+
+/** Tick slicing (§3.3): sim ms per frame by device class, the row band a resumable pass stops at, the largest unit allowed in Node at 25 districts. */
+export const SLICE = { capHandheldMs: 6, capPcMs: 10, bandRows: 8, unitMaxNodeMs: 1.5 } as const;
+
+/** Lower-detail mode for a 5×5 city on a handheld device (§3.11). maxDaysPerSec caps every speed; Step 9 sets it from the device check (6–8). */
+export const LOW_DETAIL = { maxDaysPerSec: 8, sleepCadence: 8, awakeRing: 1, autosaveMinSec: 120, mirrorEverySec: 600, atlasMaxMB: 4 } as const;
 
 /** Ruins (§3.7): recovery pay cap, blight weight, collapse exemption. */
 export const RUINS = { payCapMonth: 4_000, blightWeight: 0.5 } as const;
@@ -520,36 +671,42 @@ export const RUINS = { payCapMonth: 4_000, blightWeight: 0.5 } as const;
 /** Every price × this (§0, "How price is rescaled"): 1 = per-building parity. Read by costOf / upkeepOf only. */
 export const CR_SCALE = 1;
 
-/** Port limits grow with owned districts (§3.5). */
+/** Port limits grow with owned districts (§3.5); a 3×3 region never passes 9, so its limits are the first rows. */
 export const PORT_LIMITS = {
-  seaport: (owned: number) => 2 + Math.floor((owned - 1) / 3),    // 2, 3 at 4+, 4 at 7+
-  airport: (owned: number) => (owned >= 4 ? 2 : 1),               // the second only inside Tarmac Reach
+  seaport: (owned: number) => Math.min(6, 2 + Math.floor((owned - 1) / 3)),  // 2, 3 at 4+, 4 at 7+, 5 at 10+, 6 at 13+
+  airport: (owned: number) => (owned >= 13 ? 3 : owned >= 4 ? 2 : 1),        // every Airport after the first inside a Tarmac district
   spaceport: (_owned: number) => 1,
 } as const;
 ```
 
-`BuildingDef` gains (optional; absent = today's behaviour): `height?: number` (the building's top) and `roof?: number` (the facade top a skybridge tube attaches under), both in world px, set by Step 0b from today's art (Spire 287 / ≈ 200, Arcology 204 / ≈ 180, Glarewall 138 / ≈ 120, Stratablock by complete stage 83 / 177 / 232 with roof ≈ 160 from stage 2) and kept by the WP-4 art test (§5.3); `site?: 'shore' | 'water'` (`'water'`: the footprint is on water, Tidal Turbine); `hidden?: boolean` (never in a tray: `frame`, `pumphall`, and any dropped optional type); `fixed?: boolean` (`frame`, `pumphall`: cannot be bulldozed). `BuildingGate` (story/types.ts) gains `district?: DistrictKind`, `lobby?: number`, `districts?: number`, `chapter?: number` (§6.3) and `ending?: EndingId` (§9.2). `EDGE_LINKS` gains `perDistrict: 4` (cap = 12 + 4 × (owned − 1)). Events (`events.ts`): `annex: { slot: SlotId; kind: DistrictKind }`, `grant: { grants: number; why: 'chapter' | 'ending' | 'epilogue' | 'migrated' }`, `terrain: { x0, y0, x1, y1 }`, `districtGoal: { slot: SlotId; id: string }`, `cityEvent: { id: CityEventId; phase: 'start' | 'end'; slot?: SlotId }`; `toast.action.id` gains `'map'`.
+`BuildingDef` gains (optional; absent = today's behaviour): `height?: number` (the building's top) and `roof?: number` (the facade top a skybridge tube attaches under), both in world px, set by Step 0b from today's art (Spire 287 / ≈ 200, Arcology 204 / ≈ 180, Glarewall 138 / ≈ 120, Stratablock by complete stage 83 / 177 / 232 with roof ≈ 160 from stage 2) and kept by the WP-4 art test (§5.3); `site?: 'shore' | 'water'` (`'water'`: the footprint is on water, Tidal Turbine); `hidden?: boolean` (never in a tray: `frame`, `pumphall`, and any dropped optional type); `fixed?: boolean` (`frame`, `pumphall`: cannot be bulldozed). `BuildingGate` (story/types.ts) gains `district?: DistrictKind`, `lobby?: number`, `districts?: number`, `chapter?: number` (§6.3) and `ending?: EndingId` (§9.2). `EDGE_LINKS` gains `perDistrict: 4` (cap = 12 + 4 × (owned − 1)). `MILESTONES` rows gain `region?: Region` (a row with `region: 5` exists, counts and shows only on a 5×5 region, §4.5). Events (`events.ts`): `annex: { slot: SlotId; kind: DistrictKind; variant: DistrictVariant }`, `grant: { grants: number; why: 'chapter' | 'ending' | 'epilogue' | 'migrated' }`, `terrain: { x0, y0, x1, y1 }`, `districtGoal: { slot: SlotId; id: string }`, `cityEvent: { id: CityEventId; phase: 'start' | 'end'; slot?: SlotId }`; `toast.action.id` (`ToastAction`, today `'undo' | 'watch'`) gains `'map'` and `'export'` (the storage-full toast, §3.10; WP-9 wires its handler, until then it opens the menu).
 
 ### 3.3 The sim with districts
 
-The world is one continuous city: roads, power, services, traffic, turf and skybridges cross slot borders with no special case, because the arrays are one 192×192 grid. Locked slots hold nothing, so they contribute nothing; what has to change is that today's code **visits** them, and that a full day at 9 districts is too big to run in one frame. The optimisations, each with an owner (WP-1 unless stated) and its measured or expected effect:
+The world is one continuous city: roads, power, services, traffic, turf and skybridges cross slot borders with no special case, because the arrays are one N×N grid (192 or 320). Locked slots hold nothing, so they contribute nothing; what has to change is that today's code **visits** them, and that a full day at 9 districts (and far more at 25) is too big to run in one frame. The optimisations, each with an owner (WP-1 unless stated) and its measured or expected effect:
 
 | # | Change | Effect |
 |---|---|---|
 | **O1** | **Owned segments, one boundary rule.** Every per-tile loop in `sim/*.ts`, `story/turf.ts`, `story/mods.ts` (`composeLayers`, `resetLayers`) and `story/vertical.ts` (`refresh`, WP-2) iterates `for (let s = 0; s < w.segCount; s += 2) for (let i = w.segs[s]; i < w.segs[s + 1]; i++)`. **A locked tile is exactly out of bounds for every stencil** (`blur3` both directions, turf dilations, the water-view BFS of `computeTerrainValue`, road access, coverage stamps): each stencil treats it like today's map edge, whatever the scratch buffers hold, so a v3 city in the start slot computes exactly what it did on the 64 map (S1, §11.3). The day's tile-age loop walks zoned, road and building tiles only. `turf.landTiles`, `capFor` and `turf.share` count owned land only. | removes the 2.9 ms of empty area (§2.3): "1 of 9" ≈ today |
-| **O2** | **Power, specified exactly.** Component labels are cached on `world.conductorVersion`. Every tick: supply and demand per component. A component with **supply 0** is unpowered, with no BFS. A component with **supply ≥ demand > 0** powers every tile and sets `remain[c] = supply − demand`, so `PowerGrid.tryReserve` and `canFeed` see the true headroom. Only components with **0 < supply < demand** run today's allocation BFS. (The draft's prototype skipped the subtraction and was not equivalence-safe.) Test: on 50 random cities, including disconnected consumers, zero-supply components and brownouts, `powered`, `remain`, `compDeficit` and `building.powered` equal today's BFS exactly; re-measure after the fix. | power 29% of a step → ~10% (to be re-measured) |
+| **O2** | **Power, specified exactly.** Component labels are cached on `world.conductorVersion`. Every tick: supply and demand per component. A component with **supply 0** is unpowered, with no BFS. A component with **supply ≥ demand > 0** powers every tile and sets `remain[c] = supply − demand`, so `PowerGrid.tryReserve` and `canFeed` see the true headroom. Only components with **0 < supply < demand** run today's allocation BFS. (The draft's prototype skipped the subtraction and was not equivalence-safe.) **Slicing:** the prototype's per-tick pass still costs 2.2 ms at 25 districts (§2.8), so the supply, demand and flag sweep runs in row bands like a field pass, and tile flags are rewritten only for components whose state changed; a **relabel** after a conductor change is its own resumable unit (a flood fill whose queue survives across frames), and added conductors merge labels incrementally (the touched tiles' neighbour labels unioned), so only removals relabel. Test: on 50 random cities, including disconnected consumers, zero-supply components and brownouts, `powered`, `remain`, `compDeficit` and `building.powered` equal today's BFS exactly, sliced or whole; re-measure after the fix. | power 4.9 ms a tick at 25 districts → 2.2 (prototype) → units ≤ 1.5 ms |
 | **O3** | **Coverage cached** on `(world.coverageVersion, world.mods version, layer part versions)`. `coverageVersion` bumps on building add / remove / stage / crown / sponsor / look / offline / powered, the Metro network flag (§6.3) and Sky Lobby membership (Halo Lookout); `mods` covers `securityMul` (deals, crackdowns); the layer versions cover `transitAdd` and the district `parkAdd`. Test: toggling each input changes the cached fields exactly as an uncached pass does. | coverage 10% → ~0 on quiet ticks |
-| **O4** | **4-phase field stagger** (`FIELD_STAGGER` 4): 0 traffic; 1 pollution + noise; 2 neighbourhood + land value; 3 crime + wealth score. Field latency 4 days (2 s at speed 1). With tick slicing (below) at most one field phase runs per frame. | −40% together with O2–O3 (§2.4) |
+| **O4** | **4-phase field stagger** (`FIELD_STAGGER` 4): 0 traffic; 1 pollution + noise; 2 neighbourhood + land value; 3 crime + wealth score. Field latency 4 days (2 s at speed 1). With tick slicing (below) each **pass** is its own unit, resumable by row band, so phase 2's 4.6 ms at 25 districts never lands in one frame. | −40% together with O2–O3 (§2.4; 11.6–12.6 ms a day at 25, §2.8) |
 | **O5** | **`Simulation.recomputeAround(rect)`** after player actions: power (relabel only if conductors changed), coverage (if its key changed), traffic in full (highway and sky pools are network-wide), then pollution, neighbourhood, land value, crime and wealth score on `rect ⊕ 12` rows clipped to owned segments, then census, averages and budget. If the traffic change **outside** the window exceeds 2% of any tile's volume, a full field pass is scheduled for the next ticks (sliced as usual). `Game.apply` passes the plan's touched rect. Tax and budget sliders (`ui/budget.ts` calls `recomputeAll` at the end of every drag today) call `sim.recomputeEconomy()` (census and budget only). `recomputeAll` stays for load, new city and annex; WP-1 lists every remaining caller in its hand-off. | an action costs ~4 ms in Node at 9 districts instead of 10–12 |
-| **O6** | **Turf from typed mirrors, banded over the month** (prototyped in `/tmp/claude-megacity/` before WP-1 starts; the ≤ 8 ms month-end frame of §11.1 is the bar). `turf.computeMaps` reads `SimGrid`'s typed arrays instead of `Tile` objects, keeps today's **separable** dilations but runs them over owned segments only, and runs in 4 row bands on days 1–4 of each month into a double buffer; the monthly rules apply the finished buffer on day 4. `bestTile` (seeding, tagback) scans owned eligible tiles only when needed. `refreshStats` over owned segments. | `onMonth` 9.4 ms → 4 slices of ≤ 2 ms |
+| **O6** | **Turf from typed mirrors, banded over the month** (prototyped in `/tmp/claude-megacity/` before WP-1 starts; the ≤ 8 ms month-end frame of §11.1 is the bar). `turf.computeMaps` reads `SimGrid`'s typed arrays instead of `Tile` objects, keeps today's **separable** dilations but runs them over owned segments only, and runs in `REGION[R].turfBands` row bands (4 on days 1–4 of each month on a 3×3 region, 8 on days 1–8 on a 5×5) into a double buffer; the monthly rules apply the finished buffer on the last band's day. `bestTile` (seeding, tagback) scans owned eligible tiles only when needed. `refreshStats` over owned segments. | `onMonth` 9.4 ms → 4 slices of ≤ 2 ms (3×3); 45–56 ms today at 25 districts (§2.8) → 8 slices of ≤ 3 ms |
 | **O7** | Budget projection every 3rd tick (the month-end tick always projects fresh before `settleMonth`). | −0.3 ms at 9 districts |
-| **O8** | **Sleeping districts: a planned contingency with a trigger.** A slot with no player action for 120 s and no level change for 60 d samples growth at ¼ rate and runs its local field passes every 4th cycle. **Trigger:** Step 0b's device benchmark measures a phone factor above 4.5 (instead of the assumed 3.5), or the p95 day on the device exceeds 12 ms at 9 districts. Then O8 is built inside WP-1 before Wave 2 starts; otherwise it is not built. | ≈ −40% at 9 districts with 5 asleep (estimate) |
+| **O8** | **Sleeping districts (core since the 5×5 region, §2.8).** `sim.sleep: 'off' \| 'auto' \| 'forced'` (set by Game, §3.11). A slot **may sleep** when it had no player action for `SLEEP.idleSec` (120 s) and no level change for `SLEEP.quietDays` (60 d); in `'forced'` mode every slot outside `LOW_DETAIL.awakeRing` (1) of the slot under the camera centre may sleep regardless of level changes. Slots with a player action in the last 120 s are always awake. An asleep slot skips **only its rows of the throttleable field passes** (pollution, noise, neighbourhood, land value, crime, wealth score; ≈ 2.4 ms a day at 25 districts, §2.8): they run when `(cycle + slot) % k == 0`, with `cycle = floor(tick / FIELD_STAGGER)` and k = `SLEEP.cadence` (4) or `LOW_DETAIL.sleepCadence` (8) when forced, so the resting slots catch up a few at a time, never all on one day. **Growth sampling, tile ages, tier checks and everything else keep their normal rate** (growth is ≈ 1 ms a day; throttling it would save little and make the city grow differently with the camera, the device and after a transfer). Network-wide passes (power, coverage, traffic, census, budget) and every stencil's reads are unchanged, so an asleep slot's neighbours see its last values, never garbage. Waking is instant (the next field cycle runs it). Nothing is saved. Tests: a slot asleep for 4k field cycles and woken equals an always-awake run within the field tolerance of `recompute-around.test.ts` after one full field cycle; taxes and census are identical asleep or awake; **residents after 2 sim years in `'forced'` are within 5% of `'off'`** on the 25-district fixture; **no field cycle costs more than 1.2× the mean cycle** (no catch-up spike; cycles, not days, because O4's phases differ by design). **When it is on:** a 5×5 city on a PC: `'auto'`, on only while the frame guard sees strain (§3.11); a 5×5 city in lower detail: `'forced'`; a 3×3 city: `'off'`, unless Step 0b's device benchmark measures a phone factor above 4.5 (instead of the assumed 3.5) or a p95 day above 12 ms at 9 districts, in which case 3×3 cities on handheld devices run `'auto'`. | ≈ −1.3 ms a day at 25 districts with 16 asleep at cadence 8, ≈ −1.7 ms with 24 asleep at cadence 4; ≈ −0.35 ms at 9 with 5 asleep (estimates; M3 measures) |
 
-**Tick slicing and the frame guard** (`Simulation.stepSlice`, WP-1; `Game.update`, WP-2). `step()` stays as the headless whole-day call (tests, the measure harness). The game calls `stepSlice(budgetMs)`, which runs the current day's next **slices**, each atomic: **A** scan, power, coverage, census count; **B** this day's field phase (O4); **C** growth sample, tiers, district daily hook, budget, advisor, then `story.onDay`. A day completes over 1–3 frames; stats and events are published only when C completes, so the UI never sees half a day. Sim work per frame is capped at 6 ms on coarse-pointer devices (10 ms otherwise); a slice never starts if the frame has already spent the cap. At speed 3 (16 days a second) that is 48 slices a second, under one per frame at 60 fps. The dropped-backlog threshold stays at today's 4 days (`game.ts`; raised to 6 only if the device check shows calendar loss at speed 3), so a hitch (an annex `recomputeAll`, a GC pause) never turns into seconds of saturated catch-up.
+**Tick slicing and the frame guard** (`Simulation.stepSlice`, WP-1; `Game.update`, WP-2). `step()` stays as the headless whole-day call (tests, the measure harness). The game calls `stepSlice(budgetMs)` (signature frozen in Step 0b), which runs the current day's next **units** in a fixed order:
 
-**Month end, spread** (WP-1 for the sim, WP-2 for the story parts it calls). The story's `onMonth` parts move off the month-end tick: `turf` bands on days 1–4 (O6), `vertical.refresh` on day 2, `turf.refreshStats` and `composeLayers` on day 4; `settleMonth` (budget) stays on the month-end tick with its projection precomputed on the tick before (O7). Every slice C stays within the frame cap.
+- **A1** scan and the census count; **A2** power: the per-tick supply, demand and flag sweep, plus a pending relabel (O2); **A3** coverage, only when its key changed (O3);
+- **B** this day's field phase (O4), **one pass per unit** (traffic; pollution; noise; neighbourhood; land value; crime; wealth score). A pass is **resumable by row band** (`SLICE.bandRows` 8 rows) over owned segments: it writes into a back buffer (a separable blur runs its horizontal sweep over every band, then its vertical sweep), and the field swaps when the pass completes, so no reader ever sees a half-written field;
+- **C1** growth sample, tiers, the district daily hook; **C2** budget, advisor, then `story.onDay` (its month-end parts banded, below).
 
-**Autosave off the month tick** (`src/main.ts`, WP-2). The `month` handler only sets `saveDue`. The save runs on the first frame after it in which no sim slice ran (`requestIdleCallback` with a 500 ms timeout fallback), at most every max(3 sim months, 60 unpaused seconds). Serialization uses the tile blocks of §3.10 (≈ 1 ms in Node at 9 districts); `localStorage.setItem` of a 240 KB string is measured on the device in Step 0b.
+No **atomic step** (an unbanded unit, or one band of a banded one) exceeds `SLICE.unitMaxNodeMs` (1.5 ms) in Node at 25 districts: anything bigger (scan, power's sweep, the budget projection if needed) is banded the same way, and a test asserts the bound on the 25-district fixture. Each step kind keeps a running cost estimate (the mean of its last 8 runs); a step starts only while `spent + estimate ≤ cap`, and at least one step runs in a frame while a day is due, so the sim never stalls. The cap is `SLICE.capHandheldMs` (6 ms) on a handheld device and `SLICE.capPcMs` (10 ms) on a PC (§3.11's device class). A day completes over 1–4 frames on a PC (more on a phone in lower detail); stats and events are published only when C2 completes, so the UI never sees half a day, and a sliced day equals a whole `step()` exactly. The dropped-backlog threshold stays at today's 4 days (`game.ts`; raised to 6 only if the device check shows calendar loss at speed 3), so a hitch (an annex `recomputeAll`, a GC pause) never turns into seconds of saturated catch-up.
+
+**Month end, spread** (WP-1 for the sim, WP-2 for the story parts it calls). The story's `onMonth` parts move off the month-end tick: `turf` bands on days 1–4 (1–8 on a 5×5 region, O6), `vertical.refresh` on day 2, `turf.refreshStats` and `composeLayers` on the last band's day; `settleMonth` (budget) stays on the month-end tick with its projection precomputed on the tick before (O7). Every turf band and every C unit stays within `SLICE.unitMaxNodeMs`.
+
+**Autosave off the month tick** (`src/main.ts`, WP-2). The `month` handler only sets `saveDue`. The save runs on the first frame after it in which no sim slice ran (`requestIdleCallback` with a 500 ms timeout fallback), at most every max(3 sim months, `autosaveMinSec` unpaused seconds: 60, or 120 in lower detail). The `pagehide` save stays synchronous, as today. Serialization uses the tile blocks of §3.10 (≈ 1 ms in Node at 9 districts; at 25 the v4 round trip measured 2.6 ms, so ≈ 3 ms is expected, §2.8); `localStorage.setItem` of a 260 KB and a 600 KB string is measured on the device in Step 0b. Compressed backups (§3.10) are written after the main save, asynchronously, never in a frame that ran a slice.
 
 **District rules in the sim** (WP-1, reading `DISTRICTS[kind].mods`, tile `elev` / `ground` and the district layer part):
 
@@ -558,9 +715,9 @@ The world is one continuous city: roads, power, services, traffic, turf and skyb
 - **Fields.** Coverage max-combines `parkAdd` into `park`; pollution adds `pollutionAdd` to the sources and multiplies the diffused field by `1 − 0.25 × filter`; `resilience` and `filter` are ordinary coverage effects (added to `EFFECTS`).
 - **Ruins** (§3.7). A ruin is a zoned, abandoned tile with ground Rubble. Census counts it in `ruins`, **not** `abandoned`, so the advisor's "N buildings stand abandoned" line, Undertow's "Dark lots" mood driver (`content/factions.ts`, `abandoned / 10`) and the `abandoned`-keyed cards and spot rules (`nc.renewal`, Undertow's `abandoned ≥ 5` card) never see ruins. Ruins never collapse (exempt from `COLLAPSE_AGE`), blight the neighbourhood field at half weight (`RUINS.blightWeight`), and recover like abandoned tiles once a road is within 3 and power arrives, at `RECOVER_CHANCE × recoverMul` (2 in the Sunk); recovery sets ground Plain, adds 1 to `districts.ruinsRestored` and pays `restorePay` (cap `RUINS.payCapMonth` a month). Bulldozing a ruin costs the normal fee and leaves an unzoned rubble lot. The advisor gains one ruins line (Appendix B).
 - **Growth.** Reedmere floodplain tiles (land within 1 of water, marked at annex) cannot step to level 3 while `resilience` = 0; a brownfield tile clears (`setGround(Plain)`) when a sampled tile is developed with `age ≥ 720`, or has `park ≥ 0.3` or `filter > 0` with `age ≥ 360`.
-- **Demand.** `Simulation.setTrade` adds Kessel Flats' +2,000 industrial jobs while it has < 400 developed Fab tiles, the Tarmac lease (+2,000 Market or Fab jobs), and the Bazaar's visitors (`PortSystem` raw visitors) at 600 per 10 developed Market tiles there, cap 30,000. The turf demand term (`TURF.demandPer100`, +0.04 per 100 gang tiles today) is divided by the number of owned districts, so one district is unchanged and a gang at its 8% cap over nine districts adds what it adds today (≈ +0.1).
+- **Demand.** `Simulation.setTrade` adds +2,000 industrial jobs for each owned Flats district (Kessel Flats and its 5×5 variants) while that district has < 400 developed Fab tiles, the Tarmac lease (+2,000 Market or Fab jobs), and each Bazaar district's visitors (`PortSystem` raw visitors) at 600 per 10 developed Market tiles there, cap 30,000 per district. Mods are per district: every rule in `DistrictMods` applies to each district of its kind on its own. The turf demand term (`TURF.demandPer100`, +0.04 per 100 gang tiles today) is divided by the number of owned districts, so one district is unchanged and a gang at its 8% cap over nine districts adds what it adds today (≈ +0.1).
 - **Census** fills `stats.districts` in the same pass (residents, jobs, developed tiles, ruins and mean land value per owned slot).
-- **Daily** (`districts/daily.ts`, WP-2, called from slice C through a Step 0b hook): Pump House reclamation, king tides (`world.tide`), frame crime refresh on finish, district goals on the month tick (§3.7).
+- **Daily** (`districts/daily.ts`, WP-2, called from unit C1 through a Step 0b hook): Pump House reclamation, king tides (`world.tide`), frame crime refresh on finish, district goals on the month tick (§3.7).
 
 ### 3.4 Locked slots
 
@@ -572,26 +729,29 @@ The world is one continuous city: roads, power, services, traffic, turf and skyb
 ### 3.5 Map edge, regional links and ports
 
 - **Boundary tile:** an owned tile with a 4-neighbour that is off the map or in a locked slot.
-- **Regional link** (EXPANSION §3.10's rule with "map border" replaced by "boundary"): a ground road on a boundary tile, whose outward neighbour is off-map or locked and whose inward neighbour is a road it links to. Points as EXPANSION (Street 1, Avenue 2, Highway 3); cap `12 + 4 × (owned − 1)` (44 at 9 districts); demand per point in ×10 units (Fab 250 jobs, Market 120); visitors per point 400 (X3).
-- **Annexing turns a shared border internal:** its links stop counting. The annex sheet says so ("3 regional links here become city streets"); the new district's outer boundary is where the next ones go. The world's outer edge (x or y = 0 or 191) is a permanent boundary.
+- **Regional link** (EXPANSION §3.10's rule with "map border" replaced by "boundary"): a ground road on a boundary tile, whose outward neighbour is off-map or locked and whose inward neighbour is a road it links to. Points as EXPANSION (Street 1, Avenue 2, Highway 3); cap `12 + 4 × (owned − 1)` (44 at 9 districts, 108 at 25); demand per point in ×10 units (Fab 250 jobs, Market 120); visitors per point 400 (X3).
+- **Annexing turns a shared border internal:** its links stop counting. The annex sheet says so ("3 regional links here become city streets"); the new district's outer boundary is where the next ones go. The region's outer edge (x or y = 0 or N − 1) is a permanent boundary.
 - **Stubs:** each owned slot gets 2 painted regional-road stubs on its outer boundary (art, from the seed), redrawn when the boundary moves. Cars spawn and leave at boundary roads (EXPANSION §3.11 with the boundary; the spawn rule in `art/traffic.ts` is WP-3's in Wave 2, the rest of that file WP-6's in Wave 3).
 - **Ports:** a Seaport's berth tiles must be owned open water; the ship's approach may cross locked water (art only). Airport, Spaceport and every footprint must be owned. Planes and launches ignore slots.
-- **Port limits grow with the city** (`PORT_LIMITS`, §3.2; `SEAPORT.maxCounted` follows the Seaport limit): Seaports 2 at 1–3 districts, 3 at 4–6, 4 at 7–9; Airports 1, and a second from 4 districts that must stand inside Tarmac Reach (so its "Airport 25% off" perk always has a use); one Spaceport. A city of millions with one harbour and one airport would undercut the realism the owner asked for; the limit message names the next step ("A third Seaport needs 4 districts").
+- **Port limits grow with the city** (`PORT_LIMITS`, §3.2; `SEAPORT.maxCounted` follows the Seaport limit): Seaports 2 at 1–3 districts, 3 at 4–6, 4 at 7–9, and on a 5×5 region 5 at 10–12 and 6 from 13; Airports 1, a second from 4 districts and (5×5 only) a third from 13, each after the first inside a Tarmac district (Tarmac Reach or a variant, so its "Airport 25% off" perk always has a use); one Spaceport. A city of millions with one harbour and one airport would undercut the realism the owner asked for; the limit message names the next step ("A third Seaport needs 4 districts").
 
 ### 3.6 Terrain generation
 
 #### 3.6.1 Pipeline (`src/game/districts/terrain.ts`, WP-2; Step 0b ships a plain-noise stub with the same signature)
 
-1. **Start slot:** today's `generateTerrain` run in slot-local coordinates and written at +64, +64: **bit-identical** to today's map for the same seed (test), so new cities start exactly as before and the balance tests keep their terrain.
-2. **Layout:** `assignKinds(seed, baySide, riverAxis, riverExits)` (§3.6.2) → `kinds[9]`.
-3. **Edge slots** in the order 1, 5, 7, 3, then **corners** 0, 2, 6, 8, each with its kind's generator (§3.7) and **border blending** against every neighbour already generated: for depth d = 0..5 from the shared border, `w = (6 − d) / 6`; a tile is water when `w × p(k) + (1 − w) × own(k, d) > 0.5`, where `p(k)` is the neighbour's border tile (water 1, land 0) smoothed over k ± 1, and `own` is the generator's value scaled to 0..1 around its threshold. A water run of 2–4 tiles on the neighbour's border (a river mouth) is continued as a channel of the same width that meanders (`sin` + fbm, as today's river) to the opposite edge or into the kind's water body. Corners take the larger blend weight of their two neighbours.
-4. Every generator uses `new Rng(seed ^ SALT[slot])` and `fbm(…, seed + 100 × slot)`, so locked slots regenerate identically at every load. Owned slots are saved (§3.10), so a later generator change only alters land nobody owns yet.
+1. **Start slot:** today's `generateTerrain` run in slot-local coordinates and written at the start slot's origin (+64, +64 on a 3×3 region; +128, +128 on a 5×5): **bit-identical** to today's map for the same seed on either region (test), so new cities start exactly as before and the balance tests keep their terrain.
+2. **Layout:** `assignKinds(seed, region, baySide, riverAxis, riverExits)` (§3.6.2) → `kinds[R²]` and `variants[R²]`.
+3. **Ring 1** (the slots touching the start): its **edge slots** north, east, south, west (slots 1, 5, 7, 3 on a 3×3 region), then its **corners** north-west, north-east, south-west, south-east (0, 2, 6, 8); on a 5×5 region then **ring 2**: the four slots straight out from the start (north, east, south, west), the eight off-axis slots clockwise from north, then the four outer corners. Each slot runs its kind's generator with its variant's preset (§3.7) and **border blending** against every neighbour already generated: for depth d = 0..5 from the shared border, `w = (6 − d) / 6`; a tile is water when `w × p(k) + (1 − w) × own(k, d) > 0.5`, where `p(k)` is the neighbour's border tile (water 1, land 0) smoothed over k ± 1, and `own` is the generator's value scaled to 0..1 around its threshold. A water run of 2–4 tiles on the neighbour's border (a river mouth) is continued as a channel of the same width that meanders (`sin` + fbm, as today's river) to the opposite edge or into the kind's water body. Corners take the larger blend weight of their two neighbours.
+4. Every generator uses `new Rng(seed ^ SALT[ringKey])` and `fbm(…, seed + 100 × ringKey)` (`ringKey`, §3.2: the slot's offset from the start, the same number on both regions), so locked slots regenerate identically at every load, and a 5×5 region's ring 1 is generated exactly like the 3×3 region of the same seed (ring 1 only blends against the start and ring 1, which come first in both orders). Owned slots are saved (§3.10), so a later generator change only alters land nobody owns yet.
+5. **The same on every browser** (a city moves between engines through §13): ECMAScript leaves `Math.sin`, `cos`, `exp` and `pow` implementation-approximated, while `rng.ts`' `hash2`, `valueNoise` and `fbm` use only `Math.imul`, `+` and `×` and are exact everywhere. So the district generators and their presets use only those, integer hashes and a fixed polynomial `sinP(x)` (in `districts/terrain.ts`) where a meander needs a sine. The start generator keeps today's `Math.sin` river (bit-identity, step 1); the start slot is always owned and saved, so only its regenerated border strips feed blending. A golden-hash test of `World.generate` and `assignKinds` for 5 seeds per region runs in Node and in Playwright Chromium, and in WebKit and Firefox where they are installed (§11.2); if an engine differs only through the start generator's river, the effect is limited to locked land and is recorded in §11.6.
 
-Cost: 32,768 tiles of fbm at world creation, < 25 ms in Node (once per new city or migration). **On load** only the locked slots are generated, plus the 6-tile border strips of owned slots that blending reads (owned land comes from the save); each slot's fbm field is computed once into a scratch `Float32Array(4096)` so the Shoals' threshold iterations (and any other iterative rule) reuse it instead of recomputing noise. The review measured a full `Game.restore` of an empty 192 world at 109 ms in Node with today's code (§2.6); §11.1 budgets it.
+Cost: (R² − 1) × 4,096 tiles of fbm at world creation: 32,768 on a 3×3 region (< 25 ms in Node), 98,304 on a 5×5 (today's generator takes 58–84 ms for the whole 320 frame, §2.8), once per new city or migration. **On load** only the locked slots are generated, plus the 6-tile border strips of owned slots that blending reads (owned land comes from the save); each slot's fbm field is computed once into a scratch `Float32Array(4096)` so the Shoals' threshold iterations (and any other iterative rule) reuse it instead of recomputing noise. The review measured a full `Game.restore` of an empty 192 world at 109 ms in Node with today's code under load (§2.6); this revision measured the restore alone at 31–33 ms (192) and 87–100 ms (320), plus the generation (§2.8); §11.1 budgets both.
 
 #### 3.6.2 Which district goes where
 
-Relative to the start map's bay side (`side` in `generateTerrain`: 0 north, 1 east, 2 south, 3 west) and its river (`riverAxis`: crosses the west and east edges when 0, north and south when 1). Rng `new Rng(seed ^ 0x6d454741)` so no other roll shifts:
+Relative to the start map's bay side (`side` in `generateTerrain`: 0 north, 1 east, 2 south, 3 west) and its river (`riverAxis`: crosses the west and east edges when 0, north and south when 1).
+
+**Ring 1 (both regions)**, the eight slots around the start, each kind once at variant 0. Rng `new Rng(seed ^ 0x6d454741)` so no other roll shifts; "edge slot" and "corner" mean ring 1's:
 
 1. The edge slot across the bay → **Saltglass Shoals** (the bay continues into islands).
 2. One of the two corners flanking it (rng) → **The Sunk** (the drowned lower wards lie along the old shore).
@@ -600,9 +760,17 @@ Relative to the start map's bay side (`side` in `generateTerrain`: 0 north, 1 ea
 5. A free slot touching the bay side if any, else any free slot → **Kessel Flats** (it carves its own dock basin either way).
 6. The rest → **Skeleton Row**, **Tarmac Reach**, **Verdigris Bazaar**, shuffled.
 
-A contract test runs 200 seeds: every kind appears once, the Shoals is always across the bay, every slot's land share is inside its kind's range, and every slot is buildable (≥ 35% land in one 4-connected component).
+**Ring 2 (5×5 only)**, the sixteen outer slots, with a second rng `new Rng(seed ^ 0x6d454742)` so ring 1 is identical to the 3×3 layout of the same seed. The 24 non-start slots of a 5×5 region hold fixed **quotas**: the Sunk 1 (unique, ring 1), Shoals 4, Terraces 4, and Reedmere, Flats, Skeleton, Tarmac and Bazaar 3 each; ring 1 placed one of each, so ring 2 places Shoals 3, Terraces 3 and two of each other kind. In the order of §3.6.1 (straight-out slots, off-axis slots clockwise from north, outer corners), each ring-2 slot has a **parent**: the ring-1 slot it shares an edge with, or for an outer corner the ring-1 corner diagonal to it. It takes:
 
-### 3.7 The nine districts
+1. the parent's kind, if that kind has quota left (a Sunk parent proposes **Shoals**: the drowned shore runs out to sea);
+2. else the kind with the most quota left that no already-placed 4-neighbour has (ties by rng);
+3. else the kind with the most quota left.
+
+So islands continue beyond the Shoals, the hills climb on past the Terraces, the marsh spreads down the river, and the straight-out slot across the bay is always Shoals (its parent is the Shoals and it is placed first). Each slot's **variant** is its order among the slots of its kind (ring 1 first, then ring 2's order): the kind's own district is variant 0, its repeats 1..3. Every slot is generated with its variant's terrain preset (§3.7).
+
+A contract test runs 200 seeds per region: on 3×3 every kind appears once; on 5×5 the quotas hold exactly, the Sunk is once and in ring 1, ring 1 equals the 3×3 layout of the same seed, and both slots straight across the bay (rings 1 and 2) are Shoals; on both, every slot's land share is inside its kind's (variant's) range and every slot is buildable (≥ 35% land in one 4-connected component).
+
+### 3.7 The nine kinds, and their repeats on a 5×5 region
 
 | Kind | Name (short) | Water | Lobby | Perks (City map lines) | Hazards | Style |
 |---|---|---|---|---|---|---|
@@ -618,14 +786,14 @@ A contract test runs 200 seeds: every kind appears once, the Shoals is always ac
 
 Taglines (City map, ≤ 60 chars): Shore "Where the charter opened the shore. Your first streets."; Shoals "Islands and sandbars across the bay. Bridges come cheap."; Sunk "The drowned wards. People still live there." (after the ch4.brine choice it changes, §9.3); Flats "Slag, rail yards and a long dock. Industry moves in fast."; Terraces "A stepped hillside. Views sell, slopes cost."; Reedmere "Reeds and channels. Free parkland while you leave it be."; Skeleton "Unfinished towers from a developer who went bust."; Tarmac "An old airfield. Flat, open and windy."; Bazaar "A tangle of alleys and night stalls under copper roofs."
 
-Every district style also brings its own building silhouettes (§6.1, at least 25% of the bodies drawn there), its own ground props (§3.9) and 2–3 optional **district goals**, shown on its City map sheet once it is owned and checked on the month tick (`districts/goals.ts`, WP-2). A goal pays its reward once, posts one ticker line ("Kessel Flats: two Seaports on the basin. +25,000 CR") and stamps the district on the City map; it never opens a card.
+Every district style also brings its own building silhouettes (§6.1, at least 25% of the bodies drawn there), its own ground props (§3.9) and 2–3 optional **district goals**, shown on its City map sheet once it is owned and checked on the month tick (`districts/goals.ts`, WP-2). A goal pays its reward once, posts one ticker line ("Kessel Flats: two Seaports on the basin. +25,000 CR") and stamps the district on the City map; it never opens a card. Labels never name their district (the sheet's heading and the ticker line's prefix already do), so a 5×5 repeat reads right. **Late goals pay like late land:** a goal completed after an ending pays max(its reward, `GOAL_LATE_SHARE` (0.25) × `districtPrice(owned)`), e.g. 1,260,000 CR at 14 districts owned: a fixed rule by districts owned, never by funds, so a goal stays worth chasing when the treasury is in the millions. Before the ending the listed rewards apply, so the campaign's economy is unchanged.
 
 #### Saltglass Shoals (`shoals`)
 
 - **Terrain:** water by default; land where `fbm(x·0.06, y·0.06) > t` (islands, t starting at 0.52 and lowered by 0.01 until land ≥ 40%), plus sandbars where `|fbm2 − 0.5| < 0.02` (one-tile land strips joining some islands). The bay side continues open water for the first 8 tiles from the shared border except where the start map's coast pokes through.
 - **Mods:** `bridgeCostMul 0.6`, `bridgeUpkeepMul 0.7`, `lvShore +0.04`, `kingTide { months: [3, 9], days: 20, lv: −0.03 }` (land within 1 of open water, cancelled where `resilience > 0`).
 - **Content on annex:** none (terrain is the content); 2 stubs. The Harbour Beacon (§6.3) needs a Shoals shore tile.
-- **Goals:** "Bridge 3 islands to the city" (20,000); "Light the Harbour Beacon" (10,000); "150,000 residents on the Shoals" (25,000).
+- **Goals:** "Bridge 3 islands to the city" (20,000); "Light the Harbour Beacon" (10,000, `once`: the Beacon is unique); "150,000 residents" (25,000).
 - **Neighbourhoods:** Pelican Key, Gull Reef, Pearl Spit, Low Key, Shell Bar, Ferry Row, Sandbar, Tide Key, Kelp Wharf, Glass Key, Tern Point, Salt Row.
 - **Look:** white render and pastel walls on stilts, boardwalk edges, rope bollards, ferry piers; gulls (art) by day. Own silhouettes: stilt houses, boardwalk terraces, a ferry-pier hall.
 
@@ -645,7 +813,7 @@ Every district style also brings its own building silhouettes (§6.1, at least 2
 - **Terrain:** almost all land; one straight dock basin 4 tiles wide along the slot edge farthest from the start (or through the middle if that edge is the world edge on the bay side), straight for ≥ 40 tiles so it offers ≥ 3 Seaport sites (`shoreSites` test).
 - **Content on annex:** brownfield ground on 60% of land (blobs where `fbm > 0.4`), old rail-yard ground art on brownfield, 2 stubs (one aimed at the basin).
 - **Mods:** `zoneCostMul { ind: 0.5 }`, `buildCostMul { reactor: 0.85, foundry: 0.85, seaport: 0.85, hexworks: 0.85 }`, `demandInd { jobs: 2000, whileFabBelow: 400 }`, `brownfield { pollution: 0.15, developedPollution: 0.07, clearDays: 720, parkClearDays: 360 }`.
-- **Goals:** "Clear 300 brownfield lots" (20,000); "Two Seaports on the basin" (25,000); "A Reclaim Works in the Flats" (10,000).
+- **Goals:** "Clear 300 brownfield lots" (20,000); "Two Seaports on the basin" (25,000, `once`: Seaports are limited); "A Reclaim Works to clean the slag" (10,000).
 - **Neighbourhoods:** Slag Hill, Rivet Row, Yard Nine, Coke Ovens, Kessel Cross, Sidings, Furnace End, Ash Lane, Gantry Row, Cinder Mile, Pressworks, Coal Wharf.
 - **Look:** corrugated steel and soot brick, sawtooth roofs, chimneys, sodium light, oil-sheen puddles. Own silhouettes: gantry sheds, coke-oven rows, worker barracks with a rooftop pipe rack.
 
@@ -664,7 +832,7 @@ Every district style also brings its own building silhouettes (§6.1, at least 2
 - **Terrain:** braided channels: the start map's river (if it exits here) splits into 3–5 channels of width 1–2 that wander and rejoin; otherwise 3 channels from the slot's edges. Water 25–40%.
 - **Content on annex:** reed ground on 50% of land within 4 of water (`fbm > 0.35`); floodplain marks (land within 1 of water).
 - **Mods:** `reedPark { v: 0.5, r: 1 }` (only while the reed tile has no road, zone or building), `floodplainMaxLevel 2` (unless `resilience > 0`).
-- **Goals:** "Keep 300 reed lots wild at 100,000 residents" (25,000); "A Floodwatch Station in the marsh" (10,000).
+- **Goals:** "300 wild reed lots at 100,000 residents" (25,000; the draft's label ran to 44 characters); "A Floodwatch Station in the marsh" (10,000).
 - **Neighbourhoods:** Reedmere, Heron Flats, Wickfen, Sedge Row, Mere End, Willowcut, Fenlight, Eelbrook, Marsh End, Rushmoor, Cattail, Mudbank.
 - **Look:** timber and green roofs, boardwalk paths, reeds swaying (animated tint), herons (art) by day, the foggiest district (`fog 0.6`). Own silhouettes: long houses on piles, reed-thatched boathouses.
 
@@ -675,7 +843,7 @@ Every district style also brings its own building silhouettes (§6.1, at least 2
 - **Finish a frame:** inspect action "Finish frame · 7,200 CR" (60% of the Stratablock plinth, `STACK_STAGES[0].cost × 0.6`, ignoring the per-stack 1.15 scale) replaces it with a `stack` at **stage 1 complete** (no 60-day plinth wait) in the Skeleton style; later stages as normal. Needs `unlock stack` (or its fallback).
 - **Mods:** `frameCrime { v: 0.04, r: 3 }` around unfinished frames.
 - **Story:** the Kites seed on a frame on annex (if seeded): `frame` joins `TURF_KEEPING` (world.ts) and `KEEPS_TURF` (turf.ts), so turf can stand on a frame's footprint; finishing a frame into a Stratablock clears it as for any building. lark lobbies.
-- **Goals:** "Finish 2 frames" (20,000); "A Sky Lobby in Skeleton Row" (20,000).
+- **Goals:** "Finish 2 frames" (20,000); "A Sky Lobby over the frames" (20,000).
 - **Neighbourhoods:** Rebar Row, The Frames, Crane Yard, Hollow Tower, Scaffold Lane, Formwork, Skyhook, Bare Steel, Topping Out, Lift Shaft, Ninth Floor, Girder Park.
 - **Look:** raw concrete and exposed rebar, tarps flapping, tower cranes frozen mid-swing, Kites' string lights on the frame tops at night. Own silhouettes: scaffold-wrapped half-towers, a tower with a bare concrete top storey.
 
@@ -683,9 +851,9 @@ Every district style also brings its own building silhouettes (§6.1, at least 2
 
 - **Terrain:** flat land, one shore edge or a lagoon (water 5–15%).
 - **Content on annex:** an old runway strip (6×40) and apron (12×12) painted as ground art (brownfield bits, no pollution in this district), 2 stubs, and **the apron families**: a cluster of 24 Hab tiles at level 1, tier $, on the apron's edge with a Back Alley through it (an affordable quarter, EXPANSION §4.4), which `ds.tarmac` can rehouse or clear (§8.3).
-- **Mods:** `roadCostMul 0.7`, `buildCostMul { airport: 0.75, spaceport: 0.8 }`, `lvAll −0.03`. The city's second Airport may only stand here (§3.5).
+- **Mods:** `roadCostMul 0.7`, `buildCostMul { airport: 0.75, spaceport: 0.8 }`, `lvAll −0.03`. The city's second Airport (and on a 5×5 region its third) may only stand in a Tarmac district (§3.5).
 - **Lease** (annex sheet, §7.2): "Lease the old apron to:" **Nacre** (+2,000 Market jobs of demand, Nacre +8, Basalt −4) or **Basalt** (+2,000 Fab jobs, Basalt +8, Nacre −4).
-- **Goals:** "A second Airport on the old field" (30,000); "100,000 residents on the Reach" (20,000).
+- **Goals:** "A second Airport on the old field" (30,000, `once`: Airports are limited); "100,000 residents" (20,000).
 - **Neighbourhoods:** Apron Nine, Old Tower, Hangar Row, Taxiway, Windsock, Runway End, Beacon Hill, Jetwash, Holding Bay, Tarmac Cross, Radar Row, Hardstand.
 - **Look:** low hangars, wide sheds, windsocks, faded runway numbers, blinking obstruction lights. Own silhouettes: hangar homes under arched roofs, a control-tower block.
 
@@ -695,21 +863,78 @@ Every district style also brings its own building silhouettes (§6.1, at least 2
 - **Content on annex:** a Back Alley tangle on a jittered 3-tile grid (≈ 18% of land), two Streets entering from each shared border, 1×1 empty squares at alley crossings.
 - **Mods:** `visitorsPerMarket { per: 600, tiles: 10, cap: 30000 }`, `buildCostMul { markethall: 0.5 }`; both gangs' turf affinity +0.1 inside it (`TURF.affinity.*.bazaar`).
 - **Story:** both gangs lobby for it (both +6 on annex); who runs its night stalls is settled later in the card `ds.bazaar` (§8.3), not on the annex sheet.
-- **Goals:** "40 Market lots at $$ or better" (20,000); "A Market Hall in the Bazaar" (10,000, hidden if the Market Hall is dropped).
+- **Goals:** "40 Market lots at $$ or better" (20,000); "A Market Hall under the copper roofs" (10,000, hidden if the Market Hall is dropped).
 - **Neighbourhoods:** Tinsmith Row, Paper Lane, Spice Row, Noodle Steps, Tin Market, Wireway, Brass Court, Silk Steps, Coil Street, Pawn Row, Charm Lane, Abacus Bridge.
 - **Look:** copper and verdigris roofs, paper lanterns strung across alleys (animated glow), awnings, dense hand-painted signs in the invented glyph set. Own silhouettes: courtyard shophouses, a stacked market tower with balconies on every floor.
 
-**Naming lint** (WP-7, `content-lint`): no neighbourhood name appears in two lists (the start list in `news.ts` included), no neighbourhood contains a district name, and in the new names this doc adds (districts, neighbourhoods, landmarks, milestones, Sky Lobby names, crowns) "Lamp" / "Lantern" appear only for the Tuning, plus the one neutral `lanterns` City life night (existing names such as "Thousand Lamps" and "Lantern Row" stay). Event and news lines that name a neighbourhood append the district short name when the city has more than one district ("Paper Lane, Verdigris").
+#### Repeats on a 5×5 region (variants)
+
+A 5×5 region repeats seven kinds (§3.6.2 quotas). A repeat is the same kind (perks, hazards, mods, lobby, style, and the kind's goals except `once` ones) with **its own name, short name, tagline, terrain preset, accent colour** (roof trims, signs and the City map tint; WP-4 art) **and one goal of its own** (below), so the City map, the district label and every news line tell the districts apart, and the eighteen districts after the ending each bring something new to do. Variant 0 is the kind's own district above, the only one a 3×3 region has.
+
+| Kind | Variant | Name (short) | Tagline (City map, ≤ 60) | Terrain preset (WP-2) |
+|---|---|---|---|---|
+| `shoals` | 1 | Driftsand Banks (Driftsand) | Sandbanks that flood and dry with the tide. | `banks`: islands threshold 0.48, sandbars twice as wide; water 40–55% |
+| `shoals` | 2 | Gannet Isles (Gannet Isles) | Rocky islets far out in the bay. Sea views. | `isles`: fewer, higher islands (threshold 0.56); water 55–65% |
+| `shoals` | 3 | Coral Strand (Coral Strand) | A long sand spit and the lagoon behind it. | `strand`: a 6–10-tile land band along the outer edge, a lagoon inside; water 40–55% |
+| `terraces` | 1 | Cliffside Rise (Cliffside) | Steeper slopes above the first hill. Long views. | `steep`: elevation formula × 8 instead of × 6, step 0 only along the shared border; water 2–5% |
+| `terraces` | 2 | Windward Heights (Windward) | Terraced ridges facing the weather. | `ridges`: steps follow one fbm axis in long ridges; water 2–5% |
+| `terraces` | 3 | Orchard Steps (Orchard) | Old orchard terraces climbing to the ridge. | `gentle`: × 4, wide steps, a stream; water 4–8% |
+| `reedmere` | 1 | Mistwater Fen (Mistwater) | Fog, reeds and slow channels. | `fen`: 5–7 narrow channels, fog 0.7; water 30–40% |
+| `reedmere` | 2 | Bittern Marsh (Bittern) | A wide marsh where the river ends. | `mouth`: one wide river mouth with reed islands; water 30–45% |
+| `flats` | 1 | Ironside Docks (Ironside) | Cranes, two deep basins and acres of slag. | `docks`: two parallel dock basins (≥ 3 Seaport sites each); water 12–18% |
+| `flats` | 2 | Cokeworth Flats (Cokeworth) | Old coke works on a rail spur. | `spur`: no basin, a brownfield band along an old rail line; water 3–8% |
+| `skeleton` | 1 | Halfway Towers (Halfway) | A second ring of towers stopped at half height. | `frames4`: 4 frames, rubble on 20% of land; water 5–10% |
+| `skeleton` | 2 | Concrete Grove (Concrete) | Rows of bare frames like trees in winter. | `rows`: 4 frames in a row along a broken avenue; water 5–10% |
+| `tarmac` | 1 | Cargo Fields (Cargo Fields) | An old freight field: long sheds and taxiways. | `freight`: two parallel runway strips, shed ground art; water 5–12% |
+| `tarmac` | 2 | Windmark Strip (Windmark) | A wind-scoured airstrip on a headland. | `headland`: one short strip on a headland; water 15–25% |
+| `bazaar` | 1 | Saffron Arcade (Saffron) | Covered alleys of spice stalls and repair shops. | `arcade`: a Back Alley grid at 2-tile spacing in the core; water 3–8% |
+| `bazaar` | 2 | Moonbrass Bazaar (Moonbrass) | Brass stalls and rooftop tea rooms, open all night. | `canal`: the alley tangle strung along a canal; water 8–14% |
+
+**Variant goals** (one each, reward 20,000 before an ending and the late rule after it; checks in `districts/goals.ts`, WP-2; every check reads only that district):
+
+| Variant | Goal (≤ 40) | Check | Skips the kind goal |
+|---|---|---|---|
+| Driftsand Banks | A Floodwatch Station on the banks | a `floodwatch` here | — |
+| Gannet Isles | 120,000 residents with a sea view | residents here ≥ 120,000 | — |
+| Coral Strand | 80 Market lots along the strand | developed Market tiles here ≥ 80 | "Bridge 3 islands" (its preset has a spit, not islands) |
+| Cliffside Rise | 20,000 residents on the top step | residents on step-3 tiles here ≥ 20,000 | — |
+| Windward Heights | A Canopy Park on the heights | a `canopypark` here | — |
+| Orchard Steps | Three Neon Plazas on the old orchards | `plaza` ≥ 3 here | — |
+| Mistwater Fen | A Metro Station in the fen | a `metro` here | — |
+| Bittern Marsh | A Tidal Turbine at the river mouth | a `tidal` here (hidden if dropped) | — |
+| Ironside Docks | 200 Fab Yards lots by the basins | developed Fab tiles here ≥ 200 | — |
+| Cokeworth Flats | A Maglev Station on the old spur | a `maglev` here | — |
+| Halfway Towers | Finish all four frames | frames finished here = 4 | — |
+| Concrete Grove | Three Stratablocks in the grove | `stack` ≥ 3 here | — |
+| Cargo Fields | 100 Market lots along the taxiways | developed Market tiles here ≥ 100 | — |
+| Windmark Strip | A Reclaim Works on the old strip | a `reclaim` here | — |
+| Saffron Arcade | Draw 5,000 visitors to the arcade | this district's Bazaar visitors ≥ 5,000 | — |
+| Moonbrass Bazaar | A Sky Lobby over the tea rooms | a Sky Lobby with an anchor here | — |
+
+None of them needs a unique or limited building, so each is reachable in every city (D6 runs on every variant's preset); a goal that names a building type carries `needs` and stays hidden while that type is locked or dropped.
+
+**What repeats and what stays unique:**
+
+- **Unique:** Charter Shore (the start) and **the Sunk** (the story's drowned wards, its old pump hall, `ch4.brine`). The Sunk stays in ring 1, never repeats, and keeps every rule above.
+- **Variant 0 only:** the Tarmac **apron families** and the annex-sheet **lease** (one contest, one place; later Tarmac districts have neither), Kessel Flats' and Skeleton Row's annex content as listed (variants use their preset's content: frames, basins, sheds as in the table).
+- **Per district:** mods (§3.3), the kind's goals minus `once` ones and the variant's `skipGoals`, plus the variant's own goal (stored as `goalId@slot`; each Shoals district has its own "Bridge 3 islands"), district ground character and silhouettes, the district name label.
+- **Variant 0 only (goals):** the `once` goals: the Harbour Beacon, a second Airport and two Seaports name a unique or limited building that four Shoals, three Tarmac or three Flats districts could never all have.
+- **Once per kind:** the deck cards `ds.*` (they are `once` and read `district.<kind> >= 1`, now a count), the moment banner on annex ("DISTRICT ANNEXED · …", the first district of a kind; later ones post the `annex` news line only), and full annex reactions (later districts of a kind use `ANNEX.repeatLobbyFavor` +2 and `repeatRivalLobbyFavor` −1, §3.8).
+- **Lobby lines:** variants reuse their kind's line (§8.2), except the two that name their district, which get a variant line: Sallow (Flats repeats) "Cheap ground and a deep basin, Operations. Two fabs here pay for one anywhere else. I have checked." and lark (Bazaar repeats) "another market, moth? good. more stalls, more signal. we'll sell there too, if you let us."
+- **Neighbourhood names:** 12 per variant (16 lists, ≤ 15 chars each) in new `src/game/districts/names.ts`, written by WP-7 in the kind's theme (Shoals: reefs, keys and wharves; Terraces: steps, rises and lookouts; Reedmere: fens, meres and reeds; Flats: yards, sidings and furnaces; Skeleton: steel, cranes and floors; Tarmac: aprons, hangars and taxiways; Bazaar: crafts, spices and lanes) under the naming lint. Until then Step 0b's placeholder reuses the kind's variant-0 list.
+- **Effects that name a district** (§8.4) act on the districts of that kind owned when the choice is made: `brownfield clear` on every owned Flats district, `reeds drain` on the nearer half of every owned marsh, `turf … slot:skeleton` on every owned Skeleton district; districts annexed later keep their own ground.
+
+**Naming lint** (WP-7, `content-lint`): no neighbourhood name appears in two lists (the start list in `news.ts` included), no neighbourhood contains a district or variant name, no two district or variant names share a word other than a generic one (Flats, Marsh, Isles, Banks, Heights, Fields, Bazaar, Towers, Steps, Docks…), and in the new names this doc adds (districts, variants, neighbourhoods, landmarks, milestones, Sky Lobby names, crowns) "Lamp" / "Lantern" appear only for the Tuning, plus the one neutral `lanterns` City life night (existing names such as "Thousand Lamps" and "Lantern Row" stay). Event and news lines that name a neighbourhood append the district short name when the city has more than one district ("Paper Lane, Verdigris").
 
 ### 3.8 Annexing
 
 - **Land grants (story).** Each chapter reward (Ch1–Ch5) and the ending carry the new effect `grant 1` (§8.4): `districts.grants` +1, event `grant`, the goal chip shows a gold "✦ 1" token until spent. Grants never expire.
-- **Land grants (epilogue).** After the ending, Game counts unpaused real seconds in `districts.epilogueSec` (saved) and grants one more every `pace.chapterMinSec` (1,440 s on Relaxed, 840 on Normal, 600 on Brisk: the same floor that spaced the chapters), while at least one slot is locked and no grant is unspent. It arrives as one ticker line ("A land grant arrives: the city may annex again.") and the ✦ token; never a card, banner or pause. A 7-district city at Charter Night reaches 9 districts about 48 minutes later on Relaxed without spending a credit.
+- **Land grants (epilogue).** After the ending, Game counts unpaused real seconds in `districts.epilogueSec` (saved) and grants one more every `pace.chapterMinSec × REGION[R].epilogueGrantMul` unpaused seconds, while at least one slot is locked and no grant is unspent: on a 3×3 region 1,440 s on Relaxed, 840 on Normal, 600 on Brisk (the same floor that spaced the chapters); on a 5×5 region half that, 720 / 420 / 300 s, because eighteen districts remain instead of two. It arrives as one ticker line ("A land grant arrives: the city may annex again.") and the ✦ token; never a card, banner or pause. A 7-district city at Charter Night reaches 9 districts about 48 minutes later on Relaxed without spending a credit; a 5×5 city reaches 25 about 3 h 36 min later (18 grants × 12 min), and sooner by buying. **Why this keeps 25 districts from feeling endless or grindy:** building out a district takes a player 10–20 minutes, so free land arrives about as fast as it can be used, and credits always offer a faster path at a fixed, income-sized price (below); the map never stalls (D1-5, §11.3), and the sandbox ladder gives the extra land a purpose: each repeat brings its own variant goal, every goal completed after the ending pays a share of the next district's price (§3.7), Electric Tide (6 M) and Glass Horizon (8 M) sit between Endless City and the full region, and 25/25 has its own banner (below). D1-5 checks that no 30 unpaused minutes pass without one of them.
 - **Candidates:** locked slots 4-adjacent to an owned slot (`adjacentLocked`) whose `opensWhen` holds. Non-adjacent locked slots show on the City map but cannot be annexed ("Not next to the city yet"); the Sunk before `ch4.brine` shows "Still flooded: opens later".
-- **Price:** one grant while the player has any; otherwise, **only after an ending is chosen**, `DISTRICT_PRICES[owned]` credits (fixed numbers: placeholders 2,500,000 for the 8th and 4,000,000 for the 9th, set by Step 9 to 8–12 unpaused minutes of a median 7-district city's net income at speed 1). Buying skips the wait for the next epilogue grant; it never resets that clock. Before the ending without a grant: "Next land grant: finish Chapter III".
-- **The edge of the region.** With all 9 districts owned the City map says "The city reaches the edge of the region." and the sandbox's goals take over: the 2M and 4M milestones (§4.5), every district goal, the landmark set (all ten landmarks and, through Charter Reviews, all five ending landmarks, §9.2) and Pump House reclamation of the remaining bay.
-- **`Game.annex(slot, lease?)`** (WP-2): checks; pays (grant, or funds and `bought` +1); `world.annex(slot)` (batched: one `tiles` touch for the slot rect); rebuilds the district layer part; `director.onAnnex(kind, lease)` (favor, §8.2); `sim.recomputeAll()`; emits `annex`; queues the once-per-kind moment banner ("DISTRICT ANNEXED · KESSEL FLATS" / "Fab zoning half price") in `MilestoneBanner`. Not undoable (it is confirmed on the sheet, §7.2). Same seed and same annex order give an identical world (test).
-- **Migration** (§3.10) grants what a v3 city has earned: completed chapters (at most 5), plus 1 if an ending was chosen; a post-ending save also starts its epilogue clock at 0.
+- **Price:** one grant while the player has any; otherwise, **only after an ending is chosen**, `districtPrice(owned)` credits (§3.2: `DISTRICT_PRICE_STEP × owned`, a fixed rule never scaled with funds; placeholders 2,520,000 for the 8th district, 2,880,000 for the 9th and 8,640,000 for the 25th). Income grows about linearly with districts, so every purchase costs about the same real time: Step 9 sets the step so a purchase is 8–12 unpaused minutes of the median city's net income at speed 1 at that size (D1, D1-5). Money stays the reward: it buys time, never gates the end of the map. Buying skips the wait for the next epilogue grant; it never resets that clock. Before the ending without a grant: "Next land grant: finish Chapter III".
+- **The edge of the region.** The annex that makes all R² districts owned (9 or 25) queues a once-per-city moment banner (`MomentId 'region'`): "THE REGION IS WHOLE" / "All 25 districts are part of Neon Bay." (9 on a 3×3 region; a 3×3 city that grows can see it again at 25). Then the City map says "The city reaches the edge of the region." and the sandbox's goals take over: the 2M and 4M milestones, and 6M and 8M on a 5×5 region (§4.5), every district goal, the landmark set (all ten landmarks and, through Charter Reviews, all five ending landmarks, §9.2) and Pump House reclamation of the remaining bay. On a 3×3 region the line adds a **Grow to 25 districts** button (§3.11).
+- **`Game.annex(slot, lease?)`** (WP-2): checks; pays (grant, or funds and `bought` +1); `world.annex(slot)` (batched: one `tiles` touch for the slot rect); rebuilds the district layer part; `director.onAnnex(kind, lease, repeat)` (favor, §8.2; `repeat` = a district of this kind was owned before, which uses the smaller `ANNEX.repeat*` reactions); `sim.recomputeAll()`; emits `annex`; queues the once-per-kind moment banner ("DISTRICT ANNEXED · KESSEL FLATS" / "Fab zoning half price") in `MilestoneBanner`. Not undoable (it is confirmed on the sheet, §7.2). Same seed and same annex order give an identical world (test).
+- **Migration** (§3.10) makes a v3 city a 3×3 region and grants what it has earned: completed chapters (at most 5), plus 1 if an ending was chosen; a post-ending save also starts its epilogue clock at 0.
 
 ### 3.9 The renderer with districts (WP-3)
 
@@ -717,41 +942,134 @@ Three view bands for a city of more than one district (a one-district city keeps
 
 | Band | Zoom | What draws | Why |
 |---|---|---|---|
-| **Street view** | ≥ 0.4 | everything, as today (LOD sprites below `LOD_ZOOM` 0.55) | ≤ 2,195 tiles on screen at 0.4 (portrait), inside today's worst case |
-| **Skyline view** | 0.22–0.4 | real sprites for L3 towers, parcels and **every** building (Spires, crowns, Arcologies, landmarks), at the sprite cache's bucketed scales; L1–L2 bodies as roof tints painted into the ground cache's bucket; roads, rail, skyways and skybridges as today; no crowds, cars or fine fx | the zoomed-out night skyline is where "a city of millions" is felt, so towers, crowns and lit windows stay sharp; the sweep visits the clipped box but draws only tall things (cap: 2,600 sprites a frame, nearest the screen centre first; the rest of the tall bodies drop to roof tints, measured in M7) |
-| **City map** | the 3×3 world fitted (≈ 0.03–0.05) | one atlas impostor per slot (below) | the whole region at a glance; only reached as a separate view |
+| **Street view** | ≥ `streetMinZoom` | everything, as today (LOD sprites below `LOD_ZOOM` 0.55) | `streetMinZoom` is 0.4 on handheld devices (§3.11): ≤ 2,195 tiles on screen (portrait), inside today's worst case. A wide PC screen shows far more tiles at the same zoom (≈ W × H / (1,024 z²) CSS px), so there it is the smallest zoom showing ≤ 6,000 tiles: 0.41 at 1280×800, 0.46 at 1440×900, 0.58 at 1920×1080 (never below 0.4). The 6,000 is provisional: if V1/P1's desktop rows (§11.3) miss their sprite or paint targets, WP-3 lowers it to the largest count that meets them |
+| **Skyline view** | `minZoom`–`streetMinZoom` (0.22–0.4 on a phone) | real sprites for L3 towers, parcels and **every** building (Spires, crowns, Arcologies, landmarks), at the sprite cache's bucketed scales; L1–L2 bodies as roof tints painted into the ground cache's bucket; roads, rail, skyways and skybridges as today; no crowds, cars or fine fx | the zoomed-out night skyline is where "a city of millions" is felt, so towers, crowns and lit windows stay sharp; the sweep visits the clipped box but draws only tall things (cap: 2,600 sprites a frame, nearest the screen centre first; the rest of the tall bodies drop to roof tints, measured in M7; 6,000 on a PC on high quality, provisional like the street cap) |
+| **City map** | the region fitted: ≈ 0.03–0.05 for 3×3 on a phone, ≈ 0.018–0.03 for 5×5 on a phone, ≈ 0.04–0.12 on a PC | one atlas impostor per slot (below) | the whole region at a glance; only reached as a separate view (pinch or wheel out past `minZoom`, the map button, Data → City map, the M key) |
 
-- **Camera** (`camera.ts`, additive, the public API stays): `bounds: Rect | null` in tiles, used by `clamp()` instead of `0..MAP_SIZE` when set; `setBounds(r)`; `fitBox(r, insetBottomPx = 0)` (frames a tile rect above a bottom sheet: the City map frames the 3×3 world in the top half). Slot taps on the atlas and Annex pin taps are pure geometry (`camera.screenToTile` → `slotAt`; pin centres from `slotRect` → `camera.tileToScreen`), so input and UI never call into the renderer. The Renderer sets `bounds` to the owned box ± `ANNEX.peek` (6), `minZoom` to 0.25 for one district and **0.22** otherwise, and `fitMap()` fits the owned box. `visibleTileBounds` keeps clipping to the map. (Step 0b already ships bounds, `minZoom`, `fitMap` to the owned box, the sweep clip and the owned-box overview, so the build between Step 0b and WP-3 looks like today; WP-3 adds the rest.)
-- **The pinch-out gesture:** continued pinch-out at `minZoom` snaps, animated over 0.3 s, to the City map framing; pinching in (or tapping an owned slot) on the City map snaps back to `minZoom` centred where the fingers are. There are no intermediate atlas zooms, so the atlas is never shown magnified: at the City map framing (≈ 0.04 × DPR 2 = 0.08 device px per world px) the 0.1 atlas is drawn at least 1:1.
-- **Ground cache.** `OX` and the chunk grid are unchanged in form (N = 192). Locked tiles inside the peek margin paint in a **fog** style: terrain colour × 0.45 mixed 30% toward `[40, 26, 70]`, no props, no roads, but the Sunk's old pump hall shows as a dark hall shape; a dashed boundary line (`#8f7bff`, 2 world px, alpha 0.6, dash 10/8) along the owned edge. Below zoom 0.4 (more than one district) the ground chunk also paints L1–L2 roof tints (one flat roof diamond per developed tile in the body's wall colour, darkened by night bucket).
-- **Annex pins**: a 44 px round screen-space button with "+" and the short name at the middle of each candidate slot's shared border, drawn after the ground; input hit-tests it and opens the City map on that slot. Pins show **only while a grant waits**, or after the ending while the next district's price is affordable; otherwise the dashed border alone says there is more land.
+- **Camera** (`camera.ts`, additive, the public API stays): `bounds: Rect | null` in tiles, used by `clamp()` instead of `0..N` when set; `setBounds(r)`; `fitBox(r, insetBottomPx = 0)` (frames a tile rect above a bottom sheet: the City map frames the region in the top half); `setInsets({ top, right, bottom, left })` (screen px the UI covers: `fitBox`, `fitMap`, `centerOnTile` and the eases of §5.4 use the uncovered area; the desktop side panel sets `right`, §14.1). Slot taps on the atlas and Annex pin taps are pure geometry (`camera.screenToTile` → `slotAt`; pin centres from `slotRect` → `camera.tileToScreen`), so input and UI never call into the renderer. The Renderer sets `bounds` to the owned box ± `ANNEX.peek` (6), `minZoom` to 0.25 for one district and **0.22** otherwise, `streetMinZoom` from the viewport and the pointer as in the table, and `fitMap()` fits the owned box. `visibleTileBounds` keeps clipping to the map. (Step 0b already ships bounds, `minZoom`, `fitMap` to the owned box, the sweep clip and the owned-box overview, so the build between Step 0b and WP-3 looks like today; WP-3 adds the rest.)
+- **The pinch-out gesture:** continued pinch-out at `minZoom` snaps, animated over 0.3 s, to the City map framing; pinching in (or tapping an owned slot) on the City map snaps back to `minZoom` centred where the fingers are. **Wheel:** the wheel and two-finger trackpad scroll are zoom in this game (`input.ts`), and inertial scrolling keeps sending deltas after the camera reaches `minZoom`, so a wheel snaps only on a **new** wheel gesture (≥ 300 ms since the last wheel event) that adds ≥ 240 px of further out-delta at `minZoom`; a wheel-in or a click on an owned slot snaps back. WP-3 exposes `camera.snapToMap()` / `snapFromMap(x, y)` with the animation; WP-5 wires pinch (Wave 3), WP-9 wires the wheel (Wave 5). There are no intermediate atlas zooms, so the atlas is never shown magnified beyond what it was painted for: the **atlas scale** is chosen when the City map opens, `s = min(0.1, fitZoom × DPR × headroom)`, with headroom 2 for a 5×5 region on a handheld device (its City map zooms to 2× fit, §7.2) and 1 otherwise, and capped so the impostors stay within the atlas budget (25 slots: s ≤ 0.064 on handheld devices, ≤ 0.09 on a PC). At the 3×3 City map framing on a phone (≈ 0.04 × DPR 2 = 0.08 device px per world px) the 0.1 atlas is drawn at least 1:1, as before.
+- **Ground cache.** `OX` and the chunk grid are unchanged in form (N = 192 or 320). Locked tiles inside the peek margin paint in a **fog** style: terrain colour × 0.45 mixed 30% toward `[40, 26, 70]`, no props, no roads, but the Sunk's old pump hall shows as a dark hall shape; a dashed boundary line (`#8f7bff`, 2 world px, alpha 0.6, dash 10/8) along the owned edge. Below zoom 0.4 (more than one district) the ground chunk also paints L1–L2 roof tints (one flat roof diamond per developed tile in the body's wall colour, darkened by night bucket).
+- **Annex pins**: a 44 px round screen-space button with "+" and the short name at the middle of each candidate slot's shared border, drawn after the ground; input hit-tests it and opens the City map on that slot. Pins show **only while a grant waits**, or after the ending while the next district's price is affordable, and at most `ANNEX.maxPins` (4) at once, nearest the view centre (a 5×5 region can have ten or more candidates); otherwise the dashed border alone says there is more land.
 - **District name label**: when the camera centre crosses into another owned district, its name ("KESSEL FLATS") fades in at the top of the map area and out over 1.5 s, at most once per 20 s, never while a tool is dragging.
 - **Overview bucket** (the pan fallback while chunks paint): covers the visible region ∩ (owned box + peek) at ≥ 0.2 device px per world px, rebuilt progressively as the camera moves, within 4 MB. It is a transient fallback: chunks at the current bucket paint within the existing per-frame chunk budget, so it shows for a few frames during a fast pan.
-- **Atlas** (`render/atlas.ts`, City map only): one cached impostor per slot at 0.1 device px per world px (≈ 410×236 px, 0.39 MB; 3.5 MB for 9). Owned slots: ground colour per tile, a shaded prism per developed tile (height by level), prisms for buildings, lit-window dots in 3 night buckets; locked slots: fog terrain (water, land, terrace tints) with the kind's icon. Repainted **progressively** in row bands within ≤ 2 ms a frame, only when the City map opens (dirty slots) and on annex while it is open. Frame cost: 9 blits and labels, ≤ 1 ms. `styleVignette(kind)` paints the annex sheet's night vignette (3 kit bodies in the district style, §7.2) into a small canvas once per kind.
-- **Sweep:** `drawObjects` iterates the visible box clipped to the owned box; at zoom ≥ 0.4 the on-screen count is ≤ 2,195 (portrait), inside today's worst case. Below 0.55 sprites stay on the sprite cache's scale buckets (no exact-scale repaint on settle), so a zoom change does not repaint every visible body.
-- **R0: render caches go incremental** (WP-3, with WP-6 for `effects.ts` / `art/traffic.ts`). Today several render caches rebuild over the whole map on every `tiles` event, and growth emits one nearly every tick at speed 3: `RoadAccessMap` (renderer.ts: `fillKinds` + `computeAccess`) and `StreetTraffic.rebuild` (effects.ts) cost 1.6 + 1.1 ms in Node at 9 districts (§2.6). WP-3 inventories every N×N loop in `src/render` and `src/ui` (also overlay `darkState` once per tick, overlay builds, `drawToolHints` recomputing `shoreSites` on every `world.version` while the Seaport tool is active, the `StoryRender` tall mask, `SkywayLayer`'s shape list, ground `TerrainInfo`) and makes each one dirty-rect incremental from the rect the `tiles` event already carries (`events.ts`: `{ x0, y0, x1, y1 }`), or clips it to owned segments; full rebuilds are throttled to at most one per 250 ms. Budget: render cache upkeep ≤ 0.3 ms a frame on average and ≤ 1 ms p95 at 9 districts in Node during a speed-3 growth run (§11.1, test R1).
+- **Atlas** (`render/atlas.ts`, City map only): one cached impostor per slot at the atlas scale (at 0.1 device px per world px ≈ 410×236 px, 0.39 MB; 3.5 MB for 9; 25 slots at s ≤ 0.064 ≤ 4 MB). Owned slots: ground colour per tile, a shaded prism per developed tile (height by level), prisms for buildings, lit-window dots in 3 night buckets; locked slots: fog terrain (water, land, terrace tints) with the kind's icon. Repainted **progressively** in row bands within ≤ 2 ms a frame, only when the City map opens (dirty slots) and on annex while it is open. Frame cost: R² blits (9 or 25) and labels, ≤ 1.5 ms. `styleVignette(kind)` paints the annex sheet's night vignette (3 kit bodies in the district style, §7.2) into a small canvas once per kind.
+- **Sweep:** `drawObjects` iterates the visible box clipped to the owned box; in the street view the on-screen count is ≤ 2,195 tiles on a phone (portrait), inside today's worst case, and ≤ 6,000 on a PC screen (provisional, above). Below 0.55 sprites stay on the sprite cache's scale buckets (no exact-scale repaint on settle), so a zoom change does not repaint every visible body.
+- **R0: render caches go incremental** (WP-3, with WP-6 for `effects.ts` / `art/traffic.ts`). Today several render caches rebuild over the whole map on every `tiles` event, and growth emits one nearly every tick at speed 3: `RoadAccessMap` (renderer.ts: `fillKinds` + `computeAccess`) and `StreetTraffic.rebuild` (effects.ts) cost 1.6 + 1.1 ms in Node at 9 districts (§2.6) and 4.4 + 2.9 ms at 25 (§2.8). WP-3 inventories every N×N loop in `src/render` and `src/ui` (also overlay `darkState` once per tick, overlay builds, `drawToolHints` recomputing `shoreSites` on every `world.version` while the Seaport tool is active, the `StoryRender` tall mask, `SkywayLayer`'s shape list, ground `TerrainInfo`) and makes each one dirty-rect incremental from the rect the `tiles` event already carries (`events.ts`: `{ x0, y0, x1, y1 }`), or clips it to owned segments; full rebuilds are throttled to at most one per 250 ms. Budget: render cache upkeep ≤ 0.3 ms a frame on average and ≤ 1 ms p95 at 9 districts in Node during a speed-3 growth run, ≤ 0.5 ms and ≤ 1.5 ms p95 at 25 (§11.1, test R1).
 - **Terraces** (`elev`): contour shading, painted retaining walls, stair decals and darkened building bases (core, §3.7); nothing is raised. `elevOffset(world, x, y)` is frozen in Step 0b and returns 0 until the optional raised-steps package (§12).
 - **District ground character** (ground cache, per style): pavement tint and street furniture (Shoals boardwalks and bollards, Sunk canal walls and mooring rings, Kessel rail tracks on brownfield, Terraces stairs, Reedmere reeds and boardwalks, Skeleton rubble and cones, Tarmac runway numbers and windsocks, Bazaar paper lanterns over alleys, glowing in the animated pass).
-- **The title Showcase** (`ui/start/showcase.ts`) builds its own World, Simulation and Renderer; with `MAP_SIZE` 192 that is another ≈ 15 MB, so it is released when the title closes (WP-5), and `loadPrevious` drops the current world before restoring the other.
-- Budgets: ground chunks 24 MB (unchanged), sprite cache 32 MB (unchanged), overview ≤ 4 MB, atlas ≤ 4 MB.
+- **The title Showcase** (`ui/start/showcase.ts`) builds its own World, Simulation and Renderer, always on a **3×3 region** whatever the city's size (≈ 16 MB, §2.8). It is already released when the title closes (today's `startScreen.ts` `dropShowcase()` destroys it and drops the reference); Step 0b keeps that and adds a test that no Showcase World is reachable after the title closes. `loadPrevious`, Import and Grow (§13, §3.11) release the current Simulation and render caches before building the other World.
+- **Lower detail** (a 5×5 city on a handheld device, §3.11): quality Low (sprite cache 20 MB), `streetMinZoom` 0.5, skyline sprite cap 1,800, atlas ≤ 4 MB; WP-3 reads `game.lowerDetail`.
+- Budgets on a handheld device: ground chunks 24 MB (unchanged), sprite cache 32 MB (unchanged), paint 3 ms a frame (unchanged), overview ≤ 4 MB, atlas ≤ 4 MB.
+- **Budgets on a PC** (a desktop screen holds up to 6,000 tiles or sprites, 2.7× a phone's): the **ground cache** keeps today's rule, 24 MB or what the screen itself needs plus 4 chunks (`ground.ts` evicts to `max(budget, needed + 4)`), which is ≈ 25 MB at 1920×1080 at DPR 1 and ≈ 62 MB at DPR 2 (up to 54 visible 516-px chunks); the **sprite cache** is sized to the canvas on high quality: 64 MB, or 96 MB from 2.5 M device pixels (1920×1080 at DPR ≥ 1.25, 1440×900 at DPR 2), set by the renderer through today's public `SpriteCache.capBytes`; the **paint budget** (`SpriteCache.budgetMs`) is 3 ms, raised up to 6 ms in a frame whose sim units left room (`budgetMs = min(6, max(3, 9 − simMsThisFrame))`); atlas ≤ 8 MB. V1/P1's desktop rows (§11.3) check these against distinct bodies, fallback frames after a pan and paint time.
 
 ### 3.10 Saves: version 4 and migration
 
 - `SAVE_VERSION = 4`, `SAVE_VERSIONS_SUPPORTED = [1, 2, 3, 4]`, `SAVE_KEY` unchanged.
 - **Tile bits:** EXPANSION §2.3 plus **20-21 elev** (0..3; written 0 on water) and **22-23 ground** (0..3; written 0 on water). Bits 24-31 are not stored in v4 (a later version that needs them widens the block).
-- **v4 layout:** `size: 192`, `scale: 10`, `districts` (§3.2), and `tileBlocks`: one base64 string per owned slot in `districts.owned` order, 4096 tiles × 3 bytes (bits 0-23, little-endian), row-major inside the slot (so the start slot's block decodes to exactly the old tile numbers). The review measured 189 KB for 9 built districts this way against 278 KB as number arrays with realistic tier and ground bits, and a 2.5× faster round trip (§2.6). Buildings, sky, turf, rail and links are stored in world coordinates. Locked slots are not saved: `deserialize` first generates the locked slots and the border strips blending needs (§3.6.1; each blends against *generated* neighbours, never against edited land, so a Pump House can't shift a locked coastline between sessions), then decodes the owned blocks over it. A block that is not 16,384 base64 characters, a block count ≠ `owned.length`, a duplicate or out-of-range slot, or `owned` without `START_SLOT` → "Incompatible save" (raw string copied to `.unreadable`, EXPANSION §2.5).
-- **Which saves migrate:** only `version ≤ 3` (`upgradeSave`). A v4 save whose `size` is not 192 is treated as a **future save** (left untouched, autosave blocked, EXPANSION §2.5), not as "Incompatible"; a v4 save is never migrated as if it were v3.
+- **v4 layout:** `region: 3 | 5`, `size: 64 × region` (192 or 320), `scale: 10`, `districts` (§3.2; `kinds`, `variants` and `annexedAt` of length region²), and `tileBlocks`: one base64 string per owned slot in `districts.owned` order, 4096 tiles × 3 bytes (bits 0-23, little-endian), row-major inside the slot (so the start slot's block decodes to exactly the old tile numbers). The review measured 189 KB for 9 built districts this way against 278 KB as number arrays with realistic tier and ground bits, and a 2.5× faster round trip (§2.6); this revision measured 198 KB for 9 and 543 KB for 25 (§2.8). Buildings, sky, turf, rail and links are stored in world coordinates. Locked slots are not saved: `deserialize` first generates the locked slots and the border strips blending needs (§3.6.1; each blends against *generated* neighbours, never against edited land, so a Pump House can't shift a locked coastline between sessions), then decodes the owned blocks over it. A block that is not 16,384 base64 characters, a block count ≠ `owned.length`, a duplicate or out-of-range slot (≥ region²), or `owned` without `startSlot(region)` → "Incompatible save" (raw string copied to `.unreadable`, EXPANSION §2.5).
+- **Which saves migrate:** only `version ≤ 3` (`upgradeSave`). A v4 save whose `region` is not 3 or 5, or whose `size` is not 64 × `region` (a v4 save without `region` reads as 3 only when `size` is 192), is treated as a **future save** (left untouched, autosave blocked, EXPANSION §2.5), not as "Incompatible": a later build may add region sizes. A v4 save is never migrated as if it were v3.
 - **Migration** `upgradeSave(data): SaveData` (new `src/game/districts/migrate.ts`, pure JSON → JSON, Step 0b), for `version ≤ 3`:
-  - offset (64, 64); `remap(i) = ((i >> 6) + 64) * 192 + (i & 63) + 64`;
+  - **a v3 city becomes a 3×3 region**, without asking: the migration must give the same result on every device, every v3 city was built for a phone-sized map, and its start slot is unchanged either way. (It can grow into a 5×5 afterwards, §3.11.) Offset (64, 64); `remap(i) = ((i >> 6) + 64) * 192 + (i & 63) + 64`. Every world-coordinate rule below is one pure function, `reframe(data, from, to, offset)` (`migrate.ts`), which the growth transform reuses with (192, 320, 64);
   - `tiles` → the start slot's block verbatim;
   - buildings `x`, `y` += 64; `sky` (v3), story `turf` and `rail`: RLE-decode at 4096, place, RLE-encode at 36,864; `links` `ax ay bx by` += 64;
   - story tile indices through `remap` (−1 / null kept): `seam`, `pending.spot`, `open.spot`, `waiting.spot`, `railOut[].i`; coordinates += 64: `locals[].x/y`, `crackdowns[].x/y`. Step 0b lists them in `TILE_INDEX_FIELDS` / `TILE_XY_FIELDS`, and a contract test walks every `StoryState` key so a future field cannot be missed;
   - **scale:** a save without `scale` gets `maxPopulation × 10` and its `milestones` mapped to the ×10 thresholds; then `scale: 10`;
-  - `districts`: `kinds` from §3.6.2 (the start terrain is regenerated from the seed and checked against the saved terrain bits; on a mismatch, e.g. a hand-edited save, the layout still comes from the seed), `owned [4]`, `grants` as §3.8, `bought 0`, `annexedAt` (length 9, by SlotId) −1 except slot 4 = the save's tick, `epilogueSec 0`;
+  - `districts`: `kinds` from §3.6.2 (the start terrain is regenerated from the seed and checked against the saved terrain bits; on a mismatch, e.g. a hand-edited save, the layout still comes from the seed), `variants` all 0, `owned [4]`, `grants` as §3.8, `bought 0`, `annexedAt` (length 9, by SlotId) −1 except slot 4 = the save's tick, `epilogueSec 0`; `region: 3`, `size: 192`;
   - story: `endingHistory` from `ending` / `endingVariant` / `endingTick` when an ending was chosen (§9.6).
   - **Backups by source version:** the first v1 or v2 load keeps writing `${SAVE_KEY}.v2` (today's rule) and the first v3 load writes `${SAVE_KEY}.v3`, each once and never overwritten (today's `keepOldSave` writes `.v2` whenever `loadedVersion < SAVE_VERSION`, which after the bump would file a v3 save under `.v2`). `loadedVersion` keeps the original version (EXPANSION's `settleWealth` still runs for < 3).
-  - `previousSaveInfo` (the previous-city slot on the title screen) multiplies a backup's `maxPopulation` by 10 when it has no `scale`, so the title never shows ×1 numbers.
-- **Size:** 9 districts fully built ≈ 190–240 KB with tile blocks; budget **≤ 260 KB**, tested with the megacity fixture with tiers and ground set. Write ≤ 2 ms p95 in Node, in an idle frame (§3.3). Total storage with backups (`.v2`, `.v3`, the previous-city slot, `.future`, `.unreadable`) ≤ 1.2 MB. A failed `storageSet` toasts "Couldn't save: storage is full" once a session.
+  - `previousSaveInfo` (the previous-city slot on the title screen) multiplies a backup's `maxPopulation` by 10 when it has no `scale`, so the title never shows ×1 numbers, and returns the backup's region (3 for v1–v3), read from a compressed backup's envelope header without unpacking it (below).
+- **Growing** a 3×3 save into a 5×5 one is `upgradeRegion(data)` in `migrate.ts` (Step 0b, frozen; §3.11 has the rules and the player's side).
+- **Story pace travels with the city:** `story.pace` (§3.2) is written from `Settings.storyPace` at New City and on every change; Continue, Restore previous city and the kept-city restore (below) apply a saved pace to Settings, Import offers it in the preview (§13.1). Missing (v1–v3, or a save from before this field) → the device's pace is kept.
+- **No backups of a throwaway city:** while `saveBlocked` (a newer build's city is stored, EXPANSION §2.5) the city in memory is a stand-in, so New City, Restore, Import and Grow never write it to `.prev` (today's `backupCurrent` and `loadPrevious` do whenever it has a road; the stored newer city is already safe in `.future`).
+- **A newer city kept aside is offered back** (Step 0b's `game.ts`; the title row is WP-9's). A stale cached build that meets a newer save blocks it and keeps a raw copy in `.future`; if the player then taps New City there, `SAVE_KEY` and the mirror get the stale build's city and the newer one survives only in `.future`, which no build reads back today (the title's warning reads `saveBlocked`, not the key). From v4 on, boot (`readStoredSave`) checks `.future`: if it parses (an envelope is unpacked) and its version is one this build supports, the title shows a row "A newer city was kept: Neon Bay · 2.41M" with **Restore**, which runs the `loadPrevious` path from `.future`: confirm "Restore Neon Bay? Harbor Nine moves to Previous city.", the current city to `.prev` (unless `saveBlocked`), and `.future` is removed only after the restored city has saved. A `.future` this build still can't read stays untouched and unoffered.
+- **Hot reload:** `main.ts`' `looksLikeSave` accepts a v4 snapshot (`Array.isArray(data.tileBlocks)`, not only `data.tiles`), so the artifact's hot-reload snapshot of a v4 city restores (Step 0b).
+- **Size:** 9 districts fully built 198 KB with tile blocks (§2.8), budget **≤ 260 KB**; 25 districts 543 KB, budget **≤ 600 KB**; both tested with the megacity fixture with tiers and ground set. Write ≤ 2 ms (9) and ≤ 5 ms (25) p95 in Node, in an idle frame (§3.3).
+
+#### Storage plan (Step 0b)
+
+`localStorage` is synchronous, which the `pagehide` save needs, and small: the planning floor is **2.5 M characters per origin** (5 MB counted as UTF-16, WebKit's limit; Chromium and Firefox allow more). Safari can also clear a site's storage after seven days without a visit unless the game was added to the Home Screen, which Export (§13) answers. The rule: **the main save stays plain JSON and synchronous; backups of big saves are compressed.**
+
+| Key | Holds | Format | 3×3 full | 5×5 full |
+|---|---|---|---|---|
+| `SAVE_KEY` | the city | plain JSON, written synchronously (idle autosave and `pagehide`), so every older build's newer-save check still reads `version: 4` | 198 K chars | 556 K |
+| `.mirror` | the last save this build wrote (EXPANSION §2.5) | plain JSON while the save is ≤ 300 K characters (as today); larger (only a 5×5 city gets there): a **compressed envelope** written asynchronously after the main save, at most every `REGION[5].mirrorEverySec` (300 s) of play (600 s in lower detail) and after New City, Import and Restore | 198 K | 306 K |
+| `.prev` (Previous city) | the city New City, Import, Restore or Grow replaced | written **plain and synchronously before** the main save is replaced (so `newCity` stays synchronous, as `found()` expects), then swapped for a compressed envelope (when `CompressionStream` exists) in an idle callback; the title's Previous city row reads an envelope's header, and Restore previous city unpacks it asynchronously (its confirm stays up until it resolves). A stale v3 build shows the header's name and population and fails safely on Restore, as for any newer save | 114 K (198 K until the swap) | 306 K (556 K until the swap) |
+| `.v2`, `.v3` | the first v1–v2 and v3 save this build loaded | raw, once (a v3 save is ≤ 40 K) | ≤ 40 K | — |
+| `.future`, `.unreadable`, `.stale` | raw copies of a newer build's save, an unreadable one, an older build's overwrite | raw (this build can't vouch for their format) | only after such an event | |
+
+A **compressed envelope** is a small JSON object whose header stays readable: `{"version":4,"region":5,"cityName":"…","maxPopulation":…,"savedAt":…,"scale":10,"z":"<base64 of gzip(save JSON)>"}`. Because it carries `version`, every rule that reads versions still works: today's v3 build, finding an older-version main beside it, restores the envelope into `SAVE_KEY` and then treats it as a newer save (blocked, kept in `.future`), so nothing is lost. A v4 build that finds an envelope in `SAVE_KEY` (only after such a restore) unpacks it; **boot becomes async** for that one case: `main.ts` awaits `readStoredSave()` (which decompresses an envelope) before constructing `Game`, and the title shows as soon as it resolves. Gzip uses `CompressionStream('gzip')` / `DecompressionStream`; base64 is chunked through `btoa` / `atob`. Measured gzip of a full 5×5 save: 19 ms in Node (native zlib, async in the browser).
+
+- **Typical totals:** 3×3 ≈ 0.55 M characters (main, plain mirror, compressed Previous city, `.v3`); 5×5 ≈ 1.2 M (48% of the floor); the worst realistic 5×5 case, a stale build's `.future` copy on top, ≈ 1.8 M (72%), and ≈ 2.0 M (80%) for the moment between a plain `.prev` write and its swap (556 K main + 306 K mirror + 556 K `.prev` + 556 K `.future`).
+- **No `CompressionStream`** (iOS before 16.4): backups are written plain; a save over 300 K characters then gets no mirror (main and Previous city only, ≈ 1.1 M for 5×5).
+- **Quota failure** on the main save: drop `.stale`, then `.unreadable`, then `.mirror`, retrying after each; never drop `.prev`, `.future`, `.v2` or `.v3` (they are other cities). If it still fails, toast once a session "Couldn't save: storage is full. Export your city to keep a copy." with an **Export** action (44 px, `toast.action.id 'export'`, §13).
+- **Quota failure on `.prev`** (New City, Import, Restore, Grow): the same drops and retries; if it still fails, nothing changes and the sheet says "Couldn't keep a copy of Harbor Nine: storage is full. Export it first." with **Export** and **Replace without a copy** (a second confirm), so a full storage never traps the player (today a failed `.prev` write is silently ignored).
+- Step 0b's device check measures `setItem` of a 260 K and a 600 K string and the actual quota on iOS Safari and Android Chrome (a probe page, not the game).
+
+### 3.11 Region size per city: device default, override, growing and lower detail
+
+**Choosing** (the New City sheet, §7.9). The sheet's **Region** control offers "3×3 · 9 districts" and "5×5 · 25 districts". Its default comes from new `src/game/device.ts` (Step 0b, frozen interface):
+
+```ts
+export interface DeviceProfile {
+  /** A hovering mouse or trackpad is the primary pointer: matchMedia('(hover: hover) and (pointer: fine)'), the query the dock's drag hint already uses. */
+  finePointer: boolean;
+  /**
+   * A phone or tablet operating system, even with a mouse, trackpad or keyboard attached: iPhone, iPad (iPadOS reports a
+   * Mac platform with maxTouchPoints > 1) or Android (navigator.userAgentData?.platform, else 'Android' in the user agent:
+   * the one place the game reads the user agent, and only for this default).
+   */
+  mobileOS: boolean;
+  /** Shorter side of the screen (screen.width / screen.height, not the window), CSS px. */
+  shortSide: number;
+  /** navigator.hardwareConcurrency, 4 when missing. */
+  cores: number;
+  /** navigator.deviceMemory (Chromium only, bucketed, ≤ 8), else null. */
+  memoryGB: number | null;
+  /** Micro-benchmark factor (device ms ÷ Node ms), null until measured or when the timer is too coarse; cached per device. */
+  benchFactor: number | null;
+}
+/** Computed once per session and memoized: plugging in or removing a mouse mid-session changes nothing. */
+export function deviceProfile(): DeviceProfile;
+export type DeviceClass = 'pc' | 'handheld';
+/** 'pc' when PC-like (below), else 'handheld'. Memoized with the profile. */
+export function deviceClass(p?: DeviceProfile): DeviceClass;
+/** 5 for a PC that can carry it, else 3. */
+export function defaultRegion(p?: DeviceProfile): Region;
+/** Sim-like work in an idle callback (≈ 150–250 ms in all); cached in localStorage 'cybercity.device.v1' for 30 days. */
+export function runMicroBench(): Promise<number | null>;
+```
+
+- **PC-like** = `finePointer && !mobileOS && shortSide >= 600`. A touchscreen laptop and a Chromebook count (the primary pointer is the trackpad); phones, tablets, an iPad with a trackpad and an Android tablet with a mouse do not.
+- **One device class everywhere.** `deviceClass()` decides the region default, the lower-detail default (below), the sim's frame cap (§3.3), `streetMinZoom`, the skyline cap and the atlas budget (§3.9), O8's 3×3 trigger (§3.3), the New City warning (§7.9) and the import notice (§13.4). It is computed once a session. Only the desktop **layout** (§14.1) follows a live media query, because a window can be resized.
+- **Capable** = `cores >= 4 && (memoryGB === null || memoryGB >= 4) && (benchFactor === null || benchFactor <= 2.0)`.
+- `defaultRegion` = 5 when PC-like and capable, otherwise 3.
+- The **micro-benchmark** (three passes of a separable 3-tap blur and one typed-array BFS over a 320×320 grid; ≈ 6 ms in Node, the reference fixed by Step 0b) first measures the timer's resolution (the smallest non-zero step between successive `performance.now()` calls). Above 1 ms (Firefox with fingerprinting resistance, some privacy modes) it returns null and the cores and memory rule decides. Otherwise it repeats the work until each run lasts ≥ 50 ms, divides by the repetitions and takes the median of 3 runs, so Safari's 1 ms clamp costs at most 2%. It starts in an idle callback when the sheet opens on a PC-like device; if it finishes before the player touches the Region control, the default updates. It never runs on a handheld device, which defaults to 3 anyway. Step 0b checks on the reference devices that its factor tracks the real 25-district day within ±30%.
+- **Override:** either size on any device. A handheld device that selects 5×5 shows the warning under the control (§7.9) before Found city; there is no extra confirm.
+- **Stored per city:** in the save (§3.10), shown on the City map header and as a read-only Settings line, carried by export files (§13). A 5×5 city never shrinks; a 3×3 city can grow once (below).
+
+**Growing a 3×3 city into a 5×5** (one way). The transfer story ("I started my city on the train and carry on at my desk", §1.1) needs a phone's 3×3 city to be able to use a computer's 25 districts. Every invariant that makes it cheap already holds: the start slot and ring 1 generate identically on both regions and key on `ringKey` (§3.6.1, §3.6.2), owned slots are saved as slot-local tile blocks (§3.10), and `artXY` keeps art coordinates when world coordinates shift (§3.2).
+
+- **The transform** `upgradeRegion(data: SaveData): SaveData` (`districts/migrate.ts`, Step 0b, frozen; pure JSON → JSON; a save that is not a v4 `region: 3` save comes back unchanged):
+  - `region: 5`, `size: 320`; `reframe(data, 192, 320, 64)` for every world-coordinate field, exactly the fields migration moves and its `StoryState` contract test covers: buildings, `sky`, story `turf` and `rail` (RLE at 36,864 → 102,400), `links` (+64), `TILE_INDEX_FIELDS` through `remap(i) = (⌊i / 192⌋ + 64) × 320 + (i mod 192) + 64`, `TILE_XY_FIELDS` (+64);
+  - slot ids `(sx, sy)` → `(sx + 1, sy + 1)` in `owned`, `annexedAt` (re-indexed to length 25, −1 for the new slots) and `goalsDone` (`goalId@slot`); `tileBlocks` unchanged (slot-local, in `owned` order);
+  - `kinds` and `variants`: ring 1 copied from the save (remapped), ring 2 placed by §3.6.2's ring-2 rule with those ring-1 kinds as parents and the same second Rng, so the grown city's ring 2 is the one a 5×5 city of the same seed has;
+  - grants, `bought`, the lease, `epilogueSec`, `ruinsRestored`, the story and every other field unchanged; after an ending the epilogue clock runs at the 5×5 cadence from then on, so a grant can arrive soon.
+- **The player's side** (`Game.growRegion()`, WP-9): a **Grow to 25 districts** button on Settings' City line (§7.6), on any device, and on the City map's edge-of-region line once all 9 districts are owned (§3.8, §7.2). Disabled while `saveBlocked` ("Reload to update first: this device holds a city from a newer version."). The existing confirm dialog: "Grow to 25 districts?" / "Neon Bay gains 16 districts around its edge. Everything you built stays. This can't be undone: the 3×3 copy is kept as Previous city (replacing Old Lanthorn there)." and, on a handheld device, "On this device it runs in lower detail." / "Grow". Then: the 3×3 save to `.prev` (plain first, with §3.10's quota rule), the transform, `Game.restore` of the result behind a "Growing the region…" busy state (≈ 100–200 ms in Node), the main save, one news line "Neon Bay now spans a 5×5 region: 16 new districts to annex.", and the lower-detail notice where it applies. The camera keeps its place (its tile moves by 64, 64); grants, story and the epilogue clock carry on. Restoring Previous city is the way back.
+- **Tests** (`save-v4.test.ts`, Step 0b): the transform is pure and leaves a 5×5 save unchanged; after growing a 3×3 fixture (several owned slots with buildings, sky, turf, rail, links and story spots) and `recomputeAll`, every field and stat on owned land equals the 3×3 run within 1e-6 (land that was off the map is now locked, and the O1 boundary rule treats both as out of bounds); `artXY` render hashes are unchanged; annexing a ring-2 slot afterwards places exactly the terrain and content a native 5×5 city of the same seed places there; `kinds` meets the 5×5 quotas; the round trip keeps every field §11.2 item 3 lists.
+
+**Lower detail** (`game.lowerDetail`, a Step 0b getter): true for a 5×5 city when `settings.lowerDetail` is true; a 3×3 city ignores it. The first time a 5×5 city loads on a device (New City, Continue, Restore, Import, Grow), a missing `settings.lowerDetail` is written once from the device class (on for a handheld, off for a PC), so it never flips mid-session and the player's switch always wins. Settings shows a "Lower detail" switch for a 5×5 city (§7.6), so a strong tablet can turn it off and a weak laptop on. What it changes (owners in brackets):
+
+| Lever | In lower detail | Effect |
+|---|---|---|
+| Sleeping districts (O8, §3.3) | `sim.sleep = 'forced'`: every slot farther than `LOW_DETAIL.awakeRing` (1) from the slot under the camera centre rests (up to 9 awake, 16 resting), its field rows at cadence 8, staggered by slot; growth is never throttled (WP-1; Game sets the mode, WP-2) | ≈ −1.3 ms of a ≈ 10.7 ms day in Node (prototype p50, §2.8), so ≈ 9.4 ms (estimate; M3 measures) |
+| Top speed | every speed runs at most `LOW_DETAIL.maxDaysPerSec` days a second (placeholder 8; speed 3 is 16 elsewhere); the speed tooltip and the warning say so (WP-2, WP-5) | ≈ 9.4 ms × 3.5 ≈ 33 ms a day on a phone: at 8 days a second ≈ 260 ms a second, a quarter of a core and ≈ 4.4 ms a frame at 60 fps. At 30 fps the 6 ms cap carries only ≈ 5 days a second, so Step 9 sets the number to the largest rate, at most 8, at which a 60 s top-speed run on the reference phone drops no day (on a slow phone speeds 2 and 3 may then run alike) |
+| Render | quality Low (sprite cache 20 MB, DPR cap 1.5), `streetMinZoom` 0.5, skyline cap 1,800 sprites, atlas ≤ 4 MB (WP-3) | fewer sprites, less canvas memory |
+| Life and weather | weather Off, crowds off, boats ≤ 8, drones off, City life visuals off while its small gameplay terms still apply (WP-6) | ≈ 1.5 ms a frame back (§6.4 budgets) |
+| Saves | autosave at most every 120 s; mirror envelope at most every 600 s (WP-2, Step 0b) | a 556 K-character write costs a phone tens of ms |
+
+**Warning on load.** When a 5×5 city opens with lower detail on (Continue, Restore previous city, Import, Grow), one notice through the existing `notices` path (never a card or a pause), once per city per device (`cybercity.ui.lowdetail.v1`, keyed by seed): "Big city, small screen: lower detail is on to keep it smooth. Settings › Lower detail."
+
+**On a PC, far districts rest only when needed** (WP-2's frame guard). For a 5×5 city with lower detail off, `sim.sleep` is `'auto'`: it switches on when, over a `SLEEP.strainWindowSec` (10 s) window at speed 2 or 3, the backlog guard dropped days or the sim's per-frame p95 exceeded `SLEEP.strainCapShare` (80%) of the frame cap, and off again after `SLEEP.recoverSec` (60 s) without strain. No notice: nothing the player does changes, and resting districts' land value, pollution and crime update a little less often. The FPS readout (Settings › Show FPS) adds "· resting 16" while districts sleep, for players who look.
 
 ---
 ## 4. Megacity scale
@@ -879,8 +1197,10 @@ A lint (`tests/megacity-scale.test.ts`, Step 0a) fails on any `m('pop', …)` th
 | **1,000,000** | **Million Windows** (new) | 60,000 |
 | **2,000,000** | **Neon Coast** (new) | 90,000 |
 | **4,000,000** | **Endless City** (new) | 150,000 |
+| **6,000,000** | **Electric Tide** (new, 5×5 region only: `region: 5`) | 200,000 |
+| **8,000,000** | **Glass Horizon** (new, 5×5 region only: `region: 5`) | 250,000 |
 
-The new rows need more than one district (a balanced district holds roughly half a million), so they are the late game's and the sandbox's growth goals. Each still gives Board +3 (STORY.md §2.6). "Lamp" and "Lantern" stay reserved for the Tuning (§3.7 naming lint), so the new titles avoid them.
+The new rows need more than one district (a balanced district holds roughly half a million), so they are the late game's and the sandbox's growth goals. A 3×3 region tops out near 4–5 M, so Endless City is its last row; Electric Tide and Glass Horizon exist, count and show ("next milestone") only on a 5×5 region (a grown city sees them from the moment it grows), which reaches about 12 M fully built (§2.8: 1.21 M ×1 for the fixture) and passes 6 M and 8 M with roughly half and two thirds of its land developed (D1-5 checks it, §11.3), so the long stretch between Endless City and the full region has a step in the middle. The milestone banner calls the money a **bonus** ("Board bonus +200,000"; Step 0a renames today's "Charter grant", §0 Words), so on screen "grant" means only the ✦ land grant. Each still gives Board +3 (STORY.md §2.6). "Lamp" and "Lantern" stay reserved for the Tuning (§3.7 naming lint), so the new titles avoid them.
 
 ### 4.6 Display and realism surfaces
 
@@ -888,7 +1208,7 @@ The new rows need more than one district (a balanced district holds roughly half
 - **Inspect, zone tile** (WP-2 fills `TileInfo`, WP-5 renders): subtitle "{form} · {floors} floors" ("Point tower · 41 floors", "Office tower · 38 floors"); rows Residents `1,480` and Homes `617` (residents / 2.4) for Hab Blocks, **Jobs `1,250`** for shops and fabs ("employs 1,250" in the subtitle's tooltip line for offices); a merged parcel adds the note "Part of a 2×2 tower: 5,920 residents" (`getTileInfo` reads `src/game/parcels.ts`, so Game knows the parcel). `floors = max(1, round(top / 6.5))` from `heightOf` (`src/game/heights.ts`), so Game computes it without importing render.
 - **Inspect, megastructures:** "Stratablock · 61 floors"; rows Residents, Jobs, Stage.
 - **City map census** per district: residents, jobs, "1 job per 1.7 residents", land value.
-- **Report:** a "Districts" block (one compact row per district) and the city line "2.41M residents · 1.38M jobs · 7 districts".
+- **Report:** a "Districts" block (one compact row per district; past 9 districts it shows the 8 largest and a "Show all 25" row) and the city line "2.41M residents · 1.38M jobs · 7 districts".
 
 ---
 ## 5. Skybridges v2
@@ -1070,10 +1390,10 @@ Materials alone read weakly at the phone's usual zoom (0.4–0.9), so each style
 - **Service ids (frozen in Step 0b):** today's `SERVICE_BASE (480) + typeIndex × STACK_VARIANTS (64) + variant` would run into `SKY_BASE` 4,000 once the 27 new types are added (today's 27 + 27 = 54 types: 54 × 64 + 480 = 3,936, plus up to 63 variants), and crown, Spire, faction and style looks overflow 64 variants per type. Every service model moves to `SERVICE_KIT_BASE (2,000,000) + ((typeIndex × 16 + look) × 10 + style) × 64 + variant` (look = sponsor × 4 + look for Spires, < 16), below 2,600,000 for up to 57 types. `SKY_BASE` 4,000 and `BRIDGE_BASE` 5,000 stay. A contract test checks every id family is disjoint. Ids are cache keys, never saved, so renumbering is free.
 - **Sprite keys** keep today's formula `((id × 5 + state) × 7 + nb) × 4096 × 2 + lod`, which stays below 2⁵³ while id < ≈ 3·10¹⁰ (not 10¹¹ as the draft said); every id above is far below. `zoneHeights` (`Float32Array(SERVICE_BASE)` in `buildings.ts`) becomes a `Map` for kit ids, since heights now come from `heights.ts`.
 - **Below `LOD_ZOOM` (0.55)** kit bodies collapse to a small LOD set: key (zone, level, parcel, style, form mod 4, tier), 4 silhouettes per cell and style, painted on the scale buckets only (never exact-scale on settle). Buildings, crowns and landmarks keep their own LOD sprites, so the skyline view (§3.9) stays recognisable.
-- **Sprite cache** 32 MB on high quality (unchanged), 20 MB on low; paint budget 3 ms a frame (unchanged).
+- **Sprite cache** 32 MB on high quality (unchanged), 20 MB on low; paint budget 3 ms a frame (unchanged). On a PC the renderer raises both through the existing public fields (64 or 96 MB by canvas size, paint up to 6 ms when the frame's sim units left room; §3.9), because a desktop view holds up to 6,000 tiles.
 - **Generic fallback, a `SpriteCache` rule:** today `SpriteCache.get` paints a family with no sprite yet at once, ignoring the budget (`art/sprites.ts`). Kit families get a **cross-family fallback**: a body never painted draws the classic body of the same zone, level, tier and palette (painted first and kept warm) until its turn in the budget, so panning into a new district never hitches. Target: on the reference phone, a fresh district panned into at zoom 1 shows all real bodies within 30 frames.
 - **Contact sheets** (WP-4 deliverable, before Wave 3): one generated PNG per style showing every cell's bodies by day and by night at zoom 1 and 0.5, for an owner-style review.
-- **Targets** (WP-4 acceptance, the megacity fixture and a scripted pan): at zoom 1 portrait, distinct bodies on screen ≤ 260 and sprite memory ≤ 26 MB at DPR 2; at zoom 0.55 and 0.4, distinct bodies, sprite MB and paint ms per frame measured on the reference phone (≤ 3 ms paint p95 while panning); sprites painted per second while panning ≤ 1.5× v3; **adjacent-identical rate** (a tile and any of its 8 neighbours drawing the same body) ≤ 3%; **no body more than 15% of its cell's tiles on screen**; no identical body within r = 2; every kit template ≤ 1.2 ms to paint at scale 1.
+- **Targets** (WP-4 acceptance, the megacity fixture and a scripted pan): at zoom 1 portrait, distinct bodies on screen ≤ 260 and sprite memory ≤ 26 MB at DPR 2; at zoom 0.55 and 0.4, distinct bodies, sprite MB and paint ms per frame measured on the reference phone (≤ 3 ms paint p95 while panning); sprites painted per second while panning ≤ 1.5× v3; **adjacent-identical rate** (a tile and any of its 8 neighbours drawing the same body) ≤ 3%; **no body more than 15% of its cell's tiles on screen**; no identical body within r = 2; every kit template ≤ 1.2 ms to paint at scale 1. **Desktop rows** (same fixture, a scripted pan and a jump to a district not yet painted), at **1920×1080 DPR 1** and **1440×900 DPR 2**, each at its `streetMinZoom` and in the skyline view at 0.3: distinct bodies on screen, sprite MB (≤ the PC cache), frames showing a fallback body after the pan stops (≤ 30), paint ms p95 (≤ the PC paint budget). A miss lowers the provisional 6,000-tile cap (§3.9) rather than raising memory further.
 
 ### 6.2 Faction architecture languages
 
@@ -1148,7 +1468,7 @@ Unlocks sit on the milestone populations (15,000 Boomtown, 50,000 Neon Metro, 12
 
 ### 6.4 Life and atmosphere
 
-All of it lives in `Effects` and its art modules (WP-6), reads the world, and changes no rule except the small, labelled City life terms. Low quality turns crowds, boats and fog patches off.
+All of it lives in `Effects` and its art modules (WP-6), reads the world, and changes no rule except the small, labelled City life terms. Low quality turns crowds, boats and fog patches off; lower detail (a 5×5 city on a phone, §3.11) also turns weather and drones off and City life's visuals.
 
 | Item | What | Budget | Core? |
 |---|---|---|---|
@@ -1197,13 +1517,13 @@ Ticker lines (Appendix B) name the place with `{district}` (a neighbourhood in t
 
 ### 7.2 City map and annexing
 
-**Entry points:** (1) the **map button** in the HUD's top-right cluster (44×44, a map icon with a gold dot and count while a grant waits; label "City map" on wide screens; not shown below 375 px wide, §7.3); (2) Data → City map; (3) pinching out past the minimum zoom in a multi-district city snaps to the City map (§3.9); (4) an **Annex pin** on the boundary; (5) the **Map** action on a "Not annexed yet" toast; (6) the goal chip's ✦ token. The sim keeps running (it is a panel like the budget, not an interruption).
+**Entry points:** (1) the **map button** in the HUD's top-right cluster (44×44, a map icon with a gold dot and count while a grant waits; label "City map" on wide screens; not shown below 375 px wide, §7.3); (2) Data → City map; (3) pinching out past the minimum zoom in a multi-district city snaps to the City map (§3.9); (4) an **Annex pin** on the boundary; (5) the **Map** action on a "Not annexed yet" toast; (6) the goal chip's ✦ token; (7) on a desktop, the **M** key and wheel-out past the minimum zoom (§14.3). The sim keeps running (it is a panel like the budget, not an interruption).
 
 **Portrait (390×844, 360×640):**
 
 ```
 ┌───────────────────────────────┐
-│ City map             ✦ 2    ? ✕│  44 px header
+│ City map      ✦ 2 · 3/9     ? ✕│  44 px header: grants waiting · districts owned / region size
 │          ◇                    │
 │       ◇  ◆  ◇      atlas      │  ≈ 50% height: the 3×3 slots as one diamond fitted to the width
 │          ◆  ◆                 │  (slot diamonds 120×60 px at 390, 110×55 at 360)
@@ -1226,12 +1546,31 @@ Ticker lines (Appendix B) name the place with `{district}` (a neighbourhood in t
 
 **Landscape (844×390):** atlas on the left 55%, sheet on the right 45% (scrolls above the same sticky footer).
 
-- **Slot states:** owned (impostor, short name, residents in `abbr`; the sheet shows its census, perks, its **district goals** with ticks and rewards, and "Go there"); candidate (as above); not adjacent (dimmer, a lock, "Not next to the city yet"); not open yet (the Sunk before `ch4.brine`: "Still flooded: opens later", no reason); buyable after the ending (price instead of a grant). With all 9 owned, a line under the atlas: "The city reaches the edge of the region."
-- **Price line:** "Uses 1 land grant (1 left)"; "2,500,000 CR · or wait for the next grant" (after the ending, no grant left); "Next land grant: finish Chapter III" (story, no grant); "Not next to the city yet".
-- **Lease (Tarmac Reach only):** two 44 px segmented buttons, "Nacre: terminal" and "Basalt: cargo", each with its summary line ("Nacre ++ · Basalt −"); **Annex** stays disabled until one is picked.
+**A 5×5 region at phone width** (390×844, 360×640; the same sheet below the atlas):
+
+```
+┌───────────────────────────────┐
+│ City map     ✦ 1 · 7/25     ? ✕│  44 px header
+│             ◇                 │
+│          ◇  ◇  ◇              │  ≈ 50% height: the 5×5 slots fitted to the width
+│       ◇  ◆  ◆  ◇  ◇           │  (slot diamonds 72×36 px at 390, 66×33 at 360)
+│          ◆  ◆  ◆  ◇           │  pinch or double-tap: 1× ↔ 2× around the finger,
+│             ◆  ◇              │  one-finger pan while zoomed
+├───────────────────────────────┤
+│ [+ Gannet Isles] [+ Ironside] │  44 px chip row, scrolls sideways: candidates first (+),
+│ Kessel Flats                  │  then owned districts; a tap selects and centres the slot
+│ …                             │  the sheet as above, sticky footer included
+```
+
+- A slot diamond is smaller than a 44 px target at fit, so a tap anywhere inside a diamond selects it (the diamonds tile the atlas, so a miss lands on a neighbour, outlined at once and corrected with one more tap), the **chip row** gives every candidate and owned district a full 44 px target, and the atlas zooms to 2× (the atlas scale has that headroom, §3.9). A 3×3 region keeps the layout above unchanged: no chips, no atlas zoom.
+- **Desktop** (the side-panel layout, §14.1): the atlas fills the map area (slot diamonds ≈ 280×140 px for 3×3 and ≈ 168×84 for 5×5 at 1280×800 with the panel open) and the sheet is the side panel, sticky footer at its bottom; hovering a slot shows its name, state and price (§14.2); a click selects; Esc or M closes.
+
+- **Slot states:** owned (impostor, short name, residents in `abbr`; the sheet shows its census, perks, its **district goals** with ticks and rewards, and "Go there"); candidate (as above); not adjacent (dimmer, a lock, "Not next to the city yet"); not open yet (the Sunk before `ch4.brine`: "Still flooded: opens later", no reason); buyable after the ending (price instead of a grant). With all R² owned (9 or 25), a line under the atlas: "The city reaches the edge of the region.", on a 3×3 region with a 44 px **Grow to 25 districts** button beside it (§3.11). Variants show their own names; the census line of an owned district names its kind when it is a variant ("Ironside Docks · Flats").
+- **Price line:** "Uses 1 land grant (1 left)"; "2,520,000 CR · or wait for the next grant" (after the ending, no grant left; `districtPrice`, §3.8); "Next land grant: finish Chapter III" (story, no grant); "Not next to the city yet".
+- **Lease (Tarmac Reach only, not its variants):** two 44 px segmented buttons, "Nacre: terminal" and "Basalt: cargo", each with its summary line ("Nacre ++ · Basalt −"); **Annex** stays disabled until one is picked.
 - **Confirm:** tapping Annex turns the button into "Annex Kessel Flats? ✓ ✕" (each ≥ 44×44); Enter = ✓ on desktop. ✓ calls `game.annex(slot, lease)`, closes the sheet, flies the camera in (1.2 s, a tap skips) and lifts the fog (1.5 s); the banner follows (`MilestoneBanner`).
 - **Metro lines:** owned districts that each have a powered Metro Station are joined by a thin line on the atlas (§6.3).
-- **"?"** in the header: "Every chapter you finish brings a land grant. Spend it here to annex a district next to your city. Each district has its own land, perks, problems and goals, and some factions lobby for one or another. After Charter Night grants keep coming, and you can buy districts with credits."
+- **"?"** in the header: "Every chapter you finish brings a land grant. Spend it here to annex a district next to your city. Each district has its own land, perks, problems and goals, and some factions lobby for one or another. After Charter Night grants keep coming, and you can buy districts with credits. Your region is 3×3 or 5×5 districts, chosen when you founded the city; a 3×3 city can grow to 5×5 in Settings."
 
 ### 7.3 HUD and goal chip
 
@@ -1268,6 +1607,8 @@ Values stay ≤ 12 characters; longer text goes in note rows (EXPANSION §7.4).
 - **Weather:** Full / Light / Off (a 3-way segmented control, replacing the Rain toggle; §6.4).
 - **Crowds:** On / Off (default On on high quality, Off on low).
 - **City life:** On / Off (default On; §6.4.1). The existing "City events" toggle (incidents) is unchanged and listed next to it with its description, so the two are not confused.
+- **Lower detail** (a 5×5 city only; §3.11): On / Off, default On on a handheld device and Off on a PC (§3.11's device class, written once on the first 5×5 load, never re-derived from the pointer). Description: "Far districts rest, no weather or crowds, lower top speed. For big cities on phones."
+- **City** (read-only line at the top of Settings): "Neon Bay · 5×5 region · 25 districts" (or "3×3 region · 9 districts"), so the player can always see which size the city is. On a 3×3 city the line carries a 44 px **Grow to 25 districts** button (§3.11; WP-9), disabled while `saveBlocked`.
 - All are additive `Settings` fields with the usual "unknown reads as default" rule.
 
 ### 7.7 Making it explain itself
@@ -1276,12 +1617,39 @@ Values stay ≤ 12 characters; longer text goes in note rows (EXPANSION §7.4).
 2. **The City map's "?"** (above) and the annex sheet's summary lines.
 3. **Rules drawn while the skybridge tool is active** (ghost tubes, see-through buildings, badges, reasons).
 4. **Inspect notes** for every district perk and hazard, and the plaques of §9.3.
-5. **Help** (menu.ts) gains two steps after EXPANSION's: "10 · Grow beyond the shore" ("Each chapter brings a land grant. Open the City map, pick a district next to your city and annex it.") and "11 · Bridge the towers" ("Pick Skybridge and tap a tall tower: its lanes light up. Tap a glowing partner to link them. Three linked towers make a Sky Lobby.").
+5. **Help** (menu.ts) gains steps after today's fourteen (the draft numbered them 10 and 11, before the expansion's help steps landed): "15 · Grow beyond the shore" ("Each chapter brings a land grant. Open the City map, pick a district next to your city and annex it. A city's region is 3×3 or 5×5 districts, chosen when you found it; a 3×3 city can grow to 5×5.") and "16 · Bridge the towers" ("Pick Skybridge and tap a tall tower: its lanes light up. Tap a glowing partner to link them. Three linked towers make a Sky Lobby."), both WP-5; WP-9 adds "17 · Take your city along" ("Menu › Export city saves your city to a file. On another phone or computer, Menu › Import city opens it. On iPhone the Home Screen app keeps its own city: export in Safari, import in the app.") and appends "Press ? for every shortcut." to step 6's desktop sentence (§13, §14).
 6. **Unlock news and the milestone banner** name the tray and chip ("Now available: Canopy Park (Civic · Parks)").
 
 ### 7.8 Acceptance (WP-5)
 
-Every target ≥ 44 px at 390×844, 360×640 and 844×390; the toolbar still has 9 buttons; no chip holds more than 6 cards; the City map's price line and Annex button stay visible (sticky) with every sheet section expanded at 360×640, and the button sits in the bottom 40% in portrait; the HUD fits at 360 px and at 390 px with funds "12.3M" and population "4.41M" (map button absent below 375 px); no inspect value overflows at 360 px (visual harness, as EXPANSION §7.4); the annex confirm can't fire from a single tap; with a source selected in a dense downtown at zoom 0.6 on 390 px, at most 8 badges show and none overlap; tips never stack.
+Every target ≥ 44 px at 390×844, 360×640 and 844×390; the toolbar still has 9 buttons; no chip holds more than 6 cards; the City map's price line and Annex button stay visible (sticky) with every sheet section expanded at 360×640, and the button sits in the bottom 40% in portrait; the HUD fits at 360 px and at 390 px with funds "12.3M" and population "4.41M" (map button absent below 375 px); no inspect value overflows at 360 px (visual harness, as EXPANSION §7.4); the annex confirm can't fire from a single tap; with a source selected in a dense downtown at zoom 0.6 on 390 px, at most 8 badges show and none overlap; tips never stack. **Regions:** the New City sheet with the Region control and its phone warning fits at 360×640 with Found city visible (sticky foot); a 5×5 City map at 390×844 and 360×640 has a 44 px chip for every candidate and owned district, selects a slot from any tap inside its diamond, zooms to 2× and back, and keeps the sticky footer; the HUD fits at 360 px with population "12.1M"; the lower-detail warning shows once per city and never as a card; the Grow confirm fits at 360×640 with both buttons ≥ 44 px.
+
+### 7.9 New City: choosing the region (WP-5)
+
+The New City sheet (`ui/start/startScreen.ts`: name and reroll, Story pace, then the footer with the backup note and Found city) gains a **Region** field after Story pace. The footer stays sticky, so Found city never scrolls away at 360×640.
+
+```
+│ Region                                   │
+│ [ 3×3 · 9 districts ][ 5×5 · 25 districts ] │  44 px segmented radio group; the device default carries a "Recommended" tag
+│ Nine districts, a city of 4–5 million.    │  the selected size's line (aria-live)
+│ Best on phones.                           │
+│ ! 25 districts are a lot for a phone: …   │  amber, only for 5×5 on a handheld device (§3.11)
+│ Both have the same story. A 3×3 city …    │
+```
+
+| Piece | Copy |
+|---|---|
+| Label | "Region" |
+| Options | "3×3 · 9 districts" and "5×5 · 25 districts" ("3×3 · 9" and "5×5 · 25" below 380 px wide) |
+| Default tag | "Recommended" (on the option `defaultRegion()` picked, §3.11) |
+| 3×3 line | "Nine districts, a city of 4–5 million. Best on phones." |
+| 5×5 line | "25 districts, a city of up to 12 million. Best on a computer." |
+| Warning (5×5 on a handheld device) | "25 districts are a lot for a phone: it will run in lower detail (far districts rest, no weather, lower top speed)." |
+| Footnote | "Both have the same story. A 3×3 city can grow to 5×5 later, never back." |
+
+- Arrow keys move the choice, as for Story pace; the choice is remembered for the next New City on this device (`cybercity.ui.region.v1`), never across devices.
+- `found()` passes it on: `game.newCity(name, seed, region)` (Step 0b API). On first launch the waiting map (generated at boot at `defaultRegion()` before any benchmark) is kept only if its region matches; otherwise the same seed is generated at the chosen size, and the start map looks identical (§3.1).
+- The title's Continue card and the Previous city row show the size: "Neon Bay · 2.41M · 5×5".
 
 ---
 
@@ -1317,7 +1685,7 @@ Every target ≥ 44 px at 390×844, 360×640 and 844×390; the toolbar still has
 | Verdigris Bazaar | Brine | The night stalls run on tides, little light. I know their tides. |
 | Verdigris Bazaar | lark | verdigris is the best market in town. we sell signal there. let us keep selling. |
 
-- **Annex reactions** (`director.onAnnex(kind, lease)`, Step 0b; ordinary favor changes through the standing rules): each lobbyist of the annexed district +6 (`ANNEX.lobbyFavor`); each lobbyist of the **other current candidates** −2 (`rivalLobbyFavor`, once per faction; a faction that lobbied for the annexed one too gets only the +6); Tarmac lease: chosen +8, the other −4. The hidden Tuning is never a lobbyist (or named) before `tuningActive`; Marrow speaks for Terraces until then. No card opens on annex.
+- **Annex reactions** (`director.onAnnex(kind, lease, repeat)`, Step 0b; ordinary favor changes through the standing rules): each lobbyist of the annexed district +6 (`ANNEX.lobbyFavor`); each lobbyist of the **other current candidates** −2 (`rivalLobbyFavor`, once per faction; a faction that lobbied for the annexed one too gets only the +6); Tarmac lease: chosen +8, the other −4. When a district of the same kind was already owned (a 5×5 repeat), +2 and −1 instead (`ANNEX.repeat*`), so 24 annexes cannot swing the factions much further than 8 do; the rival penalty counts candidates of kinds not yet owned only. The hidden Tuning is never a lobbyist (or named) before `tuningActive`; Marrow speaks for Terraces until then. No card opens on annex.
 
 ### 8.3 Deck cards (new file `src/game/story/content/cards/megacity.ts`, WP-7)
 
@@ -1429,8 +1797,8 @@ Brief: "The Glass Kites want a hidden relay on the Halo Lookout. It pleases them
 
 ### 8.4 Data rows
 
-- **Effects** (STORY.md §10.3 closed vocabulary, additive): `grant n` (Step 0b); `brownfield clear` (clears every brownfield tile in owned Kessel Flats), `ruins clear` (turns the Sunk's remaining ruins into empty zoned lots), `reeds drain` (reed ground → Plain on the half of owned Reedmere nearer the start slot), `apron rehouse` and `apron clear` (the Tarmac apron cluster, §3.7), all WP-7 in `story/effects.ts`, calling `clearBrownfield` / `clearRuins` / `drainReeds` / `apron` from `districts/effects.ts` (WP-2). The turf effect gains the target `slot:<kind>` (`Target` union, Step 0b): every tile of that gang inside the owned slot of that kind. An effect whose district isn't owned is skipped (STORY.md §0).
-- **Metrics** (closed `Metric` union, `PLAIN_METRICS`, `STAT_METRICS`, Step 0b): `districts` (owned count), `grants`, `district.shoals | sunk | flats | terraces | reedmere | skeleton | tarmac | bazaar` (0/1), `ruins`, `skylobby.count`, `skylobby.max`. `count.<type>` works for the new types automatically. §9.4's cards also read `chapter` and flags, which exist.
+- **Effects** (STORY.md §10.3 closed vocabulary, additive): `grant n` (Step 0b); `brownfield clear` (clears every brownfield tile in every owned Flats district), `ruins clear` (turns the Sunk's remaining ruins into empty zoned lots), `reeds drain` (reed ground → Plain on the half nearer the start slot of every owned marsh district), `apron rehouse` and `apron clear` (the Tarmac apron cluster, §3.7), all WP-7 in `story/effects.ts`, calling `clearBrownfield` / `clearRuins` / `drainReeds` / `apron` from `districts/effects.ts` (WP-2). The turf effect gains the target `slot:<kind>` (`Target` union, Step 0b): every tile of that gang inside the owned slots of that kind. Districts annexed after the choice keep their own ground (§3.7). An effect whose district isn't owned is skipped (STORY.md §0).
+- **Metrics** (closed `Metric` union, `PLAIN_METRICS`, `STAT_METRICS`, Step 0b): `districts` (owned count), `grants`, `district.shoals | sunk | flats | terraces | reedmere | skeleton | tarmac | bazaar` (districts of that kind owned: 0/1 on a 3×3 region, 0..4 on a 5×5; every condition in this doc reads `>= 1`, and the mood drivers below are capped at their `max`), `region` (3 or 5), `ruins`, `skylobby.count`, `skylobby.max`. `count.<type>` works for the new types automatically. §9.4's cards also read `chapter` and flags, which exist.
 - **Mood drivers** (`content/factions.ts`, WP-7; every faction stays within the lint's 4–6): Board "Green lung" `m: 'district.reedmere', mul: 3, min: 0, max: 3`; Basalt "The Flats" `district.flats ×3`; Tuning "Lamps on the hill" `district.terraces ×3`. Nacre, Undertow and Kites already have 6.
 - **Build reactions** (`FACTION_BUILD_REACTIONS`, Step 0b; landmarks limit 1, others the default 5): floodwatch Board +1; pumphouse Undertow +1, Tuning +1; canopypark Board +1, Tuning +1; medtower Board +2, Tuning +2; reclaim Board +1, Basalt −1; metro Board +2, Undertow −1; markethall Undertow +1, Kites +1; tidal Tuning +1, Basalt −1; geothermal Basalt +1; datavault Nacre +3, Kites +1; charterhall Board +8, Nacre −2; hexworks Basalt +10, Tuning −3; pearlatrium Nacre +10, Kites −3; hullhouse Undertow +10, Board −4; kitemast Kites +10, Nacre −4; lampchoir Tuning +10, Basalt −2; beacon Board +2, Undertow −1; arena Nacre +3, Board +2; halolookout Nacre +4, Kites +2; terminal Board +4; the ending landmarks as §9.2. The Spire's reaction follows its sponsor (§6.2).
 - **Power terms** (both `POWER_TERMS` in content, WP-7, and the live sums in `story/factions.ts`, WP-2): Board +100 per Charter Hall; Basalt +120 per Hexworks, +120 per Basalt-sponsored Spire; Nacre `perSpire` 120 now counts Nacre-sponsored and unsponsored old spires, +120 per Pearl Atrium; Undertow +100 per Hullhouse, +80 per Salvage crown; Kites +100 per Kite Mast; Basalt +150 per Foreman's Gantry and Nacre +150 per Glass Smile while their ending is current (§9.2). A test pins the Balance of Power of the S1 fixture as unchanged.
@@ -1608,9 +1976,9 @@ Optional (5, one per ending landmark; WP-8 writes the final copy under the same 
 
 ### 9.5 The map keeps growing after the ending
 
-- **Epilogue land grants** (core, §3.8): one every `pace.chapterMinSec` unpaused real seconds after the ending (1,440 / 840 / 600 s on Relaxed / Normal / Brisk, the cadence the chapters had), counted in `districts.epilogueSec`, while a slot is locked and no grant is unspent. One ticker line and the ✦ token; never a card, banner or pause.
-- **Purchase with credits** (core): any time after the ending, `DISTRICT_PRICES` (fixed, §3.2); buying skips the wait and never resets the grant clock.
-- A city that reaches Charter Night with 7 districts owns all 9 about 48 minutes later on Relaxed without spending, sooner if it buys. Then the City map says "The city reaches the edge of the region." and the sandbox goals take over (§3.8). Growing past nine districts is an open owner question (Appendix E).
+- **Epilogue land grants** (core, §3.8): one every `pace.chapterMinSec` unpaused real seconds after the ending on a 3×3 region (1,440 / 840 / 600 s on Relaxed / Normal / Brisk, the cadence the chapters had) and every half of it on a 5×5 region (720 / 420 / 300 s), counted in `districts.epilogueSec`, while a slot is locked and no grant is unspent. One ticker line and the ✦ token; never a card, banner or pause.
+- **Purchase with credits** (core): any time after the ending, `districtPrice(owned)` (fixed, §3.2); buying skips the wait and never resets the grant clock.
+- A city that reaches Charter Night with 7 districts owns all 9 about 48 minutes later on Relaxed without spending, or all 25 of a 5×5 region about 3 h 36 min later, sooner if it buys. Then the City map says "The city reaches the edge of the region." and the sandbox goals take over (§3.8). The owner settled how far the map grows in the second interview: the region size per city (3×3 or 5×5, Appendix E); a 3×3 city can also grow into a 5×5 later (§3.11).
 
 ### 9.6 Saves, ownership and tests
 
@@ -1635,7 +2003,7 @@ The marks themselves are never saved: `deriveMarks` recomputes them on load.
 2. `deriveMarks` after a save and load equals `deriveMarks` live (marks are derived, nothing drifts).
 3. Ending history: a city that held Ironwork for 6 sim years and then Open Ledger for 2 has Basalt share 0.35 and Board share 0.14 (total ≤ 0.5); the bodies in the Basalt band stay Basalt after the swap.
 4. Ending landmarks: buildable only while their ending is current; after a review swap the landmark stands, reads "Dormant", keeps its visitors, park and approval and drops its ending-bound terms; it wakes when the ending returns.
-5. Epilogue grant clock on a fake clock: the first grant 1,440 unpaused s after the ending on Relaxed, never while paused, none while a grant is unspent, none once all 9 slots are owned; a purchase does not reset it; the clock survives save and load.
+5. Epilogue grant clock on a fake clock: the first grant 1,440 unpaused s after the ending on Relaxed, never while paused, none while a grant is unspent, none once all R² slots are owned (9 or 25); 720 s on a 5×5 region; a purchase does not reset it; the clock survives save and load.
 6. Review lines: each review appends exactly one line, never repeats one, falls back to the generic line, and every line and epilogue card passes §8.6's lint, the length limits and the voice rules (lowercase lark, Brine's "little light", Marrow's minutes, no `!` outside Nacre).
 7. Epilogue cards are drawable only in Chapter VII with their flags, never open by themselves, and `ep.fence` / `ep.leash` leave `buried` / `leashed` and therefore the ending claims unchanged.
 8. A v3 post-ending fixture migrates with one `endingHistory` entry and shows its marks on first load.
@@ -1653,46 +2021,58 @@ The marks themselves are never saved: `deriveMarks` recomputes them on load.
 
 ### 11.1 Budgets
 
-Node figures are what the tests assert (CI keeps EXPANSION's 3× slack). Phone figures use the factor **measured in Step 0b** on the reference device (a mid-range phone, or Chrome with 4× CPU throttling when no phone is available); the 3.5 in §2 is the assumption it replaces. Every per-frame budget is a **p95 and a max**, because a single slice or the month end cannot be split further (§2.6).
+Node figures are what the tests assert (CI keeps EXPANSION's 3× slack). Phone figures use the factor **measured in Step 0b** on the reference device (owner-measured on a mid-range phone; until then a proxy, Chrome with 4× CPU throttling, marked as such in §11.6); the 3.5 in §2 is the assumption it replaces. **PC** figures are the Node figures (a desktop browser at about Node speed, §2.8), checked by the owner on a reference laptop with the same bench page. Every per-frame budget is a **p95 and a max on the device**, plus a Node bound on the largest unit (`SLICE.unitMaxNodeMs`, §3.3), because a unit cannot be split further. The 25-district column is a 5×5 city on a PC with sleeping off (`'auto'` never engaged); a 5×5 city on a phone runs in lower detail (last rows).
 
-| Area | 1 district | 9 districts, fully built | How |
-|---|---|---|---|
-| `sim.step()` (headless whole day) mean | ≤ 1.0 ms (today 0.78–1.05) | ≤ 4.5 ms (prototype 4.1–4.9) | O1–O4, O7 |
-| Sim work in one frame (`stepSlice` slices + `story.onDay`), during a speed-3 run | p95 ≤ 2 ms, max ≤ 4 ms | **p95 ≤ 4 ms, max ≤ 6 ms** (draft prototype, unsliced: p95 7.4, max 13.3) | tick slicing, O4 |
-| The month-end frame (settlement, the day's slices, `onMonth` parts due that day, nothing else) | ≤ 3 ms | **≤ 6 ms p95, ≤ 8 ms max** (today's code: 15–17 p50, 26 max) | month end spread, O6 |
-| Autosave frame (serialize + stringify + `setItem`) | ≤ 1 ms | ≤ 2 ms p95 in Node + `setItem` measured on the device; never in a frame that ran a slice | tile blocks, idle frame (§3.3) |
-| After a player action (`recomputeAround`) | ≤ 1.5 ms | ≤ 5 ms | O5 |
-| `recomputeAll()` (load, new city, annex) | ≤ 2 ms | ≤ 12 ms | — |
-| Render cache upkeep (R0) during a speed-3 growth run | ≤ 0.1 ms mean | **≤ 0.3 ms mean, ≤ 1 ms p95** (today 2.7 ms per `tiles` event) | dirty rects, 250 ms throttle (§3.9) |
-| Save size | ≤ 40 KB | **≤ 260 KB** (tiers and ground set) | tile blocks (§3.10) |
-| `Game.restore` (parse, deserialize, generate locked slots and border strips, sim constructor, `recomputeAll`) | ≤ 40 ms | **≤ 120 ms** in Node (empty-world restore today 109 ms); measured on the device | §3.6.1 |
-| Migration v1–v3 → v4 | ≤ 60 ms once | — | §3.10 |
-| Sim share of a phone frame at speed 3 | — | ≤ 30%; frame cap 6 ms | §3.3 |
-| Frame, mid-range phone, default zoom | ≥ 30 fps, 60 target | same | view-bound; skyline view below 0.4 (§3.9) |
-| On-screen sprites at minimum zoom | ≤ 3,775 tiles (today) | ≤ 2,195 tiles at 0.4; ≤ 2,600 sprites in the skyline view | §2.5, §3.9 |
-| Canvas memory | ground 24 MB + sprites 32 MB (today) | + overview ≤ 4 MB + atlas ≤ 4 MB | §3.9, §6.1 |
-| JS heap + typed arrays | +≈ 15 MB for the 192 frame (measured: 4.3 MB heap + 11 MB typed arrays for one World + Simulation) | same; the title Showcase's world is released when the title closes | §3.9 |
-| Skybridges | ≤ 0.4 ms for 60 visible gap tiles | same | cached segments |
-| Life and atmosphere | ≤ 1.5 ms a frame together (crowds 0.6, weather 0.5, boats 0.2, City life 0.4) | same | §6.4 |
-| Faction signatures and marks (§6.2, §9) | ≤ 0.3 ms a frame | same | live fx in the effects pass |
-| City map open | ≤ 2 ms a frame | same | 9 impostor blits, progressive repaint |
+| Area | 1 district | 9 districts (3×3), fully built | 25 districts (5×5), fully built, PC | How |
+|---|---|---|---|---|
+| `sim.step()` (headless whole day) mean | ≤ 1.0 ms (today 0.72–1.05) | ≤ 4.5 ms (prototype 4.1–4.9) | **≤ 12 ms** (today 19.8–20.5; O2–O4 prototype at 320: 11.6–12.6, §2.8); sleeping saves ≈ 1.3–1.7 ms more | O1–O4, O7; O8 |
+| Largest unit of a sliced day, in Node | ≤ 0.5 ms | ≤ 0.6 ms (so ≤ 2.1 ms on a phone at ×3.5) | **≤ 1.5 ms** (`SLICE.unitMaxNodeMs`; today phase 2 is one 4.6 ms block) | units of §3.3, row bands |
+| Sim work in one frame (`stepSlice` units + `story.onDay`), during a speed-3 run, on the device | p95 ≤ 2 ms, max ≤ 4 ms | **p95 ≤ 4 ms, max ≤ 6 ms on a handheld** (draft prototype, unsliced, in Node: p95 7.4, max 13.3) | **p95 ≤ 6 ms, max ≤ 10 ms on a PC** (the PC cap; today unsliced p95 27.6, max 37.1; prototype unsliced p95 15.0, max 21.9) | tick slicing, O4 |
+| The month-end frame (settlement, the day's slices, `onMonth` parts due that day, nothing else) | ≤ 3 ms | **≤ 6 ms p95, ≤ 8 ms max** (today's code: 15–17 p50, 26 max; 16.7 / 34.7 in §2.8) | **≤ 8 ms p95, ≤ 12 ms max** (today 45 p50, 56 max) | month end spread, O6 with 8 bands |
+| Autosave frame (serialize + stringify + `setItem`) | ≤ 1 ms | ≤ 2 ms p95 in Node + `setItem` measured on the device; never in a frame that ran a slice | ≤ 5 ms p95 + `setItem`; compressed backups async (§3.10) | tile blocks, idle frame (§3.3) |
+| After a player action (`recomputeAround`) | ≤ 1.5 ms | ≤ 5 ms | ≤ 8 ms | O5 |
+| `recomputeAll()` (load, new city, annex) | ≤ 2 ms | ≤ 12 ms | ≤ 30 ms (today 33.5–36.1) | — |
+| Render cache upkeep (R0) during a speed-3 growth run | ≤ 0.1 ms mean | **≤ 0.3 ms mean, ≤ 1 ms p95** (today 2.7 ms per `tiles` event) | **≤ 0.5 ms mean, ≤ 1.5 ms p95** (today 7.4 ms per `tiles` event) | dirty rects, 250 ms throttle (§3.9) |
+| Save size | ≤ 40 KB | **≤ 260 KB** (tiers and ground set; 198 KB measured) | **≤ 600 KB** (543 KB measured) | tile blocks (§3.10) |
+| All storage keys, typical / worst realistic | — | ≈ 0.55 M / ≈ 1.0 M characters | ≈ 1.2 M / ≈ 1.8 M characters (floor 2.5 M) | compressed backups (§3.10) |
+| `Game.restore` (parse, deserialize, generate locked slots and border strips, sim constructor, `recomputeAll`) | ≤ 40 ms | **≤ 120 ms** in Node (restore alone 31–33 ms today, §2.8); measured on the device | **≤ 200 ms** (restore alone 87–100 ms today, plus up to ≈ 80 ms of locked-slot generation for a young city) | §3.6.1 |
+| Migration v1–v3 → v4 | ≤ 60 ms once | — | — (v3 cities become 3×3) | §3.10 |
+| Sim share of a frame at speed 3 | — | phone ≤ 30%; frame cap 6 ms | PC ≤ 20% of a core; frame cap 10 ms | §3.3 |
+| Frame rate, default zoom | phone ≥ 30 fps, 60 target | same | PC ≥ 50 fps, 60 target, at 1920×1080 DPR 1 and at 1440×900 DPR 2 on the reference laptop | view bands by on-screen tiles (§3.9) |
+| On-screen sprites at minimum zoom | ≤ 3,775 tiles (today) | phone: ≤ 2,195 tiles in the street view; ≤ 2,600 sprites in the skyline view | PC: ≤ 6,000 tiles in the street view; ≤ 6,000 sprites in the skyline view (provisional, lowered if V1/P1's desktop rows miss) | §2.5, §3.9 |
+| Canvas memory | ground 24 MB + sprites 32 MB (today) | + overview ≤ 4 MB + atlas ≤ 4 MB | ground 24 MB or the screen's chunks + 4 (≈ 25 MB at 1920×1080 DPR 1, ≈ 62 MB at DPR 2); sprites 64 MB, 96 MB from 2.5 M device px; overview ≤ 4 MB; atlas ≤ 8 MB | §3.9, §6.1 |
+| Sprite paint per frame | 3 ms (today) | same | ≤ 6 ms when the frame's sim units left room; ≤ 30 frames of fallback bodies after a pan (V1 desktop rows) | §3.9, §6.1 |
+| JS heap + typed arrays (one World + Simulation) | +≈ 15 MB for the 192 frame (measured 4.3 MB heap + 11 MB; 5.0 + 11.0 in §2.8) | same; the title Showcase's 3×3 world is released when the title closes | ≈ 45 MB for the 320 frame (12.6 MB heap + 32.1 MB typed arrays measured) | §3.1, §3.9 |
+| Skybridges | ≤ 0.4 ms for 60 visible gap tiles | same | same | cached segments |
+| Life and atmosphere | ≤ 1.5 ms a frame together (crowds 0.6, weather 0.5, boats 0.2, City life 0.4) | same | same | §6.4 |
+| Faction signatures and marks (§6.2, §9) | ≤ 0.3 ms a frame | same | same | live fx in the effects pass |
+| City map open | ≤ 2 ms a frame | same (9 impostor blits) | ≤ 2.5 ms (25 blits) | progressive repaint |
+| Side panel, tooltips, key hints (§14) | — | — | ≤ 0.3 ms a frame; tooltip hover pick ≤ 0.2 ms, at most every 100 ms | §14 |
+| Export / import (§13), growing (§3.11) | — | build ≤ 30 ms, read and validate ≤ 50 ms in Node (no World), restore after the confirm as `Game.restore` | build ≤ 60 ms, read and validate ≤ 100 ms (gzip 19 ms; no World), restore ≤ 200 ms; grow: transform ≤ 20 ms + restore ≤ 200 ms | §13, §3.11 |
+
+**A 5×5 city on a phone (lower detail, §3.11), on the device:** sim work per frame **p95 ≤ 6 ms, max ≤ 12 ms** (the 6 ms cap plus at most one unit of ≤ 1.5 ms in Node); the sim ≤ 30% of a core at the capped top speed, with no day dropped in a 60 s top-speed run (Step 9 sets `LOW_DETAIL.maxDaysPerSec`, at most 8, to the largest rate that achieves it); the frame ≥ 30 fps at the default zoom; restore ≤ 3× its Node time; no frame over 50 ms in that run except the annex and load frames. The draft's claim that the unsliced day fits the 6 ms cap was wrong (§2.8: phase 2 alone is ≈ 16 ms on a phone); it holds only with §3.3's units. Measured by Step 0b with the proxy, confirmed on the owner's phone (§11.6).
 
 ### 11.2 Save, migration and contract tests (Step 0b)
 
-`tests/save-v4.test.ts`, `tests/districts-contract.test.ts`:
+`tests/save-v4.test.ts`, `tests/districts-contract.test.ts`, `tests/frame.test.ts`, `tests/storage.test.ts`, `tests/device.test.ts`, `tests/terrain-golden.test.ts`. Every contract test that builds a world runs at **both region sizes** (`describe.each([3, 5])`), except the v1–v3 migration rows, which are 3×3 by definition:
 
-1. v1, v2 and v3 fixtures (the pinned JSON files of Step 0a) migrate: the start slot's tiles equal the old tiles bit for bit; buildings at +64; sky, turf and rail at the offset; links +64; `seam`, `pending.spot`, `open.spot`, `waiting.spot`, `railOut[].i` remapped; `locals` and `crackdowns` +64; `maxPopulation` ×10 and `milestones` mapped; grants owed (a Ch3 save gets 2, a post-ending save 6, with `endingHistory` and `epilogueSec 0`); `.v2` for v1–v2 and `.v3` for v3, each written once and never overwritten; `loadedVersion` kept.
+1. v1, v2 and v3 fixtures (the pinned JSON files of Step 0a) migrate to a 3×3 region (`region: 3`, `size: 192`): the start slot's tiles equal the old tiles bit for bit; buildings at +64; sky, turf and rail at the offset; links +64; `seam`, `pending.spot`, `open.spot`, `waiting.spot`, `railOut[].i` remapped; `locals` and `crackdowns` +64; `maxPopulation` ×10 and `milestones` mapped; grants owed (a Ch3 save gets 2, a post-ending save 6, with `endingHistory` and `epilogueSec 0`); `.v2` for v1–v2 and `.v3` for v3, each written once and never overwritten; `loadedVersion` kept.
 2. The contract test walks every `StoryState` key and fails on a numeric field not listed as a tile index, a coordinate or "not spatial".
-3. A v4 round trip keeps owned slots, their order, grants, `bought`, `annexedAt` (length 9, by SlotId), the lease, `epilogueSec`, `goalsDone`, `ruinsRestored`, `elev`, `ground`, `sponsor`, `look`, `reclaim`, `endingHistory` and `callbacks`; locked slots regenerate identically; the 9-district fixture with tiers and ground serializes ≤ 260 KB.
-4. Corrupt input never throws except "Incompatible save" for a bad tile block, a block count mismatch, duplicate or out-of-range slots, or a missing `START_SLOT`; unknown or wrong-length `kinds` → the seed's layout; negative grants → 0; `elev` or `ground` on water → 0; a lease on an unowned or wrong district → dropped.
-5. A v5 save, or a v4 save whose `size` is not 192, is left untouched and blocks autosave (EXPANSION §2.5 rule with versions bumped); a v4 save is never run through `upgradeSave`; a dev save with `scale: 10` is not multiplied again; `previousSaveInfo` shows ×10 numbers for a v3 backup.
-6. `World.generate(seed)`'s start slot equals today's `generateTerrain` output for 30 seeds.
+3. A v4 round trip, on both regions, keeps `region`, owned slots, their order, `kinds` and `variants`, grants, `bought`, `annexedAt` (length region², by SlotId), the lease, `epilogueSec`, `goalsDone`, `ruinsRestored`, `elev`, `ground`, `sponsor`, `look`, `reclaim`, `endingHistory` and `callbacks`; locked slots regenerate identically; the 9-district fixture with tiers and ground serializes ≤ 260 KB and the 25-district one ≤ 600 KB.
+4. Corrupt input never throws except "Incompatible save" for a bad tile block, a block count mismatch, duplicate or out-of-range slots (≥ region²), or a missing `startSlot(region)`; unknown or wrong-length `kinds` → the seed's layout; negative grants → 0; `elev` or `ground` on water → 0; a lease on an unowned or wrong district → dropped.
+5. A v5 save, or a v4 save whose `region` is not 3 or 5 or whose `size` is not 64 × `region`, is left untouched and blocks autosave (EXPANSION §2.5 rule with versions bumped); a v4 save is never run through `upgradeSave`; a dev save with `scale: 10` is not multiplied again; `previousSaveInfo` shows ×10 numbers for a v3 backup.
+6. `World.generate(seed, …, region)`'s start slot equals today's `generateTerrain` output for 30 seeds, on both regions (so the two regions share the start map), and a 5×5 region's ring 1 equals the 3×3 region's for the same seed.
 7. Every mutator, called in random order with random annexes, keeps the §3.2 invariants; nothing can be built, zoned, railed, skywayed, bridged, turfed or reclaimed on a locked tile.
-8. Layout (§3.6.2) over 200 seeds: every kind once, the Shoals across the bay, land shares in range, every slot ≥ 35% land in one component.
+8. Layout (§3.6.2) over 200 seeds per region: on 3×3 every kind once; on 5×5 the quotas, the Sunk once in ring 1, Shoals straight across the bay in rings 1 and 2; on both, land shares in range and every slot ≥ 35% land in one component.
 9. **Field identity on slot 4:** a pinned v3 fixture loaded in v4, then `recomputeAll`, gives every field on the start slot (pollution, neighbourhood, land value, crime, coverage, traffic, terrain value) equal to the v3 build's within 1e-6 (the O1 boundary rule and `artXY` noise).
 10. **Look 0:** the v3 fixture's Spires, crowns, faction buildings, Arcology, reactors and Stratablocks resolve to today's art recipes after loading (§6.2).
 11. **Ids:** every model id family (zones, lots, kit, services, sky, bridges) is disjoint; the sprite key of the largest id stays below 2⁵³; the frame-size assertion of §3.1 holds.
-12. **Annex determinism:** the same seed and the same annex order give an identical world (tiles, buildings, rng state).
+12. **Annex determinism:** the same seed and the same annex order give an identical world (tiles, buildings, rng state), on both regions.
+13. **Frame per world** (`frame.test.ts`): `MAP_SIZE` is not exported; no module-scope typed array is sized from a frame constant (a source scan); a 3×3 and a 5×5 World + Simulation built side by side (the Showcase case) step without touching each other's arrays; `SimGrid`'s index lists are 32-bit; `MAX_MAP_SIZE ** 2 < 2 ** 31`.
+14. **Storage** (`storage.test.ts`, a fake `localStorage` with a quota): the main save is plain JSON at both sizes; a save over 300 K characters gets an envelope mirror, a smaller one a plain mirror; `.prev` is written plain and synchronously before the main save is replaced and becomes an envelope in the idle callback when `CompressionStream` exists; while `saveBlocked`, New City, Restore, Import and Grow never write `.prev`; a failed `.prev` write (after the drops) changes nothing and offers Export and Replace without a copy; **kept newer city:** a stale-v3 New City simulated over a v4 city (the v3 `newCity` path run against the stored keys) leaves the v4 city only in `.future`, the v4 boot offers it, Restore brings it back, the replaced city goes to `.prev` and `.future` is removed only after the save; a `.future` this build can't read is never offered; `story.pace` is applied on Continue and Restore; an envelope round-trips exactly; today's v3 `restoreMirror` and `isFutureSave` (copied verbatim into a test helper by Step 0b before it edits `game.ts`) treat an envelope as a newer save and keep it; boot unpacks an envelope found in `SAVE_KEY`; on quota failure `.stale`, `.unreadable` and `.mirror` go in that order and `.prev`, `.future`, `.v2`, `.v3` never do; the "storage is full" toast offers Export; without `CompressionStream` everything is plain and a big save gets no mirror.
+15. **Device default** (`device.test.ts`, stubbed `matchMedia` / `navigator` / `screen`): a phone, a tablet, an iPad with a trackpad and an Android tablet with a mouse are handheld and default to 3; a 4-core desktop, a touchscreen laptop and a Chromebook are PCs and default to 5; 2 cores, 2 GB or a bench factor of 2.5 default to 3; a mouse connected or removed mid-session (the `matchMedia` stub flips) changes neither the class nor `game.lowerDetail`; the first 5×5 load writes `settings.lowerDetail` once from the class and a player's value always wins; `game.lowerDetail` is false on every 3×3 city; the micro-benchmark returns null with a 16 ms timer and a factor within 5% of the truth with a 1 ms one.
+16. **Growing** (`save-v4.test.ts`): §3.11's growth tests.
+17. **Same terrain on every engine** (`terrain-golden.test.ts`): a hash of `World.generate` and `assignKinds` for 5 seeds per region equals a pinned value in Node; the same page runs in Playwright Chromium (installed in the dev container) and, where `npx playwright install webkit firefox` succeeds, in WebKit and Firefox (§3.6.1). No district generator calls `Math.sin`, `cos`, `exp` or `pow` (a source scan).
 
 ### 11.3 Balance targets
 
@@ -1704,16 +2084,17 @@ Measured headless (§11.4); Step 9 tunes only the megacity tables in config.ts a
 | S2 | v4 `ScriptedMayor` 8 years against its v3 run (after the density pass) | population ×10 within −5% / +25% (the denser jobs free land for homes); funds trajectory within −5% / +25%; chapter starts in the story harness within ±30 d on every pace |
 | S3 | Existing balance, playthrough and expansion-balance tests (expectations ×10, density-adjusted where they count jobs) | pass |
 | S4 | **Density pass.** A demand-led mayor (zones whichever of Hab, Market, Fab has the highest demand) on one district, 12 sim years | at zero unemployment (≤ 5%), land developed as Hab 55–65%, Market 15–25%, Fab 15–25%; avgTraffic within +0.03 of S2's; Balance of Power within ±2 points of S2's; every megastructure houses or employs ≥ 1.5× the heads of its footprint in L3 zone tiles (§4.2) |
-| D1 | **MegaMayor** with PACING.md's harness (0.5 s a sim day, Relaxed pace, the reading-time model; annexes whenever a grant waits, candidates in a fixed kind order, grows each new slot with the `ScriptedMayor` grid), run to Charter Night and 60 unpaused minutes past it, 3 seeds, plus a speed-3 variant | districts owned at each chapter start: Ch2 ≥ 2, Ch3 ≥ 3, Ch4 ≥ 4, Ch5 ≥ 5, Charter Night ≥ 6 (7 after the ending's grant), 9 by 60 min after it; residents at Charter Night 1.0–3.0 M; net income positive every year; approval within ±5 of the one-district mayor; **no stall**: owned land is never ≥ 85% developed for more than 10 unpaused minutes while no grant waits and (after the ending) no purchase is affordable. The 7-district net income at Charter Night sets `DISTRICT_PRICES[7..8]` (§3.2). |
+| D1 | **MegaMayor** with PACING.md's harness (0.5 s a sim day, Relaxed pace, the reading-time model; annexes whenever a grant waits, candidates in a fixed kind order, grows each new slot with the `ScriptedMayor` grid), run to Charter Night and 60 unpaused minutes past it, 3 seeds, plus a speed-3 variant | districts owned at each chapter start: Ch2 ≥ 2, Ch3 ≥ 3, Ch4 ≥ 4, Ch5 ≥ 5, Charter Night ≥ 6 (7 after the ending's grant), 9 by 60 min after it; residents at Charter Night 1.0–3.0 M; net income positive every year; approval within ±5 of the one-district mayor; **no stall**: owned land is never ≥ 85% developed for more than 10 unpaused minutes while no grant waits and (after the ending) no purchase is affordable. The 7-district net income at Charter Night sets `DISTRICT_PRICE_STEP` (§3.2), checked against D1-5. |
+| D1-5 | **MegaMayor on a 5×5 region**, the same harness and seeds, run to Charter Night and **4 unpaused hours** past it (MEASURE only; the regular suite runs 30 minutes past it on one seed), once never buying and once buying whenever a purchase is affordable | before Charter Night the same counts as D1 (grants are the same); without buying, 25 districts ≤ 3 h 40 min after the ending on Relaxed; buying, each purchase costs 8–12 unpaused minutes of the city's net income at that size (checked at 7, 12, 18 and 24 owned, which sets and confirms `DISTRICT_PRICE_STEP`); **no stall** as D1; residents with 25 districts 8–14 M and Electric Tide (6 M) and Glass Horizon (8 M) reached; **the longest stretch after the ending without a new district, a district goal completed or a milestone ≤ 30 unpaused minutes** (reported per run); net income positive every year; Balance of Power within ±5 of D1's at Charter Night (the repeat reactions keep 24 annexes from swinging the factions) |
 | D2 | Each perk (unit tests) | Shoals bridges ×0.6 price; Sunk ruins recover ≥ 1.8× as often as abandoned tiles elsewhere; **ruins: ≥ 90% still stand after 2 sim years untouched**, never counted in `abandoned`, the advisor's abandoned line and the "Dark lots" driver ignore them; Kessel Fab zoning ×0.5 and its demand add stops at 400 Fab tiles; Terraces +0.035 land value per step; an unbuilt reed tile reads park ≥ 0.45; the Tarmac lease adds 2,000 jobs of demand; 100 Bazaar Market tiles → 6,000 visitors; Seaport and Airport limits follow `PORT_LIMITS` |
 | D3 | Hazards stay mild | no hazard abandons a building; king tides and the floodplain cap vanish under a Floodwatch; brownfield clears ≤ 720 d after development |
-| D4 | No softlock | the playthrough test with annexing disabled reaches Charter Night and an ending on every pace; the Sunk is never annexable before `ch4.brine` on any pace (pace test) |
+| D4 | No softlock | the playthrough test with annexing disabled reaches Charter Night and an ending on every pace; the Sunk is never annexable before `ch4.brine` on any pace and either region (pace test) |
 | D5 | A new district grows | the first `ScriptedMayor` block in a just-annexed slot develops within 60 d of getting road and power |
-| D6 | District goals | every goal is reachable in its district by the MegaMayor or a scripted builder within 10 sim years; each pays once and posts one line |
+| D6 | District goals | every goal of every kind and every variant (with its `once` and `skipGoals` rules) is reachable in its district, on that variant's terrain preset, by the MegaMayor or a scripted builder within 10 sim years; each pays once and posts one line; a goal completed after the ending pays `GOAL_LATE_SHARE × districtPrice(owned)` when that is more |
 | K1 | Sky Lobby payoff (fixture: 2–6 L3 towers in a row, bridged) | trips −20% at k = 2, −25% at k ≥ 3; land value at the anchors +0.05 (+0.02 × min(k, 4) in a lobby); visitors 1,000 × (k − 2), ≤ 6,000 per lobby and ≤ 30,000 city-wide; the Halo Lookout unlocks at k = 5; a 2×2 parcel counts once |
 | K2 | Skybridge placement on a **dense downtown fixture** (a 16×16 block of mixed L2 and L3 Hab and Market, parcels on, plus an aligned row) | every green partner builds; every red reason ≤ 32 chars; no L2 tile ever blocks a bridge between L3 anchors; no parcel blocks itself; a two-bridge route exists for ≥ 80% of non-aligned tall pairs within 10 tiles |
-| V1 | Variety | adjacent-identical rate ≤ 3%; no body over 15% of its cell on screen; no identical body within r = 2; ≥ 6 bodies per single cell and ≥ 4 per pair and quad cell (matrix test); style silhouettes ≥ 25% of their district; distinct bodies at zoom 1 ≤ 260; paint rate ≤ 1.5× v3 |
-| P1 | Performance | §11.1 with the megacity fixture, p95 and max included |
+| V1 | Variety | adjacent-identical rate ≤ 3%; no body over 15% of its cell on screen; no identical body within r = 2; ≥ 6 bodies per single cell and ≥ 4 per pair and quad cell (matrix test); style silhouettes ≥ 25% of their district; distinct bodies at zoom 1 ≤ 260; paint rate ≤ 1.5× v3; the **desktop rows** of §6.1 (1920×1080 DPR 1 and 1440×900 DPR 2, at `streetMinZoom` and in the skyline view): sprite MB within the PC cache, ≤ 30 fallback frames after a pan, paint p95 within the PC paint budget |
+| P1 | Performance | §11.1 with the megacity fixture at 1, 9 and 25 districts, p95 and max included, and the largest unit ≤ 1.5 ms in Node at 25; the 5×5 lower-detail run at its capped speed; with `sim.sleep = 'forced'`, taxes and census equal the awake run and residents after 2 sim years are within 5% of `'off'`; the PC frame rate at 1920×1080 DPR 1 and 1440×900 DPR 2 |
 | R1 | Render passes | a canvas-mock speed-3 growth run counts whole-map passes per frame: ≤ 1 per 250 ms |
 | E1 | City life | 3–7 per unpaused hour; none in the first 600 s; never two at once; exactly one ticker line each; gameplay terms last ≤ 60 sim days at any speed |
 | L1 | Choices that last | §9.6's tests |
@@ -1722,90 +2103,107 @@ Measured headless (§11.4); Step 9 tunes only the megacity tables in config.ts a
 
 `tests/megacity-measure.test.ts` (Step 9), skipped unless `MEASURE=1`, seeds 2091, 7, 31, one printed table per scenario:
 
-- **M1** S1 invariance from the pinned v3 fixtures. **M2** MegaMayor with the PACING harness to Charter Night + 60 min (D1, D5, D6), and the demand-led mayor (S4). **M3** `megacityFixture(n)` for n = 1, 3, 5, 9 fully built slots: whole-day `step`, the per-frame sim work of a speed-3 run (sliced), the month-end frame, the autosave frame, `recomputeAround` over 100 random actions, `recomputeAll`, `Game.restore`, save size (P1), printing **p50, p95 and max** per measure (best-of-8 means only alongside). **M4** Sky Lobby payoff and placement (K1, K2). **M5** perks and hazards (D2, D3). **M6** City life on a fake clock (E1). **M7** render counts with `tests/canvas-mock.ts`: distinct body ids per frame in a scripted pan over the fixture at zoom 1, 0.55 and 0.4, painted sprites per second, adjacent-identical rate, sprites in the skyline view, whole-map passes per frame (V1, R1).
-- **Fixture and mayors** in new `tests/megacity-fixture.ts` (WP-1, extended by Step 9; `tests/helpers.ts` gains only the frame port of Step 0b): `megacityFixture(world, n)` owns and fills n slots with World mutators only (so WP-1 does not depend on WP-2's tools); `MegaMayor` wraps `ScriptedMayor` with `annex` and per-slot origins.
-- The scratch scripts of Appendix D are the starting point; M3 reproduces §2.2–§2.6 inside the test suite.
+- **M1** S1 invariance from the pinned v3 fixtures. **M2** MegaMayor with the PACING harness to Charter Night + 60 min (D1, D5, D6), its 5×5 run to Charter Night + 4 h (D1-5), and the demand-led mayor (S4). **M3** `megacityFixture(n)` for n = 1, 3, 5, 9 fully built slots on a 3×3 region and n = 1, 9, 25 on a 5×5, the 25 also with `sim.sleep` `'auto'` and `'forced'`: whole-day `step`, the per-frame sim work of a speed-3 run (sliced), the month-end frame, the autosave frame, `recomputeAround` over 100 random actions, `recomputeAll`, `Game.restore`, save size (P1), printing **p50, p95 and max** per measure (best-of-8 means only alongside). **M4** Sky Lobby payoff and placement (K1, K2). **M5** perks and hazards (D2, D3). **M6** City life on a fake clock (E1). **M7** render counts with `tests/canvas-mock.ts`: distinct body ids per frame in a scripted pan over the fixture at zoom 1, 0.55 and 0.4, painted sprites per second, adjacent-identical rate, sprites in the skyline view, whole-map passes per frame (V1, R1), on a 390×844 viewport and on the desktop rows (1920×1080 at DPR 1, 1440×900 at DPR 2: the street-view tile cap of §3.9, sprite MB, fallback frames after a pan).
+- **Fixture and mayors** in new `tests/megacity-fixture.ts` (WP-1, extended by Step 9; `tests/helpers.ts` gains only the frame port of Step 0b): `megacityFixture(world, n)` owns and fills n slots (centre first, then rings) of a world of either region with World mutators only (so WP-1 does not depend on WP-2's tools); `MegaMayor` wraps `ScriptedMayor` with `annex`, per-slot origins and an optional buyer.
+- The scratch scripts of Appendix D are the starting point; M3 reproduces §2.2–§2.6 and §2.8 inside the test suite.
 
 ### 11.5 Tests by package
 
 | Package | New tests | Updated |
 |---|---|---|
 | Step 0a | `megacity-scale.test.ts` (S1 at the part-1 commit, then its static half; the threshold and per-tile-term lints), pinned `tests/fixtures/v3-*.json` | every population expectation (balance, budget, growth, story harness and playthrough, expansion balance), density-adjusted job expectations, the "Fab Yards" strings |
-| Step 0b | `save-v4.test.ts`, `districts-contract.test.ts` (§11.2), `parcels-contract.test.ts` (the merge rule as a pure function), `heights.test.ts` (`CLASSIC_TOPS` equals the art, bounds) | **the 32 test files** that match the size grep (`64`, `63`, `4096`, `MAP_SIZE`, `N - 1`): actions-ports, actions-roads, actions-story, building-art, expansion-contract, expansion-fixture, expansion-measure, fields, fuzz, helpers, input-gestures, perf, port-fx, ports-sim, render-ground, render-roads, roads, save-v3, save, sim-roads, start-screen, story/conditions, story/content-lint, story/contract, story/effects, story/expansion-cards, story/format-vs, story/mods, story/pace, turf, vertical, wealth. Some mean "the map edge" by `N − 1` (e.g. `expansion-fixture.ts` digs its bay with `clearRect(w, 0, 60, N−1, N−1)`, which at 192 lands in a locked slot), so each is reviewed, not rewritten blindly. New helpers: `sx(x)` / `sy(y)` (slot-local → world for slot 4), `flatWorld()` owns all 9 slots, `startWorld()` owns only slot 4, `fullyBuiltWorld()` builds in slot 4; shared fixtures are cached per file (a World + Simulation costs ≈ 35 ms at 192 vs 5 ms at 64), and the suite's wall time is budgeted at ≤ 1.5× today's. `story/contract.test.ts` (SAVE_VERSION 4); `perf.test.ts` temporary budgets |
-| WP-1 | `sim-districts.test.ts`; `power-equivalence.test.ts` (O2 on 50 random cities with disconnected consumers, zero-supply components and brownouts); `coverage-cache.test.ts` (O3: toggling every input matches an uncached pass); `recompute-around.test.ts` (on a freshly recomputed world, after an action, fields inside `rect ⊕ (12 − the largest stencil radius)` equal `recomputeAll`'s within 1e-6, traffic-derived pollution beyond the window not compared, and stats match); `turf-scale.test.ts` (O6's banded turf equals the full-map turf after the month on 20 random cities); `slice.test.ts` (a sliced day equals a whole `step()` exactly; stats publish only at slice C); `ruins.test.ts`; `megacity-fixture.ts` | `perf.test.ts` (§11.1 restored with p95 / max, megacity fixture), `fields`, `growth`, `budget` |
-| WP-2 | `districts-terrain.test.ts`, `annex.test.ts` (determinism, batching: one `tiles` event per annex), `actions-districts.test.ts`, `skybridge-v2.test.ts` (K2 dense fixture, parcels as one anchor, the height rule's guarantees), `goals.test.ts`, `game-megacity.test.ts` (annex, buy, grants, the epilogue clock stub, lease, undo of bridges, frame finish, the frame cap and backlog with a fake clock, autosave never in a slice frame) | `vertical.test.ts`, `actions.test.ts`, `fuzz.test.ts` (new tools), `story/conditions.test.ts` (power terms) |
-| WP-3 | `render-districts.test.ts` (fog, pins only with a grant, overview, the City map snap, minZoom, the skyline view's sprite cap, the district label), `render-passes.test.ts` (R1), parcel draw order | `render-ground.test.ts`, `render-roads.test.ts` |
+| Step 0b | `save-v4.test.ts` (growing included), `districts-contract.test.ts`, `frame.test.ts`, `storage.test.ts`, `device.test.ts`, `terrain-golden.test.ts` (§11.2), `parcels-contract.test.ts` (the merge rule as a pure function), `heights.test.ts` (`CLASSIC_TOPS` equals the art, bounds) | **the 32 test files** that match the size grep (`64`, `63`, `4096`, `MAP_SIZE`, `N - 1`): actions-ports, actions-roads, actions-story, building-art, expansion-contract, expansion-fixture, expansion-measure, fields, fuzz, helpers, input-gestures, perf, port-fx, ports-sim, render-ground, render-roads, roads, save-v3, save, sim-roads, start-screen, story/conditions, story/content-lint, story/contract, story/effects, story/expansion-cards, story/format-vs, story/mods, story/pace, turf, vertical, wealth. Some mean "the map edge" by `N − 1` (e.g. `expansion-fixture.ts` digs its bay with `clearRect(w, 0, 60, N−1, N−1)`, which at 192 lands in a locked slot), so each is reviewed, not rewritten blindly. New helpers, each taking `region = 3`: `sx(x)` / `sy(y)` (slot-local → world for the start slot), `flatWorld(region)` owns every slot, `startWorld(region)` owns only the start slot, `fullyBuiltWorld(region)` builds in the start slot; shared fixtures are cached per file (a World + Simulation costs ≈ 35 ms at 192 vs 5 ms at 64, and ≈ 100–160 ms at 320, so 5×5 worlds appear only in the contract, save, layout and perf files), and the suite's wall time is budgeted at ≤ 1.5× today's. `story/contract.test.ts` (SAVE_VERSION 4); `perf.test.ts` temporary budgets |
+| WP-1 | `sim-districts.test.ts`; `power-equivalence.test.ts` (O2 on 50 random cities with disconnected consumers, zero-supply components and brownouts); `coverage-cache.test.ts` (O3: toggling every input matches an uncached pass); `recompute-around.test.ts` (on a freshly recomputed world, after an action, fields inside `rect ⊕ (12 − the largest stencil radius)` equal `recomputeAll`'s within 1e-6, traffic-derived pollution beyond the window not compared, and stats match); `turf-scale.test.ts` (O6's banded turf equals the full-map turf after the month on 20 random cities); `slice.test.ts` (a sliced day equals a whole `step()` exactly, with units stopped at random band boundaries; stats publish only when C2 completes; the largest unit ≤ 1.5 ms in Node on the 25-district fixture; a power relabel and a field pass resumed across frames equal the whole pass); `sleep.test.ts` (O8: wake equivalence, taxes and census unchanged, `'forced'` keeps the camera ring awake, cadence 4 and 8, growth never throttled: residents after 2 sim years within 5% of `'off'`, no field cycle above 1.2× the mean); `ruins.test.ts`; `megacity-fixture.ts` (both regions) | `perf.test.ts` (§11.1 restored with p95 / max, megacity fixture), `fields`, `growth`, `budget` |
+| WP-2 | `districts-terrain.test.ts`, `annex.test.ts` (determinism, batching: one `tiles` event per annex), `actions-districts.test.ts`, `skybridge-v2.test.ts` (K2 dense fixture, parcels as one anchor, the height rule's guarantees), `goals.test.ts`, `game-megacity.test.ts` (annex, buy at `districtPrice`, grants, the epilogue clock stub at both cadences, lease only on variant 0, repeat reactions, `once` goals only on variant 0, variant goals, the late goal pay, the "region is whole" banner once, undo of bridges, frame finish, the frame cap by device class and the unit estimates with a fake clock, the backlog, autosave never in a slice frame, `'auto'` sleep on strain and off after 60 s, the lower-detail speed cap on every speed and the autosave interval) | `vertical.test.ts`, `actions.test.ts`, `fuzz.test.ts` (new tools), `story/conditions.test.ts` (power terms) |
+| WP-3 | `render-districts.test.ts` (fog, pins only with a grant and at most 4, overview, the City map snap through `snapToMap` / `snapFromMap`, minZoom, `streetMinZoom` at 390×844 / 1280×800 / 1920×1080, the skyline view's sprite cap per pointer, the atlas scale and budget for 9 and 25 slots, `setInsets`, the district label, lower-detail render levers, the PC sprite cache and paint budget by canvas size), `render-passes.test.ts` (R1 at both regions), parcel draw order | `render-ground.test.ts`, `render-roads.test.ts` |
 | WP-4 | `building-variety.test.ts` (every kit body × style × tier × parcel × seed paints; the eligibility matrix floors; every new building, look and ending landmark; height bounds; V1 counts) | `building-art.test.ts` (look 0 equals today's recipes) |
-| WP-5 | `citymap.test.ts` (model: states, price lines, sticky footer, lease gating, confirm, goals list), `ui-catalogue` (chips, metas, icons, the Legacy chip) | `input-gestures.test.ts` (silhouette first tap, badges, tube pick, pins) |
-| WP-6 | `city-events.test.ts` (E1, fake clock, the per-sim-day cap), `life-fx.test.ts` (caps, LOD, settings) | `port-fx.test.ts` if traffic kinds shift |
-| WP-7 | — | `story/content-lint.test.ts` (+11 cards, the universal spoiler scan, the pre-`ch4.drain` scan, lobby lines, the naming lint, glossary cap 22), `story/expansion-cards.test.ts`-style drawability for the 11 cards |
+| WP-5 | `citymap.test.ts` (model: states, price lines, sticky footer, lease gating, confirm, goals list; 5×5: the chip row, diamond hit-test, 2× zoom), `region-picker.test.ts` (default by device, the Recommended tag, the phone warning, remembered choice, `newCity` gets the region, the waiting map kept only for the same region), `ui-catalogue` (chips, metas, icons, the Legacy chip, the Lower detail and City settings rows) | `input-gestures.test.ts` (silhouette first tap, badges, tube pick, pins) |
+| WP-6 | `city-events.test.ts` (E1, fake clock, the per-sim-day cap), `life-fx.test.ts` (caps, LOD, settings, lower detail) | `port-fx.test.ts` if traffic kinds shift |
+| WP-7 | — | `story/content-lint.test.ts` (+11 cards, the universal spoiler scan, the pre-`ch4.drain` scan, lobby lines including the two variant lines, the naming lint over the 16 variant names and their neighbourhood lists, glossary cap 22), `story/expansion-cards.test.ts`-style drawability for the 11 cards |
 | WP-8 | `lasting-choices.test.ts`, `story/lasting-lint.test.ts` (§9.6) | `story/director` tests for the review paragraph |
+| WP-9 | `transfer.test.ts` (§13.8), `grow.test.ts` (`Game.growRegion`: confirm copy, `.prev` written first, disabled while blocked, lower-detail note on a handheld, camera kept, news line), `desktop-ui.test.ts` (§14.5: side panels, insets, dock and rail placement at 1024×768, 1280×800, 1440×900, 1920×1080, and the phone layout unchanged), `tooltip.test.ts` (delay, content, never on touch, never while dragging), `shortcuts.test.ts` (every key of §14.3 on US, AZERTY and QWERTZ layouts: `?` never zooms or opens the City map, Ctrl / Cmd+Z undoes on all three; the ? sheet lists exactly the bound keys; hints only on the desktop layout or after a hardware key press, never after a virtual-keyboard keydown with `key` 'Unidentified' or in a text field) | `input-gestures.test.ts` (hover pick; the wheel snap only on a new gesture past 240 px), `ui-catalogue` (menu rows, help step 17, the Grow buttons, the kept-city title row) |
 
 ### 11.6 Measured
 
-*(Filled in by Step 9: the final §11.3 table, the on-device frame and speed-3 numbers with p95 and max, the measured phone factor from Step 0b, and whether O8 was needed.)*
+*(Filled in by Step 9: the final §11.3 table, the frame and speed-3 numbers with p95 and max, the phone and PC factors and the micro-benchmark correlation, whether 3×3 cities needed O8, the lower-detail top speed chosen, the `localStorage` quotas and `setItem` times, the desktop frame rates at 1280×800, 1440×900 and 1920×1080, and the cross-engine terrain hashes. Every number says how it was measured: **automated** (Node, Playwright Chromium in the dev container, or WebKit and Firefox where they could be installed), **proxy** (Chrome with 4× CPU throttling for the phone, the container's headless Chrome for the PC) or **owner-measured** (a real device). An agent never marks an owner row passed.)*
+
+**Owner checklist** (Step 9 writes it out with the build's links; the owner runs it and signs off each row; an unchecked row stays open in this section, it is not waived):
+
+| # | Device | Steps | Expected |
+|---|---|---|---|
+| 1 | Mid-range phone (Android Chrome) | open `bench.html`, run all | phone factor, sliced p95 / max at 9 districts and in lower detail at 25, `setItem` of 260 K and 600 K, quota: recorded here |
+| 2 | Laptop (Chrome, then Safari or Firefox) | open `bench.html`, run all | PC factor and micro-benchmark correlation within ±30% |
+| 3 | iPhone, Safari tab | build a few roads, Menu › Export city › Share… › Save to Files | the share sheet opens; a `.cybercity.txt` file lands in Files |
+| 4 | iPhone, Home Screen app | Menu › Import city › Choose file… › that file | the preview shows the city; Replace; the city plays; the replaced city is in Previous city |
+| 5 | Android Chrome, installed app | Export › Share… and Download; Import the downloaded file | both work; the file opens in the picker |
+| 6 | Laptop | Export › Download; copy the file to the phone; Import there | the 5×5 city opens in lower detail with the one-time notice |
+| 7 | Phone | Export a 3×3 city; Import on the laptop; Settings › Grow to 25 districts | 16 fog districts appear; everything built is unchanged; Previous city holds the 3×3 copy |
+| 8 | Laptop, 1920×1080 and a Retina 1440×900 | play a 25-district city at speed 3 for a minute; pan across districts | ≥ 50 fps; no blank bodies for more than half a second after a pan |
+| 9 | Any | the artifact (single-file) build in claude.ai | Export › Copy as text, Import › Paste text round-trips |
 
 ---
 
 ## 12. Work packages
 
-**Rules.** Step 0a, then Step 0b, land first, one agent each, alone. Then **at most two agents run at once**, in the waves below. Each package owns the files listed and edits nothing else; a change needed in another package's file goes into its hand-off note for Step 9. After Step 0b these are frozen: `types.ts`, `world.ts`, `events.ts`, `buildingStats.ts`, `districts/slots.ts`, `districts/migrate.ts`, `districts/layout.ts`, `story/types.ts`, the `TileInfo` shape, `src/game/parcels.ts` (rules and interface), `src/game/heights.ts` (interface and bounds; WP-4 may only regenerate `CLASSIC_TOPS`), `src/game/marks.ts` (interface), the service model id scheme, `elevOffset(world, x, y)` (returns 0), the parcel-aware draw call `drawZone(ctx, tile, parcel, env)`, `drawSkybridgeSpan(ctx, span, skin, env)`, the `makeLayers` / `makeLayerParts` additions in `story/mods.ts` (`parkAdd`, `pollutionAdd`, the `district` part), `Simulation.stepSlice`, the `marks.draw` call site in `render/story.ts` and the `EPILOGUE_DECK` spread. `config.ts` belongs to WP-1 (numbers only, no renames) during the waves and to Step 9 after. Every package ends with `npm run typecheck` and `npm test` green.
+**Rules.** Step 0a, then Step 0b, land first, one agent each, alone. Then **at most two agents run at once**, in the waves below (Wave 5 has one). Each package owns the files listed and edits nothing else; a change needed in another package's file goes into its hand-off note for Step 9. After Step 0b these are frozen: `types.ts`, `world.ts`, `events.ts`, `buildingStats.ts`, `districts/slots.ts`, `districts/migrate.ts`, `districts/layout.ts`, `story/types.ts`, the `TileInfo` shape, `src/game/parcels.ts` (rules and interface), `src/game/heights.ts` (interface and bounds; WP-4 may only regenerate `CLASSIC_TOPS`), `src/game/marks.ts` (interface), the service model id scheme, `elevOffset(world, x, y)` (returns 0), the parcel-aware draw call `drawZone(ctx, tile, parcel, env)`, `drawSkybridgeSpan(ctx, span, skin, env)`, the `makeLayers` / `makeLayerParts` additions in `story/mods.ts` (`parkAdd`, `pollutionAdd`, the `district` part), `Simulation.stepSlice`, the `marks.draw` call site in `render/story.ts`, the `EPILOGUE_DECK` spread, the per-world frame (`world.region`, `world.N`, `world.area`, `scratchFor`), `src/game/device.ts` (interface), `src/game/saveStore.ts` (envelopes and the storage plan), `game.lowerDetail`, `Simulation.sleep` (its three modes), `Game.newCity(name, seed, region): void` (synchronous, as today's `found()` expects; §3.10's plain-first `.prev`), `camera.setInsets`, `reframe` and `upgradeRegion` in `districts/migrate.ts`, `validateSaveShape(data)` (the structural checks `deserialize` and Import share, §13.3), `deviceClass()`, the `SLICE` units and `story.pace`. `config.ts` belongs to WP-1 (numbers only, no renames) during the waves and to Step 9 after. Every package ends with `npm run typecheck` and `npm test` green.
 
 ### Step 0a · Scale (one agent)
 
-**Owns:** `src/game/config.ts` (§4 numbers, `POP_SCALE`, `CR_SCALE`, the density table, the megastructure premium, the "Fab Yards" name), `src/game/sim/tuning.ts`, `src/game/sim/census.ts` (the two demand floors only), `src/game/sim/advisor.ts` and `src/game/sim/incidents.ts` (thresholds, the payout slope and the "Fab Yards" strings only), `src/game/news.ts` (`minPop` / `maxPop`), `src/render/art/traffic.ts` and `src/render/art/skytraffic.ts` (one constant each), `src/game/story/content/chapters.ts`, `cards/undertow.ts`, `cards/nacre.ts`, `cards/board.ts` (thresholds and goal labels), `src/game/story/content/whispers.ts` and the note line in `story/director.ts` (the per-head crossing constant, §4.4), `content/factions.ts` (the two "Fab Yards" labels), `src/ui/tips.ts` (one string), `src/game/world.ts` (load: ×10 for saves without `scale`; write `scale: 10`). Tests: new `tests/megacity-scale.test.ts`; **first**, before any edit, generate and commit the pinned v3 fixtures `tests/fixtures/v3-expansion.json`, `v3-mayor-{2091,7,31}-y{3,8}.json`; then update every population expectation.
+**Owns:** `src/game/config.ts` (§4 numbers, `POP_SCALE`, `CR_SCALE`, the density table, the megastructure premium, the "Fab Yards" name), `src/game/sim/tuning.ts`, `src/game/sim/census.ts` (the two demand floors only), `src/game/sim/advisor.ts` and `src/game/sim/incidents.ts` (thresholds, the payout slope and the "Fab Yards" strings only), `src/game/news.ts` (`minPop` / `maxPop`), `src/render/art/traffic.ts` and `src/render/art/skytraffic.ts` (one constant each), `src/game/story/content/chapters.ts`, `cards/undertow.ts`, `cards/nacre.ts`, `cards/board.ts` (thresholds and goal labels), `src/game/story/content/whispers.ts` and the note line in `story/director.ts` (the per-head crossing constant, §4.4), `content/factions.ts` (the two "Fab Yards" labels), `src/ui/tips.ts` (one string), `src/ui/feedback.ts` and `src/ui/menu.ts` (one string each: the milestone "bonus", §0 Words; `advisor.ts`' line is in its row above), `src/game/world.ts` (load: ×10 for saves without `scale`; write `scale: 10`). Tests: new `tests/megacity-scale.test.ts`; **first**, before any edit, generate and commit the pinned v3 fixtures `tests/fixtures/v3-expansion.json`, `v3-mayor-{2091,7,31}-y{3,8}.json`; then update every population expectation.
 **Builds:** §4, in two commits: part 1 the units (S1 green at that commit), part 2 the density pass and megastructure premium (S4 measured, S2 and S3 green).
 **Acceptance:** S1 (part 1), S2, S3 and S4 (part 2); the story pace tests unchanged in timing.
 
-### Step 0b · World frame, districts contract, save v4, device check (one agent)
+### Step 0b · World frame, regions, districts contract, save v4, device check (one agent)
 
-**Owns:** `types.ts`, `config.ts` (§3.2 tables, `DISTRICTS` copy verbatim from §3.7 and §8.2, `DISTRICT_PRICES`, `ANNEX`, `RUINS`, `PORT_LIMITS`, `SKYBRIDGE` v2 numbers, new `BUILDINGS` rows with `meta`, `desc`, gates and `height` / `roof`, the ending landmark rows, `CROWNS` additions, `FACTION_BUILD_REACTIONS`, `POWER_WEIGHTS` keys, `TURF.affinity` keys, `EDGE_LINKS.perDistrict`, `CITY_LIFE`), `events.ts`, `world.ts` (frame, district state, slots, segments, batched `annex`, `setTerrain` (owned only), `setGround`, invariants, v4 serialize / deserialize with tile blocks, `cityEvent`, `conductorVersion`, `coverageVersion` and `terrainVersion` bumps), `buildingStats.ts` (new types; frames and the pump hall inert), new `src/game/parcels.ts`, `src/game/heights.ts` (with `CLASSIC_TOPS` generated from today's art), `src/game/marks.ts` (stub), `src/game/districts/slots.ts`, `migrate.ts`, `layout.ts` (§3.6.2 in full), `terrain.ts` (the start generator moved in bit-identically, plain-noise stubs for the kinds), in `sim.ts` only the `districtDaily` hook, a `stepSlice` that runs whole days and a `recomputeAround` that calls `recomputeAll`, in `census.ts` / `sim/ports.ts` only the `cityEvent` read sites; `story/types.ts` (metrics, `CrownId`, effect `grant`, the `slot:<kind>` target, gate fields including `ending`, `InspectAction` ids `'frame' | 'bridgeRemove' | 'map'`, `VerticalCache.lobbies` and `.lobbyVisitors`, `StoryState.endingHistory` and `.callbacks`, `VisualState.marks`), `story/encode.ts` (the two fields), `story/conditions.ts` and `content/vocab.ts` (metrics), `story/effects.ts` (`grant` only), `story/director.ts` (`onAnnex`, the ending's grant, `endingHistory` on `setEnding`), `story/content/chapters.ts` (`grant 1` in every reward), `story/content/cards/index.ts` (the empty `EPILOGUE_DECK` spread), `game.ts` (save safety: versions, `.v2` / `.v3` by source version, future-save rule; `annex` / `buyDistrict` stubs; the `cityEvents.update(dt)` call in `Game.update`), new `src/game/cityEvents.ts` (a no-op with the final signature, WP-6 fills it), placeholder art entries in `render/art/services.ts` (new types reuse existing recipes) and `render/overlay.ts` (`EFFECT_RGB` for `resilience`, `filter`), the **minimal render frame** (in `camera.ts`, `renderer.ts`, `ground.ts`: camera bounds of the owned box ± peek, `minZoom`, `fitMap` to the owned box, the sweep clipped to the owned box, the overview over the owned box), the frozen draw signatures (`drawZone` with a parcel, `drawSkybridgeSpan`, `marks.draw` → a no-op `art/marks.ts`), the service id scheme in `render/buildings.ts`, and the frame-size assertion. Tests: §11.2 and the frame port (§11.5).
-**Device check (before the frame is frozen):** run the 192 prototype benchmark (the scratch `opt192` bundle and the review's `frames.ts`, wrapped in a `bench.html` page) on the reference phone, or Chrome with 4× CPU throttling: whole-day step, sliced frame p95 and max, month-end frame, autosave frame including `localStorage.setItem` of a 240 KB string, `Game.restore`. Record the measured phone factor in §11.6. **If the factor exceeds 4.5 or the p95 day exceeds 12 ms on the device at 9 districts, O8 becomes a WP-1 item** (§3.3) before Wave 2.
+**Two parts, two commits.** **Part 1, the per-world frame** (§3.1): a pure refactor at today's size. `MAP_SIZE` is removed; every module that captured it (the 25 with `const N = MAP_SIZE`, the module-scope scratch of `actions.ts`, `roads.ts`, `skyway.ts`, `story/turf.ts`, `story/vertical.ts`, `story/effects.ts`, `story/encode.ts`, `story/mods.ts`, `story/state.ts`, `sim/growth.ts`, `render/art/skyway.ts`, `ui/grid.ts`, and the render and UI files that read it) takes the side from its world; `SimGrid`'s index lists are widened (`sim/grid.ts`). Every city is still 64×64 and every existing test is green at that commit. **Part 2** adds regions 3 and 5 and everything below. Part 1 touches files other packages own later; it lands before any of them start.
+
+**Owns:** `types.ts`, `config.ts` (§3.2 tables, `DISTRICTS` copy verbatim from §3.7 and §8.2 including the `variants` rows with their goals and the `once` marks, `districtPrice`, `GOAL_LATE_SHARE`, `ANNEX`, `REGION`, `SLEEP`, `SLICE`, `LOW_DETAIL`, `RUINS`, `PORT_LIMITS`, the `MILESTONES` rows with `region`, `SKYBRIDGE` v2 numbers, new `BUILDINGS` rows with `meta`, `desc`, gates and `height` / `roof`, the ending landmark rows, `CROWNS` additions, `FACTION_BUILD_REACTIONS`, `POWER_WEIGHTS` keys, `TURF.affinity` keys, `EDGE_LINKS.perDistrict`, `CITY_LIFE`), `events.ts`, `world.ts` (frame, district state, slots, segments, batched `annex`, `setTerrain` (owned only), `setGround`, invariants, v4 serialize / deserialize with tile blocks, `cityEvent`, `conductorVersion`, `coverageVersion` and `terrainVersion` bumps), `buildingStats.ts` (new types; frames and the pump hall inert), new `src/game/parcels.ts`, `src/game/heights.ts` (with `CLASSIC_TOPS` generated from today's art), `src/game/marks.ts` (stub), `src/game/districts/slots.ts`, `migrate.ts` (`upgradeSave`, `reframe`, `upgradeRegion`, §3.10, §3.11), `layout.ts` (§3.6.2 in full, both regions, ring 2 callable on its own for `upgradeRegion`), `terrain.ts` (the start generator moved in bit-identically, plain-noise stubs for the kinds and presets), `names.ts` (variant neighbourhood placeholders), new `src/game/device.ts` (§3.11: the profile, `deviceClass`, the micro-benchmark with its timer check), new `src/game/saveStore.ts` (§3.10's storage plan: envelopes, the mirror rule, eviction, `readStoredSave()`), in `sim.ts` only the `districtDaily` hook, a `stepSlice` that runs whole days, a `recomputeAround` that calls `recomputeAll` and a `sleep` field that does nothing yet, in `census.ts` / `sim/ports.ts` only the `cityEvent` read sites; `story/types.ts` (metrics, `CrownId`, effect `grant`, the `slot:<kind>` target, gate fields including `ending`, `InspectAction` ids `'frame' | 'bridgeRemove' | 'map'`, `VerticalCache.lobbies` and `.lobbyVisitors`, `StoryState.endingHistory`, `.callbacks` and `.pace`, `VisualState.marks`), `story/encode.ts` (the three fields: `endingHistory`, `callbacks`, `pace`), `story/conditions.ts` and `content/vocab.ts` (metrics), `story/effects.ts` (`grant` only), `story/director.ts` (`onAnnex`, the ending's grant, `endingHistory` on `setEnding`), `story/content/chapters.ts` (`grant 1` in every reward), `story/content/cards/index.ts` (the empty `EPILOGUE_DECK` spread), `game.ts` (save safety: versions, `.v2` / `.v3` by source version, the future-save rule with `region` and `size`, the storage plan through `saveStore.ts` with the plain-first `.prev` and its quota rule, no `.prev` while `saveBlocked`, the kept newer city (`keptCityInfo()`, `restoreKept()`, §3.10), `story.pace` applied on load; `newCity(name, seed, region)`; the `lowerDetail` getter and the load notice; `annex` / `buyDistrict` stubs; the `cityEvents.update(dt)` call in `Game.update`), `src/main.ts` (async boot through `readStoredSave()`, `looksLikeSave` for v4), new `src/game/cityEvents.ts` (a no-op with the final signature, WP-6 fills it), placeholder art entries in `render/art/services.ts` (new types reuse existing recipes) and `render/overlay.ts` (`EFFECT_RGB` for `resilience`, `filter`), the **minimal render frame** (in `camera.ts`, `renderer.ts`, `ground.ts`: camera bounds of the owned box ± peek, `minZoom`, `fitMap` to the owned box, the sweep clipped to the owned box, the overview over the owned box, `setInsets` stored and used by `fitBox` / `fitMap`), `ui/start/showcase.ts` (always a 3×3 world; today's release on leaving the title stays, with a test), `ui/start/startScreen.ts` (only `found()` passing a region: the device default until WP-5 adds the control), the frozen draw signatures (`drawZone` with a parcel, `drawSkybridgeSpan`, `marks.draw` → a no-op `art/marks.ts`), the service id scheme in `render/buildings.ts`, and the frame-size assertion. Tests: §11.2 and the frame port (§11.5).
+**Device check (before the frame is frozen):** run the prototype benchmarks (the scratch `opt192` and `opt320` bundles, the review's `frames.ts` and this revision's `/tmp/claude-megacity2/` scenarios at 192 and 320, wrapped in a `bench.html` page) on the reference phone (or Chrome with 4× CPU throttling) and on a reference PC (a mid-range 4-core laptop, Chrome plus Safari or Firefox): whole-day step, sliced frame p95 and max, month-end frame, autosave frame including `localStorage.setItem` of a 260 K and a 600 K string, `Game.restore`, the micro-benchmark of §3.11, and a `localStorage` quota probe on iOS Safari and Android Chrome. Record the phone and PC factors and the micro-benchmark's correlation in §11.6, each marked **proxy** (Chrome with 4× CPU throttling; the container's headless Chrome, ≈ Node by construction) until the owner runs `bench.html` on real devices (§11.6 checklist rows 1–2); Step 0b leaves those rows open rather than inventing device numbers. **If the phone factor exceeds 4.5 or the p95 day exceeds 12 ms on the phone at 9 districts, 3×3 cities on handheld devices run O8 `'auto'`** (§3.3); if the PC factor exceeds 2.0, `SLEEP.strainCapShare` drops to 0.6 and §3.11's 5×5 default requires the micro-benchmark.
 **Perf note:** until WP-1, a one-district world still pays the empty-area cost (§2.3); Step 0b raises `tests/perf.test.ts` to step < 5 ms and recompute < 15 ms with a comment naming WP-1, which restores §11.1.
-**Acceptance:** §11.2 green; a v3 city loads, plays and saves on the 192 frame and looks the same (start slot, names, props, camera, overview), because the minimal render frame lands here; a new city starts on the identical start map.
+**Acceptance:** §11.2 green; a v3 city loads, plays and saves on the 192 frame and looks the same (start slot, names, props, camera, overview), because the minimal render frame lands here; a new city starts on the identical start map on either region; a 5×5 city founds, saves, loads and plays (unoptimised: the perf note applies); a 3×3 save grown by `upgradeRegion` loads and plays as a 5×5 city with identical fields; boot with an envelope in `SAVE_KEY` restores the city; a kept `.future` city is offered back by `keptCityInfo()`.
 
 ### Wave 1 (two agents)
 
 #### WP-1 · Sim at scale
-**Owns:** `src/game/sim.ts`, `src/game/sim/*.ts`, `src/game/story/turf.ts`, `src/game/story/mods.ts`, `config.ts` (numbers). Tests per §11.5. **First:** prototype O6 in the scratch copy and confirm the month-end frame bar (§3.3).
-**Builds:** O1–O7 (O8 if Step 0b's trigger fired); tick slicing (`stepSlice`) and the spread month end; the district sim rules of §3.3 (layers `parkAdd` / `pollutionAdd`, floodplain cap, ruins, brownfield clearing, demand adds, the turf demand term per district, per-district census, `resilience` and `filter`, local terrain-value recompute on `terrain`, Seaport `shoreSites` refresh, the Metro network, Sky Lobby and landmark visitors in `PortSystem`, `cityEvent` terms, port limits); turf affinity terms for the Bazaar, frames and the Sunk; regional links on the boundary (§3.5) in `SimGrid`; `recomputeEconomy`.
-**Acceptance:** §11.1 sim and story budgets with p95 and max; the equivalence tests (power, coverage, slices, turf, recomputeAround, field identity); every existing sim, story and balance test green.
+**Owns:** `src/game/sim.ts`, `src/game/sim/*.ts`, `src/game/story/turf.ts`, `src/game/story/mods.ts`, `config.ts` (numbers). Tests per §11.5. **First:** prototype O6 in the scratch copy and confirm the month-end frame bar (§3.3); then port O2–O4 with §3.3's units to today's code at 320 (the old prototype measured 11.6–12.6 ms a day, §2.8) and confirm the ≈ 12 ms day, the largest unit ≤ 1.5 ms and the per-frame p95 before §11.1's 25-district rows are frozen. If the day exceeds 14 ms, 5×5 cities on a PC start with `sim.sleep = 'auto'` engaged and Step 9 re-baselines those rows.
+**Builds:** O1–O8 (O8 in every case now, with its `'auto'` and `'forced'` modes and both cadences, field rows only, §3.3); tick slicing (`stepSlice` with the units, row bands, back buffers and cost estimates of §3.3; power's banded sweep and resumable relabel) and the spread month end with `REGION[R].turfBands`; the district sim rules of §3.3 (layers `parkAdd` / `pollutionAdd`, floodplain cap, ruins, brownfield clearing, demand adds, the turf demand term per district, per-district census, `resilience` and `filter`, local terrain-value recompute on `terrain`, Seaport `shoreSites` refresh, the Metro network, Sky Lobby and landmark visitors in `PortSystem`, `cityEvent` terms, port limits); turf affinity terms for the Bazaar, frames and the Sunk; regional links on the boundary (§3.5) in `SimGrid`; `recomputeEconomy`.
+**Acceptance:** §11.1 sim and story budgets with p95 and max at 1, 9 and 25 districts; the equivalence tests (power, coverage, slices, turf, recomputeAround, field identity, sleep); every existing sim, story and balance test green.
 
 #### WP-2 · Districts gameplay, actions, Game and skybridge rules
-**Owns:** `src/game/districts/terrain.ts` (generators), `annex.ts` (content placement, batched, own Rng), `effects.ts` (district layer part, `clearBrownfield`, `clearRuins`, `drainReeds`, `apron`), `daily.ts` (Pump Houses, king tides), `goals.ts` (district goals); `src/game/actions.ts` (locked tiles, district costs, the new building rules: flat footprint, water and shore sites, district-bound and ending landmarks, the pump-hall radius, sponsor, frame finish, ruin restore pay); `src/game/game.ts` (annex, buy, grants, the epilogue grant clock, lease, `districtView()` for the City map, `getTileInfo` additions with parcels and heights, `inspectActions`, toast `'map'`, skybridge source / plan / apply with undo, the frame cap and backlog); `src/main.ts` (autosave off the month tick); `src/game/story/vertical.ts` (skybridge v2, partners, routes, lanes, payoff, Sky Lobbies, parcels as anchors, owned segments, the "dark" news line); `src/game/story/factions.ts` (power terms). Tests per §11.5.
-**Acceptance:** D2, D3, D5, D6, K1, K2; every rule of §3.4, §3.5, §5.3 and §6.3 has a test; the fuzz test is green with the new tools.
+**Owns:** `src/game/districts/terrain.ts` (generators and the 16 variant presets of §3.7), `annex.ts` (content placement per kind and variant, batched, own Rng keyed by `ringKey`), `effects.ts` (district layer part, `clearBrownfield`, `clearRuins`, `drainReeds`, `apron`), `daily.ts` (Pump Houses, king tides), `goals.ts` (district goals per district: the kind's, `once` on variant 0 only, `skipGoals`, the 16 variant goals, the late pay rule); `src/game/actions.ts` (locked tiles, district costs, the new building rules: flat footprint, water and shore sites, district-bound and ending landmarks, the pump-hall radius, sponsor, frame finish, ruin restore pay); `src/game/game.ts` (annex with the repeat reactions, buy at `districtPrice`, grants, the epilogue grant clock at `REGION[R].epilogueGrantMul`, lease on variant 0 only, `districtView()` for the City map with variants and the owned / region count, the frame guard (the cap by device class, §3.3) with its `'auto'` sleep, the lower-detail speed cap on every speed and its autosave interval (§3.11), the "region is whole" moment banner (§3.8), `getTileInfo` additions with parcels and heights, `inspectActions`, toast `'map'`, skybridge source / plan / apply with undo, the frame cap and backlog); `src/main.ts` (autosave off the month tick); `src/game/story/vertical.ts` (skybridge v2, partners, routes, lanes, payoff, Sky Lobbies, parcels as anchors, owned segments, the "dark" news line); `src/game/story/factions.ts` (power terms). Tests per §11.5.
+**Acceptance:** D2, D3, D5, D6, K1, K2 on both regions; every rule of §3.4, §3.5, §5.3 and §6.3 has a test; the fuzz test is green with the new tools; every variant preset passes the layout test's land and buildability bounds.
 
 ### Wave 2 (two agents)
 
-Interfaces fixed before the wave (Step 0b): `parcels.ts`, `heights.ts`, `drawZone(ctx, tile, parcel, env)`, `drawSkybridgeSpan(ctx, span, skin, env)`, `marks.ts`.
+Interfaces fixed before the wave (Step 0b): `parcels.ts`, `heights.ts`, `drawZone(ctx, tile, parcel, env)`, `drawSkybridgeSpan(ctx, span, skin, env)`, `marks.ts`, `camera.setInsets`, `game.lowerDetail`.
 
 #### WP-3 · World view
-**Owns:** `src/render/renderer.ts`, `ground.ts`, `camera.ts` (additive), `overlay.ts`, `src/render/story.ts`, new `src/render/atlas.ts`, `src/render/art/skyway.ts` (only for crossings), the boundary spawn rule in `src/render/art/traffic.ts` (that rule only, §3.5), `src/ui/start/showcase.ts` (release on close).
-**Builds:** §3.9 (fog, boundary line, pins, the three view bands and the City map snap, overview, atlas, sweep clip, district label, district ground character, Terraces contour shading and wall decals), **R0** (every whole-map render pass made incremental or clipped, with WP-6 taking `effects.ts`' `StreetTraffic` in Wave 3 under the same rule), the skybridge ghost tubes, see-through pass, badges, route ghost and crossing order (§5.4, §5.6 depth), parcel caching and sort keys.
-**Acceptance:** visual checks at 390×844, 360×640 and 844×390, day and night, zoom 0.22 / 0.3 / 0.4 / 1 / 2.5: fog and boundary readable, pins tappable, no seams at slot borders; **at zoom 0.3 by night, crowns, Spires and landmarks are identifiable**; the City map snap both ways; R1; the frame budget with the megacity fixture.
+**Owns:** `src/render/renderer.ts`, `ground.ts`, `camera.ts` (additive), `overlay.ts`, `src/render/story.ts`, new `src/render/atlas.ts`, `src/render/art/skyway.ts` (only for crossings), the boundary spawn rule in `src/render/art/traffic.ts` (that rule only, §3.5).
+**Builds:** §3.9 for both regions (fog, boundary line, pins and their cap, the three view bands with `streetMinZoom` by viewport and device class, the City map snap as `camera.snapToMap()` / `snapFromMap()` (WP-5 wires pinch, WP-9 the wheel), the PC sprite cache and paint budget (§3.9), overview, atlas with its scale rule, sweep clip, district label, district ground character, Terraces contour shading and wall decals, the camera insets, the lower-detail render levers), **R0** (every whole-map render pass made incremental or clipped, with WP-6 taking `effects.ts`' `StreetTraffic` in Wave 3 under the same rule), the skybridge ghost tubes, see-through pass, badges, route ghost and crossing order (§5.4, §5.6 depth), parcel caching and sort keys.
+**Acceptance:** visual checks at 390×844, 360×640 and 844×390, day and night, zoom 0.22 / 0.3 / 0.4 / 1 / 2.5: fog and boundary readable, pins tappable, no seams at slot borders; **at zoom 0.3 by night, crowns, Spires and landmarks are identifiable**; the City map snap both ways; a 5×5 region at 1280×800, 1440×900 and 1920×1080 at its `streetMinZoom` and at 0.22 within the PC frame budget; R1; the frame budget with the megacity fixture at 9 and 25 districts.
 
 #### WP-4 · Building art
 **Owns:** `src/render/buildings.ts`, `art/painter.ts`, `art/zones.ts`, `art/sprites.ts` (the cross-family fallback rule), new `art/kit.ts`, `art/styles.ts`, `art/faction.ts`, `art/landmarks.ts`, `art/legacy.ts`, `art/services.ts`, `art/story.ts`, `art/vertical.ts`.
-**Builds:** the kit, its eligibility matrix and styles with their own silhouettes (§6.1), service looks by style, parcel drawing, the generic fallback, the LOD collapse, faction languages with their designs, signatures, standing light and where they apply, look 0 = today's art (§6.2), art for every new type (§6.3) including the pump hall's looks, the five ending landmarks with past looks and the faction tower bodies (§9.2), the skybridge skins and walkers (§5.6), the height bounds.
-**Acceptance:** V1; every body and look renders in the sweep test; a migrated city keeps its palettes and today's Spires, crowns and faction buildings; Basalt, Nacre, Board, Undertow, Kites and Tuning designs are told apart in a side-by-side capture at zoom 0.5 by day and by night; the nine districts are told apart in a side-by-side capture at zoom 0.5 by day and by night; the per-style **contact sheets** are delivered for review before Wave 3.
+**Builds:** the kit, its eligibility matrix and styles with their own silhouettes (§6.1) and the variant accents (§3.7), service looks by style, parcel drawing, the generic fallback, the LOD collapse, faction languages with their designs, signatures, standing light and where they apply, look 0 = today's art (§6.2), art for every new type (§6.3) including the pump hall's looks, the five ending landmarks with past looks and the faction tower bodies (§9.2), the skybridge skins and walkers (§5.6), the height bounds.
+**Acceptance:** V1; every body and look renders in the sweep test; a migrated city keeps its palettes and today's Spires, crowns and faction buildings; Basalt, Nacre, Board, Undertow, Kites and Tuning designs are told apart in a side-by-side capture at zoom 0.5 by day and by night; the nine kinds are told apart in a side-by-side capture at zoom 0.5 by day and by night, and two variants of a kind by their accent; the per-style **contact sheets** are delivered for review before Wave 3.
 
 ### Wave 3 (two agents)
 
 #### WP-5 · UI, input and audio
 **Owns:** `src/ui/*` (new `ui/citymap.ts`), `src/input/*`, `src/audio/audio.ts`.
-**Builds:** §7 (chips including Legacy, rumoured cards, metas, City map and annex sheet with the sticky footer, vignette and goals, the map button rules, goal-chip token, the skybridge tool flow with the silhouette first tap, inspect additions, the Spire sponsor step and the crown look picker, settings including City life, tips, help), §10.
+**Builds:** §7 (chips including Legacy, rumoured cards, metas, City map and annex sheet with the sticky footer, vignette and goals, the 5×5 chip row and atlas zoom, the map button rules, goal-chip token, the skybridge tool flow with the silhouette first tap, inspect additions, the Spire sponsor step and the crown look picker, settings including City life, Lower detail and the City line, tips, help steps 15–16, the New City Region control of §7.9, the lower-detail notice, and the pinch to `camera.snapToMap()` / `snapFromMap()`), §10.
 **Acceptance:** §7.8.
 
 #### WP-6 · Life and atmosphere (**droppable as a package**)
 **Owns:** `src/render/effects.ts`, `art/traffic.ts` (all but the boundary spawn rule), `art/weather.ts`, `art/skytraffic.ts`, `art/fx.ts`, new `art/crowds.ts`, `art/boats.ts`, `art/festival.ts`, `src/game/cityEvents.ts` (fills Step 0b's stub).
-**Builds:** §6.4, and R0 for `StreetTraffic.rebuild` (dirty rects). If dropped: `world.cityEvent` stays null, `Settings.weather` maps to today's rain, R0 for `effects.ts` is still done by Step 9.
+**Builds:** §6.4 with the lower-detail levers of §3.11, and R0 for `StreetTraffic.rebuild` (dirty rects). If dropped: `world.cityEvent` stays null, `Settings.weather` maps to today's rain, R0 for `effects.ts` is still done by Step 9.
 **Acceptance:** E1; the life budget of §11.1; every item obeys low quality and the settings.
 
 ### Wave 4 (two agents)
 
 #### WP-7 · Story content (cards **droppable**)
-**Owns:** new `src/game/story/content/cards/megacity.ts`, `content/factions.ts` (drivers, `POWER_TERMS` rows), `content/glossary.ts` (Skybridge text, the two new entries), `story/effects.ts` (`brownfield clear`, `ruins clear`, `reeds drain`, `apron`, the `slot:<kind>` turf target), `tests/story/content-lint.test.ts`, and `docs/STORY.md` (the **single owner** of STORY.md in this update: a "Megacity" subsection on districts, land grants, the new crowns and landmarks, the cards and §9's marks; population numbers ×10).
-**Builds:** §8.3, §8.4's content rows, §8.6.
+**Owns:** new `src/game/story/content/cards/megacity.ts`, `src/game/districts/names.ts` (the 16 variant neighbourhood lists, filling Step 0b's placeholder), `content/factions.ts` (drivers, `POWER_TERMS` rows), `content/glossary.ts` (Skybridge text, the two new entries), `story/effects.ts` (`brownfield clear`, `ruins clear`, `reeds drain`, `apron`, the `slot:<kind>` turf target), `tests/story/content-lint.test.ts`, and `docs/STORY.md` (the **single owner** of STORY.md in this update: a "Megacity" subsection on districts, land grants, the new crowns and landmarks, the cards and §9's marks; population numbers ×10).
+**Builds:** §8.3, §8.4's content rows, §8.6, the variant names of §3.7.
 **Acceptance:** content lint green; each card drawable in a world that meets its `when`; the playthrough reaches Ch6 on every pace. If the cards are dropped, the lobby lines, annex reactions, grants and rescale (Step 0a / 0b) still ship.
 
 #### WP-8 · Choices that last (core)
@@ -1813,13 +2211,21 @@ Interfaces fixed before the wave (Step 0b): `parcels.ts`, `heights.ts`, `drawZon
 **Builds:** §9 (the art of the landmarks and tower bodies is WP-4's, Wave 2).
 **Acceptance:** §9.6's tests; a post-ending playthrough on each of the five endings shows its skyline takeover, its landmark in the Legacy chip and at least three marks from §9.3 with their plaques.
 
+### Wave 5 (one agent)
+
+#### WP-9 · City transfer and desktop polish (core)
+Separate from WP-5 because it builds on WP-5's finished screens and edits `game.ts` (the import path), which WP-8 also edits in Wave 4; it runs alone, so the two-agent rule holds. The `src/ui` and `src/input` files WP-5 owned in Wave 3 pass to WP-9 as listed; WP-8's `keepsakes.ts` and its goal-drawer mount are done by then.
+**Owns:** new `src/game/transfer.ts` (the file format: build, read and validate; no DOM, only `CompressionStream` / `DecompressionStream`, which Node 22 has for the tests), `src/game/game.ts` (`exportCity()`, `importCity()`, `growRegion()` and their save safety only, handed over after Wave 4), new `src/ui/transfer.ts` (the Export and Import sheets), new `src/ui/tooltip.ts`, new `src/ui/shortcuts.ts` (the ? sheet), `src/ui/menu.ts` (the two rows, the About line, help step 17 and step 6's sentence, the Grow button on Settings' City line), `src/ui/start/startScreen.ts` (Import city and the kept-city row on the title), `src/ui/context.ts` (`buildDialog({ side: true })` and the non-modal side layer), `src/ui/ui.ts` (the desktop layout class and the side-panel host), `src/ui/ui.css`, `src/ui/story/story.css` and `src/ui/story/sheet.ts` (side-panel presentation), `src/ui/story/storyCard.ts` (side-panel mode only), `src/ui/dock.ts`, `src/ui/hud.ts` and `src/ui/tools.ts` (key hints and the new category keys), `src/ui/inspect.ts`, `report.ts`, `budget.ts` and `newslog.ts` (side-panel mode only), `citymap.ts` (side-panel mode and the Grow button on the edge-of-region line), `src/input/keyboard.ts` (§14.3's keys and layout rules), `src/input/input.ts` (the hover pick for tooltips; the wheel to `camera.snapToMap()` by §3.9's new-gesture rule). Tests per §11.5.
+**Builds:** §13, §14 and growing a city (§3.11).
+**Acceptance:** §13.8 and §14.5; the phone layout is unchanged at 390×844, 360×640 and 844×390 (UI-layer screenshots identical to the build before WP-9).
+
 ### Step 9 · Integration, balance and performance (one agent, last)
-**Owns:** `config.ts` (megacity numbers, `DISTRICT_PRICES` from D1), `tests/megacity-measure.test.ts`, new `tests/megacity-balance.test.ts` (D1 short form, one seed, in the regular suite), `tests/megacity-fixture.ts` (extends WP-1's), `public/sw.js` (`VERSION` bump), `docs/MEGACITY.md` §11.6, `docs/CONTRACTS.md` (a "Megacity layer" section: the frame, slots and segments, save v4, the new modules and events), `docs/DESIGN.md` (the interview decisions, "prices kept at per-building parity", the choices-that-last request), `docs/EXPANSION.md` (population numbers ×10 with a note), and the cross-package fixes from the hand-off notes.
-**Builds:** §11.4; tunes to §11.3; the final **device check** (frame rate at 9 districts, sim share at speed 3, p95 and max); `npm run build:single` and a single-file run; loads v1, v2, v3 and v4 saves; a stale v3 build opened on a v4 save leaves it intact.
-**Acceptance:** every §11.3 target met or waived in §11.6 with a reason; all tests green.
+**Owns:** `config.ts` (megacity numbers, `DISTRICT_PRICE_STEP` from D1 and D1-5, `LOW_DETAIL.maxDaysPerSec` from the device check), `tests/megacity-measure.test.ts`, new `tests/megacity-balance.test.ts` (D1 short form, one seed, in the regular suite), `tests/megacity-fixture.ts` (extends WP-1's), `public/sw.js` (`VERSION` bump), `docs/MEGACITY.md` §11.6, `docs/CONTRACTS.md` (a "Megacity layer" section: the frame, slots and segments, save v4, the new modules and events), `docs/DESIGN.md` (results beside the "Megacity decisions" table this revision added: "prices kept at per-building parity" confirmed or changed, the measured region defaults), `docs/EXPANSION.md` (population numbers ×10 with a note), and the cross-package fixes from the hand-off notes.
+**Builds:** §11.4; tunes to §11.3; the **automated** device-side checks in Playwright (Chromium, installed in the dev container; WebKit and Firefox too if `npx playwright install webkit firefox` succeeds): frame and sim numbers with the 4× CPU-throttling proxy, §13.8's automated acceptance, the terrain golden hashes; `npm run build:single` and a single-file run; loads v1, v2, v3 and v4 saves of both regions; a stale v3 build opened on a v4 save, or on an envelope in the mirror, leaves the city intact, and a stale-v3 New City leaves the v4 city offered back as the kept city; then writes §11.6's **owner checklist** with the build's links. Real-phone and real-laptop numbers, iOS share sheets, Home Screen apps and installed Android apps are the owner's rows, never reported as passed by an agent.
+**Acceptance:** every automated §11.3 target met or waived in §11.6 with a reason; every owner row listed and open until signed; all tests green.
 
 ### After Step 9 (optional) · Raised terrace steps
-One agent, only if the owner wants real raised hills after seeing the contour version. Every layer drawn on a tile offsets by `elevOffset(world, x, y) = elev × 8`: ground plates and retaining-wall faces (`ground.ts`), zone and building sprites (`buildings.ts`), cars and crowds (`art/traffic.ts`, `art/crowds.ts`), boats (no change: water is step 0), rail viaducts (28 px) and skyway decks (52 px) with their ramps (`render/story.ts`, `art/skyway.ts`), skybridge tubes (tube top = min over the anchors of `roofOf + elev × 8` − 6), overlays, ghosts and highlights (`overlay.ts`, `highlight.ts`), the atlas prisms, and picking (`input/*`: test the up to three tiles in front of the ground hit whose raised diamond contains the point). Rules that already hold from Step 0b: parcels never span two steps; a skyway or rail span may not change step.
+The owner chose "painted first" (second interview): this package stays optional. One agent, only if the owner wants real raised hills after seeing the painted version. Every layer drawn on a tile offsets by `elevOffset(world, x, y) = elev × 8`: ground plates and retaining-wall faces (`ground.ts`), zone and building sprites (`buildings.ts`), cars and crowds (`art/traffic.ts`, `art/crowds.ts`), boats (no change: water is step 0), rail viaducts (28 px) and skyway decks (52 px) with their ramps (`render/story.ts`, `art/skyway.ts`), skybridge tubes (tube top = min over the anchors of `roofOf + elev × 8` − 6), overlays, ghosts and highlights (`overlay.ts`, `highlight.ts`), the atlas prisms, and picking (`input/*`: test the up to three tiles in front of the ground hit whose raised diamond contains the point). Rules that already hold from Step 0b: parcels never span two steps; a skyway or rail span may not change step.
 
 ### Order and what can be dropped
 
@@ -1828,20 +2234,237 @@ Step 0a ─► Step 0b (+ device check) ─► Wave 1: WP-1 Sim ∥ WP-2 Distric
                                     ─► Wave 2: WP-3 World view ∥ WP-4 Building art
                                     ─► Wave 3: WP-5 UI/input/audio ∥ WP-6 Life & atmosphere
                                     ─► Wave 4: WP-7 Story content ∥ WP-8 Choices that last
+                                    ─► Wave 5: WP-9 City transfer and desktop polish
                                     ─► Step 9 Integration ─► (optional) raised terrace steps
 ```
 
 | Item | Package | If dropped |
 |---|---|---|
-| Life and atmosphere (whole package) | WP-6 | `cityEvent` null; weather = today's rain |
+| Life and atmosphere (whole package) | WP-6 | `cityEvent` null; weather = today's rain (lower detail turns it off) |
 | Story cards (the 11 megacity cards) | WP-7 | the deck is unchanged; lobby lines, reactions, district effects remain |
 | Optional epilogue cards (the five ending-landmark cards), the optional marks of §9.3, the smile that follows the camera, the live ledger text | WP-8 | the core marks, review lines and five core epilogue cards remain |
 | Raised terrace steps | after Step 9 | contour shading (core) stays |
 | Optional landmarks (Hullhouse, Lamp Choir, Grand Terminal) and services (Market Hall, Tidal Turbine, Geothermal Bore, Data Vault) | WP-2, WP-4 | their `BUILDINGS` rows get `hidden: true` (never in trays); their district goals hide; contract rows stay |
 | Haze, drones, ambience, chimes, Kite Day, Parade | WP-6 | — |
-| O8 sleeping districts | WP-1 | built only if Step 0b's trigger fires |
+| Drag-and-drop import on a desktop | WP-9 | the file picker and paste remain |
+| The "· resting n" FPS readout | WP-2 | — |
 
-Not droppable: Step 0a (both parts), Step 0b, WP-1, WP-2, WP-3, WP-4 (kit and matrix, style silhouettes, parcels, faction languages, look 0, core landmarks, ending landmarks), WP-5, WP-8's core.
+Not droppable: Step 0a (both parts), Step 0b (both parts), WP-1 (O8 included: the 5×5 region needs it), WP-2, WP-3, WP-4 (kit and matrix, style silhouettes, parcels, faction languages, look 0, core landmarks, ending landmarks, variant accents), WP-5 (the Region control included), WP-7's variant names, WP-8's core, WP-9 (export and import, side panels, hover tooltips, key hints and the ? sheet: all four are owner decisions; growing a 3×3 city, which the phone-to-computer transfer needs, unless the owner declines it, Appendix E).
+
+---
+
+## 13. City transfer: export and import
+
+The owner (second interview): **"Export/import file"**. Menu → **Export city** saves a small file; **Import city** on another device loads it. No accounts, no servers. Everything here is WP-9 (Wave 5) on top of Step 0b's storage plan (§3.10).
+
+### 13.1 What the player does
+
+**Export** (in-game Menu, a new row after "Restore previous city"). The game saves, packs the city (≤ 60 ms in Node for a full 5×5 city) and opens the **Export sheet**: the city line ("Neon Bay · 2.41M · 5×5 · 7 districts"), the file name and size ("neon-bay-2026-11-24.cybercity.txt · 86 KB") and up to three actions, chosen by what the device can do (§13.5):
+
+- **Share…**: the system share sheet (Save to Files, AirDrop, Nearby Share, Drive, a message). Primary on phones and tablets that can share files.
+- **Download**: the browser's download. Primary on computers, and on phones that cannot share files.
+- **Copy as text**: the same file contents to the clipboard, for pages where neither works (a sandboxed frame such as the claude.ai artifact build) or to paste into a note. If the clipboard is refused, a read-only text box with all the text selected and a "Select all" button.
+
+The file is built when the sheet opens, so the Share tap can hand it to the system at once (share sheets need the tap's user activation). Export is disabled while this device holds a newer build's city (`saveBlocked`): "Reload to update first: this device holds a city from a newer version."
+
+**Import** (in-game Menu, the row after Export; on the title screen, an "Import city" button beside Previous city). The **Import sheet** offers **Choose file…** (primary, a file picker), **Paste text** (a text box and an Open button) and, on a desktop, a drop zone ("or drop a city file here", optional). On an iPhone or iPad it also notes: "On iPhone the Home Screen app keeps its own city: export in Safari, import in the app." (iOS keeps a Home Screen app's storage apart from Safari's.) While the file is read and checked (§13.3; ≤ 0.1 s in Node for a full 5×5, a few tenths of a second on a phone) the sheet shows "Reading city…" with its buttons disabled. A readable file shows a **preview card**, built from the header and the checked save JSON without building a World:
+
+- city name, region and districts ("5×5 region · 7 of 25 districts"), peak population, chapter or ending, export date ("exported 3 days ago");
+- what will happen: "This replaces your current city, Harbor Nine. It moves to Previous city (replacing Old Lanthorn there).";
+- **the same city** (same seed as the current city; dates as the HUD writes them, `tickDate`): a newer copy says "A newer copy of Neon Bay: JUN 2093 (this device: MAR 2092)."; an **older** copy shows an amber line "This copy is older than the one on this device: MAR 2092 (this device: JUN 2093)." and the button reads **Replace with older copy**; the **same** copy (same seed and day) says "This is the same as the city on this device." and offers only **Close**. (A round trip A → B → A that would import an older copy over newer play is the likeliest way to lose work.)
+- **story pace**, when the file's differs from this device's: "Story pace: Relaxed (this device: Brisk)" with a 44 px two-way choice, "Relaxed" and "Brisk", defaulting to the file's; the choice is applied (`updateSettings`) before the imported city's first update, so a city played on Relaxed stays Relaxed unless the player says otherwise;
+- a 5×5 city on a handheld device: "This is a 25-district city. On this device it runs in lower detail."; a 3×3 city on a PC: "You can grow it to 25 districts later in Settings." (§3.11).
+
+**Replace city** (52 px) opens the existing confirm dialog (`actions.confirm`, as Restore previous city does): title "Replace your city?", body "Harbor Nine moves to Previous city. Neon Bay takes its place.", confirm "Replace" ("Replace with older copy" for an older copy). After it the sheet shows "Opening Neon Bay…" until §13.4 completes; then the sheet and menu close, the imported city is on screen at the speed it was saved at, and a toast says "Imported Neon Bay." From the title screen the import leaves the title like Continue.
+
+### 13.2 The file
+
+- **Name:** `{slug}-{yyyy-mm-dd}.cybercity.txt`: the city name lower-cased, runs of anything but ASCII letters and digits turned into one "-", at most 24 characters, "city" when nothing is left ("neon-bay-2026-11-24.cybercity.txt").
+- **Type:** `text/plain;charset=utf-8`. Plain text on purpose: the iOS file picker greys out unknown extensions, and Chrome on Android shares only allow-listed file types, which include plain text but not JSON, gzip or a custom extension.
+- **Content:** UTF-8 text in three parts.
+
+```
+CYBERCITY 1
+{"game":"cyber-city","format":1,"save":4,"region":5,"city":"Neon Bay","seed":2091,"day":5410,"pace":"relaxed","pop":2410000,"districts":7,"chapter":7,"ending":"ledger","exported":"2026-11-24T16:00:00Z","enc":"gzip-b64","bytes":158934,"sum":"9f2c41d0"}
+H4sIAAAAAAAAA+y9a3Mbx5Yg+FcqOBNh94QJ1vsx3/qSdNsdV7ZWUs/0rtehKFQVSbRBgA1Ufb…
+… (base64, 76 characters a line)
+```
+
+  1. **Magic line:** `CYBERCITY` and the file format number (1).
+  2. **Header:** one JSON object (≤ 1 KB), readable without unpacking: `game` ("cyber-city"), `format` (1), `save` (the save version inside, 4), `region` (3 or 5), `city` (≤ 24 characters), `seed` and `day` (the city's seed and tick, for the same-city check of §13.1), `pace` (the story pace it was played at, `story.pace`), `pop` (peak residents), `districts` (owned), `chapter`, `ending` (an id or null), `exported` (ISO 8601, UTC), `enc` (`"gzip-b64"` or `"json"`), `bytes` (the save JSON's length in characters) and `sum` (FNV-1a 32-bit hash of the save JSON, 8 hex digits).
+  3. **Payload:** the city's save JSON, exactly what `SAVE_KEY` holds (`world.serialize()`, v4 with tile blocks), gzipped with `CompressionStream` and base64-encoded in 76-character lines; where `CompressionStream` is missing, the save JSON itself on one line with `enc: "json"`.
+- **Size** (§2.8): a full 3×3 city ≈ 115 KB, a full 5×5 ≈ 310 KB, a young city 15–30 KB; a `"json"` file ≈ 200 KB and ≈ 560 KB.
+- **Not in the file:** settings (except the story pace, which travels with the city: §3.10, §13.1), tips already seen, the backup slots, other cities. Story progress, flags, keepsakes, marks and the seed are all in the save, so the city continues exactly.
+
+### 13.3 Reading and validating (`src/game/transfer.ts`)
+
+Every check runs before anything changes; the first failure shows its message in the sheet (`role="alert"`) and nothing else happens.
+
+| Check, in order | Message |
+|---|---|
+| larger than 2 MB, or not text | "This file isn't a city file." |
+| first non-blank line is not `CYBERCITY n` (a BOM, blank lines and CRLF line ends are fine) | "This file isn't a city file." |
+| `n` or the header's `format` > 1 | "This city was saved by a newer version. Reload to update, then import it again." |
+| header not JSON, or `game` ≠ "cyber-city" | "This file isn't a city file." |
+| `save` > `max(SAVE_VERSIONS_SUPPORTED)`, or `region` is not 3 or 5 | "This city was saved by a newer version. Reload to update, then import it again." (the `FUTURE_SAVE_TEXT` style; a later build may add region sizes) |
+| `enc` is "gzip-b64" and `DecompressionStream` is missing (iOS before 16.4) | "This browser can't open city files. Update it to import this city." |
+| base64 or gzip fails; unpacked > 4 MB; `bytes` or `sum` differs | "This file is damaged. Export it again on the other device." |
+| the JSON fails, its `version` differs from `save`, or its `region` / `size` disagree with the header | "This file is damaged. Export it again on the other device." |
+| `validateSaveShape(save)` fails: the shape checks `deserialize` itself makes, without building a World (block count = `owned.length`, every block 16,384 base64 characters, slots unique and < region², `owned` contains `startSlot(region)`, `kinds` / `variants` / `annexedAt` of length region², `size` = 64 × region, buildings, links and story tile indices inside the frame) | "This file is damaged or from an incompatible build." |
+
+A newer save in a file is **rejected**, unlike a newer save found in `localStorage` (which is kept and blocks autosave, EXPANSION §2.5): the file still exists on the other device, and an import must never put this device's own city at risk. Strings from the file reach the screen only as text (`h()`'s `text:`, never `html:`). **No World is built before the confirm:** the preview reads the header and the checked JSON, so a phone looking at a 5×5 file never holds a second 45 MB world while the player decides, and Cancel frees everything. `Game.importCity` takes the checked JSON (parsed once).
+
+### 13.4 Replacing the city, with the save safety intact
+
+`Game.importCity(save, pace)` follows **Restore previous city** (`loadPrevious`). After the confirm, behind "Opening Neon Bay…":
+
+1. **Keep the current city:** if it is worth keeping (`worthKeeping`) and this device is not `saveBlocked`, it is written to `.prev` **first**, plain and synchronously (§3.10; swapped for an envelope later). If that fails, §3.10's quota rule applies (drops, then Export or Replace without a copy) and nothing has changed. While `saveBlocked` the city in memory is a stand-in and `.prev` is left alone (§3.10).
+2. **Make room:** the title Showcase (if up) and the current Simulation and render caches are released; the current World stays referenced until step 3 succeeds.
+3. **Build:** `World.deserialize` of the checked save (an imported v1–v3 save migrates like a stored one, to a 3×3 region; `.v2` / `.v3` are not written for it, because the original file still exists), then the Simulation and `recomputeAll`. Peak memory is two Worlds for this step only (≈ 16 + 45 MB on a phone opening a 5×5 city over a 3×3 one). If it throws (§13.3's checks make that close to impossible), the import stops with "This file is damaged or from an incompatible build." and the current city is rebuilt from `SAVE_KEY`, which has not been touched.
+4. **Replace:** the new world takes over; the chosen story pace is applied before its first update; the main save is written at once (plain and synchronous) and the mirror follows (§3.10).
+5. **Newer-save block:** if this device's stored city came from a newer build (`saveBlocked`), the import is an explicit replacement, like New City: that city keeps its copy in `.future` (written first if empty, and offered back once a build can read it, §3.10), the block lifts and the `FUTURE_SAVE_TEXT` notice goes.
+6. A 5×5 city on a handheld device gets lower detail (§3.11: written once unless the player set the switch) and the notice, once.
+
+### 13.5 Platforms
+
+| Platform | Export | Import |
+|---|---|---|
+| iOS Safari, tab and Home Screen app | **Share…** with a `text/plain` `File`, called inside the tap: Save to Files, AirDrop, Messages. Without file sharing (iOS before 15): **Download** in a tab (`<a download>` on a blob URL; Safari asks where to save), **Copy as text** in a Home Screen app, where blob downloads are unreliable | `<input type="file" accept=".txt,text/plain">`: the Files picker, where a `.txt` file is selectable |
+| Android Chrome, tab and installed app | **Share…** (plain text is on Chrome's share allow list) or **Download** (to Downloads) | the file input: the system picker |
+| Desktop Chrome, Edge, Firefox, Safari | **Download** first; **Share…** second where `navigator.canShare` accepts the file | the file input; drag and drop onto the game (optional) |
+| The single-file build from `file://` | **Download** | the file input |
+| A sandboxed frame (the claude.ai artifact build) | **Download** only works if the frame allows downloads, which the page cannot detect, so a framed page (`window.top !== window`) shows **Copy as text** beside it with "If nothing downloads, use Copy as text." | the file input (allowed in sandboxed frames); **Paste text** |
+
+- Feature tests, never user-agent sniffing: `navigator.canShare?.({ files: [file] })`, `typeof CompressionStream`, `navigator.clipboard?.writeText`, the frame check. Share comes first on a handheld device, Download on a PC (§3.11's device class).
+- Results: share done → toast "City shared."; share cancelled (`AbortError`) → nothing; share refused (`NotAllowedError`) → the sheet offers Copy as text; download → toast "Saved neon-bay-2026-11-24.cybercity.txt"; copy → "City copied as text. Paste it into Import city on the other device." Blob URLs are revoked after 60 s.
+- The service worker is not involved; a file leaves the device only through the system share sheet, the browser's download or the clipboard.
+
+### 13.6 Copy
+
+| Where | Text |
+|---|---|
+| Menu rows | "Export city" · "Save a copy to move or keep"; "Import city" · "Open a city file from another device" |
+| Title screen | button "Import city" |
+| Export sheet | title "Export city"; buttons "Share…", "Download", "Copy as text"; note in a frame "If nothing downloads, use Copy as text." |
+| Import sheet | title "Import city"; buttons "Choose file…", "Paste text", "Open", "Replace city", "Cancel"; drop zone "or drop a city file here" |
+| Confirm | "Replace your city?" / "{current} moves to Previous city. {imported} takes its place." / "Replace" |
+| About (menu.ts, replaces "Your city is saved only on this device.") | "Your city is saved on this device. Menu › Export city makes a copy you can open anywhere." |
+| Help step 17 (§7.7) | "17 · Take your city along": "Menu › Export city saves your city to a file. On another phone or computer, Menu › Import city opens it." |
+
+Toasts and errors are listed in §13.1, §13.3 and §13.5. All copy passes the story lint's banned-term and length rules.
+
+### 13.7 Not in scope
+
+Accounts, cloud sync, sending a city to another player to continue side by side, merging cities and a city gallery (the owner: no accounts or servers). After an import the two devices are not linked; exporting again is how a city moves back.
+
+### 13.8 Tests (`tests/transfer.test.ts`, WP-9) and acceptance
+
+1. **Round trip:** export then import gives a world whose `serialize()` equals the original's (except `savedAt`) for a one-district city, a full 3×3 and a full 5×5; the header fields match the city.
+2. Every row of §13.3 gives its message and leaves storage byte-identical (a fake `localStorage` snapshot before and after).
+3. A `"json"` file imports; a gzip file without `DecompressionStream` gives the update message.
+4. CRLF, a BOM, extra blank lines and base64 re-wrapped at another width all import; one changed payload character fails the checksum or the gzip check.
+5. **Save safety:** the current city is in `.prev` before the main save changes; a failed `.prev` write changes nothing and offers Export and Replace without a copy; a `saveBlocked` device imports without writing `.prev`, keeps `.future` and lifts the block; Export is disabled while blocked; an imported v3 file becomes 3×3 and writes no `.v3`; **no World is constructed before the confirm** (a spy on `World.deserialize`), Cancel leaves memory and storage as they were, and a `deserialize` that throws after the confirm leaves the current city rebuilt from an untouched `SAVE_KEY`.
+10. **Same city:** a file with the current seed and a lower day shows the older-copy line and the "Replace with older copy" confirm; the same seed and day shows the same-copy line and only Close; a higher day shows the newer-copy line.
+11. **Story pace:** a Relaxed file on a Brisk device shows the choice with Relaxed selected, and the imported city runs on Relaxed from its first update unless the player picks Brisk; a file without `pace` keeps the device's.
+12. **Preview lines:** a 3×3 file on a PC shows the Grow hint; the iPhone note shows only on Apple mobile platforms (stubbed).
+6. **Platform choice** with a stubbed `navigator`: a handheld device with file sharing → Share primary; a PC → Download primary and Share second; a framed page → Copy as text shown; clipboard refused → the text box.
+7. File names: "Neon Bay" → `neon-bay-…`; a name with no ASCII letters → `city-…`; ≤ 24 characters before the date.
+8. A 5×5 import on a handheld device turns lower detail on (written once; a player's setting wins) and shows its notice once.
+9. Hostile input (2 MB of junk, a header with 10,000 keys, deeply nested JSON, a city name with markup) is rejected or shown as plain text, and never throws out of `transfer.ts`.
+
+**Acceptance, automated** (WP-9 and Step 9, Playwright against `npm run preview` and the single-file build from `file://`; Chromium is installed in the dev container, WebKit and Firefox run the same suite where `npx playwright install webkit firefox` succeeds): Export → Download (`page.waitForEvent('download')`) produces a file that Import → Choose file… (`setInputFiles`) opens; Copy as text → Paste text round-trips with the clipboard stubbed and with it refused (the text box); `navigator.canShare` stubbed true puts Share first on a handheld profile and calls `navigator.share` with a `text/plain` `File`; a page framed in a sandboxed iframe without `allow-downloads` shows Copy as text; a 5×5 file imported under a handheld profile opens in lower detail with the notice.
+
+**Acceptance, owner** (§11.6 checklist rows 3–7 and 9: real share sheets, the iOS Home Screen app, the installed Android app, phone ↔ laptop by file). An agent lists them as open; it never marks them passed.
+
+---
+
+## 14. Desktop polish
+
+The owner chose all three (second interview): **side panels**, **hover tooltips** and **shortcut hints**. The game already works with a mouse and keyboard (`src/input/input.ts`: wheel zoom at the cursor, right or middle drag to pan, hover previews with a build tool, edge scroll while dragging a tool; `src/input/keyboard.ts`, §14.3), and wide screens already float the dock and show inspect as a 330 px side card from 900 px (`ui.css`). This section builds on that. **The phone layout does not change** (§14.4). Everything here is WP-9.
+
+### 14.1 The desktop layout and side panels
+
+**When it applies:** `matchMedia('(min-width: 1024px) and (min-height: 600px) and (hover: hover) and (pointer: fine)')`, watched live; `ui.ts` sets `cc-desk` on the UI root. Phones, tablets (coarse pointer) and narrower windows never match. This query decides the **layout** only; the device class of §3.11 (computed once a session) decides the sim, render and lower-detail defaults, so a tablet with a mouse can get the desktop layout without its city leaving lower detail.
+
+**Surfaces that open as the side panel** (one at a time, docked right, non-modal: no scrim, the city stays live, pannable and buildable on the left):
+
+- Inspect (today's side card, now full height);
+- the story card (beats, faction cards, ⚑ cards, Silt Logs, ending cards; `storyCard.ts`);
+- the story sheets (the Goals drawer with Story so far and Keepsakes, Factions, COMMS);
+- reports: the City report, the Budget, the City feed;
+- the City map's district sheet (the atlas fills the map area, §7.2);
+- the ? shortcut sheet (§14.3).
+
+They stay **centred dialogs**: the menu with Settings, How to play and About, confirms, the title screen and New City, Export and Import (§13), and the screens meant to take over (chapter titles, Charter Night).
+
+**Geometry:** 12 px from the right safe edge; top under the HUD (`var(--cc-top) + 8px`); bottom 12 px above the viewport edge; width `clamp(360px, 28vw, 440px)` (360 px at 1280, 403 at 1440, 440 at 1920); the content scrolls inside; footers (a card's choices, the annex footer, the budget sliders) stay pinned at the panel's bottom.
+
+**Stacking and keys:** opening a surface replaces the current one; a nested open (inspect → a faction's sheet, goals → a card) shows **Back** in the panel header (one level). A story card that arrives while a panel is open waits as today (banner and COMMS, never forced open); when the player opens it, it takes the panel, and the previous panel returns when the card closes. Esc closes in order: a plan waiting for ✓ (as today), then the panel (Back first), then the tool. Focus moves into a panel opened from the keyboard and back to the canvas when it closes; the story card keeps `role="dialog"`, reports are `role="complementary"`.
+
+**The map around it:**
+
+- `camera.setInsets({ right: panelWidth + 24 })` while a panel is open (§3.9), so fitting and centring use the visible map area; if the panel opens over the selected tile or building, the camera eases it into view (0.3 s; nothing moves if it is already visible).
+- The **dock** (toolbar and trays) and the **story rail** (goal chip) centre in the map area (their right edge is the panel's width + 24 px, a 0.2 s transition). If the full dock (9 × 76 px buttons, ≈ 710 px) does not fit, it uses its compact form (60 px buttons with the short labels, ≈ 570 px): that happens only in windows narrower than about 1,110 px with a panel open. Nothing ever overlaps the panel.
+- The action pill, toasts, tips and moment banners centre in the map area too; the HUD stays full width above the panel.
+- Map area with a panel open: 908 px at 1280×800, 1,025 px at 1440×900, 1,468 px at 1920×1080.
+
+**Implementation:** `buildDialog` gains `side: true` (City report, Budget, City feed): on the desktop layout such a dialog mounts in a new side layer instead of the modal layer, without a scrim; elsewhere it is today's dialog. `StorySheet` and the story card get a side presentation under `.cc-desk` (CSS plus the panel host's stacking); their swipe and peek gestures stay touch-only. Opening and closing a panel never pauses or resumes the sim; whatever paused before still does.
+
+### 14.2 Hover tooltips
+
+**Never on touch:** only for `pointerType === 'mouse'` while `(hover: hover)` matches. A touch or pen event hides any tooltip and suppresses them until the next mouse move. None while a button is held, a drag or a pinch is under way, a plan waits for ✓, or a modal dialog is open.
+
+**Timing and look:** shown after **450 ms** over the same target (**150 ms** when moving to another toolbar button or tray card within a second of the last tooltip); hidden at once on leave, wheel, key press or click; one at a time; `role="tooltip"` (with `aria-describedby` on DOM targets); placed under a button, or 16 px right and 20 px below the cursor on the map, flipped to stay on screen and off the side panel; at most 280 px wide; the game's panel style. Elements that get a rich tooltip drop their native `title` on the desktop layout (no double tooltips); their `aria-label`s stay.
+
+| Target | Tooltip |
+|---|---|
+| Toolbar button | name and key ("Zones · Z X C"), and what it holds ("Hab Blocks, Market Strip, Fab Yards") |
+| Tray card (a tool or building) | name and key; cost ("1,200 CR", "40 CR a tile"); key numbers from `BUILDINGS`, `ZONES` and the road kinds: power supplied or used, upkeep a month, jobs or residents, its main effect and radius ("Health r20"), size; the locked reason when locked ("Needs 120,000 residents") |
+| HUD | funds "Treasury · +12,300 CR a month · click for the budget"; population "2.41M residents · 1.38M jobs · click for the report"; RCI the three demand words; speed buttons name and key ("Fastest · 3", in lower detail "Fastest · 3 · 8 days a second" with the number from `LOW_DETAIL.maxDaysPerSec`); menu "Menu"; City map button "City map · M" |
+| A building on the map (Inspect tool) | name and district ("Fusion Reactor · Kessel Flats"), 2–3 key rows from `getTileInfo` (power use, upkeep, jobs), "Click for details" |
+| A zone tile or parcel on the map | form and floors ("Point tower · 41 floors"), residents or jobs (a parcel's sum), wealth tier, land value |
+| A road, skyway or skybridge tube | kind and traffic ("Avenue · busy"); a skybridge's walkers and its Sky Lobby |
+| A locked district (fog) | name and state ("Kessel Flats · annex with a land grant"); a click opens the City map |
+| A City map slot | name, state, price or "Uses 1 land grant", and an owned district's census |
+
+- With a build tool active the map tooltip gives way to today's hover preview (the ghost and the plan's cost), which already says what a click will do; tray card tooltips still work.
+- The map pick reuses `screenToTileInto` and the height-aware tap pick, at most every 100 ms while the mouse moves; `getTileInfo` runs only when the target changes.
+
+### 14.3 Keyboard shortcuts and hints
+
+**Keys today** (`src/input/keyboard.ts`, physical key codes so clusters stay in place on any layout): WASD or arrows pan (Shift = fast); + and − zoom; Space pauses and resumes; 1 2 3 set the speed; Esc cancels a plan waiting for ✓, else returns to Inspect and clears the selection; Enter is ✓; B Bulldoze (again: Inspect); R Street, again the next unlocked road kind; Z X C Hab Blocks, Market Strip, Fab Yards; O cycles the data views (Shift+O backwards). They are ignored in text fields, with Ctrl, Cmd or Alt held, and when the UI already handled the key. Today the toolbar shows keys only in native `title` tooltips ("Bulldoze (B)"), the HUD's speed buttons likewise ("Fastest (3)").
+
+**New keys** (same rules). Clusters stay on physical codes; **mnemonic keys and symbols go by the character** (`e.key`), because the physical-code approach breaks them on other layouts: on QWERTZ `?` is Shift + the key whose code is `Minus` (today's zoom-out), on AZERTY `?` is Shift + the key whose code is `KeyM`, and Ctrl+Z sits on code `KeyY` (QWERTZ) or `KeyW` (AZERTY). So `keyboard.ts` checks, in this order: (1) Ctrl / Cmd+Z by `e.key` `'z'` / `'Z'` (code `KeyZ` only when `e.key` is not a Latin letter), before today's modifier early-return; (2) `?` by `e.key === '?'`, before the zoom keys; (3) today's pan and zoom keys; (4) M, G and U by `e.key` (lower-cased), falling back to the code when `e.key` is not a Latin letter (a Cyrillic layout); (5) E, V, T, F by code, like today's B, R, Z, X, C (a left-hand cluster).
+
+| Key | Action |
+|---|---|
+| E | Infra tray (Power and Ports); again: close |
+| V | Civic tray |
+| T | Sky tray (Towers, Links, Landmarks) |
+| F | Deals tray (once the factions are unlocked) |
+| M | City map, open and close (§7.2) |
+| G | Goals drawer (the story rail, once the story has started) |
+| ? | the shortcut sheet |
+| U, or Ctrl / Cmd+Z | Undo, while an Undo toast is showing (EXPANSION §7.7's 10 s undo). Ctrl / Cmd+Z is the only modifier combination the game takes, and never in a text field |
+
+**Hints on buttons:** on the desktop layout, and on any device after a **hardware key press** in the session (an iPad with a keyboard): a `keydown` whose target is not a typing target, whose `e.code` is non-empty and whose `e.key` is not `'Unidentified'` (virtual keyboards on iOS and Android fire `keydown` while the player types a city name, and Android's report `'Unidentified'`; neither counts), toolbar buttons show a small keycap in their top corner (14 px tall, 10 px text, 60% opacity, full on hover): Inspect "Esc", Bulldoze "B", Road "R", Zones "Z", Infra "E", Civic "V", Sky "T", Deals "F", Data "O". Tray cards with a key show it beside the cost (Street "R", Hab Blocks "Z", Market Strip "X", Fab Yards "C"). The HUD's speed buttons, the City map button and the menu show their keys in their tooltips only (no room). Keycaps read the user's layout where the browser can tell (`navigator.keyboard.getLayoutMap()`, Chromium), else the US label.
+
+**The ? sheet** (new `src/ui/shortcuts.ts`): a side panel on the desktop layout, a dialog elsewhere; groups **Camera** (WASD / arrows, Shift = fast, + −, the wheel, right-drag, M), **Time** (Space, 1 2 3), **Build** (Esc, B, R and R again, Z X C, E V T F, Enter = ✓, Esc = ✕, U or Ctrl / Cmd+Z = undo), **Panels** (G, O and Shift+O, ?, Esc closes). It is generated from the same table `keyboard.ts` binds (`SHORTCUTS`, exported), so it can never list a key that does nothing. Also reachable from Menu › How to play ("Keyboard shortcuts", shown on the desktop layout) and step 6's sentence "Press ? for every shortcut."
+
+### 14.4 What does not change
+
+Phones and tablets (390×844, 360×640, 844×390, any coarse pointer): no side panel, no tooltip, no keycap unless a hardware key was pressed, the 9-button toolbar, 44 px targets, every sheet where it is today. The 640–1023 px wide layout (the floating dock, the inspect side card from 900 px) stays as it is.
+
+### 14.5 Acceptance (WP-9)
+
+At **1280×800, 1440×900 and 1920×1080** (and 1024×768 for the compact dock), with a mouse:
+
+1. Every side-panel surface opens docked right at the stated width; a covered selected tile is eased into view; the dock, rail, pill and toasts sit in the map area and never overlap the panel; the dock is compact only where it must be; the map pans, zooms and builds while a panel is open; Esc and Back behave as §14.1 says.
+2. A story card arriving with the City report open waits; opening it takes the panel, and the report comes back after the card.
+3. Tooltips appear after 450 ± 50 ms (150 ms warm) on every target of §14.2's table with that content; none for synthetic touch or pen events, while dragging, or with a modal open; no native `title` doubles them.
+4. Keycaps on the 9 toolbar buttons and the keyed tray cards; every key of §14.3 works with US, AZERTY and QWERTZ `key` / `code` pairs (`?` never zooms or opens the City map; Ctrl / Cmd+Z undoes on all three); ? opens the sheet, which lists exactly the bound keys; typing a city name on a phone's virtual keyboard never shows keycaps.
+5. The UI layer at 390×844, 360×640 and 844×390 is identical to the build before WP-9 (screenshots); an iPad in landscape (coarse pointer) gets no panel or tooltip; a key press on it shows keycaps.
+6. The frame costs of §11.1's desktop rows, and V1's desktop rows (sprite memory, fallback frames after a pan, paint p95) at 1920×1080 DPR 1 and 1440×900 DPR 2.
 
 ---
 
@@ -1898,9 +2521,11 @@ Descriptions (≤ 90 chars) and tray meta lines (≤ 22 chars):
 
 Links metas (one job each, §5.2): Skybridge "Walkway · tap 2 towers", Ribbon Rail "Trains · drag", Skyway "Cars · drag".
 
+Copy from the second interview lives with its feature: the 16 variant names and taglines and the two variant lobby lines (§3.7), the lower-detail notice (§3.11), the Settings rows (§7.6), help steps 15–17 (§7.7), the Region control (§7.9), the export and import strings (§13.6) and the tooltip patterns (§14.2). It was checked against the same rules (lengths, the banned-term list, the `!` rule, the spoiler regexes) with `/tmp/claude-megacity2/copycheck.py`; WP-7's and WP-9's lints are final.
+
 ## Appendix B · News and advisor lines
 
-Owners: `annex`, `grant`, `goal` (WP-2, Game), `lobby` and `dark` (WP-2, `vertical.ts`), the City life lines (WP-6, `cityEvents.ts`), the advisor rows (WP-1, `advisor.ts`). In a city of more than one district, every line that names a neighbourhood with `{district}` appends the district short name ("Paper Lane, Verdigris").
+Owners: `annex`, `grant`, `goal`, `region` (WP-2, Game), `grow` (WP-9, Game), `lobby` and `dark` (WP-2, `vertical.ts`), the City life lines (WP-6, `cityEvents.ts`), the advisor rows (WP-1, `advisor.ts`). In a city of more than one district, every line that names a neighbourhood with `{district}` appends the district short name ("Paper Lane, Verdigris").
 
 | Key | Kind | Cooldown | Text |
 |---|---|---|---|
@@ -1908,6 +2533,8 @@ Owners: `annex`, `grant`, `goal` (WP-2, Game), `lobby` and `dark` (WP-2, `vertic
 | grant (epilogue) | good | per grant | "A land grant arrives: the city may annex again." |
 | goal | good | once per goal | "{name}: {goal}. +{reward} CR" (e.g. "Kessel Flats: two Seaports on the basin. +25,000 CR") |
 | edge | info | once | "The city reaches the edge of the region." |
+| region (moment banner, `MomentId 'region'`) | good | once per city (again at 25 after growing) | "THE REGION IS WHOLE" / "All 25 districts are part of {city}." (9 on a 3×3 region) |
+| grow | good | once per city | "{city} now spans a 5×5 region: 16 new districts to annex." |
 | lobby | good | once per lobby (the first lobby gets the banner instead) | "Three towers in {district} are one Sky Lobby now: {name}." |
 | dark (reworded) | warn | as today | "Skybridge dark: an anchor dropped below the skyline." |
 | milestone (new rows) | good | once | generated as today ("Night Harbour! {city} passes 600,000 residents…") |
@@ -1924,8 +2551,8 @@ Owners: `annex`, `grant`, `goal` (WP-2, Game), `lobby` and `dark` (WP-2, `vertic
 
 ## Appendix C · Decisions and rejected alternatives
 
-1. **Growing world** (resize on annex): every stored tile index would be remapped mid-game; rejected for a fixed 3×3 frame (§3.1).
-2. **4×4 grid:** 14–15 ms a step fully built today, ≈ 28 ms on a phone optimised; rejected (§2.7). Nine districts still reach 4–5 M residents. Growing past nine is an owner question (Appendix E).
+1. **Growing world** (resize on annex): every stored tile index would be remapped mid-game; rejected for a region chosen per city, whose stride changes only through an offline save transform (§3.1, §3.11).
+2. **4×4 grid:** 14–15 ms a step fully built today, ≈ 28 ms on a phone optimised; rejected for phones (§2.7), and an even side has no centre slot. The owner's answer to "more than nine?" is a region per city: 3×3 on phones (4–5 M residents), 5×5 on computers (≈ 12 M) (§3.1, Appendix E).
 3. **Separate sims per district:** every system crosses borders; rejected.
 4. **Merging Skyways and Skybridges:** different users, heights and gestures; one tray line could not explain a merged tool. They now coexist on the same tiles, and the Links chip gives each of the three links one verb (§5.2).
 5. **Skybridges at any angle:** in this projection a bridge along (1, 1) points at the camera and reads as a column; two-bridge routes solve reachability with axis-aligned spans.
@@ -1935,18 +2562,37 @@ Owners: `annex`, `grant`, `goal` (WP-2, Game), `lobby` and `dark` (WP-2, `vertic
 9. **Water utility, service capacity limits:** not asked for, new balance surface; rejected.
 10. **Steeper capacity per level for homes** (Hab L3 ×20): re-tunes growth gates, power and the story's pacing. Instead the density pass raises jobs per tile for shops and fabs (the owner's "businesses don't provide enough jobs") and gives megastructures a premium (§4.1, §4.2).
 11. **Buying districts before the ending:** the owner said the sandbox; grants cover the campaign, and a stalled chapter still ends through its fallbacks.
-12. **Real raised elevation:** render and picking cost across six layers and four packages; Highstep Terraces get contour shading, painted walls and stairs, and raised steps are an optional package after Step 9 (§12).
+12. **Real raised elevation:** render and picking cost across six layers and four packages; Highstep Terraces get contour shading, painted walls and stairs, and raised steps are an optional package after Step 9 (§12). The owner confirmed "painted first" in the second interview.
 13. **Saving locked slots, or keeping number arrays:** regenerated land costs nothing to store; structural RLE saved only 17%, but 3-byte base64 tile blocks save about a third and round-trip 2.5× faster (§3.10).
-14. **Sleeping districts as an afterthought:** now a planned contingency with a measured trigger in Step 0b (O8).
+14. **Sleeping districts as an afterthought:** first a planned contingency with a measured trigger in Step 0b, now core because the 5×5 region needs them (O8, §2.8).
 15. **A Bazaar lease on the annex sheet:** one contest in one place; the gangs' dispute lives in `ds.bazaar`, and only Tarmac Reach has a lease.
 16. **Scaling story lore numbers:** the 11,000 and 90,212 are history, not city size; unchanged.
 17. **Parcel hysteresis** (stay merged once merged): needs saved state. Leaving level and tier out of the merge rule gives the same stability with a pure function (§6.1).
 18. **A magnified atlas between zoom 0.15 and 0.4:** a 0.1-scale impostor would be upscaled 5–8× exactly where the skyline should impress; the skyline view keeps real sprites there and the atlas only shows at 1:1 on the City map (§3.9).
 19. **Keying every Sunk text to the reveal:** two versions of every line, and Pump Houses could still drain the Sunk before Chapter IV; opening the Sunk only after `ch4.brine` makes one post-reveal version enough (§3.7).
+20. **One fixed 5×5 frame (320) for every city:** one compile-time `MAP_SIZE` and a remap-free upgrade from 3×3 to 5×5, but every city, the phone's included, would carry +29 MB of World + Simulation memory and 58–84 ms of terrain generation per new city (§2.8). The frame is per world instead (§3.1), and the upgrade is a save transform (§3.11).
+21. **Asking a v3 player to pick a region at load:** a migration must be automatic and give the same city on every device; every v3 city was built for a phone-sized map; it becomes 3×3 (§3.10).
+22. **Keeping the region fixed for a city's life** (the 5×5 revision deferred growing): the third review showed it breaks the transfer story the owner chose, since a phone's city defaults to 3×3 and could never use a computer's 25 districts. Growing is now specified (§3.11): one pure transform reusing migration's `reframe`, one way. **Shrinking a 5×5 city to 3×3** stays rejected: it would delete owned land.
+23. **Compressing the main save, or IndexedDB for big saves:** both are asynchronous, and the `pagehide` save must finish synchronously. Compressing only the backups keeps a full 5×5 city at about half the storage floor (§3.10).
+24. **A custom file extension or a JSON / gzip file type:** the iOS file picker greys out unknown types and Chrome's file sharing takes only allow-listed types; a `.txt` file works for sharing, downloads, pickers and the clipboard alike (§13.2).
+25. **Accounts or cloud sync to move a city:** the owner chose a file, with no accounts or servers (§13.7).
+26. **A JavaScript inflate for browsers without `DecompressionStream`:** about 300 lines for iOS before 16.4 only; those browsers get a clear update message instead, and their own exports are plain JSON, which every browser imports (§13.3).
+27. **Side panels for every dialog:** the menu, settings, confirms, New City and the transfer sheets are not about the city on screen and are short; the owner asked for inspect, story and reports (§14.1).
+28. **Tooltips on touch (long-press):** a long press already means peek-inspect while building and "exact effects" on a story choice; tooltips stay mouse-only (§14.2).
+29. **Throttling growth in resting districts** (the draft's O8): growth is ≈ 1 ms a day at 25 districts against ≈ 2.4 ms of throttleable field rows, so it saved little and made the city's growth depend on the camera and the device. Resting districts skip only field rows (§3.3).
+30. **Resting districts catching up on the same day:** recreates the full-cost day every k days; the catch-up is staggered by slot (§3.3).
+31. **Coarse slices (A / B / C):** phase 2 alone is 4.6 ms in Node at 25 districts and slice A ≈ 4.1 ms, ≈ 14–16 ms on a phone; units of ≤ 1.5 ms, resumable by row band, replace them (§2.8, §3.3).
+32. **Building a trial World to validate an import:** a phone would hold a second world (up to 45 MB) during the preview and the confirm; structural checks shared with `deserialize` validate without one, and the World is built after the confirm (§13.3, §13.4).
+33. **More than one Previous city slot:** a second 5×5 backup would cost another 306–556 K characters of a 2.5 M floor; the same-city check in the import preview (§13.1) and the kept-city restore (§3.10) cover the realistic losses instead.
+34. **Story pace per device on import:** a Relaxed city would silently continue on the other device's pace; the pace travels with the city and the preview offers the choice (§13.1).
+35. **The lower-detail default from the live primary pointer:** a tablet with a mouse would run a 5×5 city in full detail, and attaching a mouse mid-session would flip sim and render settings; one device class per session decides (§3.11).
+36. **Binding `?`, M, G, U and Ctrl+Z by physical code:** `?` would zoom out on QWERTZ and open the City map on AZERTY, and Ctrl+Z would miss both; they go by `e.key`, clusters stay on codes (§14.3).
+37. **`Math.sin` in the new district generators:** it is implementation-approximated, so a city moved to another browser could regenerate different locked terrain; new generators use a fixed polynomial `sinP`, and the start generator keeps today's river for bit-identity (§3.6.1).
+38. **Phone-sized desktop render budgets:** a 6,000-tile view with a 32 MB sprite cache and 3 ms of paint would show fallback bodies after every pan; the PC cache and paint budget scale with the canvas (§3.9).
 
 ## Appendix D · Measurement scripts (scratch, not part of the build)
 
-All under `/tmp/claude-megacity/` (Step 9 ports them into `tests/megacity-measure.test.ts`):
+The draft's and the reviews' scripts, all under `/tmp/claude-megacity/` (scratch; they may be gone after a container restart; Step 9 ports them into `tests/megacity-measure.test.ts`):
 
 | Path | What |
 |---|---|
@@ -1964,9 +2610,30 @@ All under `/tmp/claude-megacity/` (Step 9 ports them into `tests/megacity-measur
 | `rev/heights.ts`, `rev/heights2.ts` | zone and building art heights from today's recipes (§2.6, §5.3) |
 | `rev/check3.mjs` | length, banned-term, `!`, spoiler and pre-`ch4.drain` checks for the revision's copy (§3.7, §8.2, §8.3, §9, Appendix A) |
 
-## Appendix E · Decisions on the review
+The second interview's measurements (§2.8), rebuilt from today's `src/` under `/tmp/claude-megacity2/` (also scratch):
 
-Two reviews of the draft (a player and design critique, and an engineering critique) were resolved in this revision. Every high and medium issue is addressed; the cheap low ones are done. Where the fix differs from the one suggested, the reason is given.
+| Path | What |
+|---|---|
+| `run.sh N…` | copies `src/` into `nN/`, patches `MAP_SIZE` to N, widens `SimGrid`'s 16-bit lists to 32 bits when N² > 65,535, bundles `bench.ts`, `mem.ts` (and, copied in by hand, `restore.ts`, `render.ts`) with esbuild |
+| `fill.ts` | the §2.1 fill per 64×64 slot with tiers; modes `one` (centre slot), `nine` (centre 3×3), `full` |
+| `bench.ts` → `out192.txt`, `out320.txt` | best-of-8 `step()` and `recomputeAll()`; game-day and month-end frame percentiles over 720 days; autosave, `serialize` + `stringify`, `parse` + `deserialize`, `Game.restore`; the v4 save with tile blocks, gzipped and base64 (§2.8) |
+| `mem.ts` | retained heap and typed arrays of World + Simulation (`--expose-gc`), `World.generate` of the whole frame, constructor cost |
+| `restore.ts` | `Game.restore` alone and its phases (deserialize, Simulation constructor, first `recomputeAll`) |
+| `render.ts` | the R0 whole-map rebuilds (`RoadAccessMap`, `StreetTraffic.rebuild`) at 192 and 320 |
+| `copycheck.py` | length, banned-term, `!`, `$` and spoiler checks for the second interview's copy (§3.7 variants, §3.11, §7.6, §7.7, §7.9, §13.6) |
+
+The third review's measurements and this revision's (under the session scratchpad `/tmp/claude-0/-home-user-cyber-city/53bec300-b868-57ba-9bd3-da09cdc8b543/scratchpad/`, also scratch):
+
+| Path | What |
+|---|---|
+| `rb/prof.ts` (`prof192.ts`, `prof320.ts`) | per-pass p50 / p95 / max over 400 steps of today's code at 192 and 320 (§2.8's per-pass table) |
+| `rb/pd.ts` (`pd192.ts`, `pd64.ts`) | `parse` + `deserialize`, 30 runs per fill (§2.8's saves table). Note: `bench.ts`' `gameRestore` includes `new Game()` and a fresh `World.generate`; `restore.ts` is the "restore alone" source |
+| `opt320/` (`best.ts`, `prof.ts`) | the O2–O4 prototype source (`/tmp/claude-megacity/opt/src`) patched to 320 with 32-bit `SimGrid` lists: best-of-8 step, unsliced day percentiles, per-pass profile (§2.8) |
+| `copy3.py` | length, banned-term, `!`, `$` and spoiler checks for this revision's new copy (§3.7 variant goals, §3.8, §3.10, §3.11, §4.5, §7.6, §7.7, §7.9, §13.1, Appendix B) |
+
+## Appendix E · Decisions on the review, and the owner's answers
+
+Two reviews of the draft (a player and design critique, and an engineering critique) were resolved in the first revision. Every high and medium issue is addressed; the cheap low ones are done. Where the fix differs from the one suggested, the reason is given. The owner then answered the two open questions and added two requests in a second interview, and a third review checked the revision that implemented them; the last parts of this appendix record those decisions and where the spec implements them.
 
 **Player and design review**
 
@@ -1982,14 +2649,14 @@ Two reviews of the draft (a player and design critique, and an engineering criti
 | 8 | medium | Budgets are averages; atomic spikes | **Done** with the engineering review's #1 (below). |
 | 9 | medium | Megastructures less dense than the towers beside them | **Done:** Hab Core 32,000, crowns +6,000 / Commons +10,000, Arcology 40,000, Spire 8,000, Hexworks 20,000, Pearl Atrium 18,000, with power and upkeep adjusted, and the 1.5× assertion in S4 (§4.2, §6.3). |
 | 10 | medium | Port limits don't scale; perks moot | **Done:** `PORT_LIMITS` (Seaports 2–4, a second Airport in Tarmac Reach from 4 districts) (§3.5). |
-| 11 | medium | Sandbox prices are seconds of income; no land goal after 9 | **Done:** fixed prices set from D1's measured income (placeholders 2.5M and 4M), epilogue grants (§3.8, §9.5), the region-edge line and a sandbox goal ladder (4M milestone, district goals, the landmark set and the five ending landmarks). Growing past nine is an owner question (below). |
+| 11 | medium | Sandbox prices are seconds of income; no land goal after 9 | **Done:** fixed prices set from D1's measured income (placeholders 2.5M and 4M), epilogue grants (§3.8, §9.5), the region-edge line and a sandbox goal ladder (4M milestone, district goals, the landmark set and the five ending landmarks). Growing past nine was an owner question, answered below (a 5×5 region per city); the price table became the linear `districtPrice` (§3.8). |
 | 12 | medium | "Charter" names six things; glossary cap | **Done:** the token is a **Land Grant**; glossary cap 22 with "Districts and grants" and "Sky Lobby"; the zone is renamed **Fab Yards** on screen (§0, §8.4). |
 | 13 | medium | Skybridge lanes hidden by towers; badge clutter; multi-tile lanes; first tap | **Done:** ghost tubes at bridge height, see-through buildings, decluttered badges (green full, red 16 px dots, routes behind a chip, ≤ 8), auto-fit, lanes per footprint row and column, silhouette hit-test (§5.4, §7.4). |
 | 14 | medium | Annexing lacks short-term purpose; previews don't sell | **Done:** 2–3 district goals per district, a night vignette on the sheet, a district name label on crossing a border (§3.7, §7.2, §3.9). |
 | 15 | medium | Sheet footer can scroll away; HUD button fit; permanent pins | **Done:** sticky footer, 2-line quotes, the map button only from 375 px with a HUD fit test, pins only while a grant waits or a purchase is affordable (§7.2, §7.3, §3.9). |
 | 16 | medium | District styles are only paint | **Done:** 2–3 own silhouettes per style with a ≥ 25% share, a 9-district capture, service looks by style for four services (§6.1). |
 | 17 | medium | Faction towers need life; pickers underspecified | **Done:** a live signature per language, standing-based night light, the crown and Spire pickers specified (§6.2). |
-| 18 | medium | Terraces elevation touches six layers | **Done:** contour shading is the default; raised steps are an optional post-Step 9 package with the full layer list; the parcel, skyway and rail step rules hold now (§3.7, §12). |
+| 18 | medium | Terraces elevation touches six layers | **Done:** contour shading is the default; raised steps are an optional post-Step 9 package with the full layer list; the parcel, skyway and rail step rules hold now (§3.7, §12). The owner confirmed "painted first" (below). |
 | 19 | low | D1 mixes clocks | **Done:** PACING harness to Charter Night + 60 min, per-chapter targets, a speed-3 variant and the 85%-developed stall check (§11.3). |
 | 20 | low | Event durations vs sim time; name clash; lanterns; "slot" | **Done:** "City life" with its own toggle, gameplay capped at 60 sim days per happening, the lanterns and "every third gap" wording (§6.4.1). |
 | 21 | low | Card copy promises changes that don't happen; `ds.bazaar` overlaps `x.corner` | **Done:** `turf … slot:skeleton`, `reeds drain`, the apron families placed at annex with `apron rehouse` / `apron clear`; `ds.bazaar` retitled and set before the Seam's market (§3.7, §8.3, §8.4). |
@@ -2028,10 +2695,51 @@ Two reviews of the draft (a player and design critique, and an engineering criti
 | 23 | low | Annex fires thousands of events and draws from `world.rng` | **Done:** batched annex with one slot touch, its own Rng, a determinism test (§3.2, §3.8). |
 | 24 | low | Frames clear Kites turf | **Done:** `frame` joins both turf-keeping sets (§3.7). |
 | 25 | low | Backlog 32 ticks | **Done:** kept at today's 4 (6 only if the device shows calendar loss) (§3.3). |
-| 26 | low | `Uint16Array` limits | **Done:** a static assertion in Step 0b (§3.1). |
+| 26 | low | `Uint16Array` limits | **Done:** a static assertion in Step 0b (§3.1); since the 5×5 region (320×320 overflows them) Step 0b also widens the lists to 32 bits. |
 | 27 | low | Atlas repaint hitches | **Done:** progressive row bands ≤ 2 ms a frame, only when the map opens and on annex (§3.9). |
 
-**Open questions for the owner** (only ones that change what gets built):
+**Third review (of the 5×5 revision)**
 
-1. **More than nine districts in the sandbox?** The plan stops at a 3×3 region (≈ 4–5 M residents): after the ending, two more land grants arrive (about 48 minutes on Relaxed) or can be bought, then "the city reaches the edge of the region" and the sandbox goals take over. Growing further would need a larger frame plus sleeping districts (O8), which the measurements put at real risk on mid-range phones. Is nine the right end point, or should the sandbox keep growing at that risk?
-2. **Raised hills.** Highstep Terraces ship with painted terraces (contour shading, walls and stairs). Real raised steps touch six render layers and are planned as an optional package after integration. Build it, or is the painted version enough?
+The review re-measured on an idle container; this revision re-ran its scripts and the O2–O4 prototype at 320 (§2.8, Appendix D). Every high and medium issue is addressed and the low ones are done; where the fix differs from the one suggested, the reason is given.
+
+| # | Severity | Issue | Resolution |
+|---|---|---|---|
+| 1 | high | The region is fixed for a city's life, so a phone's 3×3 city moved to a PC can never use 25 districts, which breaks the transfer story | **Done:** `upgradeRegion` (Step 0b, frozen, reusing migration's `reframe`) and **Grow to 25 districts** (WP-9) on Settings' City line and on the City map's edge line once 9 are owned, with a confirm, the 3×3 copy kept as Previous city and the lower-detail note on a handheld; field-identity and native-5×5 equivalence tests; picker footnote "Both have the same story. A 3×3 city can grow to 5×5 later, never back." Not an always-visible City map button: a phone's City map has no spare 44 px row, and the edge line is where the player meets the limit (§3.11, §3.8, §7.6, §7.9, Appendix C 22). It is the spec's addition, so the owner is asked to confirm it (below). |
+| 2 | high | A / B / C slices cannot meet the 25-district frame budgets; the 12 ms day is extrapolation | **Done, and measured:** the prototype the review thought lost is still at `/tmp/claude-megacity/opt/src`; run at 320 it takes 11.6–12.6 ms a day, confirming the 12 ms. The same run shows slice A is ≈ 4.1 ms after O2–O3, a little above the review's 3–3.5, because power's per-tick sweep still costs 2.2 ms. So the day is cut into units of ≤ 1.5 ms in Node: scan and census, power's banded sweep, a resumable relabel, coverage, one field pass per unit resumable by row band into a back buffer, growth, then the economy and story. Units start only when their running estimate fits the cap. Budgets are restated as device p95 and max plus a Node unit bound (PC p95 ≤ 6, max ≤ 10; phone in lower detail p95 ≤ 6, max ≤ 12). WP-1 first ports the prototype to today's code and confirms the day and the units before §11.1's 25-district rows freeze (§2.8, §3.3, §11.1, §12). |
+| 3 | medium | Sleeping throttles cheap growth, makes growth camera- and device-dependent, catches up all at once, and its estimates assume 20 asleep | **Done:** resting slots skip only their field rows, staggered by `(cycle + slot) % k`; growth, ages and tiers run at full rate; estimates redone with 16 resting (≈ −1.3 ms a day, not the draft's −3 ms); tests for growth within 5% over 2 sim years and no catch-up spike. The spike test compares **field cycles**, not days, because O4's phases differ by design (traffic 2.9 ms against phase 2's 4.6 ms) (§3.3, §2.8, §11.5). |
+| 4 | medium | Desktop sprite and paint budgets are copied from the phone; DPR unstated; the ground cache exceeds its budget at DPR 2 | **Done:** the PC sprite cache by canvas size (64 / 96 MB), paint up to 6 ms when the frame's sim left room, the ground cache's existing screen rule stated (≈ 62 MB at 1920×1080 DPR 2), V1/P1 desktop rows at 1920×1080 DPR 1 and 1440×900 DPR 2, and the 6,000-tile caps marked provisional, to be lowered on a miss (§3.9, §6.1, §11.1, §11.3). |
+| 5 | medium | Device classification inconsistent; lower detail can flip mid-session | **Done:** one `deviceClass()` per session decides every default; `mobileOS` replaces `iPad` so an Android tablet with a mouse is handheld too; `settings.lowerDetail` is written once on the first 5×5 load; the live media query decides layout only; tests for a mouse connected mid-session (§3.11, §14.1, §11.2). |
+| 6 | medium | Import of an older copy of the same city; one Previous city slot; `.prev` overwritten by a stand-in city while blocked | **Done:** same-seed detection with newer, older ("Replace with older copy") and same-copy states; while `saveBlocked`, New City, Restore, Import and Grow never write `.prev` (today's `backupCurrent` and `loadPrevious` do). A second Previous city slot is rejected for storage (Appendix C 33) (§13.1, §3.10, §13.8). |
+| 7 | medium | `.future` has no way back; a stale v3 New City leaves the v4 city only there | **Done:** checked against today's code (the title's warning reads `saveBlocked`; nothing reads the `.future` key back). From v4 on, boot offers a readable `.future` as "A newer city was kept" with Restore through the `loadPrevious` path, `.future` removed only after the save; a storage test simulates the stale New City (§3.10, §11.2). |
+| 8 | medium | Story pace is per device, so a Relaxed city silently turns Brisk on another device | **Done, a little further:** `story.pace` is saved with the city (Continue and Restore re-apply it, since the pace is chosen per city at New City), the export header carries it, and the preview offers the choice defaulting to the file's (§3.10, §13.1, §13.2). |
+| 9 | medium | 18 post-ending districts are repeats with tiny goal rewards and nothing between 4 M and 8 M | **Done, plus a fix the review missed:** 16 variant goals (written here, not left to WP-7, so WP-2 has the checks); goals completed after an ending pay max(reward, 0.25 × `districtPrice(owned)`), a rule by districts owned, never by funds; Electric Tide at 6 M; a "region is whole" banner; D1-5 reports the longest stretch without a reward (≤ 30 min). The fix the review missed: kind goals tied to a unique or limited building (the Harbour Beacon, a second Airport, two Seaports) could never be met in every repeat, so they are `once` (variant 0 only), and Coral Strand's preset has no islands, so it skips "Bridge 3 islands". Kind goal labels no longer name their district (§3.7, §3.8, §4.5, §11.3). |
+| 10 | medium | `?` and Ctrl+Z break on AZERTY and QWERTZ; virtual keyboards trigger keycaps | **Done:** checked against `keyboard.ts` (code `Minus` zooms out before anything else; modifiers return early). Ctrl / Cmd+Z and `?` go by `e.key` and are checked first; M, G and U go by `e.key` with a code fallback; E, V, T and F stay on codes as a cluster; a hardware key needs a non-typing target, a non-empty `code` and a known `key`; layout tests (§14.3, §14.5, §11.5). |
+| 11 | medium | Device acceptance an agent cannot run; iOS Home Screen storage is separate | **Done:** automated acceptance in Playwright (Chromium is installed in the dev container; WebKit and Firefox only if `npx playwright install` can fetch them, which is unverified here) and an owner checklist in §11.6 that an agent never marks passed; the phone and PC factors are marked proxy or owner-measured; the iPhone note is in the Import sheet and help step 17 (§11.6, §12 Step 9, §13.1, §13.8). |
+| 12 | low | Trial World at preview vs releasing the old world | **Done:** structural `validateSaveShape` (shared with `deserialize`), no World before the confirm, "Reading city…" and "Opening …" states, a failure after the confirm rebuilds the current city from an untouched `SAVE_KEY` (§13.3, §13.4). |
+| 13 | low | `parse` + `deserialize` row is noise; `gameRestore` includes `new Game()` | **Done:** 30-run medians (≈ 10–12 ms for every 320 fill) and the notes (§2.8, Appendix D). |
+| 14 | low | "Grant" means two things on screen | **Done:** Step 0a renames milestone money to a bonus (banner, advisor line, help step 10, all three checked in the code) and the naming lint keeps the noun for the ✦ token (§0, §4.5, §12). |
+| 15 | low | An awaited compressed `.prev` makes `newCity` async; failure path unspecified | **Done:** `.prev` is written plain and synchronously, swapped for an envelope in an idle callback (worst moment ≈ 2.0 M characters with a `.future` copy, under the 2.5 M floor); `newCity` is frozen as synchronous. A failed write does not simply abort, as suggested, because storage that stays full would then block New City and Import for good: the player gets Export and Replace without a copy (§3.10, §12). |
+| 16 | low | `Math.sin` differs across engines, so locked terrain may differ after a transfer | **Done:** checked that `rng.ts` noise uses only `Math.imul`, `+` and `×`; new generators use `sinP`; the start generator keeps its `Math.sin` river for bit-identity (only its border strips feed blending); a golden-hash test in Node and Playwright engines (§3.6.1, §11.2). |
+| 17 | low | Micro-benchmark under a 1 ms timer | **Done:** runs of ≥ 50 ms, timer resolution measured first, null above 1 ms (§3.11). |
+| 18 | low | Wheel snaps by inertia; snap and Showcase owners; the Export toast action | **Done:** the new-gesture wheel rule, `camera.snapToMap()` / `snapFromMap()` from WP-3 wired by WP-5 (pinch) and WP-9 (wheel), `toast.action.id 'export'` in Step 0b. The Showcase is already released when the title closes in today's code (`startScreen.ts` `dropShowcase()`), so only the doc's two owners were wrong: Step 0b keeps it and tests it (§3.9, §3.2, §12). |
+
+**Open questions for the owner: both closed** (second interview):
+
+1. **More than nine districts in the sandbox?** *Closed: the region size is chosen per city.* The draft stopped at a 3×3 region and asked whether the sandbox should grow at the risk the measurements showed for mid-range phones. The owner wants the game played on phones and available on PCs, and asked whether the map size could differ. Answer: a 3×3 region (9 districts, 192×192 tiles, ≈ 4–5 M people) is the phone default, a 5×5 region (25 districts, 320×320 tiles, ≈ 12 M) the PC default, the New City screen picks the default from the device and the player can override it, a phone that picks 5×5 is warned and runs it in lower detail, and far districts may rest when a PC struggles. Measured in §2.8; implemented in §3.1, §3.6.2, §3.7, §3.8, §3.11, §7.2, §7.9, §11 and §12.
+2. **Raised hills.** *Closed: "painted first".* Highstep Terraces ship with painted terraces (contour shading, retaining walls, stairs; §3.7, §3.9). The raised steps stay the optional package after Step 9 (§12).
+
+**Owner decisions, second interview** (binding; also recorded in DESIGN.md's "Megacity decisions"):
+
+| # | Topic | Decision | Where |
+|---|---|---|---|
+| 1 | Hills | "Painted first": painted terraces ship; raised steps stay optional after Step 9 | §3.7, §3.9, §12, Appendix C 12 |
+| 2 | Region size (PC and phone) | Per city at New City: phones default to 3×3, PCs to 5×5; device detection (fine pointer and not a phone or tablet OS, a computer-sized screen, cores, memory where reported, a micro-benchmark), override with a warning on phones; v3 cities become 3×3; a 5×5 city on a phone runs in lower detail (forced sleeping districts, capped top speed, no weather or crowds, lower render detail); far districts rest on a PC only under strain; epilogue grants twice as often and an income-sized, linear purchase price so 25 districts neither drag nor gate; Glass Horizon (8 M) as the 5×5 sandbox milestone; the per-world frame instead of a fixed `MAP_SIZE`; compressed backups so a 5×5 city fits `localStorage` | §2.8, §3.1–§3.3, §3.6–§3.11, §4.5, §7.2, §7.6, §7.9, §11, §12 |
+| 3 | City transfer | "Export/import file": a small plain-text file (magic line, readable header, gzipped save in base64); Share on phones, Download on computers, Copy as text everywhere; Import validates everything first, rejects newer builds' files in the `FUTURE_SAVE_TEXT` style, replaces the city only after a confirm and keeps it as Previous city; the newer-save block, backups and mirror stay intact | §13, §3.10 |
+| 4 | Desktop polish | All three: side panels for inspect, story and reports on wide screens with a mouse (≥ 1024 × 600, fine pointer); hover tooltips on tools, HUD, buildings, tiles and City map slots, never on touch; keycaps on tool buttons, eight new keys and a ? sheet generated from the bound keys; the phone layout unchanged | §14, §11.1, §12 (WP-9) |
+| 5 | Standing decisions | Unchanged: no losing; late-game money is the reward (no levies, no treasury-scaled prices: `districtPrice` depends only on districts owned); relaxed real-time story pacing with no new interruptions (grants, the lower-detail notice and imports are ticker lines, notices and toasts); phone first (390×844, 360×640, 844×390; 44 px targets); mid-range phone performance is a hard constraint for the 3×3 region; fully original IP (the 16 variant names and every new string were checked) | throughout |
+
+**Open questions for the owner:**
+
+1. **Growing a 3×3 city to 5×5** (third review, #1) is this spec's addition, not an interview answer: one way, from Settings or the City map, the 3×3 copy kept as Previous city. It is specified as core because the transfer story needs it. If the owner declines, WP-9 drops `growRegion` and the two buttons, the picker footnote returns to "Set once per city.", and `upgradeRegion` stays unused in `migrate.ts`.
+
+Step 9 still confirms "prices kept at per-building parity" (§0) and reports the measured region defaults; the device rows of §11.6 wait for the owner.

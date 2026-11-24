@@ -46,3 +46,21 @@ Binding spec: `docs/EXPANSION.md` ("Roads, Wealth and Ports"); measured balance 
 | Pace | "Pace of play feels way too fast": every new cadence runs in unpaused real seconds (or the visual clock), new unlocks sit on the existing population milestones, and story additions are relaxed deck cards, never new chapter beats. |
 | Safety | Costly buildings and highways that cut lots off wait for ✓; road, skyway and zone drags can be undone for 10 s; a building bulldozed within 30 s is refunded in full. |
 | Fail state, IP | Unchanged: no losing; fully original names and art (generic terms only: Street, Avenue, Highway, Back Alley, On-ramp, Skyway, Seaport, Airport, Spaceport, Academy). |
+
+## Megacity decisions (districts and scale interviews)
+
+Binding spec: `docs/MEGACITY.md` ("Districts, Scale, Skybridges and Variety"); measurements in its §2, the owner's answers in its Appendix E.
+
+| Topic | Decision |
+|---|---|
+| Request | "The map needs to be bigger, or you should be able to expand to a new area of your choosing after each chapter. Houses don't hold enough people, businesses don't provide enough jobs. Skybridges feel clunky. Corp towers need more personality. More variety is the biggest thing." |
+| Map | **Unlock districts**: after each chapter a land grant annexes an adjacent 64×64 district of the player's choosing, each with its own terrain and character; grants keep coming after the ending, and in the sandbox districts can also be **bought with credits** (fixed prices by districts owned, never scaled with the treasury). |
+| Scale | **Megacity**: ten times the people per building, denser offices and fabs, megastructures that out-house the towers around them, millions of residents; every population goal, unlock and story threshold rescaled. Money stays at per-building parity (to confirm at Step 9). |
+| Skybridges | **Rework all four**: placing (tap a tower, tap a partner), rules (one height rule, drawn on the map), looks (bigger tubes, faction and district skins, walkers) and payoff (shown numbers, Sky Lobbies); clearly separate from Skyways. |
+| Variety | **All four kinds**: no clone buildings (merged parcels and a building kit), faction architecture for corp towers and megastructures (today's designs kept as the first look), unique landmarks and more civic types, life and atmosphere (crowds, weather, vehicles, district character, city life). |
+| Choices that last | "Even if the story ends, you should be able to keep building your city, making it your own." The ending reshapes the skyline and opens its own landmark; key choices leave named places and plaques; epilogue cards and Charter Reviews recall them. |
+| Hills | **Painted first**: Highstep Terraces ship with painted terraces (contour shading, retaining walls, stairs); real raised steps stay an optional later package. |
+| Region size | **Per city, chosen at New City**: phones default to **3×3** (9 districts, ≈ 4–5 M people), PCs to **5×5** (25 districts, ≈ 12 M). The device sets the default, the player can override it, and a phone that picks 5×5 is warned and runs it in lower detail; far districts may rest when a PC struggles. Old cities become 3×3. *Spec addition, owner to confirm:* a 3×3 city can grow once into a 5×5 (never back), so a phone's city moved to a computer can use the bigger map. |
+| City transfer | **Export/import file**: Menu → Export city saves a small file; Import city on another device opens it after a confirm, keeping the replaced city as Previous city. No accounts or servers. Works in the single-file build and the installed app on iOS and Android. The city's story pace travels with it; importing an older copy of the same city is flagged before it replaces newer play. |
+| Desktop | **All three**: on wide screens with a mouse, inspect, story and reports open as a **side panel** so the city stays visible; **hover tooltips** on tools and buildings (names, costs, key numbers); **shortcut hints** on tool buttons plus a **?** sheet. The phone layout does not change. |
+| Standing decisions | Unchanged: no losing; late-game money is the reward (no levies, no treasury-scaled prices); relaxed real-time story pacing with no new interruptions; phone first (44 px targets) with mid-range phone performance a hard constraint for the 3×3 region; fully original IP. |
