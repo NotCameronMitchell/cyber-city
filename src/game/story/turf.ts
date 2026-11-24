@@ -146,10 +146,13 @@ function fillRect(a: Uint8Array, x0: number, y0: number, x1: number, y1: number,
   for (let y = y0; y <= y1; y++) a.fill(1, y * N + x0, y * N + x1 + 1);
 }
 
-/** Eligible turf tile: land, no building except a Tidemarket or Kite Roost (§3.1). */
+/**
+ * Eligible turf tile: owned land, no building except a Tidemarket or Kite Roost (§3.1). A locked district is off the
+ * map for turf (MEGACITY §3.4 "Turf never forms there", the O1 rule): never eligible, never counted as land.
+ */
 function eligibleAt(world: World, i: number): boolean {
   const t = world.tiles[i];
-  if (t.terrain === WATER) return false;
+  if (t.terrain === WATER || !world.ownedAt(i)) return false;
   if (t.buildingId < 0) return true;
   const b = world.buildings.get(t.buildingId);
   return !!b && KEEPS_TURF.has(b.type);
@@ -172,11 +175,15 @@ function computeMaps(world: World): void {
   const ak = A.kites;
   // Indicators. mA abandoned, mB water, mC ribbon, mD city presence; mAlley back alley,
   // mSky skyway deck, mSea seaport footprint (expansion, §8.4).
+  // A locked tile is off the map (MEGACITY §3.4, O1): not eligible, and its water is not "water near" an owned tile.
   mSea.fill(0);
+  const segs = world.segs;
+  for (let i = 0; i < area; i++) elig[i] = 0;
+  for (let s = 0; s < world.segCount; s += 2) elig.fill(1, segs[s], segs[s + 1]);
   for (let i = 0; i < area; i++) {
     const t = tiles[i];
-    const water = t.terrain === WATER;
-    elig[i] = water ? 0 : 1;
+    const water = t.terrain === WATER && elig[i] === 1;
+    if (t.terrain === WATER) elig[i] = 0;
     mA[i] = t.abandoned ? 1 : 0;
     mB[i] = water ? 1 : 0;
     mC[i] = rail[i] ? 1 : 0;
@@ -317,12 +324,12 @@ function countTiles(world: World): void {
   for (let i = 0; i < area; i++) count[owner[i]]++;
 }
 
-/** Land (non-water) tiles: the cap and `turf.share` denominators. */
+/** Owned land (non-water) tiles: the cap and `turf.share` denominators (a locked district is off the map, §3.4). */
 export function landTiles(world: World): number {
-  const area = world.area;
   let n = 0;
   const tiles = world.tiles;
-  for (let i = 0; i < area; i++) if (tiles[i].terrain !== WATER) n++;
+  const segs = world.segs;
+  for (let s = 0; s < world.segCount; s += 2) for (let i = segs[s]; i < segs[s + 1]; i++) if (tiles[i].terrain !== WATER) n++;
   return n;
 }
 

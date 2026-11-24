@@ -239,3 +239,92 @@ describe('street traffic draws on every kind (§3.11)', () => {
     expect(mockStats.draws).toBeGreaterThan(0);
   });
 });
+
+describe('the minimal render frame keeps the start slot\'s look (MEGACITY §3.9; review fixes)', () => {
+  const FIXTURES = import.meta.glob(['./fixtures/v3-*.json', '!./fixtures/v3-baseline.json'], { import: 'default', eager: true }) as Record<string, import('../src/game/types').SaveData>;
+  /** The fixture migrated to a 3×3 region, and the same city on the legacy 64 frame. */
+  const pair = async (v3: import('../src/game/types').SaveData) => {
+    const { encodeBlock } = await import('../src/game/districts/migrate');
+    const migrated = M.World.deserialize(JSON.parse(JSON.stringify(v3)));
+    const legacySave = { ...JSON.parse(JSON.stringify(v3)), version: 4, region: 1, size: 64, districts: { kinds: ['shore'], owned: [0], grants: 0, bought: 0, annexedAt: [0] }, tileBlocks: [encodeBlock(v3.tiles!.map((t) => t & 0xfffff))] };
+    delete legacySave.tiles;
+    return { migrated, legacy: M.World.deserialize(legacySave) };
+  };
+
+  it('terrain tone, water depth and the regional-road stubs of every migrated fixture equal the 64 map', async () => {
+    for (const [name, v3] of Object.entries(FIXTURES)) {
+      const { migrated, legacy } = await pair(v3);
+      const a = new M.ground.TerrainInfo(legacy);
+      const b = new M.ground.TerrainInfo(migrated);
+      let stubs = 0;
+      for (let y = 0; y < 64; y++)
+        for (let x = 0; x < 64; x++) {
+          const i = y * 64 + x;
+          const j = (y + 64) * 192 + x + 64;
+          if (a.tone[i] !== b.tone[j] || a.depth[i] !== b.depth[j] || a.stub[i] !== b.stub[j]) throw new Error(`${name} at ${x},${y}: tone ${a.tone[i]}/${b.tone[j]} depth ${a.depth[i]}/${b.depth[j]} stub ${a.stub[i]}/${b.stub[j]}`);
+          if (a.stub[i]) stubs++;
+        }
+      expect([name, stubs]).toEqual([name, 4]);
+      // No stub anywhere off the start slot.
+      let outside = 0;
+      for (let i = 0; i < migrated.area; i++) if (b.stub[i] && !migrated.ownedAt(i)) outside++;
+      expect(outside).toBe(0);
+    }
+  });
+
+  it('street traffic enters at the start slot edge where it entered at the 64 map edge', async () => {
+    const v3 = Object.entries(FIXTURES).find(([n]) => n.includes('v3-expansion'))![1];
+    const { migrated, legacy } = await pair(v3);
+    const edges = (w: WorldT, off: number) => {
+      const t = new M.traffic.StreetTraffic();
+      const b = { x0: off, y0: off, x1: off + 63, y1: off + 63 };
+      t.draw(mockContext(), b, 1, 0, 'high', 0);
+      t.update(1 / 30, w, 'high');
+      return (t as unknown as { visEdge: number[] }).visEdge.map((i) => [(i % w.N) - off, ((i / w.N) | 0) - off]).sort((p, q) => p[0] - q[0] || p[1] - q[1]);
+    };
+    const a = edges(legacy, 0);
+    expect(a.length).toBeGreaterThan(0);
+    expect(edges(migrated, 64)).toEqual(a);
+  });
+
+  it('sky lanes, flyers and the blimp fly over the owned land, at the 64 map\'s places on a migrated start slot', async () => {
+    const { SkyTraffic } = await import('../src/render/art/skytraffic');
+    type Lane = { axis: number; c: number; z: number; lo: number; hi: number };
+    type Peek = { lanes: Lane[]; flyers: { lane: number; s: number }[]; blimp: { axis: number; c: number; s: number } | null; blimpTimer: number };
+    const v3 = Object.entries(FIXTURES).find(([n]) => n.includes('v3-expansion'))![1];
+    const { migrated, legacy } = await pair(v3);
+    const run = (w: WorldT) => {
+      const sky = new SkyTraffic();
+      const p = sky as unknown as Peek;
+      w.stats.population = 500_000;
+      for (let k = 0; k < 200; k++) {
+        if (k === 5) p.blimpTimer = 0;
+        sky.update(0.05, w, 'high', null, 1);
+      }
+      return p;
+    };
+    const a = run(legacy);
+    for (const R of [3, 5] as const) {
+      const w = R === 3 ? migrated : M.World.generate(legacy.seed, 'Sky', undefined, 5);
+      if (R === 5) w.stats.population = 500_000;
+      const b = run(w);
+      const o = w.ownedBox;
+      const off = o.x0;
+      // The same lanes, shifted onto the start slot.
+      expect(b.lanes.map((l) => [l.axis, l.c - off, l.z])).toEqual(a.lanes.map((l) => [l.axis, l.c, l.z]));
+      for (const l of b.lanes) {
+        expect(l.c).toBeGreaterThanOrEqual(o.x0);
+        expect(l.c).toBeLessThanOrEqual(o.x1);
+        expect([l.lo, l.hi]).toEqual([o.x0, o.x1 + 1]);
+      }
+      expect(b.flyers.length).toBeGreaterThan(10);
+      for (const f of b.flyers) {
+        expect(f.s).toBeGreaterThanOrEqual(o.x0 - 8);
+        expect(f.s).toBeLessThanOrEqual(o.x1 + 1 + 8);
+      }
+      expect(b.blimp).not.toBeNull();
+      expect(b.blimp!.c).toBeGreaterThanOrEqual(o.x0 + 14);
+      expect(b.blimp!.c).toBeLessThanOrEqual(o.x1 - 13);
+    }
+  });
+});

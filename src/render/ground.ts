@@ -303,11 +303,14 @@ export class TerrainInfo {
           hash2(x - o, y - o, this.seed + 5) * 0.26;
         this.tone[i] = Math.max(0, Math.min(7, Math.floor(v * 8)));
         if (tiles[i].terrain !== Terrain.Water) continue;
+        // The owned/locked border is a map edge for the water shading (MEGACITY §3.4, O1): owned water reads owned
+        // land only, so a migrated bay keeps its open-sea depth along the slot edge.
+        const own = world.isOwned(x, y);
         let shore = false;
         for (let dy = -1; dy <= 1 && !shore; dy++)
           for (let dx = -1; dx <= 1; dx++) {
             const t = world.tileAt(x + dx, y + dy);
-            if (t && t.terrain === Terrain.Land) {
+            if (t && t.terrain === Terrain.Land && world.isOwned(x + dx, y + dy) === own) {
               shore = true;
               break;
             }
@@ -327,7 +330,7 @@ export class TerrainInfo {
       for (let k = 0; k < 4; k++) {
         const nx = x + (k === 1 ? 1 : k === 3 ? -1 : 0);
         const ny = y + (k === 2 ? 1 : k === 0 ? -1 : 0);
-        if (nx < 0 || ny < 0 || nx >= N || ny >= N) continue;
+        if (nx < 0 || ny < 0 || nx >= N || ny >= N || world.isOwned(nx, ny) !== world.isOwned(x, y)) continue;
         const j = ny * N + nx;
         if (tiles[j].terrain === Terrain.Water && this.depth[j] === 0) {
           this.depth[j] = d + 1;
@@ -343,27 +346,34 @@ export class TerrainInfo {
    * EDGE_LINKS.stubs border points (one per side where the side has land, then extra
    * points on the sides that do): land tiles whose inward neighbour is land too, at a
    * hashed position along the side. Deterministic per seed; never stored in the save.
+   * The sides are the owned box's (MEGACITY §3.5 boundary; on a one-district city the start slot's edge, where
+   * the 64 map's border was, at the same hashed places). WP-3 gives each owned slot its own pair (§3.5).
    */
   private placeStubs(world: World) {
     const N = world.N;
-    const land = (x: number, y: number) => world.tileAt(x, y)?.terrain === Terrain.Land;
+    const b = world.ownedBox;
+    const land = (x: number, y: number) => world.isOwned(x, y) && world.tileAt(x, y)?.terrain === Terrain.Land;
+    // Along a side: the box's width for the north and south sides, its height for east and west.
+    const len = (side: number) => (side === 0 || side === 2 ? b.x1 - b.x0 + 1 : b.y1 - b.y0 + 1);
     const at = (side: number, p: number): [number, number] =>
-      side === 0 ? [p, 0] : side === 1 ? [N - 1, p] : side === 2 ? [p, N - 1] : [0, p];
+      side === 0 ? [b.x0 + p, b.y0] : side === 1 ? [b.x1, b.y0 + p] : side === 2 ? [b.x0 + p, b.y1] : [b.x0, b.y0 + p];
     let placed = 0;
     for (let round = 0; round < 3 && placed < EDGE_LINKS.stubs; round++) {
       for (let side = 0; side < 4 && placed < EDGE_LINKS.stubs; side++) {
-        const p0 = 8 + Math.floor(hash2(side, round, this.seed + 77) * (N - 16));
-        for (let d = 0; d < N; d++) {
+        const L = len(side);
+        const p0 = 8 + Math.floor(hash2(side, round, this.seed + 77) * (L - 16));
+        for (let d = 0; d < L; d++) {
           const p = p0 + (d & 1 ? -((d + 1) >> 1) : d >> 1);
-          if (p < 2 || p > N - 3) continue;
+          if (p < 2 || p > L - 3) continue;
           const [x, y] = at(side, p);
           const i = y * N + x;
-          if (this.stub[i] || !land(x, y) || !land(x - DX4[side], y - DY4[side])) continue;
+          // On the boundary: the tile beyond it is off the map or locked.
+          if (this.stub[i] || !land(x, y) || !land(x - DX4[side], y - DY4[side]) || world.isOwned(x + DX4[side], y + DY4[side])) continue;
           // Keep stubs on one side apart.
           let near = false;
           for (let e = -6; e <= 6 && !near; e++) {
             const q = p + e;
-            if (q < 0 || q >= N) continue;
+            if (q < 0 || q >= L) continue;
             const [ax, ay] = at(side, q);
             if (this.stub[ay * N + ax]) near = true;
           }
@@ -2227,7 +2237,8 @@ export class GroundCache {
 
   private bind(world: World) {
     const b = world.ownedBox;
-    const key = `${b.x0},${b.y0},${b.x1},${b.y1}`;
+    // The owned slots too: an annex inside the box still moves the boundary (stubs, water shading).
+    const key = `${b.x0},${b.y0},${b.x1},${b.y1},${world.slotsVersion}`;
     if (world.N === this.N && key === this.boxKey) return;
     this.reset();
     this.N = world.N;

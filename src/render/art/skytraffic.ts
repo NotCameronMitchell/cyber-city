@@ -5,6 +5,7 @@
 // an empty city has an empty sky.
 // ─────────────────────────────────────────────────────────────────────────────
 
+import { artOffset } from '../../game/districts/slots';
 import { hash2 } from '../../game/rng';
 import { ZoneType } from '../../game/types';
 import type { World } from '../../game/world';
@@ -20,6 +21,9 @@ interface Lane {
   axis: number;
   c: number;
   z: number;
+  /** The span flyers run over along the lane (the owned box, MEGACITY §3.9): from lo to hi tiles. */
+  lo: number;
+  hi: number;
 }
 
 interface Flyer {
@@ -129,6 +133,8 @@ export class SkyTraffic {
   private blimp: Blimp | null = null;
   private blimpTimer = 20;
   private worldRef: World | null = null;
+  /** world.slotsVersion the lanes were laid out for (an annex grows the owned box). */
+  private slotsSeen = -1;
   private target = 0;
   private flyerCss: string[] = FLYER_COLS.map((c) => css(c));
   private flyerGlow: HTMLCanvasElement[] | null = null;
@@ -157,23 +163,35 @@ export class SkyTraffic {
     this.worldRef = null;
   }
 
+  /**
+   * Lanes over the owned land (MEGACITY §3.9): placed inside the owned box as today's were inside the 64 map
+   * (8 + hash × 48 on a 64-wide box), so a migrated start slot keeps exactly its sky traffic; flyers run over the box.
+   */
   private setup(world: World) {
     this.worldRef = world;
+    this.slotsSeen = world.slotsVersion;
     this.lanes = [];
     const seed = world.seed;
+    const o = world.ownedBox;
     const count = 6;
     for (let i = 0; i < count; i++) {
+      const axis = i % 2;
+      // axis 0 runs along x at a y (c); axis 1 along y at an x.
+      const c0 = axis === 0 ? o.y0 : o.x0;
+      const side = axis === 0 ? o.y1 - o.y0 + 1 : o.x1 - o.x0 + 1;
       this.lanes.push({
-        axis: i % 2,
-        c: 8 + Math.floor(hash2(i, 1, seed) * 48),
+        axis,
+        c: c0 + 8 + Math.floor(hash2(i, 1, seed) * (side - 16)),
         z: 110 + Math.floor(hash2(i, 2, seed) * 140) + (i % 3) * 20,
+        lo: axis === 0 ? o.x0 : o.y0,
+        hi: axis === 0 ? o.x1 + 1 : o.y1 + 1,
       });
     }
   }
 
   update(dt: number, world: World, quality: 'low' | 'high', b: Bounds | null, night: number) {
-    const N = world.N;
-    if (world !== this.worldRef) this.setup(world);
+    if (world !== this.worldRef || world.slotsVersion !== this.slotsSeen) this.setup(world);
+    const o = world.ownedBox;
     const pop = world.stats.population;
     const popK = Math.pow(Math.min(1, pop / 30000), 0.8); // ×10 units (MEGACITY §4.4)
     this.target = Math.round(popK * (quality === 'low' ? 14 : 40));
@@ -183,7 +201,8 @@ export class SkyTraffic {
       f.s += f.speed * dt;
       f.age += dt;
       if (f.dying > 0) f.dying -= dt;
-      if (f.s < -8 || f.s > N + 8 || (f.dying > 0 && f.dying <= dt)) {
+      const L = this.lanes[f.lane];
+      if (f.s < L.lo - 8 || f.s > L.hi + 8 || (f.dying > 0 && f.dying <= dt)) {
         this.flyers[i] = this.flyers[this.flyers.length - 1];
         this.flyers.pop();
       }
@@ -192,10 +211,12 @@ export class SkyTraffic {
     while (spawn-- > 0) {
       const dir = Math.random() < 0.5 ? 1 : -1;
       const fresh = this.flyers.length < this.target * 0.5;
+      const lane = (Math.random() * this.lanes.length) | 0;
+      const L = this.lanes[lane];
       this.flyers.push({
-        lane: (Math.random() * this.lanes.length) | 0,
-        // Fill the sky immediately at first, then enter from the edges.
-        s: fresh ? Math.random() * N : dir > 0 ? -6 : N + 6,
+        lane,
+        // Fill the sky immediately at first, then enter from the edges of the owned land.
+        s: fresh ? L.lo + Math.random() * (L.hi - L.lo) : dir > 0 ? L.lo - 6 : L.hi + 6,
         speed: dir * (2.4 + Math.random() * 2.2),
         col: (Math.random() * FLYER_COLS.length) | 0,
         ph: Math.random(),
@@ -210,18 +231,23 @@ export class SkyTraffic {
     // Blimp / ad drone.
     if (this.blimp) {
       this.blimp.s += this.blimp.speed * dt;
-      if (this.blimp.s < -12 || this.blimp.s > N + 12) this.blimp = null;
+      const lo = this.blimp.axis === 0 ? o.x0 : o.y0;
+      const hi = this.blimp.axis === 0 ? o.x1 + 1 : o.y1 + 1;
+      if (this.blimp.s < lo - 12 || this.blimp.s > hi + 12) this.blimp = null;
     } else if (pop > 6000) {
       this.blimpTimer -= dt;
       if (this.blimpTimer <= 0) {
         this.blimpTimer = 35 + Math.random() * 40;
         const dir = Math.random() < 0.5 ? 1 : -1;
         const drone = Math.random() < 0.4;
+        const axis = Math.random() < 0.5 ? 0 : 1;
+        const c0 = axis === 0 ? o.y0 : o.x0;
+        const side = axis === 0 ? o.y1 - o.y0 + 1 : o.x1 - o.x0 + 1;
         this.blimp = {
-          axis: Math.random() < 0.5 ? 0 : 1,
-          c: 14 + Math.random() * 36,
+          axis,
+          c: c0 + 14 + Math.random() * (side - 28),
           z: drone ? 150 : 250,
-          s: dir > 0 ? -10 : N + 10,
+          s: dir > 0 ? (axis === 0 ? o.x0 : o.y0) - 10 : (axis === 0 ? o.x1 : o.y1) + 1 + 10,
           speed: dir * (drone ? 1.6 : 0.7),
           drone,
           ph: Math.random(),
@@ -238,6 +264,8 @@ export class SkyTraffic {
 
   private findLights(world: World, b: Bounds, quality: 'low' | 'high', night: number) {
     const N = world.N;
+    // Phases hash art coordinates (MEGACITY §3.2), so a migrated start slot keeps its searchlights' rhythm.
+    const ao = artOffset(world);
     this.lights.length = 0;
     if (quality === 'low' || night < 0.3) return;
     const cx = (b.x0 + b.x1) / 2;
@@ -252,12 +280,12 @@ export class SkyTraffic {
           if ((bd.type !== 'spire' && bd.type !== 'arcology') || !bd.powered) continue;
           const s = bd.size / 2;
           const h = bd.type === 'spire' ? 236 : serviceBuildingHeight(bd.type) - 50;
-          cand.push({ d: -1000, l: { x: (x + s - (y + s)) * HALF_W, y: (x + s + y + s) * HALF_H - h, ph: hash2(x, y, 3), col: bd.type === 'spire' ? 2 : 0, twin: true } });
+          cand.push({ d: -1000, l: { x: (x + s - (y + s)) * HALF_W, y: (x + s + y + s) * HALF_H - h, ph: hash2(x - ao, y - ao, 3), col: bd.type === 'spire' ? 2 : 0, twin: true } });
         } else if (t.zone !== ZoneType.None && t.level === 3 && !t.abandoned && t.powered && (t.variant & 7) % 4 === 0 && t.age > 30) {
           const h = zoneBuildingHeight(t);
           cand.push({
             d: Math.hypot(x - cx, y - cy),
-            l: { x: (x - y) * HALF_W, y: (x + y) * HALF_H + HALF_H - h, ph: hash2(x, y, 5), col: t.zone === ZoneType.Commercial ? 1 : 0, twin: false },
+            l: { x: (x - y) * HALF_W, y: (x + y) * HALF_H + HALF_H - h, ph: hash2(x - ao, y - ao, 5), col: t.zone === ZoneType.Commercial ? 1 : 0, twin: false },
           });
         }
       }

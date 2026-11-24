@@ -127,8 +127,10 @@ export class SimGrid {
   /** Tiles with hwReach ≥ 0 (BFS order). */
   readonly hwReachList: Uint32Array;
   hwReachLen = 0;
-  /** Regional link points (§3.10), capped at EDGE_LINKS.cap. */
+  /** Regional link points (§3.10, MEGACITY §3.5: on the owned boundary), capped at 12 + 4 per district after the first. */
   edgePoints = 0;
+  /** world.slotsVersion the edge points were counted for (an annex moves the boundary). */
+  private slotsSeen = -1;
 
   // ── Sky caches (rebuilt when world.skyVersion or the road signature changes) ──
   /** Skyway component of each sky tile (mutual links), -1 elsewhere. */
@@ -257,6 +259,7 @@ export class SimGrid {
       computeAccess(kind, this.roadDist, this.nearestRoad, this.queue, this.N);
       this.buildRoadCaches();
     }
+    if (roadsChanged || world.slotsVersion !== this.slotsSeen) this.computeEdgePoints(world);
     if (roadsChanged || world.skyVersion !== this.skySeen) {
       this.skySeen = world.skyVersion;
       this.buildSkyCaches(world);
@@ -408,24 +411,36 @@ export class SimGrid {
       if (d >= 0 && d !== a && d !== b && d !== cc) hwRamps[d]++;
     }
     this.hwReachLen = this.reachBfs(hwReach, hwDepth, hwReachList, head, tail, HW_REACH);
+  }
 
-    // Regional links (§3.10): a land border road whose inward 4-neighbour is a road it links to.
+  /**
+   * Regional links (EXPANSION §3.10 with "map border" read as the owned boundary, MEGACITY §3.5): a land road on an
+   * owned tile whose outward 4-neighbour is off the map or in a locked slot, and whose inward neighbour (opposite it)
+   * is a road it links to. Points per kind, capped at 12 + 4 per district after the first. On a one-district city
+   * the boundary is the start slot's edge, so a migrated v3 city keeps exactly its links.
+   */
+  private computeEdgePoints(world: World): void {
+    this.slotsSeen = world.slotsVersion;
+    const { N, kind, water } = this;
+    const segs = world.segs;
+    const open = (x: number, y: number) => !world.isOwned(x, y);
     let pts = 0;
-    const water = this.water;
-    for (let i = 0; i < area; i++) {
-      const k = kind[i];
-      if (k === K_NONE || water[i]) continue;
-      const x = i % N;
-      const y = (i / N) | 0;
-      if (x !== 0 && x !== N - 1 && y !== 0 && y !== N - 1) continue;
-      let inward = false;
-      if (y === 0 && links(k, kind[i + N])) inward = true;
-      if (y === N - 1 && links(k, kind[i - N])) inward = true;
-      if (x === 0 && links(k, kind[i + 1])) inward = true;
-      if (x === N - 1 && links(k, kind[i - 1])) inward = true;
-      if (inward) pts += EDGE_POINTS[k] ?? 0;
-    }
-    this.edgePoints = pts > EDGE.cap ? EDGE.cap : pts;
+    for (let s = 0; s < world.segCount; s += 2)
+      for (let i = segs[s]; i < segs[s + 1]; i++) {
+        const k = kind[i];
+        if (k === K_NONE || water[i]) continue;
+        const x = i % N;
+        const y = (i / N) | 0;
+        if (
+          (open(x, y - 1) && y + 1 < N && links(k, kind[i + N])) ||
+          (open(x, y + 1) && y > 0 && links(k, kind[i - N])) ||
+          (open(x - 1, y) && x + 1 < N && links(k, kind[i + 1])) ||
+          (open(x + 1, y) && x > 0 && links(k, kind[i - 1]))
+        )
+          pts += EDGE_POINTS[k] ?? 0;
+      }
+    const cap = EDGE.cap + EDGE.perDistrict * Math.max(0, world.districts.owned.length - 1);
+    this.edgePoints = pts > cap ? cap : pts;
   }
 
   private joinHw(j: number, c: number, tail: number): number {

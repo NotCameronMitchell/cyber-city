@@ -8,10 +8,13 @@ import { assignKinds, REGION5_QUOTA, seedLayout } from '../src/game/districts/la
 import { NOT_SPATIAL_FIELDS, TILE_INDEX_FIELDS, TILE_XY_FIELDS, encodeBlock } from '../src/game/districts/migrate';
 import { adjacentLocked, ringKey, ringOf, slotAtRingKey, slotNeighbours, slotRect } from '../src/game/districts/slots';
 import { KIND_WATER, startParams } from '../src/game/districts/terrain';
+import { Game } from '../src/game/game';
 import { Rng } from '../src/game/rng';
 import { Simulation } from '../src/game/sim';
 import { Advisor } from '../src/game/sim/advisor';
 import { newStoryState } from '../src/game/story/state';
+import { applySurge, findSpot } from '../src/game/story/effects';
+import * as turf from '../src/game/story/turf';
 import { BUILDING_ORDER } from '../src/game/config';
 import { DISTRICT_KINDS, Ground, LEGACY_REGION, MAX_MAP_SIZE, RoadKind, SLOT, Terrain, ZoneType, startSlot, type Region, type SaveData } from '../src/game/types';
 import { World } from '../src/game/world';
@@ -246,6 +249,10 @@ describe('invariants on locked land (§3.2, §11.2 item 7)', () => {
       ['clear', () => w.clearTile(...xy())],
       ['tool', () => void applyAction(w, 'road', { x: rng.int(0, N - 1), y: rng.int(0, N - 1) }, { x: rng.int(0, N - 1), y: rng.int(0, N - 1) })],
       ['annex', () => w.annex(rng.int(0, R * R - 1))],
+      // Turf (review fix): seeding, the monthly rules and the surge incident never claim a locked tile.
+      ['turfSeed', () => void turf.seedGang(w, rng.int(0, 1) ? 'undertow' : 'kites', ...xy(), 90)],
+      ['turfMonth', () => turf.update(w)],
+      ['surge', () => void applySurge(w, rng.int(0, 1) ? 'undertow' : 'kites', ...xy())],
     ];
     for (let k = 0; k < 600; k++) {
       const [name, op] = ops[rng.int(0, ops.length - 1)];
@@ -254,6 +261,102 @@ describe('invariants on locked land (§3.2, §11.2 item 7)', () => {
     }
     check('end');
     expect(w.districts.owned[0]).toBe(startSlot(R));
+  });
+});
+
+describe('turf never forms on locked land (§3.4, §11.2 item 7; review fix)', () => {
+  it.each(REGIONS)('%i×%i: gangs seeded at the start slot corners stay on owned land for 40 months; the cap and share count owned land', (R) => {
+    const w = new World(77, 'Lock', undefined, R);
+    const b = w.ownedBox;
+    const N = w.N;
+    for (let y = 0; y < N; y++)
+      for (let x = 0; x < N; x++) {
+        const t = w.tiles[y * N + x];
+        t.terrain = Terrain.Land;
+        if (!w.isOwned(x, y)) continue; // locked slots stay bare, as in play
+        if (x % 4 === 0 || y % 4 === 0) t.road = true;
+        else {
+          t.zone = ZoneType.Residential;
+          t.level = 2;
+        }
+      }
+    const sim = new Simulation(w);
+    sim.options.events = false;
+    sim.recomputeAll();
+    expect(turf.landTiles(w)).toBe(SLOT * SLOT);
+    turf.seedGang(w, 'undertow', b.x0 + 1, b.y0 + 1, 90);
+    turf.seedGang(w, 'kites', b.x1 - 1, b.y1 - 1, 90);
+    // Seeds asked for on locked land claim nothing.
+    expect(turf.seedGang(w, 'undertow', b.x0 - 3, b.y0 - 3, 90)).toBe(0);
+    for (let k = 0; k < 40; k++) {
+      turf.update(w);
+      for (let d = 0; d < 30; d++) sim.step();
+    }
+    applySurge(w, 'undertow', b.x0, b.y0);
+    applySurge(w, 'kites', b.x1 + 1, b.y1 + 1);
+    let owned = 0;
+    let locked = 0;
+    for (let i = 0; i < w.area; i++) if (w.turf.owner[i]) w.ownedAt(i) ? owned++ : locked++;
+    expect(owned).toBeGreaterThan(20);
+    expect(locked).toBe(0);
+    expect(w.turf.stats.tiles.undertow + w.turf.stats.tiles.kites).toBe(owned);
+    expect(turf.isEligible(w, b.x0 - 1, b.y0)).toBe(false);
+    // Story spots land on owned tiles too.
+    const rng = new Rng(5);
+    for (const rule of ['dense', 'abandoned', 'industrial', 'shore', 'highway', 'alley', 'any'] as const) {
+      const at = findSpot(w, rule as Parameters<typeof findSpot>[1], rng);
+      if (at >= 0) expect([rule, w.ownedAt(at)]).toEqual([rule, true]);
+    }
+  }, 120_000);
+});
+
+describe('regional links on the owned boundary (§3.5; review fix)', () => {
+  it.each(REGIONS)('%i×%i: a road at the start slot edge links (sim and inspect), and stops once the slot beyond is annexed', (R) => {
+    const g = new Game();
+    g.newCity('Links', 2091, R);
+    const w = g.world;
+    const o = w.ownedBox;
+    const y = o.y0 + 30;
+    for (let yy = o.y0; yy <= o.y1; yy++) for (let x = o.x0; x <= o.x1; x++) w.tiles[yy * w.N + x].terrain = Terrain.Land;
+    // A street from the west edge of the start slot inward, an avenue from its east edge.
+    for (let x = o.x0; x < o.x0 + 12; x++) w.setRoad(x, y, RoadKind.Street);
+    for (let x = o.x1; x > o.x1 - 12; x--) w.setRoad(x, y + 10, RoadKind.Avenue);
+    // A road ending one tile short of the edge is no link.
+    for (let x = o.x0 + 1; x < o.x0 + 12; x++) w.setRoad(x, y + 20, RoadKind.Street);
+    g.sim.recomputeAll();
+    expect(w.stats.edgeLinks).toBe(1 + 2);
+    expect(g.getTileInfo(o.x0, y)?.notes).toEqual([{ text: 'Regional link: +1 trade', tone: 'good' }]);
+    expect(g.getTileInfo(o.x1, y + 10)?.notes).toEqual([{ text: 'Regional link: +2 trade', tone: 'good' }]);
+    expect(g.getTileInfo(o.x0 + 1, y + 20)?.notes ?? []).toEqual([]);
+    // Annexing the west neighbour turns that border internal: the street stops counting (a daily step sees it).
+    const west = startSlot(R) - 1;
+    w.annex(west);
+    g.sim.step();
+    expect(w.stats.edgeLinks).toBe(2);
+    expect(g.getTileInfo(o.x0, y)?.notes ?? []).toEqual([]);
+  });
+});
+
+describe('inspect on locked land (§3.4; review fix)', () => {
+  it.each(REGIONS)("%i×%i: a locked tile names its district, 'Not annexed yet', with no lot rows; the Sunk before it opens says only 'Still flooded'", (R) => {
+    const g = new Game();
+    g.newCity('Peek', 2091, R);
+    const w = g.world;
+    const o = w.ownedBox;
+    const s = startSlot(R) - R; // north of the start slot
+    const at = { x: o.x0 + 10, y: o.y0 - 10 };
+    expect(w.slotAt(at.x, at.y)).toBe(s);
+    const def = DISTRICTS[w.districts.kinds[s]];
+    const v = w.variantOf(s);
+    const name = v > 0 ? def.variants[v - 1].name : def.name;
+    const info = g.getTileInfo(at.x, at.y)!;
+    expect(info).toMatchObject({ title: name, subtitle: 'Not annexed yet', rows: [] });
+    expect(info.title).not.toBe('Open ground');
+    // The Sunk before ch4.brine: its name and "Still flooded" only.
+    w.districts.kinds[s] = 'sunk';
+    expect(g.getTileInfo(at.x, at.y)).toEqual({ title: DISTRICTS.sunk.name, subtitle: 'Still flooded: opens later', color: DISTRICTS.sunk.color, rows: [] });
+    // Owned land still gets the lot rows.
+    expect(g.getTileInfo(o.x0 + 10, o.y0 + 10)!.rows.length).toBeGreaterThan(0);
   });
 });
 
@@ -343,11 +446,12 @@ describe('config tables (§3.2, §3.7, §4.5)', () => {
   });
 });
 
-describe('field identity on the start slot (§11.2 item 9, interior)', () => {
-  it('a v3 fixture loaded into a 3×3 region computes the fields it computed on the 64 map, away from the slot border', async () => {
-    const v3 = (await import('./fixtures/v3-mayor-2091-y8.json')).default as unknown as SaveData;
+describe('field identity on the start slot (§11.2 item 9)', () => {
+  const FIXTURES = import.meta.glob(['./fixtures/v3-*.json', '!./fixtures/v3-baseline.json'], { import: 'default', eager: true }) as Record<string, SaveData>;
+  const KEYS = ['landValue', 'pollution', 'crime', 'security', 'health', 'park', 'transit', 'wealth', 'traffic', 'education'] as const;
+  /** The fixture migrated to a 3×3 region and the same city on the legacy 64 frame (what the v3 build computed). */
+  const pair = (v3: SaveData) => {
     const migrated = World.deserialize(JSON.parse(JSON.stringify(v3)));
-    // The same city on the legacy 64 frame (what the v3 build computed).
     const legacySave: SaveData = {
       ...JSON.parse(JSON.stringify(v3)),
       version: 4,
@@ -359,19 +463,57 @@ describe('field identity on the start slot (§11.2 item 9, interior)', () => {
     delete legacySave.tiles;
     const legacy = World.deserialize(legacySave);
     for (const w of [migrated, legacy]) {
-      const s = new Simulation(w);
-      s.options.events = false;
-      s.recomputeAll();
+      const sim = new Simulation(w);
+      sim.options.events = false;
+      sim.recomputeAll();
     }
-    // Interior tiles (≥ 12 from the slot edge): stencils there never reach the border, so the fields match exactly.
-    // The whole slot matches only once WP-1's O1 boundary rule treats locked tiles as off the map.
-    const m = 12;
-    for (const k of ['landValue', 'pollution', 'crime', 'security', 'health', 'park', 'transit'] as const)
-      for (let y = m; y < 64 - m; y++)
-        for (let x = m; x < 64 - m; x++) {
-          const a = legacy.fields[k][y * 64 + x];
-          const b = migrated.fields[k][(y + 64) * 192 + x + 64];
-          if (Math.abs(a - b) > 1e-6) throw new Error(`${k} at ${x},${y}: ${a} vs ${b}`);
+    return { migrated, legacy };
+  };
+  /** Tiles whose field differs by more than 1e-6, and the farthest of them from the slot edge (−1 when none). */
+  const gap = (legacy: World, migrated: World) => {
+    let n = 0;
+    let depth = -1;
+    for (const k of KEYS)
+      for (let y = 0; y < 64; y++)
+        for (let x = 0; x < 64; x++) {
+          const a = (legacy.fields[k] as Float32Array)[y * 64 + x];
+          const b = (migrated.fields[k] as Float32Array)[(y + 64) * 192 + x + 64];
+          if (Math.abs(a - b) <= 1e-6) continue;
+          n++;
+          depth = Math.max(depth, Math.min(x, y, 63 - x, 63 - y));
         }
+    return { n, depth };
+  };
+
+  it('every pinned v3 fixture: identical regional links, residents and jobs; any field difference lies within 3 tiles of the slot edge', () => {
+    const names = Object.keys(FIXTURES);
+    expect(names.length).toBeGreaterThanOrEqual(8);
+    for (const name of names) {
+      const { migrated, legacy } = pair(FIXTURES[name]);
+      // Regional links count on the owned boundary (§3.5): the start slot's edge is the v3 map border.
+      for (const k of ['edgeLinks', 'population', 'jobsCom', 'jobsInd'] as const) expect([name, k, migrated.stats[k]]).toEqual([name, k, legacy.stats[k]]);
+      const g = gap(legacy, migrated);
+      // Pollution's three blur passes still cross the slot edge into the locked slots (WP-1's O1 boundary rule).
+      expect([name, g.depth]).toEqual([name, Math.min(g.depth, 2)]);
+    }
+  });
+
+  it('the whole slot matches exactly on every fixture with no pollution at the slot edge (all but v3-expansion)', () => {
+    for (const [name, v3] of Object.entries(FIXTURES)) {
+      if (name.includes('v3-expansion')) continue;
+      const { migrated, legacy } = pair(v3);
+      expect([name, gap(legacy, migrated).n]).toEqual([name, 0]);
+      // Visitors follow the mean crime (the tourism mood), so they match where the fields do.
+      expect([name, migrated.stats.visitors]).toEqual([name, legacy.stats.visitors]);
+    }
+  });
+
+  // OPEN Step 0b acceptance item (§11.6): v3-expansion has pollution sources on its map edge, and blur3 still reads
+  // the locked slots beside the start slot. WP-1's O1 (a locked tile is off the map for every stencil) closes it;
+  // this case then passes, and `it.fails` turns red: make it a plain `it`.
+  it.fails('v3-expansion over the whole slot (open until WP-1 lands O1)', () => {
+    const v3 = Object.entries(FIXTURES).find(([n]) => n.includes('v3-expansion'))![1];
+    const { migrated, legacy } = pair(v3);
+    expect(gap(legacy, migrated).n).toBe(0);
   });
 });

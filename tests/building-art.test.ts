@@ -201,3 +201,25 @@ describe('services, story buildings and ports', () => {
     expect(ZoneType.Residential).toBe(1);
   });
 });
+
+describe('per-tile phases hash art coordinates (MEGACITY §3.2; review fix)', () => {
+  it("a migrated start slot (art offset 64 or 128) lights each abandoned shell as the 64 map did; tile coordinates alone would not", () => {
+    const ctx = mockContext();
+    const shell = tile(1, 3, 2, 1, { abandoned: true });
+    const draws = (tx: number, ty: number, ao?: number) => {
+      resetMockStats();
+      art.drawZoneBuilding(ctx, 0, 0, shell, tx, ty, { time: 5, night: 1, zoom: 1, quality: 'high', ...(ao === undefined ? {} : { artOffset: ao }) });
+      return mockStats.draws;
+    };
+    draws(0, 0); // build the sprite once
+    let differs = 0;
+    for (let y = 0; y < 64; y += 3)
+      for (let x = 0; x < 64; x += 3) {
+        const legacy = draws(x, y);
+        expect(draws(x + 64, y + 64, 64)).toBe(legacy);
+        expect(draws(x + 128, y + 128, 128)).toBe(legacy);
+        if (draws(x + 64, y + 64) !== legacy) differs++;
+      }
+    expect(differs).toBeGreaterThan(0);
+  });
+});

@@ -19,6 +19,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { ANNEX } from '../game/config';
+import { artOffset } from '../game/districts/slots';
 import type { Game } from '../game/game';
 import { ZoneType, type Building, type Settings } from '../game/types';
 import type { World } from '../game/world';
@@ -292,7 +293,7 @@ export class Renderer {
     const zoom = cam.zoom;
     const night = 1 - game.daylight;
     const quality = game.settings.quality;
-    const env: ArtEnv = { time, night, zoom, quality };
+    const env: ArtEnv = { time, night, zoom, quality, artOffset: artOffset(world) };
 
     this.effects.update(dt);
     this.story.prepare(world, env);

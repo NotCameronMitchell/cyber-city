@@ -48,6 +48,20 @@ const EDGE_SHARE = 0.15;
 const DX = [0, 1, 0, -1];
 const DY = [-1, 0, 1, 0];
 
+/**
+ * The direction (0 N, 1 E, 2 S, 3 W) from an owned tile to a neighbour off the owned land (the map edge or a locked
+ * slot, MEGACITY §3.5), checked west, east, north, south as the 64 map's x = 0, x = N − 1, y = 0, y = N − 1 were; −1
+ * when the tile is inside.
+ */
+function outward(world: World, x: number, y: number): number {
+  if (!world.isOwned(x, y)) return -1;
+  if (!world.isOwned(x - 1, y)) return 3;
+  if (!world.isOwned(x + 1, y)) return 1;
+  if (!world.isOwned(x, y - 1)) return 0;
+  if (!world.isOwned(x, y + 1)) return 2;
+  return -1;
+}
+
 export interface Bounds {
   x0: number;
   y0: number;
@@ -214,7 +228,8 @@ export class StreetTraffic {
       if (x < b.x0 - m || x > b.x1 + m || y < b.y0 - m || y > b.y1 + m) continue;
       this.visRoads.push(i);
       sum += (0.05 + traffic[i] * 0.85) * SPAWN_W[kinds[i]];
-      if ((x === 0 || y === 0 || x === N - 1 || y === N - 1) && world.tiles[i].terrain === 0) this.visEdge.push(i);
+      // A boundary road (MEGACITY §3.5): owned land beside the map edge or a locked slot.
+      if (world.tiles[i].terrain === 0 && outward(world, x, y) >= 0) this.visEdge.push(i);
     }
     for (const i of this.walkRoads) {
       const x = i % N;
@@ -324,8 +339,8 @@ export class StreetTraffic {
       total += k;
     }
     if (total <= 0) {
-      // Dead end. A road running off the map edge: drive on and fade out (regional traffic).
-      if (!walk && !world.inBounds(x + DX[din], y + DY[din])) return din;
+      // Dead end. A road running off the owned land (the map edge or a locked slot): drive on and fade out.
+      if (!walk && !world.isOwned(x + DX[din], y + DY[din])) return din;
       return back; // U-turn
     }
     let r = rand() * total;
@@ -393,9 +408,8 @@ export class StreetTraffic {
     if (!walk && this.visEdge.length && rand() < EDGE_SHARE) {
       // Regional traffic: enter from a visible border road, heading inward.
       i = this.visEdge[(rand() * this.visEdge.length) | 0];
-      const x = i % N;
-      const y = (i / N) | 0;
-      fromEdge = x === 0 ? 1 : x === N - 1 ? 3 : y === 0 ? 2 : 0;
+      // Heading inward, away from the boundary (west edge → east, east → west, north → south, south → north).
+      fromEdge = (outward(world, i % N, (i / N) | 0) + 2) & 3;
     } else {
       // Pick the busier of two (kind-weighted) random candidates.
       i = this.pick(pool);

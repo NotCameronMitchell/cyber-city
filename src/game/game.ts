@@ -1495,6 +1495,24 @@ export class Game {
 
   // ── Inspect info ──────────────────────────────────────────────────────────
   /**
+   * Inspect on a locked tile (§3.4): the district's name and "Not annexed yet" with its tagline, or only "Still
+   * flooded: opens later" while its `opensWhen` doesn't hold. A stub until WP-2 / WP-5's district preview (perks,
+   * hazards, lobbyists, "Open City map").
+   */
+  private lockedInfo(x: number, y: number): TileInfo {
+    const w = this.world;
+    const s = w.slotAt(x, y);
+    const def = DISTRICTS[w.districts.kinds[s]];
+    const v = w.variantOf(s);
+    const vd = v > 0 ? def?.variants[v - 1] : undefined;
+    const name = vd?.name ?? def?.name ?? 'Unclaimed district';
+    const color = vd?.accent ?? def?.color ?? '#7f8aa8';
+    if (def?.opensWhen && !evalCond(w, def.opensWhen)) return { title: name, subtitle: 'Still flooded: opens later', color, rows: [] };
+    const tagline = vd?.tagline ?? def?.tagline;
+    return { title: name, subtitle: 'Not annexed yet', color, rows: [], ...(tagline ? { notes: [{ text: tagline }] } : {}) };
+  }
+
+  /**
    * Inspect rows for tile (x, y) (EXPANSION §7.4: standard rows ≤ 12-character values, long
    * lines as `notes`). `sky` = the player tapped the skyway deck over the tile: the skyway sheet.
    */
@@ -1502,6 +1520,8 @@ export class Game {
     const w = this.world;
     const t = w.tileAt(x, y);
     if (!t) return null;
+    // A locked district (MEGACITY §3.4): nothing is built or simulated there, so no lot rows.
+    if (!w.isOwned(x, y)) return this.lockedInfo(x, y);
     const i = w.idx(x, y);
     const f = w.fields;
     if (sky && w.sky[i] !== 0) return this.skywayInfo(x, y);
@@ -1747,19 +1767,18 @@ function highwayRamps(world: World, i: number): number {
 }
 
 /**
- * Regional link points of a border road (EXPANSION §3.10): on land on the map edge, with its
- * inward neighbour (perpendicular to that edge; either one at a corner) a road it links to.
- * Street 1, Avenue 2, Highway 3; 0 otherwise.
+ * Regional link points of a boundary road (EXPANSION §3.10, MEGACITY §3.5): on owned land whose outward 4-neighbour
+ * is off the map or in a locked slot, with its inward neighbour (opposite that one; any of them at a corner) a road it
+ * links to. Street 1, Avenue 2, Highway 3; 0 otherwise. The same rule as SimGrid's edge points.
  */
 function regionalLink(world: World, x: number, y: number): number {
-  const N = world.N;
   const t = world.tileAt(x, y);
-  if (!t || !t.road || t.terrain !== Terrain.Land) return 0;
+  if (!t || !t.road || t.terrain !== Terrain.Land || !world.isOwned(x, y)) return 0;
   const inward: [number, number][] = [];
-  if (x === 0) inward.push([1, y]);
-  if (x === N - 1) inward.push([N - 2, y]);
-  if (y === 0) inward.push([x, 1]);
-  if (y === N - 1) inward.push([x, N - 2]);
+  if (!world.isOwned(x - 1, y)) inward.push([x + 1, y]);
+  if (!world.isOwned(x + 1, y)) inward.push([x - 1, y]);
+  if (!world.isOwned(x, y - 1)) inward.push([x, y + 1]);
+  if (!world.isOwned(x, y + 1)) inward.push([x, y - 1]);
   if (!inward.some(([ix, iy]) => {
     const n = world.tileAt(ix, iy);
     return !!n && n.road && roadLinks(t.roadKind, n.roadKind);

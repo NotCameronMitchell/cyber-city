@@ -43,6 +43,12 @@ export interface ArtEnv {
   quality: 'low' | 'high';
   /** Draw as translucent placement ghost. */
   ghost?: boolean;
+  /**
+   * The world's art offset (MEGACITY §3.2, `artOffset(world)`): per-tile phases hash art coordinates (x − o, y − o),
+   * so a migrated start slot blinks, builds and lights its shells exactly as on the 64 map. 0 (the default) = tile
+   * coordinates.
+   */
+  artOffset?: number;
 }
 
 /** Below this camera zoom buildings use simplified far-LOD sprites and skip fine fx. */
@@ -533,7 +539,8 @@ export function drawZoneBuilding(ctx: CanvasRenderingContext2D, wx: number, wy: 
   const building = !tile.abandoned && tile.age < BUILD_TICKS;
   const state = tile.abandoned ? ST_ABANDONED : building || !tile.powered ? ST_DARK : ST_ON;
   const s = sprite(m, state, lod);
-  const phase = tilePhase(tx, ty);
+  const ao = env.artOffset ?? 0;
+  const phase = tilePhase(tx - ao, ty - ao);
   if (building) {
     drawConstruction(ctx, s, m, wx, wy, tile, env, phase);
     ctx.globalAlpha = alpha0;
@@ -578,7 +585,7 @@ export function drawServiceBuilding(ctx: CanvasRenderingContext2D, wx: number, w
     fxState.lit = on;
     fxState.offline = !on;
     fxState.lod = lod;
-    fxState.phase = tilePhase(b.x, b.y);
+    fxState.phase = tilePhase(b.x - (env.artOffset ?? 0), b.y - (env.artOffset ?? 0));
     drawFx(ctx, m.fx, wx, wy, fxState);
   }
   // Port live parts drawn in the building's depth slot: crane trolleys and moored ships, the tower beacon, pad steam.
