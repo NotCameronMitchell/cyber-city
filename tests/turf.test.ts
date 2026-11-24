@@ -6,7 +6,7 @@ import { crackdown } from '../src/game/actions';
 import { RIBBON, TURF } from '../src/game/config';
 import * as turf from '../src/game/story/turf';
 import * as vertical from '../src/game/story/vertical';
-import { ZoneType } from '../src/game/types';
+import { RoadKind, ZoneType } from '../src/game/types';
 import type { World } from '../src/game/world';
 import { flatWorld, fullyBuiltWorld, makeSim } from './helpers';
 
@@ -394,6 +394,69 @@ describe('turf ops for story effects', () => {
     expect(w2.turf.stats.tiles.kites).toBeGreaterThan(0);
     expect(w2.story.seam).not.toBeNull();
     expect(turf.forceSeed(w2)).toEqual([]);
+  });
+});
+
+describe('expansion affinity terms (EXPANSION §8.4)', () => {
+  /** Affinity of one tile on a flat, quiet map (all fields 0). */
+  const at = (w: World, gang: 'undertow' | 'kites', x: number, y: number) => turf.affinity(w, gang)[w.idx(x, y)];
+
+  it('alleys draw both gangs, a seaport draws the Undertow within 6, a skyway deck draws the Kites within 1', () => {
+    const A = TURF.affinity;
+    const w = flatWorld(31);
+    // Quiet baseline: no crime, full land value (lowLandValue term 0).
+    w.fields.landValue.fill(1);
+    const baseU = at(w, 'undertow', 10, 10);
+    const baseK = at(w, 'kites', 10, 10);
+    expect(baseU).toBeCloseTo(A.undertow.base, 5);
+    expect(baseK).toBeCloseTo(A.kites.base, 5);
+    w.setRoad(11, 11, RoadKind.Alley);
+    expect(at(w, 'undertow', 10, 10)).toBeCloseTo(baseU + A.undertow.alleyNear, 5);
+    expect(at(w, 'kites', 10, 10)).toBeCloseTo(baseK + A.kites.alleyNear, 5);
+    expect(at(w, 'undertow', 9, 9)).toBeCloseTo(baseU, 5); // 2 away: outside the radius
+    w.setRoad(11, 11, RoadKind.Street);
+    w.clearTile(11, 11);
+    w.addBuilding('seaport', 30, 30);
+    w.fields.landValue.fill(1);
+    expect(at(w, 'undertow', 39, 30)).toBeCloseTo(baseU + A.undertow.seaportNear, 5); // 6 from the footprint edge
+    expect(at(w, 'undertow', 40, 30)).toBeCloseTo(baseU, 5);
+    expect(at(w, 'kites', 39, 30)).toBeCloseTo(baseK, 5);
+    w.setSky(50, 50, 2);
+    w.setSky(51, 50, 8);
+    expect(at(w, 'kites', 52, 51)).toBeCloseTo(baseK + A.kites.skywayNear, 5);
+    expect(at(w, 'kites', 53, 51)).toBeCloseTo(baseK, 5);
+    expect(at(w, 'undertow', 52, 51)).toBeCloseTo(baseU, 5);
+  });
+
+  it('a congested highway (or ramp) tile gains no Kites affinity from traffic; a street does', () => {
+    const w = flatWorld(32);
+    w.fields.landValue.fill(1);
+    w.setRoad(20, 20, RoadKind.Highway);
+    w.setRoad(21, 20, RoadKind.Ramp);
+    w.setRoad(22, 20, RoadKind.Street);
+    w.fields.traffic.fill(0.9);
+    const base = TURF.affinity.kites.base;
+    expect(at(w, 'kites', 20, 20)).toBeCloseTo(base, 5);
+    expect(at(w, 'kites', 21, 20)).toBeCloseTo(base, 5);
+    expect(at(w, 'kites', 22, 20)).toBeCloseTo(base + TURF.affinity.kites.traffic * 0.9, 5);
+  });
+
+  it('affinities stay in [0, 1] with every term at its maximum', () => {
+    const w = flatWorld(33);
+    for (let x = 0; x < 64; x++) for (let y = 0; y < 64; y += 2) w.setRoad(x, y, RoadKind.Alley);
+    for (let x = 0; x < 63; x++) {
+      w.setSky(x, 1, (x > 0 ? 8 : 0) | 2);
+      w.setSky(x + 1, 1, 8);
+    }
+    for (let y = 3; y < 64; y += 2) for (let x = 0; x < 64; x++) {
+      w.setZone(x, y, ZoneType.Industrial);
+      w.setLevel(x, y, 3, true);
+    }
+    w.addBuilding('seaport', 2, 3);
+    for (const k of ['crime', 'pollution', 'traffic', 'net'] as const) w.fields[k].fill(1);
+    w.fields.landValue.fill(0);
+    for (const g of ['undertow', 'kites'] as const) for (const v of turf.affinity(w, g)) expect(v >= 0 && v <= 1).toBe(true);
+    expect(Math.max(...turf.affinity(w, 'undertow'))).toBe(1);
   });
 });
 

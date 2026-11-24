@@ -85,6 +85,21 @@ describe('skybridge validation', () => {
     expect(planAction(w, 'skybridge', { x: 20, y: 20 }, { x: 21, y: 20 }).reason).toMatch(/another tall tower/);
   });
 
+  it('refuses a gap tile under a skyway deck (EXPANSION §3.7)', () => {
+    const w = skyWorld();
+    tallTile(w, 10, 10);
+    tallTile(w, 14, 10);
+    w.setSky(12, 9, 4);
+    w.setSky(12, 10, 1 | 4);
+    w.setSky(12, 11, 1);
+    const plan = planAction(w, 'skybridge', { x: 10, y: 10 }, { x: 14, y: 10 });
+    expect(plan.valid).toBe(false);
+    expect(plan.reason).toBe('Skyway in the way');
+    expect(plan.tiles.find((t) => t.x === 12)!.ok).toBe(false);
+    w.clearSky(12, 10);
+    expect(planAction(w, 'skybridge', { x: 10, y: 10 }, { x: 14, y: 10 }).valid).toBe(true);
+  });
+
   it('allows at most 2 bridges per anchor and no shared gap tiles', () => {
     const w = skyWorld();
     for (const [x, y] of [
@@ -327,7 +342,7 @@ describe('Stratablock stages', () => {
 
     expect(raiseStage(w, b.id, 'glare').reason).toMatch(/20,000/);
     w.story.unlocks.push('crowns');
-    expect(raiseStage(w, b.id, 'glare').reason).toBe('Needs a live skybridge or ribbon station');
+    expect(raiseStage(w, b.id, 'glare').reason).toBe('Needs a live skybridge, ribbon station or skyway');
     tallTile(w, 17, 12);
     applyAction(w, 'skybridge', { x: 13, y: 12 }, { x: 17, y: 12 });
     expect(w.vertical.metrics.skybridges).toBe(1);

@@ -1,13 +1,15 @@
 import { buildingStats } from './buildingStats';
 import {
-  BRIDGE_COST,
   BUILDINGS,
   BULLDOZE_COST,
   CROWNS,
   CURRENCY,
   FACTION_LABELS,
   RIBBON,
-  ROAD_COST,
+  ROAD_KINDS,
+  SAFETY,
+  SEAPORT,
+  SKYWAY,
   STACK_COST_SCALE,
   STACK_STAGES,
   STANDING,
@@ -20,12 +22,27 @@ import {
   isZoneTool,
 } from './config';
 import { districtName } from './news';
+import { isBerthTile, noiseReach, shoreFacing } from './ports';
+import { ROAD_TOOL_KIND, dragResult, isRoadTool, lostAccess, roadPrice, type RoadTool } from './roads';
+import {
+  SKY_MASK,
+  SKY_RAMP,
+  isSkyAnchorAt,
+  planSkyway,
+  skyNeighbour,
+  skyOpposite,
+  skyRampActive,
+  skyRampGround,
+  skywayDocks,
+} from './skyway';
 import { standing, tier } from './story/factions';
 import * as turf from './story/turf';
 import type { ActionResult, BuildingGate, CrownId, CrownOption, FactionId, GangId, Tier, Unlockable } from './story/types';
 import * as vertical from './story/vertical';
-import { Terrain, ZoneType, type ActionPlan, type Building, type BuildingType, type ToolId } from './types';
+import { MAP_SIZE, RoadKind, Terrain, ZoneType, type ActionPlan, type Building, type BuildingType, type ToolId } from './types';
 import type { World } from './world';
+
+const N = MAP_SIZE;
 
 export interface Point {
   x: number;
@@ -133,6 +150,12 @@ export function turfGateReason(world: World, gate: BuildingGate | undefined, x: 
 
 /** Is the tool unlocked for this world? Returns the unlock requirement if locked. */
 export function lockedReason(world: World, tool: ToolId): string | null {
+  // Expansion (EXPANSION §2.8, §3.4): road kinds and the skyway unlock on population only.
+  if (isRoadTool(tool)) {
+    const pop = ROAD_KINDS[ROAD_TOOL_KIND[tool]].unlockPop;
+    return world.maxPopulation >= pop ? null : `Locked: reach ${num(pop)} residents`;
+  }
+  if (tool === 'skyway') return world.maxPopulation >= SKYWAY.unlockPop ? null : `Locked: reach ${num(SKYWAY.unlockPop)} residents`;
   if (tool === 'skybridge' || tool === 'rail') {
     if (isUnlocked(world, tool)) return null;
     return `Locked: reach ${num(UNLOCK_FALLBACK_POP[tool] ?? 0)} residents`;
@@ -191,6 +214,224 @@ function bulldozeTileCost(world: World, x: number, y: number): number {
   return rail;
 }
 
+/** Buildings of a type on the map. */
+function countBuildings(world: World, type: BuildingType): number {
+  let n = 0;
+  for (const b of world.buildings.values()) if (b.type === type) n++;
+  return n;
+}
+
+/** "One Airport per city" / "Only 2 Seaports per city" (§5.4). */
+function maxCountReason(type: BuildingType): string {
+  const def = BUILDINGS[type];
+  const n = def.maxCount ?? 0;
+  return n === 1 ? `One ${def.name} per city` : `Only ${n} ${def.plural ?? `${def.name}s`} per city`;
+}
+
+// ── Road drags (EXPANSION §3.4) ─────────────────────────────────────────────
+
+/**
+ * Plan a road drag of `tool` along roadPath(from, to) into `plan` (tiles, roadKinds,
+ * upgrades, ramps, base cost, reason; for highways also lostAccess, lostTiles, note and
+ * confirm). Returns the number of tiles that change. The caller applies buildCostMul and
+ * the funds check.
+ *
+ * - The tile where a Street or Avenue drag steps onto a highway, and the one where it steps
+ *   off, become On-ramps; the highway tile itself is passed through.
+ * - Existing roads change by dragResult (smaller tools never shrink a road); an upgrade costs
+ *   the price difference (bridge prices on water).
+ * - Alleys and ramps can't sit on water; no new bridge on a seaport's berth.
+ */
+function planRoad(world: World, tool: RoadTool, from: Point, to: Point, plan: ActionPlan): number {
+  const toolKind = ROAD_TOOL_KIND[tool];
+  const tiles = world.tiles;
+  const path = roadPath(from, to).filter((p) => world.inBounds(p.x, p.y));
+  const highwayAt = (p: Point | undefined, q: Point): boolean => {
+    if (!p || Math.abs(p.x - q.x) + Math.abs(p.y - q.y) !== 1) return false;
+    const t = tiles[p.y * N + p.x];
+    return t.road && t.roadKind === RoadKind.Highway;
+  };
+  const makesRamps = toolKind === RoadKind.Street || toolKind === RoadKind.Avenue;
+  const kinds: number[] = [];
+  let changes = 0;
+  let upgrades = 0;
+  let ramps = 0;
+  let reason: string | null = null;
+  /** Existing roads this highway drag turns into Highway (what it can cut or strand). */
+  const converted: number[] = [];
+  for (let k = 0; k < path.length; k++) {
+    const p = path[k];
+    const t = tiles[p.y * N + p.x];
+    const water = t.terrain === Terrain.Water;
+    if (t.road && t.roadKind === RoadKind.Highway && toolKind !== RoadKind.Highway) {
+      // The drag passes "through" the highway: this is what makes crossings work.
+      plan.tiles.push({ x: p.x, y: p.y, ok: true });
+      kinds.push(RoadKind.Highway);
+      continue;
+    }
+    const ramp = makesRamps && (highwayAt(path[k - 1], p) || highwayAt(path[k + 1], p));
+    const target = ramp ? RoadKind.Ramp : toolKind;
+    if (t.road) {
+      const result = dragResult(target, t.roadKind);
+      if (result === null) {
+        plan.tiles.push({ x: p.x, y: p.y, ok: true });
+        kinds.push(t.roadKind);
+        continue;
+      }
+      const price = roadPrice(result, water);
+      if (price === null) {
+        plan.tiles.push({ x: p.x, y: p.y, ok: false });
+        kinds.push(result);
+        reason ??= 'Ramps need land';
+        continue;
+      }
+      plan.tiles.push({ x: p.x, y: p.y, ok: true });
+      kinds.push(result);
+      changes++;
+      upgrades++;
+      if (result === RoadKind.Ramp) ramps++;
+      if (result === RoadKind.Highway) converted.push(p.y * N + p.x);
+      plan.cost += Math.max(0, price - (roadPrice(t.roadKind, water) ?? 0));
+      continue;
+    }
+    let ok = t.buildingId < 0 && !(t.zone !== ZoneType.None && t.level > 0);
+    let why = 'Blocked by buildings';
+    const price = roadPrice(target, water);
+    if (ok && price === null) {
+      ok = false;
+      why = target === RoadKind.Alley ? "Alleys can't cross water" : 'Ramps need land';
+    }
+    if (ok && water && isBerthTile(world, p.x, p.y)) {
+      ok = false;
+      why = 'Keep the berth clear';
+    }
+    plan.tiles.push({ x: p.x, y: p.y, ok });
+    kinds.push(target);
+    if (!ok) {
+      reason ??= why;
+      continue;
+    }
+    changes++;
+    if (target === RoadKind.Ramp) ramps++;
+    plan.cost += price ?? 0;
+  }
+  plan.roadKinds = kinds;
+  plan.upgrades = upgrades;
+  plan.ramps = ramps;
+  if (reason) plan.reason = reason;
+
+  if (toolKind === RoadKind.Highway) {
+    // What the highway cuts (§3.4 step 4): stranded lots first, then closed sky ramps, then cross streets.
+    const lost: number[] = [];
+    const n = lostAccess(world, converted, lost);
+    plan.lostAccess = n;
+    plan.lostTiles = lost;
+    const onPath = new Set<number>();
+    for (const p of path) onPath.add(p.y * N + p.x);
+    const cuts = new Set<number>();
+    let rampsClosed = 0;
+    for (const i of converted) {
+      if (skyRampActive(world, i)) rampsClosed++;
+      for (let d = 1; d <= 8; d <<= 1) {
+        const j = skyNeighbour(i, d);
+        if (j < 0 || onPath.has(j)) continue;
+        const nt = tiles[j];
+        if (nt.road && (nt.roadKind === RoadKind.Street || nt.roadKind === RoadKind.Avenue || nt.roadKind === RoadKind.Alley)) cuts.add(j);
+      }
+    }
+    if (n > 0) {
+      plan.note = `${num(n)} ${n === 1 ? 'block loses' : 'blocks lose'} road access`;
+      plan.confirm = true;
+    } else if (rampsClosed > 0) plan.note = `Closes ${rampsClosed} skyway ${rampsClosed === 1 ? 'ramp' : 'ramps'}`;
+    else if (cuts.size > 0) plan.note = `Cuts ${cuts.size} cross ${cuts.size === 1 ? 'street' : 'streets'}`;
+  }
+  return changes;
+}
+
+// ── Seaport sites and skyway networks (helpers for input, inspect and render) ──
+
+/**
+ * Seaport snap (§5.1): the finger tile whose footprint is the nearest valid shore site within
+ * SEAPORT.snapRadius tiles (Chebyshev, nearest by distance, then lowest index) of the natural
+ * footprint at `at`, or `at` itself when it is already valid or nothing is near. `marks` comes
+ * from ports.shoreSites (1 = a valid top-left).
+ */
+export function snapSeaport(at: Point, marks: Uint8Array): Point {
+  const size = BUILDINGS.seaport.size;
+  const off = Math.floor((size - 1) / 2);
+  const o = footprintOrigin(at, size);
+  const valid = (x: number, y: number) => x >= 0 && y >= 0 && x < N && y < N && marks[y * N + x] === 1;
+  if (valid(o.x, o.y)) return { x: at.x, y: at.y };
+  const R = SEAPORT.snapRadius;
+  let best: Point | null = null;
+  let bestD = Infinity;
+  for (let dy = -R; dy <= R; dy++)
+    for (let dx = -R; dx <= R; dx++) {
+      if (!valid(o.x + dx, o.y + dy)) continue;
+      const d = dx * dx + dy * dy;
+      if (d < bestD) {
+        bestD = d;
+        best = { x: o.x + dx, y: o.y + dy };
+      }
+    }
+  return best ? { x: best.x + off, y: best.y + off } : { x: at.x, y: at.y };
+}
+
+/** A skyway network: tiles, active and closed ramps, and the buildings it docks. */
+export interface SkywayNetwork {
+  tiles: number;
+  /** Ramps that carry traffic (ground is a Street, Avenue or Ramp). */
+  ramps: number;
+  /** Ramps whose ground no longer qualifies (a highway, an alley or nothing below). */
+  closed: number;
+  /** skyAnchor buildings with a deck tile over their footprint. */
+  docks: number;
+}
+
+const netStamp = new Uint32Array(N * N);
+const netQueue = new Int32Array(N * N);
+let netGen = 0;
+
+/**
+ * The skyway network through tile `i` (mutual links only; §3.7), for the skyway inspect sheet
+ * and planner notes. All zeros when tile `i` carries no skyway.
+ */
+export function skywayNetwork(world: World, i: number): SkywayNetwork {
+  const out: SkywayNetwork = { tiles: 0, ramps: 0, closed: 0, docks: 0 };
+  const sky = world.sky;
+  if (!(i >= 0 && i < N * N) || (sky[i] & SKY_MASK) === 0) return out;
+  netGen = (netGen + 1) >>> 0;
+  if (netGen === 0) {
+    netStamp.fill(0);
+    netGen = 1;
+  }
+  const docks = new Set<number>();
+  let head = 0;
+  let tail = 0;
+  netStamp[i] = netGen;
+  netQueue[tail++] = i;
+  while (head < tail) {
+    const j = netQueue[head++];
+    out.tiles++;
+    const m = sky[j];
+    if (m & SKY_RAMP) {
+      if (skyRampGround(world.tiles[j])) out.ramps++;
+      else out.closed++;
+    }
+    const bid = world.tiles[j].buildingId;
+    if (bid >= 0 && isSkyAnchorAt(world, j % N, (j / N) | 0)) docks.add(bid);
+    for (let d = 1; d <= 8; d <<= 1) {
+      if ((m & d) === 0) continue;
+      const n = skyNeighbour(j, d);
+      if (n < 0 || netStamp[n] === netGen || (sky[n] & skyOpposite(d)) === 0) continue;
+      netStamp[n] = netGen;
+      netQueue[tail++] = n;
+    }
+  }
+  out.docks = docks.size;
+  return out;
+}
+
 // ── Plan / apply ────────────────────────────────────────────────────────────
 
 /**
@@ -210,22 +451,22 @@ export function planAction(world: World, tool: ToolId, from: Point, to: Point): 
     return plan;
   }
 
-  if (tool === 'road') {
-    for (const p of roadPath(from, to)) {
-      const t = world.tileAt(p.x, p.y);
-      if (!t) continue;
-      if (t.road) {
-        plan.tiles.push({ ...p, ok: true });
-        continue;
-      }
-      const ok = t.buildingId < 0 && !(t.zone !== ZoneType.None && t.level > 0);
-      plan.tiles.push({ ...p, ok });
-      if (ok) {
-        changes++;
-        plan.cost += t.terrain === Terrain.Water ? BRIDGE_COST : ROAD_COST;
-      } else blocked++;
+  if (isRoadTool(tool)) {
+    const locked = lockedReason(world, tool);
+    if (locked) {
+      for (const p of [from, to]) if (world.inBounds(p.x, p.y)) plan.tiles.push({ x: p.x, y: p.y, ok: false });
+      plan.reason = locked;
+      return plan;
     }
-    if (blocked) plan.reason = 'Blocked by buildings';
+    changes = planRoad(world, tool, from, to, plan);
+  } else if (tool === 'skyway') {
+    const locked = lockedReason(world, tool);
+    if (locked) {
+      for (const p of [from, to]) if (world.inBounds(p.x, p.y)) plan.tiles.push({ x: p.x, y: p.y, ok: false });
+      plan.reason = locked;
+      return plan;
+    }
+    changes = planSkyway(world, roadPath(from, to), plan);
   } else if (isZoneTool(tool)) {
     const zone = ZONES[tool].zone;
     for (const p of rectTiles(world, from, to)) {
@@ -246,7 +487,21 @@ export function planAction(world: World, tool: ToolId, from: Point, to: Point): 
       } else blocked++;
     }
     if (blocked) plan.reason = 'Some tiles are occupied';
+  } else if (tool === 'bulldoze' && world.inBounds(from.x, from.y) && world.sky[world.idx(from.x, from.y)] !== 0) {
+    // Sky drag (§3.6): the first tile carries a skyway, so this drag removes skyway segments only.
+    plan.layer = 'sky';
+    for (const p of rectTiles(world, from, to)) {
+      const has = world.sky[world.idx(p.x, p.y)] !== 0;
+      plan.tiles.push({ ...p, ok: has });
+      if (has) {
+        changes++;
+        plan.cost += SKYWAY.bulldozeCost;
+      }
+    }
+    if (!changes) plan.reason = 'Nothing to demolish';
   } else if (tool === 'bulldoze') {
+    // Ground drag (§3.6): roads, zones, buildings and rail; skyway decks keep spanning the cleared site.
+    plan.layer = 'ground';
     const seenBuildings = new Set<number>();
     for (const p of rectTiles(world, from, to)) {
       const t = world.tileAt(p.x, p.y)!;
@@ -286,6 +541,7 @@ export function planAction(world: World, tool: ToolId, from: Point, to: Point): 
     let allOk = true;
     let water = false;
     let onRail = false;
+    let onSky = false;
     let access = false;
     for (let dy = 0; dy < def.size; dy++)
       for (let dx = 0; dx < def.size; dx++) {
@@ -300,10 +556,17 @@ export function planAction(world: World, tool: ToolId, from: Point, to: Point): 
           (t.zone === ZoneType.None || t.level === 0);
         if (t && t.terrain === Terrain.Water) water = true;
         if (t && world.rail[world.idx(x, y)]) onRail = true;
+        if (t && world.sky[world.idx(x, y)]) onSky = true;
         if (t && !access && world.hasRoadAccess(x, y)) access = true;
         if (!ok) allOk = false;
         plan.tiles.push({ x, y, ok });
       }
+    // Noisy buildings show the homes they would make loud, valid or not (§5.4).
+    if (def.noise && world.inBounds(o.x, o.y)) {
+      const loud: number[] = [];
+      noiseReach(world, tool, o.x, o.y, loud);
+      plan.loudTiles = loud;
+    }
     const bad = (reason: string) => {
       plan.reason = reason;
       plan.tiles.forEach((t) => (t.ok = false));
@@ -311,16 +574,24 @@ export function planAction(world: World, tool: ToolId, from: Point, to: Point): 
     };
     const locked = lockedReason(world, tool);
     if (locked) return bad(locked);
+    if (def.maxCount !== undefined && countBuildings(world, tool) >= def.maxCount) return bad(maxCountReason(tool));
     if (!allOk) {
       plan.reason = water ? "Can't build on water" : 'Site is occupied';
       return plan;
     }
     if (onRail && !def.station) return bad('Rail in the way');
-    if (tool === 'stack' && !access) return bad('Needs road access');
+    if (onSky && !def.skyAnchor) return bad('Skyway in the way');
+    if (def.needsRoad && !access) return bad('Needs road access');
+    if (def.site === 'shore' && shoreFacing(world, o.x, o.y, def.size) < 0) return bad('Needs a straight shore');
     const turfReason = turfGateReason(world, def.gate, o.x, o.y, def.size);
     if (turfReason) return bad(turfReason);
     changes = 1;
     plan.cost = buildingCost(world, tool);
+    // Costly placements wait for ✓ (§7.7); the note says what the player is buying into.
+    if (plan.cost >= SAFETY.confirmCost) plan.confirm = true;
+    const loud = plan.loudTiles?.length ?? 0;
+    if (loud > 0) plan.note = `Loud over ${num(loud)} ${loud === 1 ? 'home' : 'homes'}`;
+    else if (tool === 'spaceport') plan.note = 'Takes 4+ minutes to build';
   }
 
   if (scaled && plan.cost > 0) plan.cost = Math.round(plan.cost * world.mods.buildCostMul);
@@ -344,11 +615,24 @@ export function applyAction(world: World, tool: ToolId, from: Point, to: Point):
   const plan = planAction(world, tool, from, to);
   if (!plan.valid) return plan;
 
-  if (tool === 'road') {
-    for (const p of plan.tiles) {
+  if (isRoadTool(tool)) {
+    // New tiles are laid at their kind; existing ones change kind without a reroll (§3.4).
+    const kinds = plan.roadKinds ?? [];
+    plan.tiles.forEach((p, k) => {
+      if (!p.ok) return;
       const t = world.tileAt(p.x, p.y)!;
-      if (p.ok && !t.road) world.setRoad(p.x, p.y);
-    }
+      const kind = (kinds[k] ?? ROAD_TOOL_KIND[tool]) as RoadKind;
+      if (!t.road) world.setRoad(p.x, p.y, kind);
+      else if (t.roadKind !== kind) world.setRoadKind(p.x, p.y, kind);
+    });
+  } else if (tool === 'skyway' && plan.skyMasks) {
+    const masks = plan.skyMasks;
+    plan.tiles.forEach((p, k) => {
+      if (world.sky[world.idx(p.x, p.y)] !== masks[k]) world.setSky(p.x, p.y, masks[k]);
+    });
+  } else if (tool === 'bulldoze' && plan.layer === 'sky') {
+    // A sky drag removes skyway segments only: ground, zones and buildings stay.
+    for (const p of plan.tiles) if (p.ok) world.clearSky(p.x, p.y);
   } else if (isZoneTool(tool)) {
     const zone = ZONES[tool].zone;
     for (const p of plan.tiles) {
@@ -391,6 +675,13 @@ export function applyAction(world: World, tool: ToolId, from: Point, to: Point):
       return plan;
     }
     if (tool === 'stack') world.setStage(b, 1, STACK_STAGES[0].days);
+    const def = BUILDINGS[tool];
+    if (def.site === 'shore') {
+      const f = shoreFacing(world, fp.x, fp.y, fp.size);
+      b.facing = f === -1 ? 2 : f;
+    }
+    // Spaceport (§5.3): the countdown in days; Game adds the real-time floor (waitSec).
+    if (tool !== 'stack' && def.buildDays) b.buildDays = def.buildDays;
     consumeCredit(world, tool);
     world.pushSignal({ t: 'built', type: tool, id: b.id });
     vertical.refresh(world);
@@ -438,9 +729,14 @@ function footprintLandValue(world: World, b: Building): number {
   return s / (b.size * b.size);
 }
 
-/** Is the stack anchoring an active skybridge, or a station on a live ribbon line? (Crown requirement.) */
+/**
+ * Is the stack anchoring an active skybridge, a station on a live ribbon line, or docked by a
+ * skyway whose network has at least one active ramp (EXPANSION §3.7)? (Crown requirement.)
+ */
 export function stackConnected(world: World, b: Building): boolean {
   if (world.vertical.liveStations.has(b.id)) return true;
+  const dock = skywayDocks(world, b);
+  if (dock.docked && dock.ramps >= 1) return true;
   for (const l of world.links) {
     if (!world.vertical.activeLinks.has(l.id)) continue;
     if (world.tiles[world.idx(l.ax, l.ay)].buildingId === b.id || world.tiles[world.idx(l.bx, l.by)].buildingId === b.id) return true;
@@ -494,7 +790,7 @@ export function stageStatus(
       out.reason = `Needs land value ${Math.round(def.minLandValue * 100)}%, now ${Math.round(lv * 100)}%`;
     }
   }
-  if (!out.reason && next === 3 && !stackConnected(world, b)) out.reason = 'Needs a live skybridge or ribbon station';
+  if (!out.reason && next === 3 && !stackConnected(world, b)) out.reason = 'Needs a live skybridge, ribbon station or skyway';
   if (!out.reason && world.funds < cost) out.reason = `Not enough credits (need ${fmt(cost)})`;
   return out;
 }

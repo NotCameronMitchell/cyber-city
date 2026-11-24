@@ -200,7 +200,7 @@ describe('Game story API', () => {
     expect(a.id).toBe('crown');
     expect(a.crowns!.map((c) => c.id)).toEqual(['foundry', 'glare', 'nest', 'commons']);
     expect(a.crowns!.find((c) => c.id === 'nest')!.enabled).toBe(false);
-    expect(a.reason).toBe('Needs a live skybridge or ribbon station');
+    expect(a.reason).toBe('Needs a live skybridge, ribbon station or skyway');
     w.setStage(s, 3, 50, 'commons');
     expect(g.inspectActions(41, 41)[0]).toMatchObject({ label: 'Commons Crown · building 50d', enabled: false });
     expect(g.inspectActions(5, 5)).toEqual([]);

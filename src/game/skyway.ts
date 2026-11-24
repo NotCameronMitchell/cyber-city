@@ -5,7 +5,7 @@
 // Helpers are frozen after Step 0; planSkyway's body belongs to WP-2.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { BUILDINGS } from './config';
+import { BUILDINGS, SKYWAY } from './config';
 import { MAP_SIZE, RoadKind, type ActionPlan, type Building, type Tile } from './types';
 import type { Point } from './actions';
 import type { World } from './world';
@@ -117,14 +117,140 @@ export function skywayDocks(world: World, b: Building): { docked: boolean; ramps
   return res;
 }
 
+const popcount4 = (m: number) => (m & 1) + ((m >> 1) & 1) + ((m >> 2) & 1) + ((m >> 3) & 1);
+
+/** Is (x, y) a gap tile (strictly between the anchors) of any skybridge? */
+function skybridgeGapAt(world: World, x: number, y: number): boolean {
+  for (const l of world.links) {
+    if (l.ay === l.by) {
+      if (y === l.ay && x > Math.min(l.ax, l.bx) && x < Math.max(l.ax, l.bx)) return true;
+    } else if (x === l.ax && y > Math.min(l.ay, l.by) && y < Math.max(l.ay, l.by)) return true;
+  }
+  return false;
+}
+
+/** Overlay of world.sky with a plan's masks (the "lands nowhere" check). */
+const overlay = new Uint8Array(AREA);
+
 /**
- * Plan a skyway drag along `path` into `plan` (tiles, skyMasks, cost, note, reason) and
- * return the number of tiles that change. **Step 0 stub**: marks the path invalid with the
- * reason "Not yet" and returns 0. WP-2 fills it (§3.7: 24-tile cap, anchors only, gap
- * tiles refused, endpoint ramps, joins onto existing sky like planRail).
+ * Would the network through `pts` (with `masks` written over world.sky) have neither an
+ * active ramp nor a dock? A BFS over mutual links in the overlay.
+ */
+function landsNowhere(world: World, pts: readonly Point[], masks: readonly number[]): boolean {
+  overlay.set(world.sky);
+  for (let k = 0; k < pts.length; k++) overlay[pts[k].y * N + pts[k].x] = masks[k];
+  gen = (gen + 1) >>> 0;
+  if (gen === 0) {
+    stamp.fill(0);
+    gen = 1;
+  }
+  let head = 0;
+  let tail = 0;
+  const s0 = pts[0].y * N + pts[0].x;
+  stamp[s0] = gen;
+  queue[tail++] = s0;
+  while (head < tail) {
+    const i = queue[head++];
+    const m = overlay[i];
+    if ((m & SKY_RAMP) !== 0 && skyRampGround(world.tiles[i])) return false;
+    if (world.tiles[i].buildingId >= 0 && isSkyAnchorAt(world, i % N, (i / N) | 0)) return false;
+    for (let d = 1; d <= 8; d <<= 1) {
+      if ((m & d) === 0) continue;
+      const j = skyNeighbour(i, d);
+      if (j < 0 || stamp[j] === gen || (overlay[j] & skyOpposite(d)) === 0) continue;
+      stamp[j] = gen;
+      queue[tail++] = j;
+    }
+  }
+  return true;
+}
+
+/**
+ * Plan a skyway drag along `path` (actions.roadPath) into `plan` and return the number of
+ * tiles that change (§3.7). Fills `tiles`, `skyMasks` (mask | ramp << 4 per tile, joined onto
+ * existing sky like planRail), the base cost (perTile per new tile + rampCost per new ramp;
+ * the caller applies buildCostMul and the funds check), `ramps` (new ramp bits), `reason`
+ * and `note`.
+ *
+ * - At most SKYWAY.maxDrag tiles ("Max 24 tiles per drag"), at least 2 ("Drag to lay a skyway").
+ * - Land, water, any ground road, zone tiles at any level and rail are fine; building tiles only
+ *   where the building has `skyAnchor` ("Blocked by buildings"); never a skybridge gap tile
+ *   ("Skybridge in the way"). A blocked tile refuses the whole drag, like rail.
+ * - A path endpoint gets the ramp bit when its ground is a Street, Avenue or Ramp and its mask
+ *   has exactly one link; extending through a ramp gives it a second link, which clears the bit.
+ *   A ramp the drag does not change keeps its bit (an inactive ramp stays a ramp, §2.4).
+ * - Note "Lands nowhere" when the finished network has neither an active ramp nor a dock.
  */
 export function planSkyway(world: World, path: readonly Point[], plan: ActionPlan): number {
-  for (const p of path) if (world.inBounds(p.x, p.y)) plan.tiles.push({ x: p.x, y: p.y, ok: false });
-  plan.reason = 'Not yet';
-  return 0;
+  const SW = SKYWAY;
+  let pts = path.filter((p) => world.inBounds(p.x, p.y));
+  let truncated = false;
+  if (pts.length > SW.maxDrag) {
+    pts = pts.slice(0, SW.maxDrag);
+    truncated = true;
+  }
+  const sky = world.sky;
+  const masks: number[] = [];
+  plan.skyMasks = masks;
+  if (pts.length < 2) {
+    for (const p of pts) {
+      plan.tiles.push({ x: p.x, y: p.y, ok: true });
+      masks.push(sky[p.y * N + p.x]);
+    }
+    plan.reason = 'Drag to lay a skyway';
+    return 0;
+  }
+  const last = pts.length - 1;
+  let blocked: string | null = null;
+  for (let k = 0; k < pts.length; k++) {
+    const p = pts[k];
+    const i = p.y * N + p.x;
+    const t = world.tiles[i];
+    let m = sky[i] & SKY_MASK;
+    for (const q of [pts[k - 1], pts[k + 1]]) {
+      if (!q) continue;
+      if (q.y < p.y) m |= SKY_N;
+      else if (q.x > p.x) m |= SKY_E;
+      else if (q.y > p.y) m |= SKY_S;
+      else if (q.x < p.x) m |= SKY_W;
+    }
+    let ramp = false;
+    if (popcount4(m) === 1) {
+      if ((k === 0 || k === last) && skyRampGround(t)) ramp = true;
+      else if ((sky[i] & SKY_RAMP) !== 0 && (sky[i] & SKY_MASK) === m) ramp = true;
+    }
+    masks.push(m | (ramp ? SKY_RAMP : 0));
+    let ok = true;
+    if (t.buildingId >= 0 && !isSkyAnchorAt(world, p.x, p.y)) {
+      ok = false;
+      blocked ??= 'Blocked by buildings';
+    } else if (skybridgeGapAt(world, p.x, p.y)) {
+      ok = false;
+      blocked ??= 'Skybridge in the way';
+    }
+    plan.tiles.push({ x: p.x, y: p.y, ok });
+  }
+  if (blocked) {
+    plan.reason = blocked;
+    return 0;
+  }
+  let changes = 0;
+  let cost = 0;
+  let ramps = 0;
+  for (let k = 0; k < pts.length; k++) {
+    const i = pts[k].y * N + pts[k].x;
+    const before = sky[i];
+    if (masks[k] === before) continue;
+    changes++;
+    if (before === 0) cost += SW.perTile;
+    if ((masks[k] & SKY_RAMP) !== 0 && (before & SKY_RAMP) === 0) {
+      cost += SW.rampCost;
+      ramps++;
+    }
+  }
+  plan.cost = cost;
+  plan.ramps = ramps;
+  if (truncated) plan.reason = `Max ${SW.maxDrag} tiles per drag`;
+  if (changes > 0 && landsNowhere(world, pts, masks)) plan.note = 'Lands nowhere';
+  return changes;
 }

@@ -6,40 +6,65 @@ import {
   crownOptions,
   planAction,
   raiseStage,
+  skywayNetwork,
   stageStatus,
   type Point,
 } from './actions';
 import { buildingStats } from './buildingStats';
 import {
+  AIRPORT,
   BUILDINGS,
   BULLDOZE_COST,
   CURRENCY,
   DAY_CYCLE_SECONDS,
+  EDGE_LINKS,
   FACTION_LABELS,
   MAX_TAX,
   MIN_TAX,
   RIBBON,
-  ROAD_COST,
+  SAFETY,
   SAVE_KEY,
   SAVE_VERSION,
   SAVE_VERSIONS_SUPPORTED,
+  SEAPORT,
   SETTINGS_KEY,
   SKYBRIDGE,
+  SKYWAY,
+  SPACEPORT,
   SPEED_TICKS_PER_SEC,
   STACK_STAGES,
   ZONES,
   isBuildingTool,
+  isZoneTool,
   paceOf,
   zoneDefFor,
 } from './config';
-import { Emitter, type GameEventMap } from './events';
+import { Emitter, type GameEventMap, type ToastAction } from './events';
+import { ROAD_TOOL_KIND, isRoadTool, roadDef, roadLinks } from './roads';
 import { Simulation } from './sim';
+import type { PortView } from './sim/ports';
+import { SKY_RAMP, skyRampGround } from './skyway';
 import { storageGet, storageRemove, storageSet } from './storage';
+import { storyContent } from './story/conditions';
 import { StoryDirector } from './story/director';
 import * as turf from './story/turf';
 import type { ActionResult, CrownId, EndingId, FactionId, GangId, InspectAction } from './story/types';
 import * as vertical from './story/vertical';
-import { Terrain, ZoneType, type ActionPlan, type OverlayId, type SaveData, type Selection, type Settings, type ToolId } from './types';
+import {
+  MAP_SIZE,
+  RoadKind,
+  Terrain,
+  ZoneType,
+  type ActionPlan,
+  type Building,
+  type OverlayId,
+  type SaveData,
+  type Selection,
+  type Settings,
+  type TileSnap,
+  type ToolId,
+} from './types';
+import { TIER_LABEL, wealthInfo, zoneCapacity } from './wealth';
 import { World } from './world';
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -90,8 +115,83 @@ export interface TileInfo {
 const pct = (v: number) => `${Math.round(v * 100)}%`;
 const num = (n: number) => Math.round(n).toLocaleString('en-US');
 
-/** Tools whose result changes story sources (vertical caches, turf eligibility, build counts). */
-const storyTool = (tool: ToolId) => tool === 'bulldoze' || tool === 'skybridge' || tool === 'rail' || isBuildingTool(tool);
+/**
+ * Tools whose result changes story sources (vertical caches, turf eligibility, build counts).
+ * Road kinds and the skyway count too (EXPANSION §8.4): the alley mood driver, the alley and
+ * skyway power terms and turf eligibility update right after a drag.
+ */
+const storyTool = (tool: ToolId) =>
+  tool === 'bulldoze' || tool === 'skybridge' || tool === 'rail' || tool === 'skyway' || isRoadTool(tool) || isBuildingTool(tool);
+
+/** Tools whose last drag can be undone for SAFETY.undoSec (EXPANSION §7.7). */
+const undoableTool = (tool: ToolId) => isRoadTool(tool) || tool === 'skyway' || isZoneTool(tool);
+
+/** A plan waiting for ✓ (EXPANSION §7.7): the tool, the gesture's points and the plan the ghost shows. */
+export interface PendingConfirm {
+  tool: ToolId;
+  from: Point;
+  to: Point;
+  plan: ActionPlan;
+}
+
+/** One tile of the undo snapshot: before and after the drag, and whether a building stood there after it. */
+interface UndoTile {
+  before: TileSnap;
+  after: TileSnap;
+  building: boolean;
+}
+
+/** The one-step undo (EXPANSION §7.7): changed tiles, credits spent and the wall time. */
+interface UndoSnapshot {
+  tool: ToolId;
+  tiles: UndoTile[];
+  spent: number;
+  at: number;
+}
+
+/** A Spaceport's launch state for the inspect sheet (EXPANSION §5.3, §7.4). */
+export interface LaunchStatus {
+  /** 0..1 construction progress (days and real seconds combined). */
+  progress: number;
+  complete: boolean;
+  /** Complete, online and powered: its launch clock runs. */
+  active: boolean;
+  /** Unpaused seconds until the gap since the last launch has passed (0 = waiting only for night). */
+  gapLeft: number;
+  /** Seconds left of the first launch's announced lead, or null. */
+  lead: number | null;
+  /** Launches seen so far. */
+  launches: number;
+}
+
+/** Rotating news line posted at each visible liftoff (EXPANSION Appendix B). */
+const LAUNCH_NEWS = [
+  'Launch night: a cargo lifter climbs out of {city} on a column of light.',
+  'Another launch. Half of shadeside is on the roofs to watch it go.',
+  "The spaceport lights the low clouds orange for eleven seconds. Then it's gone.",
+] as const;
+
+/** Inspect subtitles by road kind (EXPANSION §7.4). */
+const ROAD_SUBTITLE: Record<RoadKind, string> = {
+  [RoadKind.Street]: 'Lots within 3 tiles can grow here.',
+  [RoadKind.Avenue]: "A wide, lit boulevard: twice a street's traffic.",
+  [RoadKind.Highway]: 'Five streets of traffic. Streets join it at on-ramps.',
+  [RoadKind.Alley]: 'Narrow and cheap. Crews like the dark.',
+  [RoadKind.Ramp]: 'Joins the street grid to the highway.',
+};
+
+/** The on-demand launch-rights card (EXPANSION §8.3; content by WP-6). */
+const RIGHTS_CARD = 'ex.rights';
+
+/** Launch-rights holder (story flag `launchRights`) → the inspect row value. */
+const RIGHTS_LABEL: Record<string, string> = { board: 'Public', basalt: 'Basalt', nacre: 'Nacre', kites: 'Kites' };
+
+const snapOf = (world: World, i: number): TileSnap => {
+  const t = world.tiles[i];
+  return { i, road: t.road, roadKind: t.roadKind, zone: t.zone, level: t.level, sky: world.sky[i] };
+};
+const sameSnap = (a: TileSnap, b: TileSnap) =>
+  a.road === b.road && a.roadKind === b.roadKind && a.zone === b.zone && a.level === b.level && a.sky === b.sky;
 
 /** A city with any progress (worth a backup before it is replaced). */
 function worthKeeping(world: World): boolean {
@@ -133,6 +233,28 @@ export class Game {
   /** Speed to restore once a blocking story card closes (null = not paused by the story). */
   private storyResumeSpeed: number | null = null;
 
+  // ── Expansion: confirm, undo, refund and launches (docs/EXPANSION.md §5.3, §7.7) ──
+  /**
+   * Wall clock in seconds for the undo and refund windows (SAFETY.undoSec / refundSec). Tests
+   * swap in a fake clock. Launches do not use it: they run on unpaused frame time (update dt).
+   */
+  now: () => number = () => Date.now() / 1000;
+  /**
+   * A costly or lossy plan waiting for ✓ (set by commit(), cleared by confirmPending(),
+   * cancelPending(), setTool(), apply() and any world swap). Input keeps the ghost while it is set.
+   */
+  pendingConfirm: PendingConfirm | null = null;
+  /** The last road, skyway or zone drag, undoable for SAFETY.undoSec (one step, no history). */
+  private undoSnap: UndoSnapshot | null = null;
+  /** Buildings placed this session: credits paid and wall time, for the SAFETY.refundSec refund. Not saved. */
+  private placed = new Map<number, { at: number; paid: number }>();
+  /** Unpaused real seconds since each complete Spaceport's last liftoff. Not saved. */
+  private launchClock = new Map<number, number>();
+  /** Spaceports seen under construction in this world (their first launch waits only for night). */
+  private launchBuilding = new Set<number>();
+  /** The first launch's announced lead: spaceport id and seconds left. */
+  private lead: { id: number; left: number } | null = null;
+
   constructor() {
     const stored = this.readSettings();
     // Older stored settings have no storyPace (or an unknown one): they read as 'relaxed'.
@@ -148,6 +270,7 @@ export class Game {
     if (this.tool === tool) return;
     this.tool = tool;
     this.preview = null;
+    this.pendingConfirm = null;
     if (tool !== 'inspect') this.select(null);
     this.events.emit('tool', tool);
   }
@@ -167,7 +290,8 @@ export class Game {
 
   select(sel: Selection | null) {
     if (sel && !this.world.inBounds(sel.x, sel.y)) sel = null;
-    const same = sel && this.selected && sel.x === this.selected.x && sel.y === this.selected.y;
+    // The skyway deck and the ground under it are different selections (EXPANSION §3.7).
+    const same = sel && this.selected && sel.x === this.selected.x && sel.y === this.selected.y && !!sel.sky === !!this.selected.sky;
     if (same || (!sel && !this.selected)) return;
     this.selected = sel;
     this.events.emit('select', sel);
@@ -191,8 +315,17 @@ export class Game {
     sim.options.events = this.settings.events;
     this.sim = sim;
     this.storyResumeSpeed = null;
+    // Session-only expansion state belongs to the world it was made in (EXPANSION §7.7, §5.3).
+    this.pendingConfirm = null;
+    this.undoSnap = null;
+    this.placed.clear();
+    this.launchClock.clear();
+    this.launchBuilding.clear();
+    this.lead = null; // a pending launch is dropped with the world
     this.story = new StoryDirector(this);
     sim.recomputeAll();
+    // A v1 / v2 city takes its wealth tiers once, in one batch, at load (EXPANSION §4.3).
+    if (this.world.loadedVersion < 3 && sim.settleWealth() > 0) sim.recomputeAll();
     // Tile power is only known after the first recompute (it is not saved): re-check
     // zone-anchored skybridges and stations now instead of at the next month.
     const m = this.world.vertical.metrics;
@@ -219,14 +352,60 @@ export class Game {
     this.events.emit('settings');
   }
 
-  toast(text: string, kind: 'info' | 'error' | 'good' = 'info') {
-    this.events.emit('toast', { text, kind });
+  /** Show a toast; `action` adds a 44 px button for `action.sec` seconds (Undo, Watch; EXPANSION §2.9). */
+  toast(text: string, kind: 'info' | 'error' | 'good' = 'info', action?: ToastAction) {
+    this.events.emit('toast', action ? { text, kind, action } : { text, kind });
   }
 
   // ── Actions (called by input) ─────────────────────────────────────────────
-  /** Preview the current tool over a drag from `from` to `to` (tile coords). */
+  /**
+   * Preview the current tool over a drag from `from` to `to` (tile coords). A ground bulldoze
+   * also carries `refund`: what bulldozing buildings placed under SAFETY.refundSec ago returns.
+   */
   plan(from: Point, to: Point): ActionPlan {
-    return planAction(this.world, this.tool, from, to);
+    const plan = planAction(this.world, this.tool, from, to);
+    if (this.tool === 'bulldoze' && plan.layer !== 'sky') {
+      const r = this.refundFor(plan);
+      if (r.total > 0) plan.refund = r.total;
+    }
+    return plan;
+  }
+
+  /**
+   * Confirm-aware commit for input (EXPANSION §7.7): a valid plan with `confirm` (a costly
+   * building, or a highway that strands lots) is not built; it becomes `pendingConfirm` and
+   * the preview keeps its ghost until confirmPending() or cancelPending(). Anything else is
+   * applied at once, exactly like apply().
+   */
+  commit(from: Point, to: Point): ActionPlan {
+    if (this.tool !== 'inspect') {
+      const plan = this.plan(from, to);
+      if (plan.valid && plan.confirm) {
+        this.pendingConfirm = { tool: this.tool, from: { x: from.x, y: from.y }, to: { x: to.x, y: to.y }, plan };
+        this.preview = plan;
+        return plan;
+      }
+    }
+    return this.apply(from, to);
+  }
+
+  /**
+   * ✓ on the pending plan: re-plans from the same points and applies (a plan that is no longer
+   * valid, e.g. funds changed, toasts its reason). Returns the executed plan, or null when
+   * nothing was pending (or the tool changed since).
+   */
+  confirmPending(): ActionPlan | null {
+    const p = this.pendingConfirm;
+    this.pendingConfirm = null;
+    if (!p || p.tool !== this.tool) return null;
+    return this.apply(p.from, p.to);
+  }
+
+  /** ✕ / Esc / a new drag: drop the pending plan and its ghost. */
+  cancelPending(): void {
+    if (!this.pendingConfirm) return;
+    this.pendingConfirm = null;
+    this.preview = null;
   }
 
   /** Set (or clear) the live preview the renderer draws. */
@@ -240,29 +419,47 @@ export class Game {
    */
   apply(from: Point, to: Point): ActionPlan {
     this.preview = null;
+    this.pendingConfirm = null;
     if (this.tool === 'inspect') {
       this.select(this.world.inBounds(to.x, to.y) ? { x: to.x, y: to.y } : null);
       this.events.emit('sfx', 'click');
       return planAction(this.world, 'inspect', from, to);
     }
-    const plan = applyAction(this.world, this.tool, from, to);
+    const tool = this.tool;
+    const w = this.world;
+    // Read what the drag will touch before it changes anything: undo before-states, refunds.
+    const pre = undoableTool(tool) || tool === 'bulldoze' ? planAction(w, tool, from, to) : null;
+    const before = pre && undoableTool(tool) ? this.snapBefore(tool, pre) : null;
+    const refund = pre && tool === 'bulldoze' && pre.layer !== 'sky' ? this.refundFor(pre) : null;
+    const plan = applyAction(w, tool, from, to);
     if (!plan.valid) {
       if (plan.reason && plan.reason !== 'Nothing to change') this.toast(plan.reason, 'error');
       this.events.emit('sfx', 'error');
       return plan;
     }
-    const tool = this.tool;
-    const kind =
+    // Any action replaces the one-step undo; only road, skyway and zone drags make a new one.
+    this.undoSnap = before ? this.makeUndo(tool, before, plan.cost) : null;
+    const kind: GameEventMap['sfx'] =
       tool === 'bulldoze'
         ? 'bulldoze'
-        : tool === 'road'
+        : isRoadTool(tool)
           ? 'road'
-          : isBuildingTool(tool) || tool === 'skybridge' || tool === 'rail'
+          : isBuildingTool(tool) || tool === 'skybridge' || tool === 'rail' || tool === 'skyway'
             ? 'build'
-            : 'zone';
+            : isZoneTool(tool)
+              ? 'zone'
+              : 'click';
     this.events.emit('sfx', kind);
-    if (isBuildingTool(tool)) this.toast(`${BUILDINGS[tool].name} built`, 'good');
+    if (isBuildingTool(tool)) this.placedBuilding(tool, plan);
     else if (tool === 'skybridge') this.toast('Skybridge built', 'good');
+    if (refund && refund.total > 0) {
+      // In full: the price paid, and the demolition fee for those buildings is waived too.
+      w.funds += refund.total + refund.fees;
+      for (const id of refund.ids) this.placed.delete(id);
+      plan.refund = refund.total;
+      this.toast(`Refunded ${num(refund.total)} ${CURRENCY}`, 'good');
+    }
+    if (this.undoSnap) this.toast(this.undoText(tool, plan), 'info', { id: 'undo', label: 'Undo', sec: SAFETY.undoSec });
     this.sim.recomputeAll();
     if (storyTool(tool)) {
       // Power was just recomputed: re-evaluate links and stations now, not next month.
@@ -271,6 +468,144 @@ export class Game {
     }
     this.events.emit('stats');
     return plan;
+  }
+
+  /** After a building is placed: the toast, its refund record and (Spaceport) the real-time floor. */
+  private placedBuilding(tool: ToolId, plan: ActionPlan): void {
+    if (!isBuildingTool(tool)) return;
+    const def = BUILDINGS[tool];
+    const fp = plan.footprint;
+    const b = fp ? this.world.buildingAt(fp.x, fp.y) : null;
+    if (b) {
+      this.placed.set(b.id, { at: this.now(), paid: plan.cost });
+      // §5.3: 240 days AND at least 4 minutes of play; Game counts waitSec down per unpaused frame.
+      if (b.type === 'spaceport') b.waitSec = SPACEPORT.minBuildSec;
+    }
+    this.toast(def.buildDays ? `${def.name} rising: ${def.buildDays} days` : `${def.name} built`, 'good');
+  }
+
+  // ── Undo (EXPANSION §7.7) ─────────────────────────────────────────────────
+
+  /** Before-states of every tile a road, skyway or zone plan can change (skyways: their neighbours too). */
+  private snapBefore(tool: ToolId, plan: ActionPlan): Map<number, TileSnap> {
+    const w = this.world;
+    const out = new Map<number, TileSnap>();
+    const add = (x: number, y: number) => {
+      if (!w.inBounds(x, y)) return;
+      const i = w.idx(x, y);
+      if (!out.has(i)) out.set(i, snapOf(w, i));
+    };
+    for (const p of plan.tiles) {
+      add(p.x, p.y);
+      if (tool === 'skyway') {
+        add(p.x, p.y - 1);
+        add(p.x + 1, p.y);
+        add(p.x, p.y + 1);
+        add(p.x - 1, p.y);
+      }
+    }
+    return out;
+  }
+
+  /** The undo snapshot after an apply: the tiles that changed, or null when none did. */
+  private makeUndo(tool: ToolId, before: Map<number, TileSnap>, spent: number): UndoSnapshot | null {
+    const w = this.world;
+    const tiles: UndoTile[] = [];
+    for (const [i, b] of before) {
+      const a = snapOf(w, i);
+      if (!sameSnap(a, b)) tiles.push({ before: b, after: a, building: w.tiles[i].buildingId >= 0 });
+    }
+    return tiles.length ? { tool, tiles, spent, at: this.now() } : null;
+  }
+
+  /** "Street ×12", "Zoned 24 lots", "Skyway ×6". */
+  private undoText(tool: ToolId, plan: ActionPlan): string {
+    const n = this.undoSnap?.tiles.length ?? 0;
+    if (isZoneTool(tool)) return `Zoned ${num(n)} ${n === 1 ? 'lot' : 'lots'}`;
+    if (tool === 'skyway') return `Skyway ×${num(n)}`;
+    if (isRoadTool(tool)) {
+      const ramps = plan.ramps ?? 0;
+      return `${roadDef(ROAD_TOOL_KIND[tool]).name} ×${num(n)}${ramps ? ` · ${ramps} ${ramps === 1 ? 'ramp' : 'ramps'}` : ''}`;
+    }
+    return 'Done';
+  }
+
+  /** Seconds left to undo the last road, skyway or zone drag (0 = nothing to undo). */
+  undoLeft(): number {
+    const u = this.undoSnap;
+    if (!u) return 0;
+    const left = SAFETY.undoSec - (this.now() - u.at);
+    return left > 0 ? left : 0;
+  }
+
+  /**
+   * Undo the last road, skyway or zone drag (EXPANSION §7.7): only inside SAFETY.undoSec and only
+   * while every changed tile is still as the drag left it (a lot that developed meanwhile, or a
+   * building placed on it, blocks it: "Too late to undo"). Writes the before-states back, refunds
+   * the credits spent, recomputes and toasts "Undone". Returns true when it undid something.
+   */
+  undo(): boolean {
+    const u = this.undoSnap;
+    if (!u) return false;
+    const w = this.world;
+    this.undoSnap = null;
+    let ok = this.now() - u.at <= SAFETY.undoSec;
+    for (const t of u.tiles) {
+      if (!ok) break;
+      const i = t.after.i;
+      if (!sameSnap(snapOf(w, i), t.after) || (w.tiles[i].buildingId >= 0) !== t.building) ok = false;
+    }
+    if (!ok) {
+      this.toast('Too late to undo', 'error');
+      this.events.emit('sfx', 'error');
+      return false;
+    }
+    for (const t of u.tiles) w.restoreTile(t.before.i, t.before);
+    w.funds += u.spent;
+    this.pendingConfirm = null;
+    this.events.emit('sfx', 'click');
+    this.toast('Undone', 'info');
+    this.sim.recomputeAll();
+    if (storyTool(u.tool)) {
+      vertical.refresh(w);
+      this.story.markDirty();
+    }
+    this.events.emit('stats');
+    return true;
+  }
+
+  // ── Refund (EXPANSION §7.7) ───────────────────────────────────────────────
+
+  /** Credits paid for the buildings a ground bulldoze plan removes that were placed under SAFETY.refundSec ago. */
+  private refundFor(plan: ActionPlan): { total: number; fees: number; ids: number[] } {
+    const w = this.world;
+    const out = { total: 0, fees: 0, ids: [] as number[] };
+    if (!this.placed.size) return out;
+    const now = this.now();
+    const seen = new Set<number>();
+    for (const p of plan.tiles) {
+      if (!p.ok) continue;
+      const id = w.tileAt(p.x, p.y)?.buildingId ?? -1;
+      if (id < 0 || seen.has(id)) continue;
+      seen.add(id);
+      const rec = this.placed.get(id);
+      const b = w.buildings.get(id);
+      if (rec && b && now - rec.at < SAFETY.refundSec) {
+        out.total += rec.paid;
+        // The demolition fee planAction charges for it (5% of the base price × buildCostMul).
+        out.fees += Math.round(Math.round(BUILDINGS[b.type].cost * 0.05) * w.mods.buildCostMul);
+        out.ids.push(id);
+      }
+    }
+    return out;
+  }
+
+  /** Seconds left of building `id`'s full refund (0 = none: placed earlier, or not this session). */
+  refundLeft(id: number): number {
+    const rec = this.placed.get(id);
+    if (!rec) return 0;
+    const left = SAFETY.refundSec - (this.now() - rec.at);
+    return left > 0 ? left : 0;
   }
 
   // ── Frame update ──────────────────────────────────────────────────────────
@@ -299,8 +634,101 @@ export class Game {
       }
       if (steps > 0) this.events.emit('stats');
       if (this.tickAcc > 4) this.tickAcc = 0; // drop backlog on slow devices
+      this.updateSpaceports(dt);
       this.syncStoryPause();
     }
+  }
+
+  // ── Spaceport construction floor and launches (EXPANSION §5.3) ───────────
+
+  /**
+   * Every unpaused frame (any speed): count each Spaceport's waitSec down by `dt`, run the
+   * launch clock of each complete, online, powered one, and lift off when it is night
+   * (daylight < SPACEPORT.nightBelow) and at least launchGapSec have passed since its last
+   * launch. The first launch is announced SPACEPORT.firstLeadSec ahead with a Watch toast.
+   */
+  private updateSpaceports(dt: number): void {
+    const w = this.world;
+    const S = SPACEPORT;
+    for (const b of w.buildings.values()) {
+      if (b.type !== 'spaceport') continue;
+      if ((b.waitSec ?? 0) > 0) b.waitSec = Math.max(0, (b.waitSec ?? 0) - dt);
+      if ((b.buildDays ?? 0) > 0 || (b.waitSec ?? 0) > 0) {
+        this.launchBuilding.add(b.id);
+        continue;
+      }
+      const c = this.launchClockOf(b) + (b.offline <= 0 && b.powered ? dt : 0);
+      this.launchClock.set(b.id, c);
+      if (this.lead || b.offline > 0 || !b.powered) continue;
+      if (c < S.launchGapSec || this.daylight >= S.nightBelow) continue;
+      if ((b.launches ?? 0) === 0) {
+        this.lead = { id: b.id, left: S.firstLeadSec };
+        this.toast(`First launch in ${S.firstLeadSec} s`, 'info', { id: 'watch', label: 'Watch', sec: S.firstLeadSec });
+      } else this.liftoff(b, false);
+    }
+    const lead = this.lead;
+    if (lead) {
+      const b = w.buildings.get(lead.id);
+      if (!b || b.type !== 'spaceport') this.lead = null;
+      else {
+        lead.left -= dt;
+        if (lead.left <= 0) {
+          this.lead = null;
+          this.liftoff(b, true);
+        }
+      }
+    }
+  }
+
+  /** A Spaceport's launch clock: a launch gap once it completes in this world, half a gap after a load or swap. */
+  private launchClockOf(b: Building): number {
+    const c = this.launchClock.get(b.id);
+    if (c !== undefined) return c;
+    return this.launchBuilding.has(b.id) ? SPACEPORT.launchGapSec : SPACEPORT.launchGapSec / 2;
+  }
+
+  /** A visible launch starts now: event, one rotating news line, the count, the clock; the first gets its banner. */
+  private liftoff(b: Building, first: boolean): void {
+    const w = this.world;
+    const n = b.launches ?? 0;
+    b.launches = n + 1;
+    this.launchClock.set(b.id, 0);
+    this.events.emit('liftoff', { id: b.id, first });
+    w.addNews(LAUNCH_NEWS[n % LAUNCH_NEWS.length].replace('{city}', w.cityName), 'info');
+    if (first && !w.moments.has('launch')) {
+      w.moments.add('launch');
+      this.events.emit('moment', { id: 'launch', title: 'FIRST LAUNCH', sub: `Every roof in ${w.cityName} is watching` });
+    }
+  }
+
+  /** The first launch's announced lead (the Watch toast's target): the pad, and seconds left; else null. */
+  get launchLead(): { id: number; x: number; y: number; left: number } | null {
+    const l = this.lead;
+    if (!l) return null;
+    const b = this.world.buildings.get(l.id);
+    if (!b) return null;
+    return { id: b.id, x: b.x + b.size / 2, y: b.y + b.size / 2, left: Math.max(0, l.left) };
+  }
+
+  /** Launch state of Spaceport `id` for the inspect sheet, or null for anything else. */
+  launchStatus(id: number): LaunchStatus | null {
+    const b = this.world.buildings.get(id);
+    if (!b || b.type !== 'spaceport') return null;
+    const complete = (b.buildDays ?? 0) <= 0 && (b.waitSec ?? 0) <= 0;
+    const clock = this.launchClockOf(b);
+    return {
+      progress: this.sim.ports.buildProgress(id),
+      complete,
+      active: complete && b.offline <= 0 && b.powered,
+      gapLeft: complete ? Math.max(0, SPACEPORT.launchGapSec - clock) : SPACEPORT.launchGapSec,
+      lead: this.lead?.id === id ? Math.max(0, this.lead.left) : null,
+      launches: b.launches ?? 0,
+    };
+  }
+
+  /** Read-only port numbers: visitors, trade per seaport, demand adds, spaceport progress (EXPANSION §2.7). */
+  get ports(): PortView {
+    return this.sim.ports;
   }
 
   /** Pause while a blocking story card is open; restore the previous speed after it closes. */
@@ -366,10 +794,31 @@ export class Game {
    * (radius for the map preview), Raise / Crown on a Stratablock (crown picker
    * rows on 'crown'). Disabled rows carry their reason. Empty elsewhere.
    */
-  inspectActions(x: number, y: number): InspectAction[] {
+  inspectActions(x: number, y: number, sky = false): InspectAction[] {
     const w = this.world;
+    if (sky) {
+      // Skyway sheet (EXPANSION §7.4): demolish this segment (one tile, a sky-layer bulldoze).
+      if (!w.inBounds(x, y) || w.sky[w.idx(x, y)] === 0) return [];
+      const cost = planAction(w, 'bulldoze', { x, y }, { x, y }).cost;
+      const a: InspectAction = { id: 'skyway', label: `Demolish segment · ${num(cost)} ${CURRENCY}`, cost, enabled: w.funds >= cost, buildingId: -1, x, y };
+      if (w.funds < cost) a.reason = `Not enough credits (need ${num(cost)} ${CURRENCY})`;
+      return [a];
+    }
     const b = w.buildingAt(x, y);
     if (!b) return [];
+    if (b.type === 'spaceport') {
+      // Launch rights (EXPANSION §5.3): chosen when the player is ready, from placement on.
+      if (w.story.flags.launchRights) return [];
+      const a: InspectAction = { id: 'rights', label: 'Launch rights · Choose', cost: 0, enabled: true, buildingId: b.id };
+      if (!storyContent().cards.get(RIGHTS_CARD)) {
+        a.enabled = false;
+        a.reason = 'Not available yet';
+      } else if (this.story.blocking) {
+        a.enabled = false;
+        a.reason = 'Answer the open message first';
+      }
+      return [a];
+    }
     if (b.type === 'precinct') {
       const st = crackdownStatus(w, b.id);
       const label = st.endsTruce ? 'Crackdown · ends the Truce' : `Crackdown · ${num(st.cost)} ${CURRENCY}`;
@@ -400,6 +849,54 @@ export class Game {
     return [];
   }
 
+  /**
+   * Open the launch-rights card for Spaceport `buildingId` (EXPANSION §5.3, §8.3 `ex.rights`)
+   * through director.openOnDemand: no deck slot, not an interruption. It blocks like any
+   * open card (the game pauses). Refused while another card is open or once rights are given.
+   */
+  openLaunchRights(buildingId: number): ActionResult {
+    const b = this.world.buildings.get(buildingId);
+    let r: ActionResult;
+    if (!b || b.type !== 'spaceport') r = { ok: false, reason: 'Not a Spaceport', cost: 0 };
+    else if (this.world.story.flags.launchRights) r = { ok: false, reason: 'Launch rights are already granted', cost: 0 };
+    else r = this.story.openOnDemand(RIGHTS_CARD);
+    if (!r.ok) {
+      if (r.reason) this.toast(r.reason, 'error');
+      this.events.emit('sfx', 'error');
+      return r;
+    }
+    this.events.emit('sfx', 'click');
+    this.syncStoryPause();
+    return r;
+  }
+
+  /**
+   * Demolish the skyway segment on (x, y) (the skyway sheet's action, EXPANSION §7.4): a
+   * sky-layer bulldoze of that one tile (SKYWAY.bulldozeCost); ground, zones and buildings stay.
+   */
+  demolishSkySegment(x: number, y: number): ActionResult {
+    const w = this.world;
+    if (!w.inBounds(x, y) || w.sky[w.idx(x, y)] === 0) {
+      this.events.emit('sfx', 'error');
+      return { ok: false, reason: 'No skyway here', cost: 0 };
+    }
+    const plan = applyAction(w, 'bulldoze', { x, y }, { x, y });
+    if (!plan.valid) {
+      if (plan.reason) this.toast(plan.reason, 'error');
+      this.events.emit('sfx', 'error');
+      return { ok: false, reason: plan.reason ?? 'Nothing to demolish', cost: 0 };
+    }
+    this.undoSnap = null;
+    this.pendingConfirm = null;
+    this.events.emit('sfx', 'bulldoze');
+    if (this.selected?.sky && this.selected.x === x && this.selected.y === y) this.select(null);
+    this.sim.recomputeAll();
+    vertical.refresh(w);
+    this.story.markDirty();
+    this.events.emit('stats');
+    return { ok: true, cost: plan.cost };
+  }
+
   /** Common follow-up for story actions: feedback, and a refresh when something changed. */
   private afterStoryAction(r: ActionResult, sfx: GameEventMap['sfx'], refreshTurf = false): ActionResult {
     if (!r.ok) {
@@ -407,6 +904,8 @@ export class Game {
       this.events.emit('sfx', 'error');
       return r;
     }
+    // Any other action ends the one-step undo (EXPANSION §7.7).
+    this.undoSnap = null;
     this.events.emit('sfx', sfx);
     if (refreshTurf) turf.refreshStats(this.world);
     this.story.markDirty();
@@ -626,17 +1125,24 @@ export class Game {
   }
 
   // ── Inspect info ──────────────────────────────────────────────────────────
-  getTileInfo(x: number, y: number): TileInfo | null {
+  /**
+   * Inspect rows for tile (x, y) (EXPANSION §7.4: standard rows ≤ 12-character values, long
+   * lines as `notes`). `sky` = the player tapped the skyway deck over the tile: the skyway sheet.
+   */
+  getTileInfo(x: number, y: number, sky = false): TileInfo | null {
     const w = this.world;
     const t = w.tileAt(x, y);
     if (!t) return null;
     const i = w.idx(x, y);
     const f = w.fields;
+    if (sky && w.sky[i] !== 0) return this.skywayInfo(x, y);
     const common: [string, string][] = [
       ['Land value', pct(f.landValue[i])],
       ['Crime', pct(f.crime[i])],
       ['Pollution', pct(f.pollution[i])],
     ];
+    const notes: NonNullable<TileInfo['notes']> = [];
+    let meter: TileInfo['meter'];
     let info: TileInfo;
     if (t.buildingId >= 0) {
       const b = w.buildings.get(t.buildingId)!;
@@ -652,33 +1158,128 @@ export class Game {
       if (s.residents || def.residents) rows.push(['Residents', `${s.residents}`]);
       rows.push(['Upkeep', `${s.upkeep} ${CURRENCY}/mo`]);
       if (b.offline > 0) rows.push(['Status', `Offline ${b.offline}d`]);
+      this.portRows(b, rows, notes);
       info = { title: def.name, subtitle: def.desc, color: def.color, rows };
     } else if (t.road) {
-      info = {
-        title: t.terrain === Terrain.Water ? 'Bridge' : 'Road',
-        subtitle: t.terrain === Terrain.Water ? 'Elevated skyway over the water.' : 'Street grid. Zones within 3 tiles can develop.',
-        color: '#9aa4c7',
-        rows: [['Traffic', pct(f.traffic[i])], ['Pollution', pct(f.pollution[i])]],
-      };
+      info = this.roadInfo(x, y, notes);
     } else if (zoneDefFor(t.zone)) {
       const zd = zoneDefFor(t.zone)!;
       const levelName = ['Empty lot', 'Low density', 'Mid density', 'High density'][t.level];
-      const cap = zd.capacity[t.level];
+      const wi = wealthInfo(w, x, y);
+      const cap = zoneCapacity(t.zone, t.level, t.level > 0 ? t.wealth : 0, wi.affordable);
+      const access = w.hasRoadAccess(x, y);
+      const highwayOnly = !access && highwayNear(w, x, y);
+      const arrow = wi.dir > 0 ? ' ▲' : wi.dir < 0 ? ' ▼' : '';
       const rows: [string, string][] = [
         ['Status', t.abandoned ? 'ABANDONED' : levelName],
+        ['Wealth', wi.lot ? `opens ${TIER_LABEL[wi.potential]}` : `${TIER_LABEL[wi.tier]}${arrow} ${pct(wi.score)}`],
         [t.zone === ZoneType.Residential ? 'Residents' : 'Jobs', t.abandoned ? '0' : `${cap}`],
         ['Power', t.level === 0 ? '—' : t.powered ? 'Online' : 'NO POWER'],
-        ['Road access', w.hasRoadAccess(x, y) ? 'Yes' : 'NO ROAD'],
+        ['Road access', access ? 'Yes' : highwayOnly ? 'none' : 'NO ROAD'],
         ...common,
       ];
+      if (!wi.lot) meter = { row: 1, ticks: [...wi.ticks] };
+      if (f.noise[i] > 0.02) rows.push(['Noise', pct(f.noise[i])]);
+      if (f.education[i] > 0.02) rows.push(['Education', pct(f.education[i])]);
+      if (wi.next) notes.push({ text: `Next: ${wi.next}`, ...(wi.next.startsWith('Rising') || wi.next.startsWith('Opens') ? { tone: 'good' as const } : {}) });
+      if (wi.lifted) notes.push({ text: `Lifted by: ${wi.lifted}`, tone: 'good' });
+      if (wi.affordable) notes.push({ text: 'Affordable quarter: +10% residents', tone: 'good' });
+      if (highwayOnly) notes.push({ text: 'Highway only: lots need a street or avenue', tone: 'warn' });
       info = { title: zd.name, subtitle: zd.desc, color: zd.color, rows };
     } else if (t.terrain === Terrain.Water) {
       info = { title: 'Bay water', subtitle: 'Black water. Roads can bridge it.', color: '#1b6c8a', rows: [['Pollution', pct(f.pollution[i])]] };
     } else {
       info = { title: 'Open ground', subtitle: 'Unclaimed lot, ready to build.', color: '#6b6f8f', rows: common };
     }
+    if (w.sky[i] !== 0) notes.push({ text: 'Skyway overhead: tap the deck' });
     this.storyRows(x, y, info.rows);
+    if (notes.length) info.notes = notes;
+    if (meter) info.meter = meter;
     return info;
+  }
+
+  /** A ground road tile: its kind, bridge, ramps and regional-link notes (EXPANSION §7.4). */
+  private roadInfo(x: number, y: number, notes: NonNullable<TileInfo['notes']>): TileInfo {
+    const w = this.world;
+    const i = w.idx(x, y);
+    const t = w.tiles[i];
+    const f = w.fields;
+    const k = t.roadKind;
+    const def = roadDef(k);
+    const water = t.terrain === Terrain.Water;
+    const rows: [string, string][] = [['Traffic', pct(f.traffic[i])]];
+    if (k === RoadKind.Street || k === RoadKind.Avenue) rows.push(['Pollution', pct(f.pollution[i])]);
+    else if (k === RoadKind.Highway) {
+      const ramps = highwayRamps(w, i);
+      rows.push(['Noise', pct(f.noise[i])], ['Ramps', `${ramps}`]);
+      if (ramps === 0) notes.push({ text: 'No on-ramps: nothing can use it', tone: 'warn' });
+    } else if (k === RoadKind.Alley) {
+      rows.push(['Crime', pct(f.crime[i])]);
+      notes.push({ text: 'Homes beside it stay affordable' });
+    }
+    const link = regionalLink(w, x, y);
+    if (link > 0) notes.push({ text: `Regional link: +${link} trade`, tone: 'good' });
+    return {
+      title: water ? `${def.name} bridge` : def.name,
+      subtitle: water ? 'A road on piers over the water.' : ROAD_SUBTITLE[k],
+      color: k === RoadKind.Street ? '#9aa4c7' : def.color,
+      rows,
+    };
+  }
+
+  /** The skyway sheet (a tap on the deck, Selection.sky): load, ramps, docks and its warnings. */
+  private skywayInfo(x: number, y: number): TileInfo {
+    const w = this.world;
+    const i = w.idx(x, y);
+    const net = skywayNetwork(w, i);
+    const notes: NonNullable<TileInfo['notes']> = [];
+    if (net.ramps === 0 && net.docks === 0) notes.push({ text: 'Lands nowhere: add a ramp or dock', tone: 'warn' });
+    if ((w.sky[i] & SKY_RAMP) !== 0 && !skyRampGround(w.tiles[i])) notes.push({ text: 'Ramp closed: needs a street below', tone: 'warn' });
+    const info: TileInfo = {
+      title: 'Skyway',
+      subtitle: 'A raised road. Ramps land on streets; docks join megastructures.',
+      color: SKYWAY.color,
+      rows: [
+        ['Load', pct(w.fields.skyTraffic[i])],
+        ['Ramps', `${net.ramps}`],
+        ['Docks', `${net.docks}`],
+      ],
+    };
+    if (notes.length) info.notes = notes;
+    return info;
+  }
+
+  /** Seaport, Airport, Spaceport and Academy rows and notes (EXPANSION §7.4). */
+  private portRows(b: Building, rows: [string, string][], notes: NonNullable<TileInfo['notes']>): void {
+    const ports = this.sim.ports;
+    const noise = BUILDINGS[b.type].noise;
+    if (b.type === 'seaport') {
+      rows.push(['Trade', `+${num(ports.tradeFor(b.id))}/mo`], ['Exports', `+${num(SEAPORT.exportJobs)} jobs`]);
+      if (noise) rows.push(['Noise', `${noise.r} tiles`]);
+    } else if (b.type === 'airport') {
+      rows.push(['Visitors', `${num(ports.visitors)}/mo`], ['Business', `+${num(AIRPORT.comJobs)} jobs`]);
+      if (noise) rows.push(['Noise', `${noise.r} tiles`]);
+      notes.push({ text: 'Shops 8-16 tiles out do better business' });
+    } else if (b.type === 'spaceport') {
+      const st = this.launchStatus(b.id)!;
+      if (!st.complete) {
+        rows.unshift(['Building', pct(st.progress)]);
+        notes.push({ text: 'Takes 240 days and at least 4 minutes of play.' });
+      } else {
+        let next: string;
+        if (st.lead !== null) next = `${Math.ceil(st.lead)} s`;
+        else if (!st.active) next = 'On hold';
+        else if (st.gapLeft > 0) next = `${Math.max(1, Math.ceil(st.gapLeft / 60))} min`;
+        else next = 'Tonight';
+        rows.unshift(['Next launch', next]);
+        rows.push(['Visitors', `${num(ports.visitors)}/mo`]);
+      }
+      if (noise) rows.push(['Noise', `${noise.r} tiles`]);
+      const holder = this.world.story.flags.launchRights;
+      rows.push(['Rights', typeof holder === 'string' ? (RIGHTS_LABEL[holder] ?? 'Open') : 'Open']);
+    } else if (b.type === 'academy') {
+      notes.push({ text: 'Lifts nearby blocks toward $$ and $$$' });
+    }
   }
 
   /** "Plinth · building 34d", "Hab Core", "Glare Crown" (§8.8). */
@@ -716,7 +1317,9 @@ export class Game {
     if (tool === 'res' || tool === 'com' || tool === 'ind') return ZONES[tool].cost;
     if (tool === 'skybridge') return SKYBRIDGE.base + SKYBRIDGE.perTile * SKYBRIDGE.minGap;
     if (tool === 'rail') return RIBBON.perTile;
-    if (tool === 'road') return ROAD_COST;
+    // Road kinds: one land tile of the kind (Street 15, Back Alley 6, Avenue 40, Highway 90).
+    if (isRoadTool(tool)) return roadDef(ROAD_TOOL_KIND[tool]).cost;
+    if (tool === 'skyway') return SKYWAY.perTile;
     if (tool === 'bulldoze') return BULLDOZE_COST;
     return 0;
   }
@@ -724,7 +1327,7 @@ export class Game {
   /**
    * Current price of a tool with every modifier: buildings use buildCostMul ×
    * costMul[type] × the next credit × the Stratablock 1.15ⁿ scaling; zones, the
-   * shortest skybridge, one rail or road tile and the cheapest bulldoze use
+   * shortest skybridge, one rail, road or skyway tile and the cheapest bulldoze use
    * buildCostMul (as planAction prices them).
    */
   toolCost(tool: ToolId): number {
@@ -733,6 +1336,63 @@ export class Game {
     if (base > 0) return Math.round(base * this.world.mods.buildCostMul);
     return base;
   }
+}
+
+/** Is a Highway within ROAD_ACCESS_RANGE (3) of (x, y)? (The "highway only" inspect note.) */
+function highwayNear(world: World, x: number, y: number): boolean {
+  for (let dy = -3; dy <= 3; dy++)
+    for (let dx = -3; dx <= 3; dx++) {
+      const t = world.tileAt(x + dx, y + dy);
+      if (t && t.road && t.roadKind === RoadKind.Highway) return true;
+    }
+  return false;
+}
+
+/** On-ramps joined to the highway network through tile `i` (4-neighbour Highway tiles; distinct Ramp tiles). */
+function highwayRamps(world: World, i: number): number {
+  const N = MAP_SIZE;
+  const tiles = world.tiles;
+  const seen = new Set<number>([i]);
+  const ramps = new Set<number>();
+  const queue = [i];
+  while (queue.length) {
+    const j = queue.pop()!;
+    const x = j % N;
+    const y = (j / N) | 0;
+    for (const [nx, ny] of [[x, y - 1], [x + 1, y], [x, y + 1], [x - 1, y]]) {
+      if (nx < 0 || ny < 0 || nx >= N || ny >= N) continue;
+      const n = ny * N + nx;
+      const t = tiles[n];
+      if (!t.road) continue;
+      if (t.roadKind === RoadKind.Ramp) ramps.add(n);
+      else if (t.roadKind === RoadKind.Highway && !seen.has(n)) {
+        seen.add(n);
+        queue.push(n);
+      }
+    }
+  }
+  return ramps.size;
+}
+
+/**
+ * Regional link points of a border road (EXPANSION §3.10): on land on the map edge, with its
+ * inward neighbour (perpendicular to that edge; either one at a corner) a road it links to.
+ * Street 1, Avenue 2, Highway 3; 0 otherwise.
+ */
+function regionalLink(world: World, x: number, y: number): number {
+  const N = MAP_SIZE;
+  const t = world.tileAt(x, y);
+  if (!t || !t.road || t.terrain !== Terrain.Land) return 0;
+  const inward: [number, number][] = [];
+  if (x === 0) inward.push([1, y]);
+  if (x === N - 1) inward.push([N - 2, y]);
+  if (y === 0) inward.push([x, 1]);
+  if (y === N - 1) inward.push([x, N - 2]);
+  if (!inward.some(([ix, iy]) => {
+    const n = world.tileAt(ix, iy);
+    return !!n && n.road && roadLinks(t.roadKind, n.roadKind);
+  })) return 0;
+  return t.roadKind === RoadKind.Street ? EDGE_LINKS.street : t.roadKind === RoadKind.Avenue ? EDGE_LINKS.avenue : t.roadKind === RoadKind.Highway ? EDGE_LINKS.highway : 0;
 }
 
 /** A save written by a newer build (its version is above every supported one). */

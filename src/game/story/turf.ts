@@ -17,7 +17,7 @@ import { completeStage } from '../buildingStats';
 import { CROWNS, GANG_IDS, GANG_NEWS_NAME, RIBBON, STANDING, TURF, TURF_OWNER } from '../config';
 import { capitalizeFirst, districtName } from '../news';
 import { Rng } from '../rng';
-import { DAYS_PER_MONTH, MAP_SIZE, Terrain, ZoneType, type BuildingType } from '../types';
+import { DAYS_PER_MONTH, MAP_SIZE, RoadKind, Terrain, ZoneType, type BuildingType } from '../types';
 import type { World } from '../world';
 import { standing, tier } from './factions';
 import { composeLayers, resetLayers } from './mods';
@@ -48,6 +48,10 @@ const mA = new Uint8Array(AREA);
 const mB = new Uint8Array(AREA);
 const mC = new Uint8Array(AREA);
 const mD = new Uint8Array(AREA);
+/** Expansion indicators (EXPANSION §8.4): back alley, seaport footprint, skyway deck. */
+const mAlley = new Uint8Array(AREA);
+const mSea = new Uint8Array(AREA);
+const mSky = new Uint8Array(AREA);
 const tmp = new Uint8Array(AREA);
 const list = new Int32Array(AREA);
 const count = [0, 0, 0];
@@ -157,10 +161,13 @@ function computeMaps(world: World): void {
   const tiles = world.tiles;
   const f = world.fields;
   const rail = world.rail;
+  const sky = world.sky;
   const A = TURF.affinity;
   const au = A.undertow;
   const ak = A.kites;
-  // Indicators. mA abandoned, mB water, mC ribbon, mD city presence.
+  // Indicators. mA abandoned, mB water, mC ribbon, mD city presence; mAlley back alley,
+  // mSky skyway deck, mSea seaport footprint (expansion, §8.4).
+  mSea.fill(0);
   for (let i = 0; i < AREA; i++) {
     const t = tiles[i];
     const water = t.terrain === WATER;
@@ -169,6 +176,8 @@ function computeMaps(world: World): void {
     mB[i] = water ? 1 : 0;
     mC[i] = rail[i] ? 1 : 0;
     mD[i] = t.road || (t.zone !== 0 && t.level > 0) || t.buildingId >= 0 ? 1 : 0;
+    mAlley[i] = t.road && t.roadKind === RoadKind.Alley ? 1 : 0;
+    mSky[i] = sky[i] !== 0 ? 1 : 0;
   }
   dilate(mD, 3, nearCity);
   protU.fill(0);
@@ -191,15 +200,20 @@ function computeMaps(world: World): void {
     } else if (b.type === 'spire' || b.type === 'arcology') {
       const r = TURF.pact.noSpreadRadius;
       fillRect(pactBlock, b.x - r, b.y - r, x1 + r, y1 + r);
-    }
+    } else if (b.type === 'seaport') fillRect(mSea, b.x, b.y, x1, y1);
   }
   const lvBlock = TURF.pact.noSpreadLandValue;
   for (let i = 0; i < AREA; i++) if (f.landValue[i] >= lvBlock) pactBlock[i] = 1;
 
-  // Undertow: abandoned within 1 (mA), water within 3 (mB), ribbon within 1 (mC).
+  // Undertow: abandoned within 1 (mA), water within 3 (mB), ribbon within 1 (mC),
+  // alley within 1 (mAlley) and a seaport footprint within 6 (mSea).
   dilate(mA, au.abandonedRadius, mA);
   dilate(mB, au.waterRadius, mB);
   dilate(mC, au.ribbonRadius, mC);
+  dilate(mSea, au.seaportRadius, mSea);
+  // The alley indicator is dilated once at the Undertow radius; the Kites' radius is the same
+  // (both 1, TURF.affinity), and if they ever differ the Kites term re-dilates below.
+  dilate(mAlley, au.alleyRadius, mAlley);
   const crime = f.crime;
   const pol = f.pollution;
   const lv = f.landValue;
@@ -215,7 +229,9 @@ function computeMaps(world: World): void {
       au.waterNear * mB[i] +
       (t.zone === IND ? au.fab : 0) +
       au.security * sec[i] +
-      au.ribbonNear * mC[i];
+      au.ribbonNear * mC[i] +
+      au.alleyNear * mAlley[i] +
+      au.seaportNear * mSea[i];
     affU[i] = v < 0 ? 0 : v > 1 ? 1 : v;
   }
 
@@ -229,20 +245,33 @@ function computeMaps(world: World): void {
     if (b.type === 'glarewall') fillRect(mB, b.x, b.y, b.x + b.size - 1, b.y + b.size - 1);
   }
   dilate(mB, ak.glarewallRadius, mB);
+  // Alley within 1 (mAlley; re-dilated only if the radii differ) and a skyway deck within 1 (mSky).
+  if (ak.alleyRadius !== au.alleyRadius) {
+    for (let i = 0; i < AREA; i++) {
+      const t = tiles[i];
+      mAlley[i] = t.road && t.roadKind === RoadKind.Alley ? 1 : 0;
+    }
+    dilate(mAlley, ak.alleyRadius, mAlley);
+  }
+  dilate(mSky, ak.skywayRadius, mSky);
   const traffic = f.traffic;
   const net = f.net;
   for (let i = 0; i < AREA; i++) {
     const t = tiles[i];
     const dense = !t.abandoned && ((t.zone === COM && t.level >= 2) || (t.zone === RES && t.level === 3)) ? 1 : 0;
+    // Highways and their ramps carry the city's through traffic: no Kites magnet there (§8.4).
+    const busy = t.road && (t.roadKind === RoadKind.Highway || t.roadKind === RoadKind.Ramp) ? 0 : traffic[i];
     let v =
       ak.base +
       ak.crime * crime[i] +
-      ak.traffic * traffic[i] +
+      ak.traffic * busy +
       ak.net * net[i] +
       ak.dense * dense +
       ak.tallNear * (mA[i] | mC[i]) +
       ak.security * sec[i] +
-      ak.glarewallNear * mB[i];
+      ak.glarewallNear * mB[i] +
+      ak.alleyNear * mAlley[i] +
+      ak.skywayNear * mSky[i];
     affK[i] = v < 0 ? 0 : v > 1 ? 1 : v;
   }
 }
@@ -344,6 +373,15 @@ function bestTileIn(gang: GangId, owner: Uint8Array, skip?: (i: number) => boole
     }
   }
   return best >= 0 ? best : any;
+}
+
+/**
+ * The gang's affinity map (0..1 per tile, §3.3 plus the expansion terms of EXPANSION §8.4),
+ * recomputed now. Shared scratch: valid until the next turf call. For tests and debug views.
+ */
+export function affinity(world: World, gang: GangId): Float32Array {
+  computeMaps(world);
+  return gang === 'undertow' ? affU : affK;
 }
 
 /** Best seed tile for a gang now (−1 if none). Recomputes the affinity maps. */

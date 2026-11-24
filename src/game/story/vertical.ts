@@ -741,7 +741,8 @@ function gapUsed(world: World, x: number, y: number): boolean {
 
 /**
  * Skybridge plan (§4.3): a straight drag from one tall anchor to another, 2..8
- * gap tiles, at most 2 bridges per anchor, no shared gap tiles. Fills `plan`
+ * gap tiles, at most 2 bridges per anchor, no shared gap tiles and no gap tile under a
+ * skyway deck ("Skyway in the way", EXPANSION §3.7). Fills `plan`
  * (tiles, span, base cost, reason) and returns the number of changes (0 or 1).
  * The caller applies cost multipliers and the funds check.
  */
@@ -779,6 +780,10 @@ export function planSkybridge(world: World, from: Pt, to: Pt, plan: ActionPlan):
     } else if (gapUsed(world, x, y)) {
       ok = false;
       blocked ??= 'Another skybridge crosses here';
+    } else if (world.sky[y * N + x] !== 0) {
+      // A skyway deck and a skybridge can't share a gap tile (EXPANSION §3.7).
+      ok = false;
+      blocked ??= 'Skyway in the way';
     }
     plan.tiles.push({ x, y, ok });
   }

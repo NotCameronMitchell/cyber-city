@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { applyAction, lockedReason, planAction } from '../src/game/actions';
 import { BRIDGE_COST, BUILDINGS, BULLDOZE_COST, ROAD_COST, ZONES } from '../src/game/config';
-import { Terrain, ZoneType } from '../src/game/types';
+import { RoadKind, Terrain, ZoneType } from '../src/game/types';
 import { flatWorld } from './helpers';
 
 describe('actions', () => {
@@ -20,6 +20,12 @@ describe('actions', () => {
     const again = planAction(w, 'road', { x: 10, y: 5 }, { x: 20, y: 5 });
     expect(again.cost).toBe(0);
     expect(again.valid).toBe(false);
+    // Expansion (EXPANSION §3.4): the Street tool is always unlocked and lays Streets, bridges included.
+    expect(lockedReason(w, 'road')).toBeNull();
+    expect(plan.roadKinds).toEqual(Array(11).fill(RoadKind.Street));
+    expect(plan.upgrades).toBe(0);
+    expect(plan.ramps).toBe(0);
+    expect(w.tileAt(15, 5)!.roadKind).toBe(RoadKind.Street);
   });
 
   it('roads are L-shaped and blocked by developed zones and buildings', () => {
@@ -91,6 +97,7 @@ describe('actions', () => {
     expect(w.tileAt(6, 5)!.zone).toBe(ZoneType.None);
     expect(w.buildings.has(b.id)).toBe(false);
     expect(w.tileAt(9, 6)!.buildingId).toBe(-1);
+    expect(plan.layer).toBe('ground');
     const nothing = planAction(w, 'bulldoze', { x: 30, y: 30 }, { x: 31, y: 31 });
     expect(nothing.valid).toBe(false);
     expect(nothing.reason).toBe('Nothing to demolish');

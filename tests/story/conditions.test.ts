@@ -573,6 +573,35 @@ describe('standing and tiers (§2.1)', () => {
     expect(total).toBeCloseTo(100, 6);
   });
 
+  it('expansion power terms: launch rights, ports, and the capped alley and skyway terms (§8.2)', () => {
+    const base = (['board', 'basalt', 'nacre', 'undertow', 'kites'] as const).map((f) => powerWeight(w, f));
+    // 1,000 alley tiles add exactly 60 Undertow weight; 400 sky tiles exactly 100 Kites weight.
+    w.stats.roads.alley = 1000;
+    w.stats.roads.skyway = 400;
+    expect(powerWeight(w, 'undertow') - base[3]).toBe(60);
+    expect(powerWeight(w, 'kites') - base[4]).toBe(100);
+    w.stats.roads.alley = 100;
+    w.stats.roads.skyway = 100;
+    expect(powerWeight(w, 'undertow') - base[3]).toBe(25);
+    expect(powerWeight(w, 'kites') - base[4]).toBe(50);
+    w.stats.roads.alley = 0;
+    w.stats.roads.skyway = 0;
+    // Ports: Basalt per Seaport, Nacre per Airport.
+    w.addBuilding('seaport', 2, 2);
+    w.addBuilding('seaport', 10, 2);
+    w.addBuilding('airport', 20, 2);
+    expect(powerWeight(w, 'basalt') - base[1]).toBe(120);
+    expect(powerWeight(w, 'nacre') - base[2]).toBe(80);
+    // Launch rights: +150 to the holder only.
+    const before = (['board', 'basalt', 'nacre', 'undertow', 'kites'] as const).map((f) => powerWeight(w, f));
+    for (const [holder, k] of [['board', 0], ['basalt', 1], ['nacre', 2], ['kites', 4]] as const) {
+      w.story.flags.launchRights = holder;
+      (['board', 'basalt', 'nacre', 'undertow', 'kites'] as const).forEach((f, j) =>
+        expect(powerWeight(w, f) - before[j]).toBe(j === k ? 150 : 0),
+      );
+    }
+  });
+
   it('friendlyCount counts visible, unretired factions at 20+', () => {
     w.story.favor.board = STANDING.friendly;
     w.story.favor.nacre = STANDING.friendly;

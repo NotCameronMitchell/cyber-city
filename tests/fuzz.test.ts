@@ -8,6 +8,8 @@ import { makeSim } from './helpers';
 const TOOLS: ToolId[] = [
   'road', 'road', 'road', 'res', 'res', 'com', 'ind', 'bulldoze',
   'solar', 'reactor', 'plaza', 'precinct', 'clinic', 'datahub', 'maglev', 'spire', 'arcology',
+  // Expansion (EXPANSION §3, §5, §6.1).
+  'avenue', 'highway', 'alley', 'alley', 'skyway', 'bulldoze', 'academy', 'seaport', 'airport', 'spaceport',
 ];
 
 describe('fuzz', () => {
@@ -41,6 +43,22 @@ describe('fuzz', () => {
       expect(t.level).toBeGreaterThanOrEqual(0);
       expect(t.level).toBeLessThanOrEqual(3);
       if (t.zone === 0) expect(t.level).toBe(0);
+      // Expansion invariants (§2.1).
+      if (!t.road) expect(t.roadKind).toBe(0);
+      if (t.zone === 0 || t.level === 0) expect(t.wealth).toBe(0);
+      if (t.terrain === 1) expect(t.roadKind === 3 || t.roadKind === 4).toBe(false);
     }
+    // Every skyway link is mutual; at most one airport and one spaceport, two seaports.
+    for (let i = 0; i < 4096; i++) {
+      const m = w.sky[i] & 15;
+      if (m & 1) expect(w.sky[i - 64] & 4).toBe(4);
+      if (m & 2) expect(w.sky[i + 1] & 8).toBe(8);
+      if (m & 4) expect(w.sky[i + 64] & 1).toBe(1);
+      if (m & 8) expect(w.sky[i - 1] & 2).toBe(2);
+    }
+    const count = (t: string) => [...w.buildings.values()].filter((b) => b.type === t).length;
+    expect(count('airport')).toBeLessThanOrEqual(1);
+    expect(count('spaceport')).toBeLessThanOrEqual(1);
+    expect(count('seaport')).toBeLessThanOrEqual(2);
   });
 });

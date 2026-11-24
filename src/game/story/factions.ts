@@ -183,7 +183,15 @@ export function resolveRef(world: World, ref: FactionRef): FactionId[] {
 /** Factions in the Balance of Power bar. */
 export const POWER_FACTIONS: readonly FactionId[] = ['board', 'basalt', 'nacre', 'undertow', 'kites'];
 
-/** Raw power weight of a faction (0 for the Tuning). */
+/**
+ * Raw power weight of a faction (0 for the Tuning).
+ *
+ * Expansion terms (EXPANSION §8.2): the holder of the Spaceport's launch rights (story flag
+ * `launchRights`: 'board' | 'basalt' | 'nacre' | 'kites') +150; Basalt 60 per Seaport; Nacre
+ * 80 per Airport; the Undertow min(0.25 × alley tiles, 60) and the Kites min(0.5 × skyway
+ * tiles, 100). The alley and skyway terms are capped so cheap tiles can't buy the Balance of
+ * Power (power.gangs ≥ 30% is an ending claim). Tile counts are world.stats.roads.
+ */
 export function powerWeight(world: World, f: FactionId): number {
   const st = world.story;
   const s = world.stats;
@@ -192,13 +200,16 @@ export function powerWeight(world: World, f: FactionId): number {
   const tiles = world.turf.stats.tiles;
   const W = POWER_WEIGHTS;
   const patron = patronFlag(world);
+  const rights = flags.launchRights;
+  const roads = s.roads;
   switch (f) {
     case 'board':
       return (
         W.board.approval * s.approval +
         W.board.perPrecinct * countOf(world, 'precinct') +
         W.board.perClinic * countOf(world, 'clinic') +
-        (flags.honestTie ? W.board.honestTie : 0)
+        (flags.honestTie ? W.board.honestTie : 0) +
+        (rights === 'board' ? W.board.launchRights : 0)
       );
     case 'basalt': {
       const branded = typeof flags.branded === 'number' ? flags.branded : flags.branded ? 1 : 0;
@@ -208,7 +219,9 @@ export function powerWeight(world: World, f: FactionId): number {
         W.basalt.perFoundry * countOf(world, 'foundry') +
         W.basalt.perCrownFoundry * crowns.foundry +
         W.basalt.branded * branded +
-        (patron === 'basalt' ? W.basalt.patron : 0)
+        (patron === 'basalt' ? W.basalt.patron : 0) +
+        W.basalt.perSeaport * countOf(world, 'seaport') +
+        (rights === 'basalt' ? W.basalt.launchRights : 0)
       );
     }
     case 'nacre':
@@ -218,20 +231,25 @@ export function powerWeight(world: World, f: FactionId): number {
         W.nacre.perSpire * countOf(world, 'spire') +
         W.nacre.perGlarewall * countOf(world, 'glarewall') +
         W.nacre.perCrownGlare * crowns.glare +
-        (patron === 'nacre' ? W.nacre.patron : 0)
+        (patron === 'nacre' ? W.nacre.patron : 0) +
+        W.nacre.perAirport * countOf(world, 'airport') +
+        (rights === 'nacre' ? W.nacre.launchRights : 0)
       );
     case 'undertow':
       return (
         W.undertow.perTurfTile * tiles.undertow +
         W.undertow.perTidemarket * countOf(world, 'tidemarket') +
-        (flags.oneTide === 'undertow' ? W.undertow.oneTide : 0)
+        (flags.oneTide === 'undertow' ? W.undertow.oneTide : 0) +
+        Math.min(W.undertow.perAlley * Math.max(0, roads?.alley ?? 0), W.undertow.alleyMax)
       );
     case 'kites':
       return (
         W.kites.perTurfTile * tiles.kites +
         W.kites.perRoost * countOf(world, 'roost') +
         W.kites.perCrownNest * crowns.nest +
-        (flags.oneTide === 'kites' ? W.kites.oneTide : 0)
+        (flags.oneTide === 'kites' ? W.kites.oneTide : 0) +
+        Math.min(W.kites.perSkywayTile * Math.max(0, roads?.skyway ?? 0), W.kites.skywayMax) +
+        (rights === 'kites' ? W.kites.launchRights : 0)
       );
     default:
       return 0;

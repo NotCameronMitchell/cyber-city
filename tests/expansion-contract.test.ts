@@ -571,12 +571,13 @@ describe('skyway helpers (§3.7)', () => {
     expect(skywayDocks(w, plaza)).toEqual({ docked: false, ramps: 0 });
   });
 
-  it('planSkyway is a Step 0 stub', () => {
+  it('planSkyway fills the plan (the Step 0 stub, filled by WP-2; rules in tests/actions-roads.test.ts)', () => {
     const w = new World(13);
     const plan: ActionPlan = { tool: 'skyway', tiles: [], cost: 0, valid: false };
-    expect(planSkyway(w, [{ x: 1, y: 1 }, { x: 2, y: 1 }], plan)).toBe(0);
-    expect(plan.reason).toBe('Not yet');
-    expect(plan.tiles.every((t) => !t.ok)).toBe(true);
+    expect(planSkyway(w, [{ x: 1, y: 1 }, { x: 2, y: 1 }], plan)).toBe(2);
+    expect(plan.skyMasks).toEqual([2, 8]);
+    expect(plan.tiles.every((t) => t.ok)).toBe(true);
+    expect(plan.note).toBe('Lands nowhere');
   });
 });
 
