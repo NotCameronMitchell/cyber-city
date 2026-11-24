@@ -5,13 +5,20 @@
 //
 // Story hooks (§11): each milestone also pushes a `milestone` signal; unlock
 // news skips gated (story / faction) buildings, which the director announces.
+//
+// Expansion (docs/EXPANSION.md §7.1, §7.6, Appendix B): unlock news names the
+// tray ("Unlocked: Avenue (Road). …") for road kinds, the Skyway and
+// buildings; six first-tier highlights; the hwnoramp / skyloose / noisehome
+// lines with their `hint` events; the revised roads and traffic lines.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { BUILDINGS, BUILDING_ORDER, CURRENCY, MILESTONES, ROAD_ACCESS_RANGE, ZONES } from '../config';
+import { BUILDINGS, BUILDING_ORDER, CURRENCY, MILESTONES, ROAD_KINDS, SKYWAY, ZONES, type BuildingDef } from '../config';
+import type { HintId } from '../events';
 import { HeadlineDeck } from '../news';
 import { ZoneType, type Demand, type NewsItem } from '../types';
 import type { World } from '../world';
 import type { Census } from './census';
+import type { SimGrid } from './grid';
 import type { PowerGrid } from './power';
 import * as T from './tuning';
 
@@ -31,9 +38,42 @@ const HIGHLIGHTS: Record<number, { text: string; kind: NewsItem['kind'] }> = {
   [ZoneType.Industrial * 4 + 3]: { text: 'First automated mega-fab comes online. The night shift is now entirely robots.', kind: 'info' },
 };
 
+/** First-tier highlights (Appendix B), keyed by zone * 3 + tier. */
+const WEALTH_HIGHLIGHTS: Record<number, { text: string; kind: NewsItem['kind'] }> = {
+  [ZoneType.Residential * 3 + 1]: { text: 'Window boxes and working lifts: the first $$ Hab Blocks in {city}.', kind: 'good' },
+  [ZoneType.Residential * 3 + 2]: { text: 'Glass balconies, private lifts: the first $$$ Hab Blocks in {city}. Land value did that.', kind: 'good' },
+  [ZoneType.Commercial * 3 + 1]: { text: 'The noodle bars get real chairs. First $$ Market Strip.', kind: 'good' },
+  [ZoneType.Commercial * 3 + 2]: { text: 'A boutique with no prices on anything: the first $$$ Market Strip.', kind: 'good' },
+  [ZoneType.Industrial * 3 + 1]: { text: 'Cleaner lines, better pay: the first $$ Fab District.', kind: 'info' },
+  [ZoneType.Industrial * 3 + 2]: { text: 'A fab so clean it has a lobby: the first $$$ Fab District. The smog lifts a little.', kind: 'good' },
+};
+
+/**
+ * Tray a building sits in (§7.1), for unlock news. The Power tray reads "Infra" once the first
+ * port unlocks (the Seaport); `transport` buildings live there too.
+ */
+function trayOf(def: BuildingDef, maxPop: number): string {
+  switch (def.category) {
+    case 'power':
+      return maxPop >= BUILDINGS.seaport.unlockPop ? 'Infra' : 'Power';
+    case 'transport':
+      return 'Infra';
+    case 'services':
+      return 'Civic';
+    case 'faction':
+      return 'Deals';
+    default:
+      return 'Sky';
+  }
+}
+
 export class Advisor {
   private readonly nextAllowed = new Map<string, number>();
   private readonly seen = new Set<number>();
+  /** First-tier highlights already shown or present (zone * 3 + tier). */
+  private readonly seenWealth = new Set<number>();
+  /** The 'wealth' hint fires on the first $$ step of the session. */
+  private wealthHinted = false;
   private readonly deck = new HeadlineDeck();
   private nextFlavor = -1;
   private unlockedAt = -1;
@@ -46,6 +86,9 @@ export class Advisor {
     for (const key of Object.keys(HIGHLIGHTS)) {
       if (census.levelCount[Number(key)] > 0) this.seen.add(Number(key));
     }
+    for (const key of Object.keys(WEALTH_HIGHLIGHTS)) {
+      if (census.tierCount[Number(key)] > 0) this.seenWealth.add(Number(key));
+    }
     if (this.unlockedAt < 0) this.unlockedAt = world.maxPopulation;
   }
 
@@ -55,6 +98,24 @@ export class Advisor {
       if (!reached[k] || this.seen.has(k)) continue;
       this.seen.add(k);
       const h = HIGHLIGHTS[k];
+      if (h) world.addNews(h.text.replace('{city}', world.cityName), h.kind);
+    }
+  }
+
+  /**
+   * One-time news for the first $$ / $$$ tile of each zone (`reached` from GrowthSystem, zone * 3 + tier),
+   * and the 'wealth' hint on the session's first step up.
+   */
+  wealthHighlights(world: World, reached: Uint8Array): void {
+    for (let k = 0; k < reached.length; k++) {
+      if (!reached[k]) continue;
+      if (!this.wealthHinted && k % 3 > 0) {
+        this.wealthHinted = true;
+        world.events.emit('hint', { id: 'wealth' });
+      }
+      if (this.seenWealth.has(k)) continue;
+      this.seenWealth.add(k);
+      const h = WEALTH_HIGHLIGHTS[k];
       if (h) world.addNews(h.text.replace('{city}', world.cityName), h.kind);
     }
   }
@@ -75,12 +136,18 @@ export class Advisor {
     }
     if (this.unlockedAt < 0) this.unlockedAt = world.maxPopulation;
     if (world.maxPopulation > this.unlockedAt) {
+      const from = this.unlockedAt;
+      const to = world.maxPopulation;
+      const opens = (pop: number) => pop > from && pop <= to;
+      // Road kinds (the On-ramp comes with the Highway) and the Skyway name their tray (§7.1).
+      for (const k of ROAD_KINDS) {
+        if (k.tool && opens(k.unlockPop)) world.addNews(`Unlocked: ${k.name} (Road). ${k.desc}`, 'info');
+      }
+      if (opens(SKYWAY.unlockPop)) world.addNews(`Unlocked: Skyway (Sky). ${SKYWAY.desc}`, 'info');
       for (const type of BUILDING_ORDER) {
         const def = BUILDINGS[type];
         if (def.gate) continue;
-        if (def.unlockPop > this.unlockedAt && def.unlockPop <= world.maxPopulation) {
-          world.addNews(`Unlocked: ${def.name}. ${def.desc}`, 'info');
-        }
+        if (opens(def.unlockPop)) world.addNews(`Unlocked: ${def.name} (${trayOf(def, to)}). ${def.desc}`, 'info');
       }
       this.unlockedAt = world.maxPopulation;
     }
@@ -98,8 +165,8 @@ export class Advisor {
     );
   }
 
-  /** Rate-limited warnings and tips. Runs every ADVISOR_PERIOD ticks. */
-  warnings(world: World, census: Census, power: PowerGrid, demand: Demand): void {
+  /** Rate-limited warnings and tips. Runs every ADVISOR_PERIOD ticks. `g` (optional) adds the road and skyway checks. */
+  warnings(world: World, census: Census, power: PowerGrid, demand: Demand, g?: SimGrid): void {
     if (world.tick % T.ADVISOR_PERIOD !== 0) return;
     const devTiles = census.developed[1] + census.developed[2] + census.developed[3];
     const zonedTiles = devTiles + census.lots[1] + census.lots[2] + census.lots[3];
@@ -127,7 +194,19 @@ export class Advisor {
 
     // ── Roads ───────────────────────────────────────────────────────────────
     if (census.noRoad >= 4) {
-      this.say(world, 'roads', 60, 'warn', `Advisor: ${census.noRoad} zoned lots have no road within ${ROAD_ACCESS_RANGE} tiles. They can't develop.`);
+      this.say(world, 'roads', 60, 'warn', `Advisor: ${fmt(census.noRoad)} zoned lots have no road in reach. Streets reach 3 tiles, alleys 1, highways none.`);
+    }
+    if (g) {
+      let bare = false;
+      for (let c = 0; c < g.hwCompCount && !bare; c++) if (g.hwRamps[c] === 0) bare = true;
+      if (bare && this.say(world, 'hwnoramp', 120, 'warn', 'Advisor: a highway with no on-ramps carries nothing. Drag a street across it to add them.')) {
+        this.hint(world, 'ramps');
+      }
+      let loose = false;
+      for (let c = 0; c < g.skyCompCount && !loose; c++) if (!g.skyLive(c)) loose = true;
+      if (loose) {
+        this.say(world, 'skyloose', 180, 'info', 'Advisor: a skyway that lands nowhere carries nothing. End it on a street or run it into a megastructure.');
+      }
     }
 
     // ── Money ───────────────────────────────────────────────────────────────
@@ -162,8 +241,27 @@ export class Advisor {
         this.say(world, 'pollution', 75, 'warn', `Advisor: smog is choking residents. Keep ${ZONES.res.name} away from fabs and add ${BUILDINGS.plaza.name}s.`);
       }
       if (census.avgTraffic > 0.6) {
-        const tip = world.maxPopulation >= BUILDINGS.maglev.unlockPop ? `or a ${BUILDINGS.maglev.name}` : 'and spread zones out';
-        this.say(world, 'traffic', 75, 'warn', `Advisor: gridlock on the main drags. Add parallel roads ${tip}.`);
+        const avenue = ROAD_KINDS[1];
+        const highway = ROAD_KINDS[2];
+        if (world.maxPopulation >= avenue.unlockPop) {
+          const hw = world.maxPopulation >= highway.unlockPop ? ', or run a Highway with on-ramps' : '';
+          this.say(world, 'traffic', 75, 'warn', `Advisor: gridlock on the main drags. Widen them into Avenues${hw}.`);
+        } else {
+          const tip = world.maxPopulation >= BUILDINGS.maglev.unlockPop ? `or a ${BUILDINGS.maglev.name}` : 'and spread zones out';
+          this.say(world, 'traffic', 75, 'warn', `Advisor: gridlock on the main drags. Add parallel roads ${tip}.`);
+        }
+      }
+      if (census.avgNoiseRes > 0.35) {
+        if (
+          this.say(
+            world,
+            'noisehome',
+            150,
+            'warn',
+            `Advisor: noise from highways and runways is dragging down nearby ${ZONES.res.name}. Keep homes back, or add ${BUILDINGS.plaza.name}s.`,
+          )
+        )
+          this.hint(world, 'noise');
       }
       if (census.abandoned >= 10) {
         this.say(world, 'abandoned', 90, 'warn', `${census.abandoned} buildings stand abandoned. Check power, roads, crime and pollution.`);
@@ -174,10 +272,16 @@ export class Advisor {
     }
   }
 
-  private say(world: World, key: string, cooldown: number, kind: NewsItem['kind'], text: string): void {
+  /** Post `text` unless `key` is cooling down; returns whether it was posted. */
+  private say(world: World, key: string, cooldown: number, kind: NewsItem['kind'], text: string): boolean {
     const next = this.nextAllowed.get(key) ?? -1;
-    if (world.tick < next) return;
+    if (world.tick < next) return false;
     this.nextAllowed.set(key, world.tick + cooldown);
     world.addNews(text, kind);
+    return true;
+  }
+
+  private hint(world: World, id: HintId): void {
+    world.events.emit('hint', { id });
   }
 }

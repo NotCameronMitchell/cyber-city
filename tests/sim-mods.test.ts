@@ -219,9 +219,9 @@ describe('§10.6 budget', () => {
   it('upkeepMul scales every expense line; upkeepMulType one type', () => {
     const base = modded();
     const roads = Math.round(54 * ROAD_UPKEEP);
-    expect(line(base.budget.expenseLines, 'Roads & skyways')).toBe(roads);
+    expect(line(base.budget.expenseLines, 'Roads')).toBe(roads);
     const twice = modded({ upkeepMul: 2 }).budget;
-    expect(line(twice.expenseLines, 'Roads & skyways')).toBe(Math.round(54 * ROAD_UPKEEP * 2));
+    expect(line(twice.expenseLines, 'Roads')).toBe(Math.round(54 * ROAD_UPKEEP * 2));
     expect(line(twice.expenseLines, 'Power plants')).toBe(BUILDINGS.reactor.upkeep * 2);
     const typed = modded({ upkeepMulType: { precinct: 1.5 } }).budget;
     expect(line(typed.expenseLines, 'Enforcer Precincts')).toBe(BUILDINGS.precinct.upkeep * 1.5);

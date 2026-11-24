@@ -9,6 +9,7 @@
 //   budget    live projection + monthly settlement
 //   incidents random events (grid hacks, crew surges, grants, smog, booms)
 //   advisor   warnings, highlights, milestones, unlocks, flavor news
+//   ports     seaport / airport / spaceport demand, trade, visitors, countdown
 //
 // step() runs the cheap systems every tick and staggers the heavier field
 // passes across FIELD_STAGGER ticks. recomputeAll() runs everything at once
@@ -18,9 +19,15 @@
 // world.layers and world.ledger (identities by default) and push
 // world.signals; the sim never imports story logic. Monthly, the tax rate is
 // clamped to mods.taxCap before the month settles.
+//
+// Expansion (docs/EXPANSION.md): road kinds, skyways, noise / hub / sea, the
+// wealth score (phase 1, and after the second land-value pass in
+// recomputeAll), tier steps inside growth only, ports and visitors. Tiers
+// never move inside recomputeAll; settleWealth() is the one-time batch Game
+// runs for old saves.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { MAX_TAX } from './config';
+import { EDGE_LINKS, MAX_TAX, TOURISM } from './config';
 import { DAYS_PER_MONTH, MAP_SIZE, type Demand } from './types';
 import type { World } from './world';
 import { Advisor } from './sim/advisor';
@@ -52,7 +59,7 @@ export class Simulation {
   private readonly growth = new GrowthSystem();
   private readonly incidents = new IncidentSystem();
   private readonly advisor = new Advisor();
-  /** Ports (EXPANSION §5; Step 0 stub, WP-1 fills it). Read through `ports`. */
+  /** Ports (EXPANSION §5). Read through `ports`. */
   private readonly portSystem: PortSystem;
   /** Smoothed demand (what the UI shows and growth reacts to). */
   private readonly demand: Demand = { res: 0, com: 0, ind: 0 };
@@ -74,10 +81,11 @@ export class Simulation {
   /**
    * Old saves settle their wealth tiers once (EXPANSION §4.3): Game calls this exactly once,
    * after the first recomputeAll of a world whose loadedVersion < 3, then recomputeAll again.
-   * Returns the number of tier steps taken. **Step 0 stub** (returns 0); WP-1 fills it.
+   * Returns the number of tier steps taken. Deterministic (no rng); never lowers a tier.
    */
   settleWealth(): number {
-    return 0;
+    if (!this.primed) this.recomputeAll();
+    return this.growth.settle(this.world, this.grid, this.power);
   }
 
   /** Advance one day. */
@@ -96,6 +104,8 @@ export class Simulation {
     g.scan(w);
     this.incidents.tick(w, g);
     this.fields.decay();
+    // Spaceport countdown before the power pass, so a finished port draws power this tick.
+    this.portSystem.tick(w);
 
     this.power.compute(w, g);
     this.growth.countDays(g, this.power);
@@ -107,16 +117,20 @@ export class Simulation {
     if (phase === 0) {
       this.fields.traffic(w, g);
       this.fields.pollution(w, g);
+      this.fields.noise(w, g);
     }
     if (phase === FIELD_STAGGER - 1) {
       this.fields.neighbourhood(g);
       this.fields.landValue(w, g);
       this.fields.crime(w, g, this.census.joblessPressure, this.census.population);
+      this.fields.wealthScore(w, g);
     }
 
     // Demand moves smoothly toward its target; growth reacts to the smoothed value.
     this.census.averages(w, g, this.fields);
     this.approval += (this.census.approval(w, this.power) - this.approval) * 0.1;
+    this.portSystem.refresh(w, g, this.census, this.approval);
+    this.setTrade();
     this.census.demandTarget(w, this.approval, this.incidents.comBoost, this.target);
     const d = this.demand;
     d.res += (this.target.res - d.res) * DEMAND_SMOOTH;
@@ -124,8 +138,10 @@ export class Simulation {
     d.ind += (this.target.ind - d.ind) * DEMAND_SMOOTH;
 
     this.growth.run(w, g, this.power, this.fields, d);
-    if (this.growth.changes > 0) this.census.count(g);
+    if (this.growth.changes > 0 || this.growth.tierSteps > 0) this.census.count(g);
     this.advisor.highlights(w, this.growth.reached);
+    this.advisor.wealthHighlights(w, this.growth.reachedWealth);
+    this.portSystem.announce(w);
 
     this.publish();
     const monthEnd = w.tick % DAYS_PER_MONTH === 0;
@@ -133,7 +149,7 @@ export class Simulation {
       const cap = Math.min(MAX_TAX, w.mods.taxCap);
       if (w.taxRate > cap) w.taxRate = cap;
     }
-    projectBudget(w, g, this.census, w.budget);
+    projectBudget(w, g, this.census, w.budget, this.portSystem);
 
     if (monthEnd) {
       settleMonth(w);
@@ -144,7 +160,7 @@ export class Simulation {
     this.advisor.milestones(w, this.census.population);
     this.incidents.update(w, g, this.fields, this.census, this.options.events);
     this.advisor.flavor(w, this.census.population);
-    this.advisor.warnings(w, this.census, this.power, d);
+    this.advisor.warnings(w, this.census, this.power, d, g);
   }
 
   /**
@@ -161,15 +177,20 @@ export class Simulation {
     this.census.count(g);
     f.traffic(w, g);
     f.pollution(w, g);
+    f.noise(w, g);
     f.neighbourhood(g);
     // Land value and crime feed each other: settle them with a second pass.
     f.landValue(w, g);
     f.crime(w, g, this.census.joblessPressure, this.census.population);
     f.landValue(w, g);
     f.crime(w, g, this.census.joblessPressure, this.census.population);
+    // The wealth score moves at once (inspect meter, lens pips); tiers only step in growth.
+    f.wealthScore(w, g);
     this.census.averages(w, g, f);
 
     const approval = this.census.approval(w, this.power);
+    this.portSystem.refresh(w, g, this.census, this.primed ? this.approval : approval);
+    this.setTrade();
     if (!this.primed) {
       // First run (new game / load): snap smoothed values instead of easing in.
       this.approval = approval;
@@ -181,13 +202,22 @@ export class Simulation {
       this.primed = true;
     }
     this.publish();
-    projectBudget(w, g, this.census, w.budget);
+    projectBudget(w, g, this.census, w.budget, this.portSystem);
+  }
+
+  /** Demand adds from ports, regional links and visitors (§5, §6.2, §6.3) for demandTarget. */
+  private setTrade(): void {
+    const p = this.portSystem;
+    const edges = this.grid.edgePoints;
+    this.census.tradeInd = p.exportJobs + p.indJobs + edges * EDGE_LINKS.ind;
+    this.census.tradeCom = p.comJobs + edges * EDGE_LINKS.com + p.visitors * TOURISM.comPerVisitor;
   }
 
   /** Write census results into world.stats and track the population high-water mark. */
   private publish(): void {
     const w = this.world;
     this.census.writeStats(w.stats, this.power, this.demand, this.approval);
+    w.stats.visitors = this.portSystem.visitors;
     if (this.census.population > w.maxPopulation) w.maxPopulation = this.census.population;
   }
 }

@@ -7,13 +7,20 @@
 // Story hooks (docs/STORY.md §10.6): every pass reads world.mods and
 // world.layers (identities by default, so the sandbox is unchanged) and takes
 // per-building numbers from buildingStats() (stage-aware Stratablocks).
+//
+// Expansion (docs/EXPANSION.md §3.8, §3.9, §4.2, §6.1): capacity-aware traffic
+// (per-kind capacity, highway and skyway diversion, docks), road pollution by
+// volume, noise / hub / sea fields, Academy education coverage, road and noise
+// terms in land value and crime, and the wealth score. With streets only and
+// every tile at $ the numbers equal the pre-expansion ones.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { blankStats, buildingStats } from '../buildingStats';
-import { ZONES } from '../config';
-import { MAP_SIZE, type ServiceEffect } from '../types';
+import { AIRPORT, BUILDINGS, NOISE, ROAD_FLOW, SEAPORT, SKYWAY, WEALTH } from '../config';
+import { MAP_SIZE, ZoneType, type Building, type ServiceEffect } from '../types';
 import type { World } from '../world';
-import type { SimGrid } from './grid';
+import { KIND_CAPACITY, KIND_POLLUTION, type SimGrid } from './grid';
+import * as Tiers from './tiers';
 import * as Tuning from './tuning';
 
 // Imported bindings are copied into module locals: under Vite's SSR/test
@@ -22,22 +29,48 @@ import * as Tuning from './tuning';
 const T = { ...Tuning };
 const N = MAP_SIZE;
 const AREA = N * N;
+const RES = ZoneType.Residential;
+const COM = ZoneType.Commercial;
+const IND = ZoneType.Industrial;
 const clamp01 = (v: number): number => (v < 0 ? 0 : v > 1 ? 1 : v);
 
-const ZONE_POLLUTION: readonly (readonly number[])[] = [
-  [0, 0, 0, 0],
-  ZONES.res.pollution,
-  ZONES.com.pollution,
-  ZONES.ind.pollution,
-];
-const ZONE_CAPACITY: readonly (readonly number[])[] = [
-  [0, 0, 0, 0],
-  ZONES.res.capacity,
-  ZONES.com.capacity,
-  ZONES.ind.capacity,
-];
+// Flat tier tables (sim/tiers.ts), copied into locals.
+const CAP_T = Tiers.CAP_T;
+const POL_T = Tiers.POL_T;
+const CAP_AFF = Tiers.CAP_AFF;
 
-const EFFECTS: readonly ServiceEffect[] = ['security', 'health', 'net', 'park', 'transit', 'prestige'];
+/** 1 / capacity and the volume scale (capacity / TRAFFIC_SCALE) per road kind. */
+const INV_CAP = KIND_CAPACITY.map((c) => 1 / c);
+const VOL_SCALE = KIND_CAPACITY.map((c) => c / Tuning.TRAFFIC_SCALE);
+const KPOL = [...KIND_POLLUTION];
+const HW_DIVERT = ROAD_FLOW.highwayDivert;
+const HW_INV = 1 / (ROAD_FLOW.highwayReach + 1);
+const SKY = { ...SKYWAY };
+const SKY_INV = 1 / (SKYWAY.reach + 1);
+const NOISE_LV = NOISE.lv;
+const HUB = { ...AIRPORT };
+const SEA_R = SEAPORT.indScoreRadius;
+const WS_RES = { ...WEALTH.score.res };
+const WS_COM = { ...WEALTH.score.com };
+const WS_IND = { ...WEALTH.score.ind };
+/** Noise def per building type (§3.9), undefined for quiet ones. */
+const NOISE_OF: Record<string, { v: number; r: number } | undefined> = {};
+for (const def of Object.values(BUILDINGS)) NOISE_OF[def.type] = def.noise;
+
+/** Airport business district by Chebyshev distance to the footprint (§3.9). */
+const hubAt = (d: number): number =>
+  d < HUB.hubNear ? 0 : d <= HUB.hubFar ? 1 : d < HUB.hubFade ? (HUB.hubFade - d) / (HUB.hubFade - HUB.hubFar) : 0;
+/** Seaport proximity (§3.9). */
+const seaAt = (d: number): number => (d < SEA_R ? 1 - d / SEA_R : 0);
+
+const EFFECTS: readonly ServiceEffect[] = ['security', 'health', 'net', 'park', 'transit', 'prestige', 'education'];
+
+/** Chebyshev distance from (x, y) to the footprint of b (0 inside). */
+function footDist(b: Building, x: number, y: number): number {
+  const dx = x < b.x ? b.x - x : x > b.x + b.size - 1 ? x - (b.x + b.size - 1) : 0;
+  const dy = y < b.y ? b.y - y : y > b.y + b.size - 1 ? y - (b.y + b.size - 1) : 0;
+  return dx > dy ? dx : dy;
+}
 
 /**
  * In-place separable 3×3 box blur (edges average only in-bounds samples).
@@ -72,6 +105,12 @@ export class FieldSystem {
   readonly crimeBoost = new Float32Array(AREA);
   /** Temporary city-wide smog intensity from events (0..1). */
   smog = 0;
+
+  /** Road traffic volume against Street capacity (pollution source, §3.8 step 7). */
+  readonly volume = new Float32Array(AREA);
+  /** Trips moved onto each highway / skyway component during the last traffic pass. */
+  readonly hwPool = new Float64Array(AREA >> 1);
+  readonly skyPool = new Float64Array(AREA >> 1);
 
   private readonly tmpA = new Float32Array(AREA);
   private readonly tmpB = new Float32Array(AREA);
@@ -126,7 +165,11 @@ export class FieldSystem {
 
   // ── Traffic ───────────────────────────────────────────────────────────────
   /**
-   * Trips from developed zones land on their nearest road, spread along the network, then saturate.
+   * Capacity-aware traffic (§3.8). Trips from developed zones land on their claiming road
+   * (computeAccess `near`), buildings on their access tile (perimeter for size ≥ 3); docked
+   * anchors send SKYWAY.anchorShare to their deck. Highways take a share of every street within
+   * ROAD_FLOW.highwayReach road steps of an on-ramp, skyways a share near their active ramps.
+   * Utilisation u = trips / kind capacity, smoothed along linked roads, traffic = 1 − e^−u.
    * Each trip source × mods.trafficMul × layers.tripMul[source tile].
    */
   traffic(world: World, g: SimGrid): void {
@@ -137,10 +180,16 @@ export class FieldSystem {
     const out = f.traffic;
     const raw = this.tmpA;
     const tmp = this.tmpB;
+    const volume = this.volume;
     const transit = f.transit;
-    const { zone, level, abandoned, road, nearestRoad, roadDist } = g;
+    const { zone, level, abandoned, road, kind, wealth, nearestRoad, roadDist, linkMask, alleyNear } = g;
+    const hwPool = this.hwPool;
+    const skyPool = this.skyPool;
     raw.fill(0);
+    for (let c = 0; c < g.hwCompCount; c++) hwPool[c] = 0;
+    for (let c = 0; c < g.skyCompCount; c++) skyPool[c] = 0;
 
+    // 1. Zone trips.
     for (let k = 0; k < g.zonedCount; k++) {
       const i = g.zoned[k];
       const lv = level[i];
@@ -148,40 +197,80 @@ export class FieldSystem {
       const r = nearestRoad[i];
       if (r < 0) continue;
       const z = zone[i];
-      raw[r] += ZONE_CAPACITY[z][lv] * T.TRIPS_PER_UNIT[z] * (1 - T.TRANSIT_TRIP_CUT * transit[i]) * tm * tripMul[i];
+      const cap = z === RES && wealth[i] === 0 && alleyNear[i] ? CAP_AFF[lv] : CAP_T[z * 12 + lv * 3 + wealth[i]];
+      raw[r] += cap * T.TRIPS_PER_UNIT[z] * (1 - T.TRANSIT_TRIP_CUT * transit[i]) * tm * tripMul[i];
     }
+    // 2. Building trips (already include BUILDING_TRIPS and a Stratablock's internal-life cut).
+    const docks = g.dockOf.size > 0;
     for (const b of g.buildings) {
-      // trips already include BUILDING_TRIPS (and a Stratablock's internal-life cut).
       const trips = buildingStats(b, st).trips;
       if (trips <= 0) continue;
       const c = (b.y + (b.size >> 1)) * N + b.x + (b.size >> 1);
-      const r = nearestRoad[c];
-      if (r >= 0) raw[r] += trips * (1 - T.TRANSIT_TRIP_CUT * transit[c]) * tm * tripMul[c];
+      let t = trips * (1 - T.TRANSIT_TRIP_CUT * transit[c]) * tm * tripMul[c];
+      if (docks) {
+        const sc = g.dockOf.get(b.id);
+        if (sc !== undefined) {
+          const up = t * SKY.anchorShare;
+          skyPool[sc] += up;
+          t -= up;
+        }
+      }
+      const r = g.accessRoad(b);
+      if (r >= 0) raw[r] += t;
     }
 
-    // Spread congestion along connected roads.
+    // 3. Highway diversion: streets near an on-ramp hand a share of their trips to that highway.
+    if (g.hwCompCount > 0) {
+      const { hwReach, hwDepth, hwReachList, hwComp, hwList, hwTiles } = g;
+      for (let k = 0; k < g.hwReachLen; k++) {
+        const j = hwReachList[k];
+        const take = raw[j] * HW_DIVERT * (1 - hwDepth[j] * HW_INV);
+        raw[j] -= take;
+        hwPool[hwReach[j]] += take;
+      }
+      for (let k = 0; k < g.hwListLen; k++) {
+        const h = hwList[k];
+        const c = hwComp[h];
+        raw[h] += hwPool[c] / hwTiles[c];
+      }
+    }
+    // 4. Sky diversion from what is left, near each active sky ramp.
+    if (g.skyReachLen > 0) {
+      const { skyReach, skyDepth, skyReachList } = g;
+      for (let k = 0; k < g.skyReachLen; k++) {
+        const j = skyReachList[k];
+        const take = raw[j] * SKY.divert * (1 - skyDepth[j] * SKY_INV);
+        raw[j] -= take;
+        skyPool[skyReach[j]] += take;
+      }
+    }
+
+    // 5. Utilisation against each kind's capacity.
+    for (let i = 0; i < AREA; i++) if (road[i]) raw[i] *= INV_CAP[kind[i]];
+
+    // 6. Spread congestion along linked roads (roadLinks: a highway only joins highways and ramps).
     for (let pass = 0; pass < T.TRAFFIC_SMOOTH_PASSES; pass++) {
       for (let i = 0; i < AREA; i++) {
         if (!road[i]) {
           tmp[i] = 0;
           continue;
         }
-        const x = i % N;
+        const m = linkMask[i];
         let s = 0;
         let n = 0;
-        if (x > 0 && road[i - 1]) {
+        if (m & 8) {
           s += raw[i - 1];
           n++;
         }
-        if (x < N - 1 && road[i + 1]) {
+        if (m & 2) {
           s += raw[i + 1];
           n++;
         }
-        if (i >= N && road[i - N]) {
+        if (m & 1) {
           s += raw[i - N];
           n++;
         }
-        if (i < AREA - N && road[i + N]) {
+        if (m & 4) {
           s += raw[i + N];
           n++;
         }
@@ -190,9 +279,28 @@ export class FieldSystem {
       raw.set(tmp);
     }
 
-    const inv = 1 / T.TRAFFIC_SCALE;
-    for (let i = 0; i < AREA; i++) if (road[i]) out[i] = 1 - Math.exp(-raw[i] * inv);
-    // Non-road tiles: a faint spill for the overlay, and the "felt" traffic for land value.
+    // 7. Congestion, and volume against a street (the pollution source).
+    for (let i = 0; i < AREA; i++) {
+      if (road[i]) {
+        const u = raw[i];
+        const k = kind[i];
+        out[i] = 1 - Math.exp(-u);
+        volume[i] = VOL_SCALE[k] === 1 ? out[i] : 1 - Math.exp(-u * VOL_SCALE[k]);
+      } else volume[i] = 0;
+    }
+    const skyT = f.skyTraffic;
+    skyT.fill(0);
+    if (g.skyCount > 0) {
+      const { skyList, skyComp, skyTiles } = g;
+      for (let k = 0; k < g.skyCount; k++) {
+        const i = skyList[k];
+        const c = skyComp[i];
+        if (!g.skyLive(c)) continue;
+        skyT[i] = 1 - Math.exp(-(skyPool[c] / skyTiles[c]) / SKY.capacity);
+      }
+    }
+
+    // 8. Non-road tiles: a faint spill for the overlay, and the "felt" traffic for land value.
     const local = this.localTraffic;
     for (let i = 0; i < AREA; i++) {
       const r = nearestRoad[i];
@@ -206,18 +314,18 @@ export class FieldSystem {
   }
 
   // ── Pollution ─────────────────────────────────────────────────────────────
-  /** Sources diffuse, parks filter, smog thickens; the final value × mods.pollutionMul before the clamp. */
+  /** Sources diffuse, parks filter, smog thickens; the final value × mods.pollutionMul before the clamp. Call after traffic(). */
   pollution(world: World, g: SimGrid): void {
     const f = world.fields;
     const st = this.st;
     const out = f.pollution;
     const src = this.tmpA;
-    const { zone, level, abandoned, road } = g;
+    const { zone, level, abandoned, road, kind, wealth } = g;
     src.fill(0);
     for (let k = 0; k < g.zonedCount; k++) {
       const i = g.zoned[k];
       if (abandoned[i]) continue;
-      src[i] = ZONE_POLLUTION[zone[i]][level[i]];
+      src[i] = POL_T[zone[i] * 12 + level[i] * 3 + wealth[i]];
     }
     for (const b of g.buildings) {
       if (b.offline > 0) continue;
@@ -226,8 +334,9 @@ export class FieldSystem {
       for (let dy = 0; dy < b.size; dy++)
         for (let dx = 0; dx < b.size; dx++) src[(b.y + dy) * N + b.x + dx] += p;
     }
-    const traffic = f.traffic;
-    for (let i = 0; i < AREA; i++) if (road[i]) src[i] += traffic[i] * T.ROAD_POLLUTION;
+    // Road source: volume × ROAD_POLLUTION × the kind's multiplier (§3.8; a street is unchanged).
+    const volume = this.volume;
+    for (let i = 0; i < AREA; i++) if (road[i]) src[i] += volume[i] * T.ROAD_POLLUTION * KPOL[kind[i]];
 
     out.set(src);
     for (let p = 0; p < T.POLLUTION_BLUR_PASSES; p++) blur3(out, this.tmpB);
@@ -242,6 +351,75 @@ export class FieldSystem {
       v *= 1 - T.PARK_FILTER * park[i];
       if (smog > 0.01 && v > 0.01) v = v * smogMul + smogAdd;
       out[i] = clamp01(v * pm);
+    }
+  }
+
+  // ── Noise, hub, sea (§3.9) ────────────────────────────────────────────────
+  /**
+   * noise = max(static highway / skyway noise, every noisy building that is not offline (a
+   * Spaceport only once complete): v·(1 − d/(r + 1)) for Chebyshev d ≤ r from its footprint).
+   * hub (online, powered Airport): 0 within hubNear, 1 out to hubFar, fading to 0 at hubFade.
+   * sea (online, powered Seaport): max(0, 1 − d / SEAPORT.indScoreRadius).
+   */
+  noise(world: World, g: SimGrid): void {
+    const f = world.fields;
+    const out = f.noise;
+    out.set(g.roadNoise);
+    const hub = f.hub;
+    const sea = f.sea;
+    hub.fill(0);
+    sea.fill(0);
+    for (const b of g.buildings) {
+      const nd = NOISE_OF[b.type];
+      if (nd && b.offline <= 0 && (b.buildDays ?? 0) <= 0) this.stamp(b, nd.r, 0, nd.v, out);
+      if (b.offline > 0 || !b.powered) continue;
+      if (b.type === 'airport') this.stamp(b, HUB.hubFade, 1, 1, hub);
+      else if (b.type === 'seaport') this.stamp(b, SEA_R, 2, 1, sea);
+    }
+  }
+
+  /**
+   * Max-combine a falloff into `out` for every tile within Chebyshev r of b's footprint (d = 0
+   * inside). mode 0: noise v·(1 − d/(r + 1)); 1: the airport business district; 2: seaport proximity.
+   */
+  private stamp(b: Building, r: number, mode: 0 | 1 | 2, v: number, out: Float32Array): void {
+    const x0 = Math.max(0, b.x - r);
+    const x1 = Math.min(N - 1, b.x + b.size - 1 + r);
+    const y0 = Math.max(0, b.y - r);
+    const y1 = Math.min(N - 1, b.y + b.size - 1 + r);
+    const inv = 1 / (r + 1);
+    for (let y = y0; y <= y1; y++)
+      for (let x = x0; x <= x1; x++) {
+        const d = footDist(b, x, y);
+        if (d > r) continue;
+        const n = mode === 0 ? v * (1 - d * inv) : mode === 1 ? hubAt(d) : seaAt(d);
+        const i = y * N + x;
+        if (n > out[i]) out[i] = n;
+      }
+  }
+
+  // ── Wealth score (§4.2) ───────────────────────────────────────────────────
+  /**
+   * One pass over the zoned tiles (call after land value and crime): the same formula as
+   * wealth.wealthScoreAt, so the sim, the inspect meter and the lens agree. Non-zone tiles 0.
+   */
+  wealthScore(world: World, g: SimGrid): void {
+    const f = world.fields;
+    const out = f.wealth;
+    const { landValue, education, transit, noise, hub, net, sea, crime } = f;
+    const zone = g.zone;
+    out.fill(0);
+    for (let k = 0; k < g.zonedCount; k++) {
+      const i = g.zoned[k];
+      const z = zone[i];
+      let s: number;
+      if (z === RES) s = landValue[i] + WS_RES.edu * education[i] + WS_RES.transit * transit[i] + WS_RES.noise * noise[i];
+      else if (z === COM)
+        s = landValue[i] + WS_COM.edu * education[i] + WS_COM.transit * transit[i] + WS_COM.hub * hub[i] + WS_COM.noise * noise[i];
+      else if (z === IND)
+        s = WS_IND.base + WS_IND.edu * education[i] + WS_IND.net * net[i] + WS_IND.transit * transit[i] + WS_IND.port * sea[i] + WS_IND.crime * crime[i];
+      else continue;
+      out[i] = clamp01(s);
     }
   }
 
@@ -267,7 +445,10 @@ export class FieldSystem {
   }
 
   // ── Land value ────────────────────────────────────────────────────────────
-  /** Terrain, density, services and nuisances, + mods.landValueAdd + layers.lvAdd[i] before the clamp. */
+  /**
+   * Terrain, density, services and nuisances, + mods.landValueAdd + layers.lvAdd[i] before the clamp,
+   * + the static road terms (g.roadLv) − NOISE.lv × noise (§3.8).
+   */
   landValue(world: World, g: SimGrid): void {
     const f = world.fields;
     const lvAdd = world.mods.landValueAdd;
@@ -278,6 +459,8 @@ export class FieldSystem {
     const terrain = g.terrainValue;
     const dens = this.density;
     const local = this.localTraffic;
+    const roadLv = g.roadLv;
+    const noise = f.noise;
     for (let i = 0; i < AREA; i++) {
       if (water[i]) {
         out[i] = 0;
@@ -295,14 +478,15 @@ export class FieldSystem {
         pollution[i] * T.LV_POLLUTION -
         crime[i] * T.LV_CRIME -
         local[i] * T.LV_TRAFFIC;
-      out[i] = clamp01(v + lvAdd + lvLayer[i]);
+      out[i] = clamp01(v + lvAdd + lvLayer[i] + roadLv[i] - noise[i] * NOISE_LV);
     }
   }
 
   // ── Crime ─────────────────────────────────────────────────────────────────
   /**
    * `jobless` = size-weighted unemployment (Census.joblessPressure).
-   * v = v·town·crimeMul + crimeAdd + layers.crimeAdd[i], then the empty-land factor, then + event boost.
+   * v = v·town·crimeMul + crimeAdd + layers.crimeAdd[i] + road kinds (g.roadCrime, §3.8), then the
+   * empty-land factor, then + event boost.
    */
   crime(world: World, g: SimGrid, jobless: number, population: number): void {
     const f = world.fields;
@@ -315,6 +499,7 @@ export class FieldSystem {
     const dens = this.density;
     const blight = this.blight;
     const boost = this.crimeBoost;
+    const roadCrime = g.roadCrime;
     const city = T.CRIME_CITY * Math.min(1, population / T.CRIME_CITY_POP);
     const shared = T.CRIME_BASE + jobless * T.CRIME_UNEMPLOYMENT + city;
     const town = T.CRIME_TOWN_SCALE + (1 - T.CRIME_TOWN_SCALE) * Math.min(1, population / T.CRIME_TOWN_POP);
@@ -329,7 +514,7 @@ export class FieldSystem {
         (1 - landValue[i]) * T.CRIME_POVERTY +
         blight[i] * T.CRIME_ABANDONMENT -
         security[i] * T.SECURITY_SUPPRESS;
-      v = v * town * crimeMul + crimeAdd + crimeLayer[i];
+      v = v * town * crimeMul + crimeAdd + crimeLayer[i] + roadCrime[i];
       if (!(zone[i] || road[i] || bld[i] >= 0)) v *= T.CRIME_EMPTY_LAND;
       out[i] = clamp01(v + boost[i]);
     }

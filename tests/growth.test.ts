@@ -2,6 +2,10 @@ import { describe, expect, it } from 'vitest';
 import { ROAD_ACCESS_RANGE } from '../src/game/config';
 import { ZoneType } from '../src/game/types';
 import type { World } from '../src/game/world';
+import { FieldSystem } from '../src/game/sim/fields';
+import { SimGrid } from '../src/game/sim/grid';
+import { GrowthSystem } from '../src/game/sim/growth';
+import { PowerGrid } from '../src/game/sim/power';
 import { flatWorld, makeSim, run } from './helpers';
 
 /** Road along y = 20 (x 10..40) with a solar farm at its west end. */
@@ -137,5 +141,34 @@ describe('zone growth', () => {
     const green = build(true);
     expect(green.lv).toBeGreaterThan(plain.lv + 0.05);
     expect(green.mid).toBeGreaterThan(plain.mid + 3);
+  });
+
+  it('abandonment keeps the wealth tier of a block; collapse back to a lot resets it to $', () => {
+    const w = base();
+    for (let x = 12; x <= 20; x++) {
+      w.setZone(x, 21, ZoneType.Residential);
+      w.setLevel(x, 21, 2, false, 1);
+    }
+    // Growth driven by hand with a score inside the $$ band, so only power decides.
+    const g = new SimGrid(w);
+    const power = new PowerGrid();
+    const growth = new GrowthSystem();
+    const fields = new FieldSystem();
+    w.buildingAt(8, 20)!.offline = 9999;
+    for (let d = 0; d < 200; d++) {
+      w.tick++;
+      g.scan(w);
+      power.compute(w, g);
+      growth.countDays(g, power);
+      for (let x = 12; x <= 20; x++) w.fields.wealth[w.idx(x, 21)] = 0.4;
+      growth.run(w, g, power, fields, { res: 0, com: 0, ind: 0 });
+    }
+    const shells = w.tiles.filter((t) => t.zone === ZoneType.Residential && t.abandoned);
+    expect(shells.length).toBeGreaterThan(3);
+    expect(shells.every((t) => t.wealth === 1)).toBe(true);
+    // A collapsed shell is a lot again, and a lot is always $.
+    const t = w.tileAt(12, 21)!;
+    w.setLevel(12, 21, 0);
+    expect(t.wealth).toBe(0);
   });
 });

@@ -4,6 +4,9 @@
 // them into city behaviour. Grouped by system so tuning stays readable.
 // ─────────────────────────────────────────────────────────────────────────────
 
+import { ROAD_KINDS } from '../config';
+import { RoadKind } from '../types';
+
 // ── Scheduling ───────────────────────────────────────────────────────────────
 /** Fraction of zoned tiles evaluated for growth each tick. */
 export const GROWTH_SAMPLE = 1 / 6;
@@ -17,8 +20,11 @@ export const TRIPS_PER_UNIT = [0, 1.0, 0.9, 0.8];
 export const BUILDING_TRIPS = 0.5;
 /** Share of trips removed at full transit coverage. */
 export const TRANSIT_TRIP_CUT = 0.6;
-/** Raw trips at which a road reads ~63% congested (1 - e^-1). */
-export const TRAFFIC_SCALE = 220;
+/**
+ * Raw trips at which a street reads ~63% congested (1 - e^-1): the Street capacity, one source
+ * (EXPANSION §3.8). Other kinds use ROAD_KINDS[k].capacity; this stays the pollution reference.
+ */
+export const TRAFFIC_SCALE = ROAD_KINDS[RoadKind.Street].capacity;
 /** Smoothing passes along connected roads. */
 export const TRAFFIC_SMOOTH_PASSES = 2;
 /** Faint traffic shown on lots next to a road (overlay only), by distance 1, 2. */

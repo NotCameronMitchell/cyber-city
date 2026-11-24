@@ -24,7 +24,8 @@ describe('monthly budget', () => {
     expect(w.budget.expenses).toBe(Math.round(20 * ROAD_UPKEEP) + BUILDINGS.solar.upkeep);
     expect(w.budget.income).toBeGreaterThan(0);
     const labels = w.budget.expenseLines.map((l) => l.label);
-    expect(labels).toContain('Roads & skyways');
+    expect(labels).toContain('Roads');
+    expect(labels).not.toContain('Skyways'); // only once a skyway exists
     expect(labels).toContain('Power plants');
     expect(w.budget.incomeLines.length).toBe(3);
     expect(w.budget.history).toEqual([]);

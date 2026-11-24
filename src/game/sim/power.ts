@@ -7,13 +7,17 @@
 // Story hooks (§10.6): plant supply × mods.powerSupplyMul, every draw (zones,
 // buildings and growth reservations) × mods.powerDemandMul; building numbers
 // come from buildingStats() (stage-aware Stratablocks).
+//
+// Expansion (docs/EXPANSION.md §3.1, §4.4): every ground road kind conducts
+// (skyways do not); a zone tile's draw follows its wealth tier
+// (zonePowerMul: richer homes and shops draw more, a clean $$$ fab less).
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { blankStats, buildingStats } from '../buildingStats';
-import { ZONES } from '../config';
 import { MAP_SIZE, type Building } from '../types';
 import type { World } from '../world';
 import type { SimGrid } from './grid';
+import * as Tiers from './tiers';
 
 // Imported bindings are copied into module locals: under Vite's SSR/test
 // transform every imported identifier becomes a getter call, which is very
@@ -21,16 +25,12 @@ import type { SimGrid } from './grid';
 const N = MAP_SIZE;
 const AREA = N * N;
 
-/** Power draw of a zone tile (0 for lots and abandoned shells). Index = ZoneType. */
-const ZONE_DRAW: readonly (readonly number[])[] = [
-  [0, 0, 0, 0],
-  ZONES.res.power,
-  ZONES.com.power,
-  ZONES.ind.power,
-];
+/** Power draw per zone × level × tier (sim/tiers.ts, index z * 12 + l * 3 + t). */
+const DRAW_T = Tiers.DRAW_T;
 
-export function zoneDraw(zone: number, level: number, abandoned: number): number {
-  return abandoned || level === 0 ? 0 : ZONE_DRAW[zone][level];
+/** Power draw of a zone tile at its level and wealth tier (0 for lots and abandoned shells). */
+export function zoneDraw(zone: number, level: number, abandoned: number, tier = 0): number {
+  return abandoned || level === 0 ? 0 : DRAW_T[zone * 12 + level * 3 + tier];
 }
 
 export class PowerGrid {
@@ -70,7 +70,7 @@ export class PowerGrid {
   /** Recompute the grid, write tile.powered / building.powered. Returns true if any tile flipped. */
   compute(world: World, g: SimGrid): boolean {
     const { comp, powered, compSupply, compDemand, compDeficit, queue, visited, remain, brown, st } = this;
-    const { zone, level, abandoned, road, bld } = g;
+    const { zone, level, abandoned, road, wealth, bld } = g;
     const supplyMul = world.mods.powerSupplyMul;
     const demandMul = world.mods.powerDemandMul;
     this.demandMul = demandMul;
@@ -104,7 +104,7 @@ export class PowerGrid {
     let plants = 0;
     for (let k = 0; k < g.zonedCount; k++) {
       const z = g.zoned[k];
-      const d = zoneDraw(zone[z], level[z], abandoned[z]) * demandMul;
+      const d = zoneDraw(zone[z], level[z], abandoned[z], wealth[z]) * demandMul;
       if (d > 0) {
         compDemand[comp[z]] += d;
         totalDemand += d;
@@ -164,7 +164,7 @@ export class PowerGrid {
           if (b) this.allocateBuilding(b, c);
         }
       } else {
-        const d = zoneDraw(zone[i], level[i], abandoned[i]) * demandMul;
+        const d = zoneDraw(zone[i], level[i], abandoned[i], wealth[i]) * demandMul;
         if (d > 0) {
           if (remain[c] >= d) {
             remain[c] -= d;

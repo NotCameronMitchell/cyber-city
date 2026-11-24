@@ -37,6 +37,8 @@ function oldCity(): World {
     for (let d = 0; d < 30; d++) sim.step();
     mayor.turn();
   }
+  // A v1 / v2 build had no wealth tiers: waterfront blocks a v3 sim lifts go back to $ (WP-1).
+  for (let i = 0; i < N * N; i++) w.setWealth(i % N, (i / N) | 0, 0);
   return w;
 }
 

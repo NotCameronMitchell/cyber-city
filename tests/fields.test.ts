@@ -97,4 +97,18 @@ describe('fields', () => {
       }
     }
   });
+
+  it('a streets-only city has no noise, business district, sea trade or education, and every road reads its kind capacity', () => {
+    const w = street();
+    block(w, ZoneType.Residential, 3, 20, 31, 40, 33);
+    block(w, ZoneType.Commercial, 2, 20, 27, 40, 29);
+    const sim = makeSim(w);
+    for (let i = 0; i < 10; i++) sim.step();
+    for (const f of ['noise', 'hub', 'sea', 'education', 'skyTraffic'] as const) expect(w.fields[f].every((v) => v === 0)).toBe(true);
+    expect(w.fields.alleyNear.every((v) => v === 0)).toBe(true);
+    // The wealth score is set on zone tiles only (a home with no school, transit or noise: its land value).
+    expect(at(w, 'wealth', 30, 32)).toBeCloseTo(at(w, 'landValue', 30, 32), 5);
+    expect(at(w, 'wealth', 30, 30)).toBe(0);
+    expect(at(w, 'wealth', 50, 50)).toBe(0);
+  });
 });
