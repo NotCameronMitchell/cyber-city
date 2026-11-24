@@ -875,16 +875,33 @@ export class GroundPainter {
     this.b4.flush(ctx);
   }
 
+  /**
+   * Drawn link mask of a road tile: World.roadMask, plus an arm off the map for a dead
+   * end on the map border that points inward (a regional road runs off the edge, §3.10).
+   */
+  private mask(x: number, y: number): number {
+    const m = this.world.roadMask(x, y);
+    if (BITS[m] !== 1) return m;
+    if (x === 0 && m === 2) return m | 8;
+    if (x === N - 1 && m === 8) return m | 2;
+    if (y === 0 && m === 4) return m | 1;
+    if (y === N - 1 && m === 1) return m | 4;
+    return m;
+  }
+
   /** Road kind of the 4-neighbour of (x, y) in direction d, or −1 when it is not a road. */
   private kindAt(x: number, y: number, d: number): number {
     const t = this.world.tileAt(x + DX4[d], y + DY4[d]);
     return t && t.road ? t.roadKind : -1;
   }
 
-  /** Arms of `mask` whose neighbour is a Highway (the rest of a highway's arms are ramps). */
+  /** Arms of `mask` whose neighbour is a Highway or off the map (the rest of a highway's arms are ramps). */
   private highwayArms(x: number, y: number, mask: number): number {
     let m = 0;
-    for (let d = 0; d < 4; d++) if (mask & DIR[d] && this.kindAt(x, y, d) === RoadKind.Highway) m |= DIR[d];
+    for (let d = 0; d < 4; d++) {
+      if (!(mask & DIR[d])) continue;
+      if (this.kindAt(x, y, d) === RoadKind.Highway || !this.world.inBounds(x + DX4[d], y + DY4[d])) m |= DIR[d];
+    }
     return m;
   }
 
@@ -1355,7 +1372,7 @@ export class GroundPainter {
   /** Street (unchanged look) or On-ramp: street art plus white chevrons towards the highway and a gantry sign. */
   private street(x: number, y: number, ramp: boolean) {
     const P = this.pal;
-    const mask = this.world.roadMask(x, y);
+    const mask = this.mask(x, y);
     this.sidewalk(x, y);
     const hv = this.h(x, y, 70);
     roadShapePath(this.b2.f(P.asphalt[Math.floor(hv * 3)]), x, y, mask, ROAD_HALF, this.px * 0.6);
@@ -1410,7 +1427,7 @@ export class GroundPainter {
   private avenue(x: number, y: number) {
     const P = this.pal;
     const h = KIND_HALF[RoadKind.Avenue];
-    const mask = this.world.roadMask(x, y);
+    const mask = this.mask(x, y);
     this.sidewalk(x, y);
     roadShapePath(this.b2.f(P.avAsphalt), x, y, mask, h, this.px * 0.6);
     const box = 0.5 - h;
@@ -1451,7 +1468,7 @@ export class GroundPainter {
   private highway(x: number, y: number) {
     const P = this.pal;
     const H = KIND_HALF[RoadKind.Highway];
-    const mask = this.world.roadMask(x, y);
+    const mask = this.mask(x, y);
     const hw = this.highwayArms(x, y, mask);
     const ramps = mask & ~hw;
     this.tileRect(this.b0.f(P.hwVerge), x, y);
@@ -1494,7 +1511,7 @@ export class GroundPainter {
   private alley(x: number, y: number) {
     const P = this.pal;
     const h = KIND_HALF[RoadKind.Alley];
-    const mask = this.world.roadMask(x, y);
+    const mask = this.mask(x, y);
     this.tileRect(this.b0.f(P.grime), x, y);
     roadShapePath(this.b2.f(P.alleyAsph), x, y, mask, h, this.px * 0.6);
     if (!this.lines) {
@@ -1691,7 +1708,7 @@ export class GroundPainter {
     const kind = t.roadKind;
     const hwy = kind === RoadKind.Highway;
     const av = kind === RoadKind.Avenue;
-    const full = this.world.roadMask(x, y);
+    const full = this.mask(x, y);
     // A highway deck spans only its highway arms; arms to ramps are narrow street decks.
     const mask = hwy ? this.highwayArms(x, y, full) : full;
     const narrow = full & ~mask;
@@ -1915,7 +1932,7 @@ export class GroundPainter {
 
   private roadGlow(x: number, y: number, t: Tile) {
     const P = this.pal;
-    const mask = this.world.roadMask(x, y);
+    const mask = this.mask(x, y);
     const n = P.n;
     switch (t.roadKind) {
       case RoadKind.Avenue: {
@@ -1988,7 +2005,7 @@ export class GroundPainter {
   private bridgeGlow(x: number, y: number) {
     const P = this.pal;
     const t = this.world.tiles[y * N + x];
-    const full = this.world.roadMask(x, y);
+    const full = this.mask(x, y);
     const hwy = t.roadKind === RoadKind.Highway;
     const mask = hwy ? this.highwayArms(x, y, full) : full;
     const dh = deckHalf(t.roadKind);
@@ -2042,7 +2059,7 @@ export class GroundPainter {
     }
     if (water && t.road) {
       // Bridge lamp halos and their reflections.
-      const full = this.world.roadMask(x, y);
+      const full = this.mask(x, y);
       const mask = t.roadKind === RoadKind.Highway ? this.highwayArms(x, y, full) : full;
       const r = 3 / (2 * HALF_H);
       for (const [u, v] of bridgeLamps(mask, deckHalf(t.roadKind))) {

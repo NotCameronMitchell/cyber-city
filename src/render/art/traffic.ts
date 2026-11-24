@@ -392,20 +392,6 @@ export class StreetTraffic {
     const y = (i / N) | 0;
     const mask = world.roadMask(x, y);
     if (!mask) return;
-    const dirs: number[] = [];
-    for (let d = 0; d < 4; d++) if (mask & (1 << d)) dirs.push(d);
-    let din: number;
-    let dout: number;
-    if (fromEdge >= 0) {
-      din = fromEdge;
-      dout = this.chooseExit(world, x, y, din, false);
-    } else {
-      dout = dirs[(rand() * dirs.length) | 0];
-      // Enter from another connected side (or from the exit side at a dead end → U-turn).
-      const others = dirs.filter((d) => d !== dout);
-      const side = others.length ? others[(rand() * others.length) | 0] : dout;
-      din = (side + 2) & 3;
-    }
     const r = rand();
     const k = kinds[i];
     // Alleys: bikes only. Highways: 35% trucks. Elsewhere the usual mix.
@@ -416,6 +402,27 @@ export class StreetTraffic {
         : k === RoadKind.Highway
           ? r < 0.35 ? Kind.Truck : r < 0.45 ? Kind.Taxi : Kind.Car
           : r < 0.12 ? Kind.Taxi : r < 0.24 ? Kind.Truck : r < 0.36 ? Kind.Bike : Kind.Car;
+    const dirs: number[] = [];
+    const motor = !walk && kind !== Kind.Bike;
+    for (let d = 0; d < 4; d++) {
+      if (!(mask & (1 << d))) continue;
+      // Motor traffic never heads into an alley.
+      if (motor && kinds[(y + DY[d]) * N + x + DX[d]] === RoadKind.Alley) continue;
+      dirs.push(d);
+    }
+    if (!dirs.length) return;
+    let din: number;
+    let dout: number;
+    if (fromEdge >= 0) {
+      din = fromEdge;
+      dout = this.chooseExit(world, x, y, din, false, kind === Kind.Bike);
+    } else {
+      dout = dirs[(rand() * dirs.length) | 0];
+      // Enter from another connected side (or from the exit side at a dead end → U-turn).
+      const others = dirs.filter((d) => d !== dout);
+      const side = others.length ? others[(rand() * others.length) | 0] : dout;
+      din = (side + 2) & 3;
+    }
     const a: Agent = {
       x,
       y,

@@ -479,7 +479,7 @@ export class SkywayLayer {
     this.tails = null;
     this.bodies = null;
     this.glowN = 0;
-    this.lightsOn = env.zoom >= 0.35;
+    this.lightsOn = env.zoom >= 0.45;
     this.glowOn = env.night > 0.3 && env.zoom >= 0.5 && env.quality === 'high';
   }
 
