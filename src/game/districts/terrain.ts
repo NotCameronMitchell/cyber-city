@@ -170,7 +170,8 @@ export function generateSlot(
   for (let y = 0; y < SLOT; y++)
     for (let x = 0; x < SLOT; x++) {
       const out = ((x - 31.5) * ux + (y - 31.5) * uy) / 63 + 0.5; // 0 toward the city, 1 away from it
-      const n = fbm((x + ox) * 0.06, (y + oy) * 0.06, nseed + (salt & 1023), 4);
+      // Art coordinates (x + ox − o): the same slot offset from the start generates the same land on both regions.
+      const n = fbm((x + ox - o) * 0.06, (y + oy - o) * 0.06, nseed + (salt & 1023), 4);
       field[y * SLOT + x] = out * 0.6 + n * 0.4;
     }
   const [lo, hi] = waterRange(kind, variant, preset);

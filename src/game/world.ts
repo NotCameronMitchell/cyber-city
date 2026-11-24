@@ -59,7 +59,7 @@ import {
 /** world.signals keeps at most this many (oldest dropped) when nothing drains it, e.g. headless sim tests. */
 const MAX_SIGNALS = 256;
 /** Building types whose footprint keeps the turf under it (§3.1). */
-const TURF_KEEPING: ReadonlySet<BuildingType> = new Set<BuildingType>(['tidemarket', 'roost']);
+const TURF_KEEPING: ReadonlySet<BuildingType> = new Set<BuildingType>(['tidemarket', 'roost', 'frame']); // + Skeleton Row's frames (MEGACITY §3.7)
 
 /** Skyway bits: link mask N1 E2 S4 W8 and the ramp bit (EXPANSION §2.4). */
 const SKY_LINKS = 15;

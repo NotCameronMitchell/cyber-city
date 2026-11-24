@@ -25,6 +25,7 @@ import type { BuildingStats, VisualState } from '../game/story/types';
 import { Terrain, ZoneType, type Tile } from '../game/types';
 import type { World } from '../game/world';
 import { MOTH_COLOR, sigilSprite } from './art/sigils';
+import * as marks from './art/marks';
 import { drawRailTile, drawSkybridgeTile, type RailEnv } from './art/vertical';
 import { serviceBuildingHeight, zoneBuildingHeight, LOD_ZOOM, type ArtEnv } from './buildings';
 import { HALF_H, HALF_W } from './camera';
@@ -358,6 +359,8 @@ export class StoryRender {
 
   /** Ground-level mood: Trace flicker, LURE's cold lamps, Undertow green lamps. World transform. */
   drawGroundFx(ctx: CanvasRenderingContext2D, world: World, b: Rect, env: ArtEnv, view: Rect): void {
+    // Choices that last (MEGACITY §9): the marks' decals (the frozen call site; art/marks.ts, WP-8).
+    if (this.visual) marks.draw(ctx, world, this.visual.marks, b, env);
     const N = world.N;
     const ao = 64 * ((world.region - 1) >> 1); // art coordinates (MEGACITY §3.2)
     const v = this.visual;

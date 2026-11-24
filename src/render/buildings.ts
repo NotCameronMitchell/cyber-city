@@ -21,7 +21,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { BUILDINGS, BUILDING_ORDER } from '../game/config';
-import type { Building, BuildingType, Tile } from '../game/types';
+import type { Building, BuildingType, Parcel, Tile } from '../game/types';
 import { ZoneType } from '../game/types';
 import { drawFx, drawAbandonedLight, type Fx, type FxState } from './art/fx';
 import { Painter, type ArtPal } from './art/painter';
@@ -80,8 +80,19 @@ const models = new Map<number, Model>();
 export const ZONE_BODIES = 432;
 /** Lots: 440..463. */
 const LOT_BASE = 440;
-/** Service, story and port buildings: 480 + type index × STACK_VARIANTS + variant. */
+/** Below this, zone and lot ids (0..479); the zone height table is sized by it. */
 const SERVICE_BASE = 480;
+/**
+ * Service model ids (MEGACITY §6.1, frozen in Step 0b): SERVICE_KIT_BASE + ((typeIndex × 16 + look) × 10 + style) × 64
+ * + variant (look = sponsor × 4 + look for Spires, < 16; style 0..9; variant < 64), below 2,600,000 for up to 57
+ * types. Ids are cache keys, never saved. Kit zone ids (KIT_BASE 1,000,000) and SKY_BASE 4,000 / BRIDGE_BASE 5,000
+ * stay disjoint from it.
+ */
+export const SERVICE_KIT_BASE = 2_000_000;
+export const KIT_BASE = 1_000_000;
+export function serviceModelId(typeIndex: number, look: number, style: number, variant: number): number {
+  return SERVICE_KIT_BASE + ((typeIndex * 16 + look) * 10 + style) * 64 + variant;
+}
 
 const emptyRecipe = LOT_RECIPES[0][0];
 
@@ -164,6 +175,15 @@ function zoneModel(zone: number, level: number, variant: number, tier = 0): Mode
 }
 
 const SERVICE_INDEX = new Map<BuildingType, number>(BUILDING_ORDER.map((t, i) => [t, i]));
+/**
+ * Art seeds keep today's per-type index (EXPANSION's BUILDING_ORDER without the Megacity types), so look 0 is exactly
+ * today's art (MEGACITY §6.2); the Megacity types (floodwatch … pumphall) seed after them.
+ */
+const MEGA_FIRST = BUILDING_ORDER.indexOf('floodwatch');
+const MEGA_LAST = BUILDING_ORDER.indexOf('pumphall');
+const SEED_INDEX = new Map<BuildingType, number>(
+  BUILDING_ORDER.map((t, i) => [t, i < MEGA_FIRST ? i : i > MEGA_LAST ? i - (MEGA_LAST - MEGA_FIRST + 1) : 100 + i]),
+);
 /** The building fields that pick a model variant (Building satisfies it). */
 type VariantKey = Pick<Building, 'type' | 'stage' | 'buildDays' | 'crown'> & Partial<Pick<Building, 'id' | 'facing' | 'waitSec'>>;
 /**
@@ -176,8 +196,13 @@ function variantOf(b: VariantKey): number {
   const building = (b.buildDays ?? 0) > 0;
   return stackVariant(building ? stage - 1 : stage, building, b.crown);
 }
+/** The art seed of a service model (tests: look 0 keeps today's seeds, MEGACITY §11.2 item 10). */
+export function serviceSeed(type: BuildingType): number {
+  return 31337 + SERVICE_BASE + (SEED_INDEX.get(type) ?? 0);
+}
+
 function serviceModel(type: BuildingType, variant = 0): Model {
-  const id = SERVICE_BASE + (SERVICE_INDEX.get(type) ?? 0) * STACK_VARIANTS + variant;
+  const id = serviceModelId(SERVICE_INDEX.get(type) ?? 0, 0, 0, variant);
   const hit = models.get(id);
   if (hit) return hit;
   const story = (STORY_RECIPES as Partial<Record<BuildingType, Recipe>>)[type];
@@ -185,7 +210,7 @@ function serviceModel(type: BuildingType, variant = 0): Model {
   const recipe = type === 'stack' ? stackRecipe(variant) : port ?? story ?? SERVICE_RECIPES[type];
   const pal =
     type === 'stack' ? STACK_PAL : (PORT_PALS as Partial<Record<BuildingType, ArtPal>>)[type] ?? (STORY_PALS as Partial<Record<BuildingType, ArtPal>>)[type] ?? SERVICE_PALS[type];
-  return buildModel(id, recipe, pal, 31337 + SERVICE_BASE + (SERVICE_INDEX.get(type) ?? 0), BUILDINGS[type].size);
+  return buildModel(id, recipe, pal, 31337 + SERVICE_BASE + (SEED_INDEX.get(type) ?? 0), BUILDINGS[type].size);
 }
 
 // ── Sprite painting ────────────────────────────────────────────────────────
@@ -472,6 +497,22 @@ function drawConstruction(ctx: CanvasRenderingContext2D, s: Sprite | null, m: Mo
 // ── Public API ─────────────────────────────────────────────────────────────
 
 /** Zone building on tile (tx,ty) whose top corner is world (wx,wy). Handles level 0 lot props, abandoned look and construction (tile.age small). */
+/**
+ * The parcel-aware zone draw call (MEGACITY §6.1, signature frozen in Step 0b): a parcel's head draws one body for the
+ * whole parcel, its other members nothing. Step 0b draws today's single-tile body at the tile (`parcel` is ignored
+ * until WP-4's kit; WP-3 calls it from the sweep). `at` carries the tile's world position and coordinates.
+ */
+export function drawZone(
+  ctx: CanvasRenderingContext2D,
+  tile: Tile,
+  parcel: Parcel | null,
+  env: ArtEnv,
+  at: { wx: number; wy: number; x: number; y: number },
+): void {
+  void parcel;
+  drawZoneBuilding(ctx, at.wx, at.wy, tile, at.x, at.y, env);
+}
+
 export function drawZoneBuilding(ctx: CanvasRenderingContext2D, wx: number, wy: number, tile: Tile, tx: number, ty: number, env: ArtEnv): void {
   const zone = tile.zone;
   if (zone === ZoneType.None) return;

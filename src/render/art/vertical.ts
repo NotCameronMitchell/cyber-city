@@ -25,6 +25,7 @@ import { HALF_H, HALF_W } from '../camera';
 import { NEON, css, glowSprite, mix, type RGB } from '../palette';
 import { mat, type ArtPal, type Mat, type Painter, type WinSpec } from './painter';
 import type { Recipe } from './zones';
+import type { ArtEnv } from '../buildings';
 
 // ── Stratablock recipes ───────────────────────────────────────────────────
 
@@ -595,3 +596,29 @@ export function drawSkybridgeTile(
   ctx.globalCompositeOperation = 'source-over';
 }
 
+
+// ── Skybridges v2 (MEGACITY §5.6): the frozen span draw call (Step 0b); WP-4 draws the tubes, skins and walkers. ──
+
+/** One skybridge span in world px: anchor tiles, gap and the tube's top (heights.ts roofOf − SKYBRIDGE.tubeBelowRoof). */
+export interface SkybridgeSpan {
+  ax: number;
+  ay: number;
+  bx: number;
+  by: number;
+  gap: number;
+  /** Tube top above the ground, world px. */
+  top: number;
+  /** Lit (both anchors tall and powered) or dark. */
+  active: boolean;
+}
+
+/** A span's skin: the builder faction or the district style that dresses the tube (§5.6). */
+export type SkybridgeSkin = 'plain' | 'basalt' | 'nacre' | 'board' | 'undertow' | 'kites' | 'tuning' | string;
+
+/**
+ * Draw a whole skybridge span (WP-4). Step 0b: nothing here; today's bridges still draw tile by tile through
+ * drawSkybridgeTile from the sweep, so the city looks as it did.
+ */
+export function drawSkybridgeSpan(_ctx: CanvasRenderingContext2D, _span: SkybridgeSpan, _skin: SkybridgeSkin, _env: ArtEnv): void {
+  // WP-4.
+}

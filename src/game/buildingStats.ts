@@ -55,6 +55,13 @@ export function blankStats(): BuildingStats {
  */
 export function buildingStats(b: Building, out: BuildingStats = blankStats()): BuildingStats {
   const def = BUILDINGS[b.type];
+  if (def?.fixed) {
+    // Megacity (MEGACITY §3.7): Skeleton Row's frames and the Sunk's old pump hall are inert: no power, upkeep,
+    // jobs, residents, trips or coverage; a frame is not tall until it is finished into a Stratablock.
+    const z = blankStats();
+    Object.assign(out, z);
+    return out;
+  }
   if (b.type !== 'stack') {
     out.tall = !!def?.tall;
     out.station = !!def?.station;

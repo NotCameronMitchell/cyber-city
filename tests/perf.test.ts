@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { fullyBuiltWorld, makeSim } from './helpers';
 import { expansionFixture } from './expansion-fixture';
+import { toV3 } from './legacy-save';
+import { World } from '../src/game/world';
 
 // Budgets from the module contract (Node, fully developed 64×64 map):
 // step() < 2 ms on average, recomputeAll() < 10 ms; with the expansion fixture
@@ -56,5 +58,20 @@ describe('performance', () => {
     expect(stepMs).toBeLessThan(2 * slack);
     expect(recomputeMs).toBeLessThan(10 * slack);
     expect(settleMs).toBeLessThan(5 * slack);
+  });
+
+  // MEGACITY Step 0b (§12 perf note): a one-district 3×3 city still pays the empty area of its locked slots (§2.3) until
+  // WP-1's owned-segment loops (O1) skip them. Temporary budgets: step < 5 ms, recomputeAll < 15 ms. WP-1 restores §11.1
+  // (≤ 1.0 ms a step for one district) and replaces this case.
+  it('a fully built start slot on a 3×3 region (temporary Step 0b budgets until WP-1)', () => {
+    const legacy = fullyBuiltWorld();
+    const w = World.deserialize(toV3(JSON.parse(JSON.stringify(legacy.serialize()))));
+    expect([w.region, w.N]).toEqual([3, 192]);
+    const sim = makeSim(w, true);
+    const { stepMs, recomputeMs } = measure(sim);
+    console.info(`[perf] 3×3, one district: step ${stepMs.toFixed(3)} ms · recomputeAll ${recomputeMs.toFixed(3)} ms`);
+    expect(w.stats.population).toBeGreaterThan(200_000);
+    expect(stepMs).toBeLessThan(5 * slack);
+    expect(recomputeMs).toBeLessThan(15 * slack);
   });
 });
