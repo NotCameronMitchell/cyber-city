@@ -347,7 +347,7 @@ Trace (0..100) measures how close anyone is to proving you exist.
 | String Pact | Kites keep to their roofs. Traffic flows. |
 | Lit Windows | The faithful leave lamps lit. People notice. |
 
-**Build reactions** (`FACTION_BUILD_REACTIONS` in config) give a one-off favor change when the player places a building. Each type counts only its first 5 instances, so they can't be farmed.
+**Build reactions** (`FACTION_BUILD_REACTIONS` in config) give a one-off favor change when the player places a building. Each type counts only its first 5 instances (fewer where `BUILD_REACTION_LIMIT_BY_TYPE` says so), so they can't be farmed.
 
 | Building | Reaction |
 |---|---|
@@ -367,6 +367,12 @@ Trace (0..100) measures how close anyone is to proving you exist.
 | roost | Kites +5, Nacre −3 |
 | commons | Board +5 |
 | memorial (first) | Undertow +10, Tuning +5 |
+| academy | Board +2, Tuning +2 |
+| seaport (first 2) | Basalt +4, Undertow +3 |
+| airport (first) | Nacre +5, Board +2, Kites −3 |
+| spaceport (first) | Nacre +4, Basalt +4, Board +3, Kites +2, Tuning −2 |
+
+The last four rows come from the "Roads, Wealth and Ports" expansion (docs/EXPANSION.md §2.8, §8.1). Road kinds and skyways have no build reactions.
 
 Other reactions:
 
@@ -1334,7 +1340,32 @@ when `trace >= 100 & !revealed` · system · onShow `reveal`, flag `tuningActive
 - **Tell the street first.** → Undertow +5, Kites +5, Tuning +5
 - **Say nothing.** ‡ → Tuning +5, Basalt −5, Nacre −5
 
-Counts: the faction deck holds **43 cards** (6 Board, 6 Basalt, 7 Nacre, 7 Undertow, 7 Kites, 6 Tuning, 2 multi-faction, 2 system), not counting the chapter beats, logs, endings, `ep.review` and the coda.
+Counts: the faction deck holds **43 cards** (6 Board, 6 Basalt, 7 Nacre, 7 Undertow, 7 Kites, 6 Tuning, 2 multi-faction, 2 system), not counting the chapter beats, logs, endings, `ep.review` and the coda. The expansion adds 11 more (below), for 54.
+
+### 7.8a Expansion cards ("Roads, Wealth and Ports")
+
+The expansion adds eleven faction cards about the new city pieces: seaports, highways, back alleys, glass towers ($$$ blocks), the Airport, the Spaceport, skyways and the Academy. Their copy, conditions and effects are in **docs/EXPANSION.md §8.3**; the data is `src/game/story/content/cards/expansion.ts`.
+
+| Card | Faction | When | Notes |
+|---|---|---|---|
+| `ex.manifest` FALSE BOTTOMS | Undertow | `count.seaport >= 1 & turf.undertow >= 10` | recurring |
+| `ex.backway` THE BACK WAY | Undertow | `roads.alley >= 30 & turf.undertow >= 10` | spot `alley`, recurring |
+| `ex.convoy` NIGHT CONVOY | Basalt | `count.seaport >= 1 & roads.highway >= 20` | once |
+| `ex.lounge` FIRST CLASS ONLY | Nacre | `count.airport >= 1` | once |
+| `ex.glassshore` THE GLASS SHORE | Nacre | `wealth.high >= 0.12` | spot `shore`, once |
+| `ex.pricedout` PRICED OUT | Board | `wealth.high >= 0.22` | recurring |
+| `ex.thecut` THE CUT | Board | `roads.highway >= 30` | spot `highway`, once |
+| `ex.rights` LAUNCH RIGHTS | Board | `count.spaceport >= 1 & !launchRights` | w30, once, on demand |
+| `ex.stringlights` STRING LIGHTS | Kites | `skyway.tiles >= 20` | once |
+| `ex.nofly` NO-FLY | Kites | `count.airport >= 1 & turf.kites >= 10` | once |
+| `ex.nightschool` NIGHT SCHOOL | Tuning | `count.academy >= 1 & tuningActive` | once |
+
+- They join `DECK` and `CARD_LIST` but not `FACTION_DECKS`, so the per-faction counts above stay. Each is a weight-10 faction card on a 720 d cooldown (`ex.rights` weight 30), with one ‡ default, a brief and no ⚑, ★ or follow-up. They draw under the pace setting's deck gaps like any other card.
+- **Spot rules** (`story/effects.ts`): `highway` is the developed Hab Block within 3 of a Highway tile with the highest noise; `alley` is the Alley tile with the highest Undertow strength, else the lowest-index Alley tile; `shore` is the developed Hab Block within 2 of water with the highest land value. A card with one is drawable only while it resolves.
+- **On demand:** `ex.rights` opens from the Spaceport's inspect sheet ("Launch rights · Choose", `Game.openLaunchRights` → `director.openOnDemand`) without taking a deck slot; the weight-30 deck entry catches players who never tap it. Every choice sets flag `launchRights` to `board`, `basalt`, `nacre` or `kites`, worth +150 power weight to the holder.
+- **Lasting choices** on the `once` cards are permanent modifiers only when they are pure bonuses (lint-checked). A lasting penalty stays timed (§2.3 rule 3): the approval cost of *Open the night lanes* (−2), *Build the lounge. Move the stop.* (−1) and *Bend the flight path* (−1) lasts 720 d, while their bonuses (`demandInd +0.06`, `landValueAdd +0.01`) are permanent. This is the one place the data differs from EXPANSION §8.3, which wrote those penalties as `perm`.
+- **Mood rows** (§2.2 sheets, additive): Board *Priced out* (`wealth.high`, offset 0.3, ×−40, −8..0), Basalt *Seaports* (`count.seaport` ×3, 0..6), Nacre *Glass towers* (`wealth.high`, offset 0.05, ×50, 0..8), Undertow *Back alleys* (`roads.alley` ×1/15, 0..5). **Power terms** (§2.4, additive): Board/Basalt/Nacre/Kites +150 for holding the launch rights, Basalt +60 per Seaport, Nacre +80 per Airport, Undertow `min(0.25 × alley tiles, 60)`, Kites `min(0.5 × skyway tiles, 100)`. The alley and skyway terms are capped so cheap tiles can't buy the Balance of Power.
+- Speakers never use the `$` symbols (they say "glass towers", "top-rent floors"); briefs and choice summaries may.
 
 ### 7.9 Whispers and MOTH notes (atmosphere, no choices)
 

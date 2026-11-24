@@ -3,8 +3,9 @@
 // collects every offender, so one run lists them all.
 
 import { describe, expect, it } from 'vitest';
-import { BUILDINGS, FACTION_IDS, FACTION_LABELS, UNLOCK_FALLBACK_POP } from '../../src/game/config';
-import { EMPTY_CONTENT, useStoryContent, type StoryContent } from '../../src/game/story/conditions';
+import { BUILDINGS, FACTION_IDS, FACTION_LABELS, POWER_WEIGHTS, UNLOCK_FALLBACK_POP } from '../../src/game/config';
+import { Rng } from '../../src/game/rng';
+import { EMPTY_CONTENT, metric, useStoryContent, type StoryContent } from '../../src/game/story/conditions';
 import * as C from '../../src/game/story/content';
 import {
   BUILDING_TYPE_SET,
@@ -15,8 +16,69 @@ import {
   TARGETS,
   UNLOCKABLES,
 } from '../../src/game/story/content/vocab';
+import { findSpot, spotAvailable } from '../../src/game/story/effects';
+import { powerWeight } from '../../src/game/story/factions';
 import { DEFAULT_MODS } from '../../src/game/story/mods';
-import type { Card, Condition, Effect, FactionId, FlagValue, ModPatch } from '../../src/game/story/types';
+import type { Card, Condition, Effect, FactionId, FlagValue, ModPatch, SpotRule } from '../../src/game/story/types';
+import { MAP_SIZE, RoadKind, Terrain, ZoneType } from '../../src/game/types';
+import type { World } from '../../src/game/world';
+import { flatWorld } from '../helpers';
+
+/**
+ * Which way is good for the player, per modifier key (+1 higher is better, −1 lower is
+ * better). A `perm` modifier may only hold keys listed here, each moved the good way:
+ * every penalty is timed (STORY.md §2.3 rule 3). `taxCap`, `cardRateMul` and
+ * `favorMonthly` are never permanent.
+ */
+const BONUS_DIR: Partial<Record<keyof ModPatch, 1 | -1>> = {
+  demandRes: 1,
+  demandCom: 1,
+  demandInd: 1,
+  landValueAdd: 1,
+  approvalAdd: 1,
+  crimeAdd: -1,
+  traceMonthly: -1,
+  outageChance: -1,
+  crimeMul: -1,
+  turfCrimeMul: -1,
+  pollutionMul: -1,
+  trafficMul: -1,
+  securityMul: 1,
+  taxIncomeMul: 1,
+  taxDemandMul: -1,
+  upkeepMul: -1,
+  buildCostMul: -1,
+  powerSupplyMul: 1,
+  powerDemandMul: -1,
+  growthMul: 1,
+  abandonMul: -1,
+  eventRateMul: -1,
+  turfSpreadMul: -1,
+  costMul: -1,
+  upkeepMulType: -1,
+};
+
+/** Keys of a patch that would hurt the player if they lasted for good. */
+function penaltyKeys(p: ModPatch): string[] {
+  const out: string[] = [];
+  for (const [k, v] of Object.entries(p) as [keyof ModPatch, unknown][]) {
+    const dir = BONUS_DIR[k];
+    if (!dir) {
+      out.push(k);
+      continue;
+    }
+    const mul = k.endsWith('Mul') || k === 'costMul' || k === 'upkeepMulType';
+    const vals = typeof v === 'object' && v !== null ? Object.values(v as Record<string, number>) : [v as number];
+    for (const x of vals) {
+      const delta = mul ? x - 1 : x;
+      if (delta * dir < 0) {
+        out.push(k);
+        break;
+      }
+    }
+  }
+  return out;
+}
 
 const { CARD_TOKEN_MAX, COPY_LIMITS, LINE_TOKEN_MAX, NOTE_TOKEN_MAX, worstCase, tokensIn } = C;
 
@@ -434,7 +496,7 @@ describe('story content lint (§13)', () => {
         } else if (typeof v !== 'number' || !Number.isFinite(v)) bad.push(`${where}: ${k} = ${String(v)}`);
       }
     };
-    eachEffect((e, site) => {
+    eachEffect((e, site, inIf) => {
       const w = site.where;
       if (!EFFECT_KINDS.has(e.t)) bad.push(`${w}: effect ${e.t}`);
       // A bare strongestTurf target only means something inside a turf effect (§10.1).
@@ -453,8 +515,13 @@ describe('story content lint (§13)', () => {
           break;
         case 'mod':
           checkPatch(e.mods, w);
-          // Every penalty is timed (§2.3 rule 3).
-          if (e.days === 'perm' || e.days <= 0) bad.push(`${w}: mod ${e.id} must be timed`);
+          // Every penalty is timed (§2.3 rule 3). A permanent modifier is a pure bonus, and only
+          // on a `once` card: a lasting choice about one physical decision (EXPANSION §8.3).
+          if (e.days === 'perm') {
+            if (!site.card?.once || inIf) bad.push(`${w}: perm mod ${e.id} outside a once card's choice`);
+            const pen = penaltyKeys(e.mods);
+            if (pen.length) bad.push(`${w}: perm mod ${e.id} holds a penalty (${pen.join(', ')}) and must be timed`);
+          } else if (e.days <= 0) bad.push(`${w}: mod ${e.id} must be timed`);
           break;
         case 'income':
           if (e.months <= 0) bad.push(`${w}: income months`);
@@ -556,18 +623,19 @@ describe('story content lint (§13)', () => {
     expect(bad).toEqual([]);
   });
 
-  it('holds the 43-card deck as specified (§7.8)', () => {
+  it('holds the 43-card deck as specified (§7.8), plus the 11 expansion cards (EXPANSION §8.3)', () => {
     const per = Object.fromEntries(Object.entries(C.FACTION_DECKS).map(([f, cards]) => [f, cards.length]));
     expect(per).toEqual({ board: 6, basalt: 6, nacre: 7, undertow: 7, kites: 7, tuning: 6 });
     expect(C.MULTI_CARDS.length).toBe(2);
     expect(C.SYSTEM_CARDS.length).toBe(2);
-    expect(C.DECK.length).toBe(43);
+    expect(C.EXPANSION_CARDS.length).toBe(11);
+    expect(C.DECK.length).toBe(43 + 11);
     for (const [f, cards] of Object.entries(C.FACTION_DECKS)) for (const c of cards) expect(c.speaker, c.id).toBe(f);
     for (const c of C.DECK) expect(['faction', 'hostile', 'system'], c.id).toContain(c.kind);
     // 83 cards in the review log (20 beats + 43 deck + 12 logs + 6 ending cards + review + coda),
-    // plus 3 whisper callbacks.
+    // plus 3 whisper callbacks, plus the 11 expansion cards.
     expect(C.BEAT_CARDS.length).toBe(20);
-    expect(CARDS.length).toBe(86);
+    expect(CARDS.length).toBe(86 + 11);
     expect(CARDS.filter((c) => c.kind === 'whisper').length).toBe(3);
   });
 
@@ -803,7 +871,7 @@ describe('story clarity pass (briefs, intros, glossary)', () => {
 
   it('runs the banned-term and "!" scans over every clarity text', () => {
     const texts = clarityTexts();
-    // 86 briefs, 6 summaries, 6 recaps, the epilogue, 6 faction lines and the glossary.
+    // 97 briefs (86 + 11 expansion), 6 summaries, 6 recaps, the epilogue, 6 faction lines and the glossary.
     expect(texts.length).toBe(CARDS.length + 6 + 6 + 1 + 6 + C.GLOSSARY.length);
     const bad: string[] = [];
     for (const { where, text } of texts) {
@@ -854,5 +922,249 @@ describe('story clarity pass (briefs, intros, glossary)', () => {
     const own = C.FACTIONS.tuning.about ?? '';
     if (OHMURA.test(own) || /\bbuilt you\b|\bengineer\b|\b2084\b/i.test(own)) bad.push('tuning about spoils Sister Ohm');
     expect(bad).toEqual([]);
+  });
+});
+
+// ── Expansion content (docs/EXPANSION.md §8) ────────────────────────────────
+//
+// The eleven expansion deck cards, the §8.2 mood and power rows, and the three spot
+// rules they use. Copy limits, banned terms, briefs and the rest are covered above.
+
+const EXPANSION_IDS = [
+  'ex.manifest',
+  'ex.backway',
+  'ex.convoy',
+  'ex.lounge',
+  'ex.glassshore',
+  'ex.pricedout',
+  'ex.thecut',
+  'ex.rights',
+  'ex.stringlights',
+  'ex.nofly',
+  'ex.nightschool',
+];
+/** The only expansion cards that may ask again (EXPANSION §8.3). */
+const EXPANSION_RECURRING = new Set(['ex.manifest', 'ex.backway', 'ex.pricedout']);
+/** Values ex.rights may give flag launchRights (Game's Rights row and powerWeight read them). */
+const LAUNCH_RIGHTS = ['board', 'basalt', 'nacre', 'kites'];
+
+/** A faction's power weight computed from POWER_TERMS data, the way powerWeight sums it live. */
+function termWeight(w: World, terms: readonly C.PowerTerm[]): number {
+  let sum = 0;
+  for (const t of terms) {
+    if ('m' in t) {
+      let v = 0;
+      for (const k of typeof t.m === 'string' ? [t.m] : t.m) v += metric(w, k);
+      const x = t.mul * v;
+      sum += t.max === undefined ? x : Math.min(x, t.max);
+    } else if ('flag' in t) {
+      const f = w.story.flags[t.flag];
+      if (t.eq === undefined ? !!f : f === t.eq) sum += t.add;
+    } else {
+      const f = w.story.flags[t.flagCount];
+      sum += t.mul * (typeof f === 'number' ? f : f ? 1 : 0);
+    }
+  }
+  return sum;
+}
+
+describe('expansion story content (EXPANSION §8)', () => {
+  const ex = C.EXPANSION_CARDS;
+
+  it('adds the eleven §8.3 cards to the deck only, each a faction card with the listed shape', () => {
+    expect(ex.map((c) => c.id)).toEqual(EXPANSION_IDS);
+    const bad: string[] = [];
+    const inFactionDecks = new Set(Object.values(C.FACTION_DECKS).flatMap((cards) => cards.map((c) => c.id)));
+    const deck = new Set(C.DECK.map((c) => c.id));
+    for (const c of ex) {
+      if (!deck.has(c.id) || !CARD_BY_ID.has(c.id)) bad.push(`${c.id}: not in DECK and CARD_LIST`);
+      if (inFactionDecks.has(c.id)) bad.push(`${c.id}: must stay out of FACTION_DECKS`);
+      if (c.kind !== 'faction') bad.push(`${c.id}: kind ${c.kind}`);
+      if (!c.when) bad.push(`${c.id}: no when`);
+      if (!c.brief) bad.push(`${c.id}: no brief`);
+      if (c.star || c.queuedOnly || c.seasonal || c.with) bad.push(`${c.id}: no ★, follow-up, seasonal or second faction`);
+      if (c.weight !== (c.id === 'ex.rights' ? 30 : 10)) bad.push(`${c.id}: weight ${String(c.weight)}`);
+      if (c.cooldown !== 720) bad.push(`${c.id}: cooldown ${String(c.cooldown)}`);
+      if (!!c.once === EXPANSION_RECURRING.has(c.id)) bad.push(`${c.id}: once should be ${!EXPANSION_RECURRING.has(c.id)}`);
+      if (!!c.onDemand !== (c.id === 'ex.rights')) bad.push(`${c.id}: onDemand`);
+      for (const ch of c.choices) for (const e of ch.fx) if (e.t === 'queue') bad.push(`${c.id}: queues ${e.card} (no expansion card queues another)`);
+    }
+    expect(bad).toEqual([]);
+    expect(ex.filter((c) => c.once).length).toBe(8);
+    expect(Object.fromEntries(ex.map((c) => [c.id, c.speaker]))).toEqual({
+      'ex.manifest': 'undertow',
+      'ex.backway': 'undertow',
+      'ex.convoy': 'basalt',
+      'ex.lounge': 'nacre',
+      'ex.glassshore': 'nacre',
+      'ex.pricedout': 'board',
+      'ex.thecut': 'board',
+      'ex.rights': 'board',
+      'ex.stringlights': 'kites',
+      'ex.nofly': 'kites',
+      'ex.nightschool': 'tuning',
+    });
+    expect(Object.fromEntries(ex.filter((c) => c.spot).map((c) => [c.id, c.spot]))).toEqual({
+      'ex.backway': 'alley',
+      'ex.glassshore': 'shore',
+      'ex.thecut': 'highway',
+    });
+  });
+
+  it('keeps the $ / $$ / $$$ symbols out of what speakers say (bodies and titles)', () => {
+    const bad: string[] = [];
+    for (const c of CARDS) for (const [field, text] of [['body', c.body], ['title', c.title]] as const) if (text.includes('$')) bad.push(`${c.id} ${field}`);
+    expect(bad).toEqual([]);
+  });
+
+  it('opens on demand only for once faction cards, and ex.rights hands the launch rights to exactly one holder', () => {
+    const bad: string[] = [];
+    for (const c of CARDS) if (c.onDemand && (!c.once || c.kind !== 'faction')) bad.push(`${c.id}: an on-demand card must be a once faction card`);
+    expect(bad).toEqual([]);
+    const rights = CARD_BY_ID.get('ex.rights')!;
+    expect(rights.onDemand).toBe(true);
+    // Drawable only while nobody holds the rights, so it can't reopen after an answer.
+    const when = rights.when!;
+    expect('all' in when && when.all).toEqual([
+      { m: 'count.spaceport', op: '>=', v: 1 },
+      { not: { flag: 'launchRights' } },
+    ]);
+    const given = rights.choices.map((ch) => ch.fx.filter((e) => e.t === 'flag' && e.key === 'launchRights').map((e) => (e.t === 'flag' ? e.v : null)));
+    expect(given).toEqual([['basalt'], ['nacre'], ['board'], ['kites']]);
+    expect(new Set(given.flat())).toEqual(new Set(LAUNCH_RIGHTS));
+    expect(rights.choices.find((ch) => ch.default)?.fx).toContainEqual({ t: 'flag', key: 'launchRights', v: 'board' });
+    const kites = rights.choices[3];
+    expect(kites.requires).toEqual({ m: 'standing.kites', op: '>=', v: 20 });
+    expect(kites.lockedHint).toBe('Needs the Kites Friendly');
+  });
+
+  it('allows a permanent modifier only as a pure bonus (every penalty is timed, STORY.md §2.3 rule 3)', () => {
+    expect(penaltyKeys({ demandInd: 0.06, approvalAdd: -2 })).toEqual(['approvalAdd']);
+    expect(penaltyKeys({ landValueAdd: 0.01 })).toEqual([]);
+    expect(penaltyKeys({ crimeMul: 1.1, buildCostMul: 0.9, costMul: { stack: 1.2 } })).toEqual(['crimeMul', 'costMul']);
+    expect(penaltyKeys({ taxCap: 15 })).toEqual(['taxCap']);
+    // The expansion's lasting choices: perm bonuses, timed penalties.
+    const perm: string[] = [];
+    eachEffect((e, site) => e.t === 'mod' && e.days === 'perm' && perm.push(site.where.split(' ')[0]));
+    expect([...new Set(perm)].sort()).toEqual(['ex.convoy', 'ex.glassshore', 'ex.lounge', 'ex.nightschool', 'ex.rights', 'ex.stringlights']);
+  });
+
+  it('adds the §8.2 mood drivers', () => {
+    const row = (f: FactionId, label: string) => C.FACTIONS[f].mood.find((d) => d.label === label);
+    expect(row('board', 'Priced out')).toEqual({ label: 'Priced out', m: 'wealth.high', offset: 0.3, mul: -40, min: -8, max: 0 });
+    expect(row('basalt', 'Seaports')).toEqual({ label: 'Seaports', m: 'count.seaport', mul: 3, min: 0, max: 6 });
+    expect(row('nacre', 'Glass towers')).toEqual({ label: 'Glass towers', m: 'wealth.high', offset: 0.05, mul: 50, min: 0, max: 8 });
+    expect(row('undertow', 'Back alleys')).toEqual({ label: 'Back alleys', m: 'roads.alley', mul: 1 / 15, min: 0, max: 5 });
+    // Kites (6) and Tuning (5) get cards and power terms instead.
+    expect(C.FACTIONS.kites.mood.length).toBe(6);
+    expect(C.FACTIONS.tuning.mood.length).toBe(5);
+  });
+
+  it('caps the cheap-tile power terms, and POWER_TERMS sums exactly what powerWeight does live', () => {
+    const bad: string[] = [];
+    for (const [f, terms] of Object.entries(C.POWER_TERMS))
+      for (const t of terms) {
+        if ('max' in t && t.max !== undefined && !(t.max > 0)) bad.push(`${f}: max ${t.max}`);
+        // Alleys cost 6 CR and power.gangs ≥ 30% is an ending claim: these terms must be capped.
+        if ('m' in t && (t.m === 'roads.alley' || t.m === 'skyway.tiles') && t.max === undefined) bad.push(`${f}: ${t.m} uncapped`);
+      }
+    expect(bad).toEqual([]);
+    const capped = Object.values(C.POWER_TERMS).flat().filter((t) => 'm' in t && t.max !== undefined);
+    expect(capped).toEqual([
+      { m: 'roads.alley', mul: POWER_WEIGHTS.undertow.perAlley, max: POWER_WEIGHTS.undertow.alleyMax },
+      { m: 'skyway.tiles', mul: POWER_WEIGHTS.kites.perSkywayTile, max: POWER_WEIGHTS.kites.skywayMax },
+    ]);
+
+    const w = flatWorld(77);
+    let x = 0;
+    for (const t of ['precinct', 'clinic', 'reactor', 'foundry', 'datahub', 'spire', 'glarewall', 'tidemarket', 'roost', 'seaport', 'seaport', 'airport'] as const) {
+      expect(w.addBuilding(t, x, 2), t).not.toBeNull();
+      x += BUILDINGS[t].size + 1;
+    }
+    const s = w.stats;
+    s.approval = 62;
+    s.jobsInd = 800;
+    s.jobsCom = 640;
+    w.turf.stats.tiles.undertow = 30;
+    w.turf.stats.tiles.kites = 18;
+    w.story.flags.honestTie = true;
+    w.story.flags.branded = 2;
+    w.story.flags.oneTide = 'kites';
+    const same = () => {
+      for (const f of ['board', 'basalt', 'nacre', 'undertow', 'kites'] as const) expect(termWeight(w, C.POWER_TERMS[f]), f).toBeCloseTo(powerWeight(w, f), 6);
+    };
+    for (const [alley, sky] of [[0, 0], [40, 60], [1000, 400]]) {
+      s.roads.alley = alley;
+      s.roads.skyway = sky;
+      same();
+    }
+    for (const holder of LAUNCH_RIGHTS) {
+      w.story.flags.launchRights = holder;
+      same();
+    }
+    // 1,000 alleys add exactly the cap; 400 sky tiles add exactly theirs.
+    expect(termWeight(w, C.POWER_TERMS.undertow.filter((t) => 'm' in t && t.m === 'roads.alley'))).toBe(POWER_WEIGHTS.undertow.alleyMax);
+    expect(termWeight(w, C.POWER_TERMS.kites.filter((t) => 'm' in t && t.m === 'skyway.tiles'))).toBe(POWER_WEIGHTS.kites.skywayMax);
+  });
+
+  it('resolves the highway, alley and shore spot rules to real places, deterministically', () => {
+    const rng = new Rng(1);
+    const pick = (w: World, rule: SpotRule) => [spotAvailable(w, rule), findSpot(w, rule, rng)] as const;
+    const home = (w: World, x: number, y: number, abandoned = false) => {
+      w.setZone(x, y, ZoneType.Residential);
+      w.setLevel(x, y, 1, abandoned);
+    };
+
+    // highway: the developed Hab Block within 3 of a Highway tile with the highest noise.
+    let w = flatWorld(5);
+    home(w, 23, 15);
+    expect(pick(w, 'highway')).toEqual([false, -1]);
+    for (let y = 10; y <= 30; y++) w.setRoad(20, y, RoadKind.Highway);
+    expect(pick(w, 'highway')).toEqual([true, w.idx(23, 15)]);
+    home(w, 22, 25);
+    home(w, 24, 20); // 4 tiles out: too far
+    home(w, 21, 12, true); // abandoned
+    w.setZone(21, 18, ZoneType.Commercial);
+    w.setLevel(21, 18, 2);
+    const noise = w.fields.noise;
+    noise[w.idx(23, 15)] = 0.4;
+    noise[w.idx(22, 25)] = 0.6;
+    noise[w.idx(24, 20)] = 0.9;
+    noise[w.idx(21, 12)] = 0.95;
+    noise[w.idx(21, 18)] = 0.95;
+    expect(pick(w, 'highway')).toEqual([true, w.idx(22, 25)]);
+    // A street is not a highway.
+    for (let y = 10; y <= 30; y++) w.setRoadKind(20, y, RoadKind.Street);
+    expect(pick(w, 'highway')).toEqual([false, -1]);
+
+    // alley: the Alley tile with the highest Undertow strength, else the lowest-index one.
+    w = flatWorld(6);
+    expect(pick(w, 'alley')).toEqual([false, -1]);
+    for (const ax of [5, 6, 7]) w.setRoad(ax, 40, RoadKind.Alley);
+    w.setRoad(4, 40, RoadKind.Street);
+    expect(pick(w, 'alley')).toEqual([true, w.idx(5, 40)]);
+    const t = w.turf;
+    t.owner[w.idx(6, 40)] = 2; // the Kites, stronger: not Undertow
+    t.str[w.idx(6, 40)] = 90;
+    t.owner[w.idx(7, 40)] = 1;
+    t.str[w.idx(7, 40)] = 40;
+    t.owner[w.idx(4, 40)] = 1; // the street beside it
+    t.str[w.idx(4, 40)] = 99;
+    expect(pick(w, 'alley')).toEqual([true, w.idx(7, 40)]);
+
+    // shore: the developed Hab Block within 2 of water with the highest land value.
+    w = flatWorld(7);
+    home(w, 42, 10);
+    expect(pick(w, 'shore')).toEqual([false, -1]); // no water on a flat map
+    for (let y = 0; y < MAP_SIZE; y++) w.tiles[w.idx(40, y)].terrain = Terrain.Water;
+    home(w, 41, 20);
+    home(w, 43, 30); // 3 tiles out
+    home(w, 41, 40, true); // abandoned
+    const lv = w.fields.landValue;
+    lv[w.idx(42, 10)] = 0.3;
+    lv[w.idx(41, 20)] = 0.5;
+    lv[w.idx(43, 30)] = 0.9;
+    lv[w.idx(41, 40)] = 0.9;
+    expect(pick(w, 'shore')).toEqual([true, w.idx(41, 20)]);
   });
 });

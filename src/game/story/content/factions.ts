@@ -44,6 +44,8 @@ export const FACTIONS: Record<FactionId, Faction> = {
       { label: 'Crime', m: 'avgCrime', offset: 0.25, mul: -40, min: -10, max: 10 },
       { label: 'Precincts and clinics', m: ['count.precinct', 'count.clinic'], mul: 2, min: 0, max: 8 },
       { label: 'Turf', m: ['turf.undertow', 'turf.kites'], mul: -1 / 40, min: -10, max: 0 },
+      // Expansion (docs/EXPANSION.md §8.2): glass towers taking over a third of the city.
+      { label: 'Priced out', m: 'wealth.high', offset: 0.3, mul: -40, min: -8, max: 0 },
     ],
     deal: {
       id: 'deal.board',
@@ -75,6 +77,8 @@ export const FACTIONS: Record<FactionId, Faction> = {
       { label: 'Reactors', m: ['count.reactor', 'count.foundry'], mul: 4, min: 0, max: 8 },
       { label: 'Stratablocks', m: 'count.stack', mul: 3, min: 0, max: 9 },
       { label: 'Tax', m: 'tax', offset: 12, mul: -2, min: -10, max: 0 },
+      // Expansion (EXPANSION §8.2).
+      { label: 'Seaports', m: 'count.seaport', mul: 3, min: 0, max: 6 },
     ],
     deal: {
       id: 'deal.basalt',
@@ -111,6 +115,8 @@ export const FACTIONS: Record<FactionId, Faction> = {
       { label: 'Data Hubs', m: 'count.datahub', mul: 3, min: 0, max: 9 },
       { label: 'Pollution', when: m('avgPollution', '>', 0.3), value: -10 },
       { label: 'Kites turf', m: 'turf.kites', mul: -1 / 30, min: -8, max: 0 },
+      // Expansion (EXPANSION §8.2): the share of $$$ blocks.
+      { label: 'Glass towers', m: 'wealth.high', offset: 0.05, mul: 50, min: 0, max: 8 },
     ],
     deal: {
       id: 'deal.nacre',
@@ -148,6 +154,8 @@ export const FACTIONS: Record<FactionId, Faction> = {
       { label: 'Own turf', m: 'turf.undertow', mul: 1 / 20, min: 0, max: 6 },
       { label: 'Secured turf', m: 'turfSecured.undertow', mul: -10, min: -10, max: 0 },
       { label: 'Ribbon on turf', m: 'railOnTurf.undertow', mul: -1 / 10, min: -6, max: 0 },
+      // Expansion (EXPANSION §8.2): back alley tiles.
+      { label: 'Back alleys', m: 'roads.alley', mul: 1 / 15, min: 0, max: 5 },
     ],
     // For gangs the pact is the deal: one button, no cooldown, renewable while Friendly (§2.2).
     deal: {
@@ -274,11 +282,12 @@ export const TIER_TEXT: Record<FactionId, { perk: string; cold: string | null; h
 // ── Power share (§2.4) ──────────────────────────────────────────────────────
 
 /**
- * One term of a faction's power weight: `mul × metric` (summed metrics), `add` while a
- * flag matches, or `mul × Number(flag)` for a counting flag (`branded`).
+ * One term of a faction's power weight: `mul × metric` (summed metrics, capped at `max`
+ * when given), `add` while a flag matches, or `mul × Number(flag)` for a counting flag
+ * (`branded`).
  */
 export type PowerTerm =
-  | { m: Metric | Metric[]; mul: number }
+  | { m: Metric | Metric[]; mul: number; max?: number }
   | { flag: string; eq?: FlagValue; add: number }
   | { flagCount: string; mul: number };
 
@@ -290,6 +299,8 @@ export const POWER_TERMS: Record<'board' | 'basalt' | 'nacre' | 'undertow' | 'ki
     { m: 'count.precinct', mul: W.board.perPrecinct },
     { m: 'count.clinic', mul: W.board.perClinic },
     { flag: 'honestTie', add: W.board.honestTie },
+    // Expansion (EXPANSION §8.2): the Spaceport's launch rights (ex.rights).
+    { flag: 'launchRights', eq: 'board', add: W.board.launchRights },
   ],
   basalt: [
     { m: 'jobs.ind', mul: 1 / W.basalt.jobsIndDiv },
@@ -298,6 +309,8 @@ export const POWER_TERMS: Record<'board' | 'basalt' | 'nacre' | 'undertow' | 'ki
     { m: 'crowns.foundry', mul: W.basalt.perCrownFoundry },
     { flagCount: 'branded', mul: W.basalt.branded },
     { flag: 'patron', eq: 'basalt', add: W.basalt.patron },
+    { m: 'count.seaport', mul: W.basalt.perSeaport },
+    { flag: 'launchRights', eq: 'basalt', add: W.basalt.launchRights },
   ],
   nacre: [
     { m: 'jobs.com', mul: 1 / W.nacre.jobsComDiv },
@@ -306,17 +319,23 @@ export const POWER_TERMS: Record<'board' | 'basalt' | 'nacre' | 'undertow' | 'ki
     { m: 'count.glarewall', mul: W.nacre.perGlarewall },
     { m: 'crowns.glare', mul: W.nacre.perCrownGlare },
     { flag: 'patron', eq: 'nacre', add: W.nacre.patron },
+    { m: 'count.airport', mul: W.nacre.perAirport },
+    { flag: 'launchRights', eq: 'nacre', add: W.nacre.launchRights },
   ],
   undertow: [
     { m: 'turf.undertow', mul: W.undertow.perTurfTile },
     { m: 'count.tidemarket', mul: W.undertow.perTidemarket },
     { flag: 'oneTide', eq: 'undertow', add: W.undertow.oneTide },
+    // Capped: alleys are cheap, and power.gangs ≥ 30% is an ending claim (EXPANSION §8.2).
+    { m: 'roads.alley', mul: W.undertow.perAlley, max: W.undertow.alleyMax },
   ],
   kites: [
     { m: 'turf.kites', mul: W.kites.perTurfTile },
     { m: 'count.roost', mul: W.kites.perRoost },
     { m: 'crowns.nest', mul: W.kites.perCrownNest },
     { flag: 'oneTide', eq: 'kites', add: W.kites.oneTide },
+    { m: 'skyway.tiles', mul: W.kites.perSkywayTile, max: W.kites.skywayMax },
+    { flag: 'launchRights', eq: 'kites', add: W.kites.launchRights },
   ],
 };
 

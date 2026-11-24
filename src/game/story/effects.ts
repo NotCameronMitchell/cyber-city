@@ -5,7 +5,7 @@
 //
 //   applyEffects(host, fx, ctx)  apply left to right; an effect whose target
 //                                can't be resolved is skipped, never an error
-//   findSpot / spotAvailable     §7.1 spot rules
+//   findSpot / spotAvailable     §7.1 spot rules (+ EXPANSION §2.2 highway, alley, shore)
 //   fillTokens                   {city} {district} {patron} {rival} {year} {coherence} …
 //   hintsFor / effectsText       choice hint chips and the exact-effects popover
 //   writeLocals                  story.locals → world.layerParts.local → composeLayers
@@ -14,10 +14,10 @@
 // hooks) go through the EffectHost the director implements.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { BUILDINGS, FACTION_IDS, FACTION_LABELS, GANG_IDS, GANG_NEWS_NAME, STANDING, TRACE, TURF } from '../config';
+import { BUILDINGS, FACTION_IDS, FACTION_LABELS, GANG_IDS, GANG_NEWS_NAME, STANDING, TRACE, TURF, TURF_OWNER } from '../config';
 import { capitalizeFirst, districtName } from '../news';
 import type { Rng } from '../rng';
-import { DAYS_PER_MONTH, MAP_SIZE, Terrain, ZoneType, type Building, type BuildingType } from '../types';
+import { DAYS_PER_MONTH, MAP_SIZE, RoadKind, Terrain, ZoneType, type Building, type BuildingType } from '../types';
 import type { World } from '../world';
 import { evalCond, storyContent } from './conditions';
 import { changeFavor, endingRules, isVisible, patronOf, resolveRef, rivalOf } from './factions';
@@ -252,6 +252,89 @@ function strongestOf(world: World, gang: GangId | 'all'): number {
   return world.turf.str[a] >= world.turf.str[b] ? a : b;
 }
 
+// ── Expansion spot rules (docs/EXPANSION.md §2.2, §8.3) ─────────────────────
+// Deterministic (no RNG), so spotAvailable and findSpot always agree and {district}
+// names a real place. Each is one or two passes over the map with reused scratch.
+
+const nearMask = new Uint8Array(AREA);
+const nearTmp = new Uint8Array(AREA);
+
+/** Chebyshev dilation of `nearMask` by r, in place (separable: rows into nearTmp, then columns). */
+function dilateNear(r: number): void {
+  for (let y = 0; y < N; y++) {
+    const row = y * N;
+    for (let x = 0; x < N; x++) {
+      let v = 0;
+      const xa = Math.max(0, x - r);
+      const xb = Math.min(N - 1, x + r);
+      for (let xx = xa; xx <= xb && !v; xx++) v = nearMask[row + xx];
+      nearTmp[row + x] = v;
+    }
+  }
+  for (let x = 0; x < N; x++) {
+    for (let y = 0; y < N; y++) {
+      let v = 0;
+      const ya = Math.max(0, y - r);
+      const yb = Math.min(N - 1, y + r);
+      for (let yy = ya; yy <= yb && !v; yy++) v = nearTmp[yy * N + x];
+      nearMask[y * N + x] = v;
+    }
+  }
+}
+
+/** A developed (lived-in, not abandoned) Hab Block tile. */
+const isHabBlock = (world: World, i: number) => world.tiles[i].zone === ZoneType.Residential && isDeveloped(world, i);
+
+/** 'highway': the developed Hab Block within 3 of a Highway tile with the highest noise (ties: lowest index), −1 if none. */
+function highwaySpot(world: World): number {
+  const tiles = world.tiles;
+  let any = false;
+  for (let i = 0; i < AREA; i++) {
+    const t = tiles[i];
+    const hw = t.road && t.roadKind === RoadKind.Highway;
+    nearMask[i] = hw ? 1 : 0;
+    if (hw) any = true;
+  }
+  if (!any) return -1;
+  dilateNear(3);
+  const noise = world.fields.noise;
+  let best = -1;
+  for (let i = 0; i < AREA; i++) {
+    if (!nearMask[i] || !isHabBlock(world, i)) continue;
+    if (best < 0 || noise[i] > noise[best]) best = i;
+  }
+  return best;
+}
+
+/** 'alley': the Alley tile with the highest Undertow turf strength, else the lowest-index Alley tile, −1 if none. */
+function alleySpot(world: World): number {
+  const tiles = world.tiles;
+  const owner = world.turf.owner;
+  const str = world.turf.str;
+  const U = TURF_OWNER.undertow;
+  let first = -1;
+  let best = -1;
+  for (let i = 0; i < AREA; i++) {
+    const t = tiles[i];
+    if (!t.road || t.roadKind !== RoadKind.Alley) continue;
+    if (first < 0) first = i;
+    if (owner[i] === U && str[i] > 0 && (best < 0 || str[i] > str[best])) best = i;
+  }
+  return best >= 0 ? best : first;
+}
+
+/** 'shore': the developed Hab Block within 2 of water with the highest land value (ties: lowest index), −1 if none. */
+function shoreSpot(world: World): number {
+  const lv = world.fields.landValue;
+  let best = -1;
+  for (let i = 0; i < AREA; i++) {
+    if (!isHabBlock(world, i)) continue;
+    if (best >= 0 && lv[i] <= lv[best]) continue;
+    if (nearWater(world, i, 2)) best = i;
+  }
+  return best;
+}
+
 /** Can this spot rule find a tile right now? (Card eligibility; cheap.) */
 export function spotAvailable(world: World, rule: SpotRule): boolean {
   const s = world.stats;
@@ -271,6 +354,12 @@ export function spotAvailable(world: World, rule: SpotRule): boolean {
       return world.vertical.activeLinks.size > 0;
     case 'random':
       return s.developed.res + s.developed.com + s.developed.ind > 0;
+    case 'highway':
+      return highwaySpot(world) >= 0;
+    case 'alley':
+      return alleySpot(world) >= 0;
+    case 'shore':
+      return shoreSpot(world) >= 0;
   }
   return false;
 }
@@ -308,6 +397,12 @@ export function findSpot(world: World, rule: SpotRule, rng: Rng): number {
     }
     case 'random':
       return randomTile(world, rng, (i) => isDeveloped(world, i));
+    case 'highway':
+      return highwaySpot(world);
+    case 'alley':
+      return alleySpot(world);
+    case 'shore':
+      return shoreSpot(world);
   }
   return -1;
 }
