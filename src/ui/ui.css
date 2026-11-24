@@ -3701,7 +3701,7 @@ body {
 
 .cc-card.is-noshore .cc-card-cost {
   font-family: var(--cc-font);
-  font-size: 11.5px;
+  font-size: 12px;
   line-height: 1.2;
   color: var(--cc-amber);
 }

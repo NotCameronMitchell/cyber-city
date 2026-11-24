@@ -32,6 +32,7 @@ import {
   a2hsHint,
   citySummary,
   driftOffset,
+  holdGame,
   replaceNote,
   startButtons,
   startKey,
@@ -311,10 +312,7 @@ export class StartScreen {
     if (this.flow.phase !== 'play') return;
     if (!this.save() && storageWorks()) this.game.toast('This city could not be saved: storage is full', 'error');
     this.flow.show();
-    const { game } = this;
-    game.setSpeed(0);
-    game.setPreview(null);
-    game.select(null);
+    holdGame(this.game);
     this.ui.ctx.actions.closeTray();
     this.ui.story.setHold(true);
     this.present(false);

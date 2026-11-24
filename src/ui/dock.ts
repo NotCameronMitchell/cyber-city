@@ -7,7 +7,7 @@
 import { isUnlocked, lockedReason } from '../game/actions';
 import { BUILDINGS, isBuildingTool } from '../game/config';
 import { storageGet, storageSet } from '../game/game';
-import { shoreSites } from '../game/ports';
+import { shoreGeometry, shoreSites } from '../game/ports';
 import { isRoadTool, type RoadTool } from '../game/roads';
 import type { OverlayId, ToolId } from '../game/types';
 import type { UIContext } from './context';
@@ -43,6 +43,19 @@ export const NEWDOT_KEY = 'cybercity.ui.newdot.v1';
 const NEW_TOOLS: ReadonlySet<ToolId> = new Set<ToolId>(['alley', 'avenue', 'highway', 'skyway', 'academy', 'seaport', 'airport', 'spaceport']);
 /** "No straight shore here" (EXPANSION §5.1): the Seaport card on a map without a valid site. */
 export const NO_SHORE = 'No straight shore here';
+/** The Seaport card when the map has straight shore but every site on it is roaded, built or developed. */
+export const SHORE_BUILT = 'Shore built up';
+/** Its toast on a tap: what to do about it. */
+export const SHORE_BUILT_TOAST = 'Shore built up: clear a waterfront block';
+
+/**
+ * The Seaport card's note (§5.1): null while a clear shore site exists, SHORE_BUILT when the
+ * map's shape has straight shore that is all built up, NO_SHORE when it has none at all.
+ */
+export function seaportNote(sites: number, geometry: number): string | null {
+  if (sites > 0) return null;
+  return geometry > 0 ? SHORE_BUILT : NO_SHORE;
+}
 
 function replayShake(el: HTMLElement): void {
   el.classList.remove('is-shake');
@@ -89,7 +102,8 @@ export class Dock {
   /** Tool ids whose card was on screen in an open tray (NEWDOT_KEY). */
   private readonly seen: Set<ToolId>;
   /** Valid Seaport sites on the current map, counted when the Infra tray opens (-1 = not counted). */
-  private shoreCount = -1;
+  /** The Seaport card's note for the open tray (seaportNote), or null. */
+  private shoreNote: string | null = null;
   private shoreMarks: Uint8Array | null = null;
   private readonly tray: HTMLElement;
   private readonly trayTitle: HTMLElement;
@@ -312,7 +326,8 @@ export class Dock {
       // Counted once per open (< 1 ms): a map with no straight shore says so on the card (§5.1).
       const w = this.ctx.game.world;
       if (!this.shoreMarks || this.shoreMarks.length !== w.size * w.size) this.shoreMarks = new Uint8Array(w.size * w.size);
-      this.shoreCount = shoreSites(w, this.shoreMarks);
+      const sites = shoreSites(w, this.shoreMarks);
+      this.shoreNote = seaportNote(sites, sites > 0 ? 0 : shoreGeometry(w));
     }
     for (const tool of cat.items ?? []) {
       const m = toolMeta(tool);
@@ -380,8 +395,8 @@ export class Dock {
       replayShake(card);
       return;
     }
-    if (tool === 'seaport' && this.shoreCount === 0) {
-      game.toast(NO_SHORE, 'info');
+    if (tool === 'seaport' && this.shoreNote) {
+      game.toast(this.shoreNote === SHORE_BUILT ? SHORE_BUILT_TOAST : this.shoreNote, 'info');
       this.ctx.sfx('error');
       replayShake(card);
       return;
@@ -421,11 +436,11 @@ export class Dock {
         }
       }
       if (!locked) this.markSeen(tool);
-      const noShore = tool === 'seaport' && !locked && this.shoreCount === 0;
+      const noShore = tool === 'seaport' && !locked && this.shoreNote !== null;
       const price = livePrice(game, tool);
       if (noShore) {
         c.price = -1;
-        setText(c.cost, NO_SHORE);
+        setText(c.cost, this.shoreNote!);
       } else if (price !== c.price) {
         c.price = price;
         setText(c.cost, costLabel({ ...m, cost: price }));

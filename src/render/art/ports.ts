@@ -676,6 +676,23 @@ export const MOOR_D = 0.55;
 const TURN_D = 2.6;
 /** Farthest approach start (tiles out from the quay, §5.1). */
 const APPROACH_MAX = 12;
+/** Tiles of ship reach past the quay for culling: the full approach plus a tile for hull width and lights. */
+const SHIP_REACH = APPROACH_MAX + 1;
+const NO_REACH: readonly [number, number, number] = [0, 0, 0];
+const REACH_E: readonly [number, number, number] = [0, SHIP_REACH * HALF_W, SHIP_REACH * HALF_H];
+const REACH_S: readonly [number, number, number] = [SHIP_REACH * HALF_W, 0, SHIP_REACH * HALF_H];
+
+/**
+ * World px a building draws past its footprint box in its own depth slot, as [left, right,
+ * down], for the renderer's culling: a Seaport whose quay faces E or S draws its ship there (in
+ * front of the port on screen), up to APPROACH_MAX tiles out. Zero for everything else.
+ */
+export function shipReach(b: Pick<Building, 'type' | 'facing'>): readonly [number, number, number] {
+  if (b.type !== 'seaport') return NO_REACH;
+  const face = b.facing ?? 2;
+  return face === 1 ? REACH_E : face === 2 ? REACH_S : NO_REACH;
+}
+
 /** Ship cycle phases in clock-seconds: approach, moored, depart (SEAPORT.shipCycleSec = 80). */
 const SHIP_IN = 26;
 const SHIP_OUT = 54;
@@ -924,6 +941,10 @@ interface Cols {
   cable: string;
   containers: string[];
   containersSide: string[];
+  /** The rocket in flight: the parked sprite's floodlit material, so liftoff keeps its colour. */
+  rocket: string;
+  rocketSide: string;
+  rocketBand: string;
 }
 const colCache: Cols[] = [];
 function cols(night: number): Cols {
@@ -947,6 +968,9 @@ function cols(night: number): Cols {
     cable: m(STEEL, 0.6),
     containers: CONTAINERS.map((x) => m(mat(x), K_TOP)),
     containersSide: CONTAINERS.map((x) => m(mat(x), K_RIGHT * 0.9)),
+    rocket: m(ROCKET, K_TOP),
+    rocketSide: m(ROCKET, K_RIGHT),
+    rocketBand: m(ROCKET_BAND, K_TOP),
   };
   colCache[b] = c;
   return c;
@@ -1366,11 +1390,11 @@ function drawRocket(ctx: CanvasRenderingContext2D, x: number, y: number, z: numb
   const w = ROCKET_R * HL * Math.SQRT2;
   const body = ROCKET_H - 34;
   const yb = y - z;
-  ctx.fillStyle = c.bridgeSide;
+  ctx.fillStyle = c.rocketSide;
   ctx.fillRect(x - w, yb - body, w * 2, body);
-  ctx.fillStyle = c.bridge;
+  ctx.fillStyle = c.rocket;
   ctx.fillRect(x - w, yb - body, w * 0.9, body);
-  ctx.fillStyle = '#2a2c36';
+  ctx.fillStyle = c.rocketBand;
   ctx.fillRect(x - w, yb - 31, w * 2, 5);
   ctx.fillRect(x - w, yb - 95, w * 2, 5);
   ctx.beginPath();
@@ -1378,9 +1402,9 @@ function drawRocket(ctx: CanvasRenderingContext2D, x: number, y: number, z: numb
   ctx.lineTo(x, yb - ROCKET_H);
   ctx.lineTo(x + w, yb - body);
   ctx.closePath();
-  ctx.fillStyle = c.bridge;
+  ctx.fillStyle = c.rocket;
   ctx.fill();
-  ctx.fillStyle = '#2a2c36';
+  ctx.fillStyle = c.rocketBand;
   ctx.beginPath();
   ctx.moveTo(x - w, yb - 26);
   ctx.lineTo(x - w - 6, yb);

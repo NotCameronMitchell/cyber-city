@@ -266,6 +266,15 @@ const SETTLE = 0.2;
 const MAX_SPRITE_SCALE = 3.2;
 const fxState: FxState = { time: 0, night: 0, lit: true, offline: false, lod: false, phase: 0 };
 
+/**
+ * Start of a Renderer frame: the next draw re-reads the transform even when the time has not
+ * moved (the still title draws every frame at one time while the camera can still change).
+ */
+export function resetFrame(): void {
+  frameTime = NaN;
+  frameCtx = null;
+}
+
 /** Detect a new frame (time advanced or a different target) and refresh frame constants. */
 function sync(ctx: CanvasRenderingContext2D, env: ArtEnv) {
   if (env.time === frameTime && ctx === frameCtx) return;

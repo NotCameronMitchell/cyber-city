@@ -281,8 +281,11 @@ export class Backdrop {
 
     // Under-glow: the city lights bouncing off smog beneath the district.
     ctx.globalCompositeOperation = 'lighter';
-    const glowA: RGB = mix([230, 160, 96], [200, 40, 190], n);
-    const glowB: RGB = mix([200, 170, 120], [90, 60, 255], n);
+    // The hue steps in 1/32 of the night value (a bounded set of cached glow sprites); the
+    // alpha below keeps the smooth value.
+    const nq = Math.round(n * 32) / 32;
+    const glowA: RGB = mix([230, 160, 96], [200, 40, 190], nq);
+    const glowB: RGB = mix([200, 170, 120], [90, 60, 255], nq);
     const a = 0.22 + 0.25 * n;
     const pulse = 1 + Math.sin(time * 0.35) * 0.06;
     ctx.globalAlpha = a;

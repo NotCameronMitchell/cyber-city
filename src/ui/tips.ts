@@ -86,6 +86,23 @@ export class Tips {
     return this.current ? [this.current, ...this.queue] : [...this.queue];
   }
 
+  /**
+   * The active tool changed (before onTool): a tool's tip never outlives its tool. A tip for
+   * another tool, on screen or queued, is dropped without being marked seen, so it shows the
+   * next time its own tool is picked. Hint tips stay.
+   */
+  onToolChange(tool: ToolId): void {
+    const keep = toolTip(tool);
+    for (let k = this.queue.length - 1; k >= 0; k--) {
+      const id = this.queue[k];
+      if (TOOL_TIPS.has(id) && id !== keep) this.queue.splice(k, 1);
+    }
+    if (this.current && TOOL_TIPS.has(this.current) && this.current !== keep) {
+      this.current = null;
+      this.el.hidden = true;
+    }
+  }
+
   /** A tool was picked: queue its first-use tip. */
   onTool(tool: ToolId): void {
     const id = toolTip(tool);

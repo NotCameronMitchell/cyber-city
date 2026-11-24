@@ -13,7 +13,20 @@
 // surfaces and toasts wait. They resume, unchanged, once the fade is done.
 // ─────────────────────────────────────────────────────────────────────────────
 
+import type { Game } from '../../game/game';
+
 export type StartPhase = 'title' | 'setup' | 'leaving' | 'play';
+
+/**
+ * Menu › Main menu holds the city: the clock stops, and the live preview, any plan waiting for
+ * ✓ (its ghost and pill go with the title, so Enter must not buy it later) and the selection clear.
+ */
+export function holdGame(game: Pick<Game, 'setSpeed' | 'cancelPending' | 'setPreview' | 'select'>): void {
+  game.setSpeed(0);
+  game.cancelPending();
+  game.setPreview(null);
+  game.select(null);
+}
 
 /** Fade from the title into the city (ms); instant with reduced motion. */
 export const LEAVE_MS = 380;

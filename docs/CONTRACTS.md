@@ -104,7 +104,7 @@ is meant to be read moment to moment except launches, which are real-time.
 |---|---|
 | `game/roads.ts` | `RoadKind` helpers: `ROAD_TOOLS`, `roadLinks`, `frontable`, `roadPrice`, `dragResult`, `fillKinds`, `computeAccess`, `lostAccess` |
 | `game/wealth.ts` | tier tables (`zoneCapacity`, `zoneTaxMul`, `zonePowerMul`, `zonePollution`), `wealthScoreAt`, `wealthTerms`, `tierCap`, `potentialTier`, `stepTarget`, `wealthInfo` |
-| `game/ports.ts` | `shoreFacing`, `shoreSites`, `berthTiles`, `noiseDef`, `noiseReach` |
+| `game/ports.ts` | `shoreFacing`, `shoreSites`, `shoreGeometry`, `berthTiles`, `noiseDef`, `noiseReach` |
 | `game/skyway.ts` | sky bits (`SKY_N/E/S/W`, `SKY_RAMP`), `skyRampActive`, `skywayDocks`, `planSkyway` |
 | `game/sim/ports.ts` | `PortSystem` behind the `PortView` interface (`sim.ports`, `game.ports`): visitors, trade, demand adds, `buildProgress` |
 | `game/sim/tiers.ts` | flat tier tables for the hot loops |

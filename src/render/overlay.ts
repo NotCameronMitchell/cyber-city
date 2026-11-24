@@ -14,9 +14,9 @@ import type { Game } from '../game/game';
 import { berthTiles, noiseDef, shoreFacing, shoreSites } from '../game/ports';
 import { computeAccess, fillKinds, isRoadTool, roadLinks } from '../game/roads';
 import { MAP_SIZE, RoadKind, ZoneType, type ActionPlan, type BuildingType, type OverlayId, type ServiceEffect, type Tile } from '../game/types';
-import { potentialTier, tierCapAt } from '../game/wealth';
+import { potentialTier, stepTarget, tierCapAt } from '../game/wealth';
 import type { World } from '../game/world';
-import { SKY_Z, drawSkywayGhost } from './art/skyway';
+import { SHAPE_SLOPE, SKY_Z, deckPieceTransform, deckShapeAt, drawSkywayGhost } from './art/skyway';
 import { drawRailTile, drawSkybridgeTile, type RailEnv } from './art/vertical';
 import { drawBuildingGhost, serviceBuildingHeight, zoneBuildingHeight, LOD_ZOOM, type ArtEnv } from './buildings';
 import { HALF_H, HALF_W, type Camera } from './camera';
@@ -58,7 +58,7 @@ export class OverlayLayer {
   private lastBuild = -1e9;
   private builtFor: OverlayId = 'none';
   private lut: Uint8ClampedArray;
-  /** Wealth lens pips per tile (rebuilt with the overlay): 1 ▲ potential above the tier, −1 ▼ below, 0 none. */
+  /** Wealth lens pips per tile (rebuilt with the overlay): stepTarget, 1 ▲ will step up, −1 ▼ will step down, 0 none. */
   private pips = new Int8Array(N * N);
   private pipsFor: World | null = null;
 
@@ -131,7 +131,8 @@ export class OverlayLayer {
           // Discrete swatches (§4.5): developed tiles by tier, lots by potential, abandoned shells dark.
           pips[i] = 0;
           if (t.zone === ZoneType.None || t.buildingId >= 0) break;
-          const pot = potentialTier(t.zone, f.wealth[i], tierCapAt(world, i));
+          const cap = tierCapAt(world, i);
+          const pot = potentialTier(t.zone, f.wealth[i], cap);
           if (t.level === 0) {
             const c = TIER_RGB[pot];
             r = c[0];
@@ -149,7 +150,9 @@ export class OverlayLayer {
             g = c[1];
             b = c[2];
             a = 200;
-            if (pot !== t.wealth) pips[i] = pot > t.wealth ? 1 : -1;
+            // The sim's own step rule (with the down-threshold hysteresis), so ▼ never marks a
+            // block inside the band that will hold its tier.
+            pips[i] = stepTarget(t.zone, t.wealth, f.wealth[i], cap);
           }
           break;
         }
@@ -238,7 +241,7 @@ export class OverlayLayer {
   }
 
   /**
-   * Wealth lens pips (§4.5): a small ▲ (potential above the tier) or ▼ (below) at the
+   * Wealth lens pips (§4.5): a small ▲ (the tier will step up) or ▼ (will step down) at the
    * centre of developed tiles, over the faded buildings, at zoom ≥ 0.6. World transform.
    */
   drawTop(ctx: CanvasRenderingContext2D, world: World, overlay: OverlayId, bounds: Rect, zoom: number, view: Rect) {
@@ -752,16 +755,33 @@ export function drawPreviewTop(ctx: CanvasRenderingContext2D, game: Game, env: A
     return;
   }
   if (plan.tool === 'bulldoze' && plan.layer === 'sky') {
-    // The decks about to go, lit at deck height.
+    // The decks about to go, lit at deck height (ramps and slopes along their incline).
     ctx.save();
+    const world = game.world;
     const pulse = 0.6 + 0.4 * Math.sin(env.time * 6);
+    const base = ctx.getTransform();
     ctx.translate(0, -SKY_Z);
     toTileSpace(ctx);
     ctx.beginPath();
-    for (const t of plan.tiles) if (t.ok && game.world.inBounds(t.x, t.y)) roadShapePath(ctx, t.x, t.y, game.world.sky[t.y * N + t.x] & 15, 0.27);
+    const sloped: number[] = [];
+    for (const t of plan.tiles) {
+      if (!t.ok || !world.inBounds(t.x, t.y)) continue;
+      const shape = deckShapeAt(world, t.x, t.y);
+      if (shape !== 255 && shape >= SHAPE_SLOPE) sloped.push(t.x, t.y, shape);
+      else roadShapePath(ctx, t.x, t.y, world.sky[t.y * N + t.x] & 15, 0.27);
+    }
     ctx.fillStyle = css(DEMOLISH, 0.35 * pulse);
     ctx.fill();
     glowStroke(ctx, DEMOLISH, env.zoom, 0.8);
+    for (let k = 0; k < sloped.length; k += 3) {
+      ctx.setTransform(base);
+      const mask = deckPieceTransform(sloped[k + 2], sloped[k], sloped[k + 1], DECK_M);
+      ctx.transform(DECK_M[0], DECK_M[1], DECK_M[2], DECK_M[3], DECK_M[4], DECK_M[5]);
+      ctx.beginPath();
+      roadShapePath(ctx, 0, 0, mask, 0.27);
+      ctx.fill();
+      glowStroke(ctx, DEMOLISH, env.zoom, 0.8);
+    }
     ctx.restore();
     return;
   }
@@ -961,15 +981,25 @@ function selectionShape(game: Game): SelectionShape | null {
   return { x: sel.x, y: sel.y, size: 1, height: h, color: NEON.cyan, radius: 0, noise: 0, sky: false };
 }
 
-/** The selected skyway deck: its tile at deck height, glowing magenta. World transform. */
+/** Tile-local → world transform of one deck piece (deckPieceTransform scratch). */
+const DECK_M = [0, 0, 0, 0, 0, 0];
+
+/** The selected skyway deck: its tile at deck height (a ramp or slope along its incline), glowing magenta. World transform. */
 function drawDeckSelection(ctx: CanvasRenderingContext2D, game: Game, s: SelectionShape, time: number, zoom: number, top: boolean) {
   const pulse = 0.7 + 0.3 * Math.sin(time * 4);
   const mask = game.world.sky[s.y * N + s.x] & 15;
+  const shape = top ? deckShapeAt(game.world, s.x, s.y) : 255;
   ctx.save();
-  if (top) ctx.translate(0, -SKY_Z);
-  toTileSpace(ctx);
   ctx.beginPath();
-  roadShapePath(ctx, s.x, s.y, mask, top ? 0.29 : 0.25);
+  if (shape !== 255 && shape >= SHAPE_SLOPE) {
+    const links = deckPieceTransform(shape, s.x, s.y, DECK_M);
+    ctx.transform(DECK_M[0], DECK_M[1], DECK_M[2], DECK_M[3], DECK_M[4], DECK_M[5]);
+    roadShapePath(ctx, 0, 0, links, 0.29);
+  } else {
+    if (top) ctx.translate(0, -SKY_Z);
+    toTileSpace(ctx);
+    roadShapePath(ctx, s.x, s.y, mask, top ? 0.29 : 0.25);
+  }
   if (!top) {
     ctx.fillStyle = css(SKY, 0.16 * pulse);
     ctx.fill();

@@ -134,6 +134,7 @@ export class UI {
         else if (id === 'watch') this.watchLaunch();
       },
       alive: (id) => (id === 'undo' ? game.undoLeft() > 0 : game.launchLead !== null),
+      left: (id) => (id === 'undo' ? game.undoLeft() : (game.launchLead?.left ?? 0)),
     };
     this.pill = new ActionPill({
       confirm: () => {
@@ -196,6 +197,7 @@ export class UI {
     on('tool', (tool) => {
       this.dock.syncTool();
       this.dock.refreshTray();
+      this.tips.onToolChange(tool);
       this.tips.onTool(tool);
       this.syncCoach();
     });

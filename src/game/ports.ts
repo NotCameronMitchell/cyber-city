@@ -96,6 +96,28 @@ export function shoreSites(world: World, out: Uint8Array): number {
 }
 
 /**
+ * Seaport footprints the map's shape allows (§5.1), ignoring what stands on them: 4×4 all-land
+ * footprints with one side facing open water. Roads, buildings and lots do not count, so a
+ * built-up waterfront still has shore here while shoreSites finds no clear site.
+ */
+export function shoreGeometry(world: World): number {
+  const s = BUILDINGS.seaport.size;
+  let n = 0;
+  for (let y = 0; y + s <= N; y++)
+    for (let x = 0; x + s <= N; x++) {
+      let land = true;
+      for (let dy = 0; dy < s && land; dy++)
+        for (let dx = 0; dx < s; dx++)
+          if (world.tiles[(y + dy) * N + x + dx].terrain !== Terrain.Land) {
+            land = false;
+            break;
+          }
+      if (land && shoreFacing(world, x, y, s) >= 0) n++;
+    }
+  return n;
+}
+
+/**
  * The berth of a Seaport: the size × SEAPORT.berthDepth water tiles beyond its `facing`
  * side (tile indices, in-bounds only). Empty for other buildings or a seaport without facing.
  */

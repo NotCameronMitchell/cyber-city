@@ -19,11 +19,12 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import type { Game } from '../game/game';
-import { MAP_SIZE, ZoneType, type Settings } from '../game/types';
+import { MAP_SIZE, ZoneType, type Building, type Settings } from '../game/types';
 import type { World } from '../game/world';
-import { drawServiceBuilding, drawZoneBuilding, serviceBuildingHeight, zoneBuildingHeight, type ArtEnv } from './buildings';
+import { drawServiceBuilding, drawZoneBuilding, resetFrame, serviceBuildingHeight, zoneBuildingHeight, type ArtEnv } from './buildings';
 import { HALF_H, HALF_W, type Camera } from './camera';
-import { SkywayLayer } from './art/skyway';
+import { shipReach } from './art/ports';
+import { SkywayLayer, resetSkywayFrame } from './art/skyway';
 import { Effects } from './effects';
 import { GroundCache, type Rect } from './ground';
 import {
@@ -46,6 +47,22 @@ const N = MAP_SIZE;
 const OBJECT_MARGIN = 10;
 /** Alpha of buildings while a data overlay is shown. */
 const OVERLAY_FADE = 0.35;
+
+/**
+ * Does a service building's depth-slot drawing reach into the view (x range vx0..vx1, already
+ * widened by half a tile)? Its footprint box and height, plus an E or S Seaport's ship, which
+ * is drawn in the port's slot out past its footprint (up to the full approach).
+ */
+export function buildingInView(bd: Building, vx0: number, vx1: number, view: Rect): boolean {
+  const wx = (bd.x - bd.y) * HALF_W;
+  const wy = (bd.x + bd.y) * HALF_H;
+  const z = bd.size;
+  const [rl, rr, rd] = shipReach(bd);
+  return (
+    !(wx + z * HALF_W + rr < vx0 || wx - z * HALF_W - rl > vx1) &&
+    !(wy + z * 2 * HALF_H + rd < view.y0 || wy + z * HALF_H - serviceBuildingHeight(bd.type, bd) - 24 > view.y1)
+  );
+}
 
 /** Identity tokens per World object, without keeping worlds alive. */
 const worldIds = new WeakMap<World, number>();
@@ -214,6 +231,10 @@ export class Renderer {
   render(dt: number, time: number): void {
     const t0 = performance.now();
     this.frameNo++;
+    // Sprite blits cache the world transform per frame, keyed on time: the still title renders
+    // at one fixed time while a rotation or reframe moves the camera, so start each frame fresh.
+    resetFrame();
+    resetSkywayFrame();
     if (dt > 0 && dt < 1) {
       const inst = 1 / dt;
       this.stats.fps += (inst - this.stats.fps) * 0.08;
@@ -416,9 +437,7 @@ export class Renderer {
             const wx = (bd.x - bd.y) * HALF_W;
             const wy = (bd.x + bd.y) * HALF_H;
             const z = bd.size;
-            const visible =
-              !(wx + z * HALF_W < vx0 || wx - z * HALF_W > vx1) &&
-              !(wy + z * 2 * HALF_H < view.y0 || wy + z * HALF_H - serviceBuildingHeight(bd.type, bd) - 24 > view.y1);
+            const visible = buildingInView(bd, vx0, vx1, view);
             if (anySky) skyway.flushIfUnder(ctx, wx - z * HALF_W, wy + z * HALF_H - serviceBuildingHeight(bd.type, bd) - 24, wx + z * HALF_W, wy + z * 2 * HALF_H);
             if (visible) drawServiceBuilding(ctx, wx, wy, bd, env);
             if (anySky) skyway.afterBuilding(ctx, world, bd, visibleX);

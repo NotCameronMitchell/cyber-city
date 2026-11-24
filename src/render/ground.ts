@@ -2525,7 +2525,8 @@ export class GroundCache {
     const pulse = glowSprite(mix(NEON.amber, NEON.magenta, 0.35), 64);
     const flicker = n > 0.2 && !low && env.zoom >= 0.45;
     const violet = glowSprite(ALLEY_RGB, 32);
-    const tint = mix([255, 255, 255], [120, 220, 255], n);
+    // Stepped by 1/32 of the night value: a bounded set of cached glow sprites at dusk and dawn.
+    const tint = mix([255, 255, 255], [120, 220, 255], Math.round(n * 32) / 32);
     const sparkTint = glowSprite(tint as RGB, 32);
     const tiles = world.tiles;
     ctx.globalCompositeOperation = 'lighter';

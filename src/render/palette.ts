@@ -69,9 +69,15 @@ const glowCache = new Map<string, HTMLCanvasElement>();
  * Much cheaper than shadowBlur on mobile. `size` is the sprite diameter in px.
  */
 export function glowSprite(color: RGB, size = 64): HTMLCanvasElement {
-  const key = `${color.join(',')}|${size}`;
+  // Whole-number channels: a colour mixed by a continuous value (dusk, dawn) must not add a
+  // new sprite every frame, so the cache stays bounded.
+  const r = Math.round(color[0]);
+  const g0 = Math.round(color[1]);
+  const b = Math.round(color[2]);
+  const key = `${r},${g0},${b}|${size}`;
   let c = glowCache.get(key);
   if (c) return c;
+  color = [r, g0, b];
   c = document.createElement('canvas');
   c.width = c.height = size;
   const g = c.getContext('2d')!;

@@ -29,6 +29,8 @@ export interface ToastActionHooks {
   run(id: ActionId): void;
   /** Is the action still possible (the undo window is open, the first launch is still ahead)? */
   alive(id: ActionId): boolean;
+  /** Seconds the action has left, if the root knows (the launch lead counts unpaused time only). */
+  left?(id: ActionId): number;
 }
 
 interface ToastEntry {
@@ -140,7 +142,9 @@ export class Toasts {
     const now = performance.now();
     for (const t of this.waiting.splice(0)) {
       if (t.action) {
-        const left = t.action.sec - (now - t.at) / 1000;
+        // Watch follows the launch lead (unpaused seconds), not the wall clock: it is stale only once the lead is gone.
+        const watch = t.action.id === 'watch';
+        const left = watch ? Math.max(1, this.hooks?.left?.('watch') ?? t.action.sec) : t.action.sec - (now - t.at) / 1000;
         if (left < 1 || !this.hooks?.alive(t.action.id)) continue; // stale: its window closed while it waited
         this.push(t.text, t.kind, { ...t.action, sec: Math.ceil(left) });
         continue;
@@ -151,6 +155,9 @@ export class Toasts {
 
   private arm(t: ToastEntry, kind: ToastKind): void {
     window.clearTimeout(t.timer);
+    // Watch stays until the launch lead ends (flush drops it once alive('watch') is false): the lead
+    // counts unpaused seconds only, so a pause or a story card must not time the button out first.
+    if (t.action?.id === 'watch') return;
     // Long messages get time to be read (~45 ms a character past the base); a button stays for its window.
     const ms = t.action ? t.action.sec * 1000 : Math.max(TOAST_MS[kind], 1200 + t.text.length * 45);
     t.timer = window.setTimeout(() => this.dismiss(t, false), ms);

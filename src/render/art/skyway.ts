@@ -321,6 +321,11 @@ let tA = 1;
 let tE = 0;
 let tF = 0;
 
+/** Start of a Renderer frame: the next draw re-reads the transform even at an unchanged time (the still title). */
+export function resetSkywayFrame(): void {
+  frameTime = NaN;
+}
+
 /** New frame: refresh the transform, scale and night bucket once (the sweep keeps the world transform). */
 function syncFrame(ctx: CanvasRenderingContext2D, env: ArtEnv) {
   if (env.time === frameTime) return;
@@ -422,6 +427,39 @@ export function computeShapes(world: World, sky: Uint8Array, list: ArrayLike<num
     }
     shapes[i] = SHAPE_RAMP + d * 4 + two * 2 + closed;
   }
+}
+
+const pickList = new Int32Array(5);
+const pickShapes = new Uint8Array(N * N).fill(255);
+
+/**
+ * Shape of the deck on tile (x, y) as the layer draws it (255 = no deck): a ramp or the upper
+ * half of a two-tile slope resolved from its neighbours, for overlays drawn over one piece.
+ */
+export function deckShapeAt(world: World, x: number, y: number): number {
+  if (!world.inBounds(x, y)) return 255;
+  const sky = world.sky;
+  let n = 0;
+  pickList[n++] = y * N + x;
+  for (let k = 0; k < 4; k++) {
+    const nx = x + DX[k];
+    const ny = y + DY[k];
+    if (nx >= 0 && ny >= 0 && nx < N && ny < N && sky[ny * N + nx]) pickList[n++] = ny * N + nx;
+  }
+  computeShapes(world, sky, pickList, n, pickShapes);
+  return pickShapes[y * N + x];
+}
+
+/**
+ * A deck shape on tile (x, y) for overlays: writes `out`, the tile-local (u, v in 0..1) →
+ * world-px transform the piece is painted with (a ramp or slope follows its incline), and
+ * returns the link mask its outline uses.
+ */
+export function deckPieceTransform(shape: number, x: number, y: number, out: number[]): number {
+  shapeMatrix(shape, out);
+  out[4] += (x - y) * HALF_W;
+  out[5] += (x + y) * HALF_H;
+  return shapeMask(shape);
 }
 
 /** Pillar rule (§3.7): straight pieces on even tiles and every junction, over open ground, water or a road. */
