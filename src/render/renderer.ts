@@ -419,26 +419,30 @@ export class Renderer {
             const visible =
               !(wx + z * HALF_W < vx0 || wx - z * HALF_W > vx1) &&
               !(wy + z * 2 * HALF_H < view.y0 || wy + z * HALF_H - serviceBuildingHeight(bd.type, bd) - 24 > view.y1);
-            if (anySky) skyway.flushCars(ctx);
+            if (anySky) skyway.flushIfUnder(ctx, wx - z * HALF_W, wy + z * HALF_H - serviceBuildingHeight(bd.type, bd) - 24, wx + z * HALF_W, wy + z * 2 * HALF_H);
             if (visible) drawServiceBuilding(ctx, wx, wy, bd, env);
             if (anySky) skyway.afterBuilding(ctx, world, bd, visibleX);
           }
         } else if (t.zone !== ZoneType.None && onScreenX) {
           if (deck && skyway.beforeZone(world, i)) {
             skyway.drawTile(ctx, world, x, y);
-            skyway.flushCars(ctx);
             deckDone = true;
           }
           const wy = (x + y) * HALF_H;
-          if (!(wy + 2 * HALF_H < view.y0 || wy + HALF_H - zoneBuildingHeight(t) - 24 > view.y1)) drawZoneBuilding(ctx, wx0, wy, t, x, y, env);
+          const zh = zoneBuildingHeight(t);
+          if (!(wy + 2 * HALF_H < view.y0 || wy + HALF_H - zh - 24 > view.y1)) {
+            // Cars queued on decks behind this tower are drawn before it, so it hides them.
+            if (anySky) skyway.flushIfUnder(ctx, wx0 - HALF_W, wy + HALF_H - zh - 8, wx0 + HALF_W, wy + 2 * HALF_H);
+            drawZoneBuilding(ctx, wx0, wy, t, x, y, env);
+          }
         }
         if (!onScreenX) continue;
         if (mask !== 0 && !railFirst) story.drawRail(ctx, world, x, y, mask);
         if (deck && !deckDone) skyway.drawTile(ctx, world, x, y);
         story.drawAfter(ctx, world, x, y, t, env);
       }
-      if (anySky) skyway.flushCars(ctx);
       story.drawSkybridges(ctx, s);
     }
+    if (anySky) skyway.flushCars(ctx);
   }
 }

@@ -462,6 +462,11 @@ export class SkywayLayer {
   private heads: Path2D | null = null;
   private tails: Path2D | null = null;
   private bodies: Path2D | null = null;
+  /** World-px box of the queued car lights (flushIfUnder tests occluders against it). */
+  private cx0 = 0;
+  private cy0 = 0;
+  private cx1 = 0;
+  private cy1 = 0;
   private glow = new Float32Array(GLOW_CAP * 3);
   private glowN = 0;
   private env: ArtEnv = { time: 0, night: 0, zoom: 1, quality: 'high' };
@@ -671,9 +676,21 @@ export class SkywayLayer {
     const mf = wy + m[5] - 1.6;
     const env = this.env;
     const seed = (((i * 2654435761) >>> 0) % 1000) / 1000;
-    const heads = (this.heads ??= new Path2D());
-    const tails = (this.tails ??= new Path2D());
-    const bodies = (this.bodies ??= new Path2D());
+    if (!this.heads) {
+      this.heads = new Path2D();
+      this.tails = new Path2D();
+      this.bodies = new Path2D();
+      this.cx0 = this.cy0 = Infinity;
+      this.cx1 = this.cy1 = -Infinity;
+    }
+    const heads = this.heads;
+    const tails = this.tails!;
+    const bodies = this.bodies!;
+    // The whole tile's deck (plus a margin) bounds its cars.
+    if (wx - HALF_W < this.cx0) this.cx0 = wx - HALF_W;
+    if (wx + HALF_W > this.cx1) this.cx1 = wx + HALF_W;
+    if (wy - SKY_Z - 4 < this.cy0) this.cy0 = wy - SKY_Z - 4;
+    if (wy + 2 * HALF_H > this.cy1) this.cy1 = wy + 2 * HALF_H;
     const night = env.night;
     for (let j = 0; j < count; j++) {
       const back = (j & 1) === 1;
@@ -739,6 +756,15 @@ export class SkywayLayer {
         this.glowN += 2;
       }
     }
+  }
+
+  /**
+   * Flush the queued car lights if an object about to be drawn over the world-px box
+   * (x0, y0)-(x1, y1) could cover them, so later buildings still hide the cars behind them.
+   */
+  flushIfUnder(ctx: CanvasRenderingContext2D, x0: number, y0: number, x1: number, y1: number): void {
+    if (!this.heads || x1 < this.cx0 || x0 > this.cx1 || y1 < this.cy0 || y0 > this.cy1) return;
+    this.flushCars(ctx);
   }
 
   /** Flush the batched car lights (call at the end of the sweep, before drawGlows). */
