@@ -1553,9 +1553,12 @@ export class PortFx {
     if (t < 8 + 0.01) {
       // Ignition and exhaust.
       const ign = t < 1.5 ? t / 1.5 : Math.max(0, 1 - (t - 1.5) / 3);
-      ctx.globalAlpha = Math.min(1, 0.4 + ign) * (0.6 + 0.4 * night);
-      const g = 80 + ign * 120;
-      ctx.drawImage(glowSprite([255, 170, 80], 64), x - g / 2, y - g * 0.35, g, g * 0.6);
+      // Low quality: the rocket and one glow only (the ignition glow, then the exhaust).
+      if (!low || t < 1.5) {
+        ctx.globalAlpha = Math.min(1, 0.4 + ign) * (0.6 + 0.4 * night);
+        const g = 80 + ign * 120;
+        ctx.drawImage(glowSprite([255, 170, 80], 64), x - g / 2, y - g * 0.35, g, g * 0.6);
+      }
       if (!low && t >= 1.5) {
         // A column of 12 glow sprites, stretched along the climb so they overlap into one plume.
         const gap = 10 + rise * 26;

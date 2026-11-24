@@ -13,8 +13,10 @@
 //    and whether a ramp is closed (no street below: red-and-white barrier).
 //  * Look (never the cyan skybridge or the teal ribbon): a dark half-tile deck,
 //    white lane dashes, magenta (#ff5fd2) edge strips, concrete pillars.
-//  * Traffic: per visible tile round(skyTraffic × 3) cars, each a pair of white
-//    headlights and red tail lights, moving both ways. Lights are batched into
+//  * Traffic: per visible tile round(skyTraffic × 3) cars (a lightly used deck
+//    still shows one car on about a third of its tiles; one that lands nowhere
+//    carries 0 and stays empty), each a pair of white headlights and red tail
+//    lights, moving both ways. Lights are batched into
 //    two fills per frame; their night glows are collected during the sweep and
 //    drawn in ONE additive pass after the building sweep (cap 200, skipped
 //    below zoom 0.5 and on low quality).
@@ -639,7 +641,10 @@ export class SkywayLayer {
   /** Queue this tile's cars into the batched light paths (and glows). */
   private cars(world: World, i: number, x: number, y: number, shape: number, wx: number, wy: number) {
     const load = world.fields.skyTraffic[i];
-    const count = Math.round(load * 3);
+    let count = Math.round(load * 3);
+    // A deck that carries anything at all shows a sparse car now and then (a network that lands
+    // nowhere carries 0 and stays empty, which is its tell).
+    if (count === 0 && load > 0.002 && ((i * 40503) & 1023) / 1024 < 0.3 + load * 4) count = 1;
     if (count <= 0) return;
     const mask = shapeMask(shape);
     // Path through the tile: along a straight axis, or arm a → centre → arm b.
