@@ -338,6 +338,8 @@ export class StreetTraffic {
   counts = 0;
   /** Rain on the road this frame (head and tail lights reflect on the wet road at night, MEGACITY §6.4). */
   private wet = 0;
+  /** The zoom of the last draw (the on-screen cap). */
+  private zoom = 1;
 
   constructor(private readonly index: StreetIndex = new StreetIndex()) {}
 
@@ -410,7 +412,8 @@ export class StreetTraffic {
     }
     const pop = world.stats.population;
     const popK = Math.pow(Math.min(1, pop / 12000), 0.7); // ×10 units (MEGACITY §4.4)
-    const cap = this.quality === 'low' ? 90 : view ? ON_SCREEN_CAP : 260;
+    // On screen the cap follows the zoom: below 1 the cars are small and a wide view holds many more roads.
+    const cap = this.quality === 'low' ? 90 : view ? Math.round(ON_SCREEN_CAP * Math.min(1, Math.max(0.5, this.zoom))) : 260;
     this.targetCars = Math.min(cap, Math.round(sum * popK * (view ? ON_SCREEN_DENSITY : 1)));
   }
 
@@ -719,6 +722,7 @@ export class StreetTraffic {
   /** World-space draw. `rain` 0..1: at night the head and tail lights streak on the wet road (umbrellas: art/crowds.ts). */
   draw(ctx: CanvasRenderingContext2D, b: Bounds, zoom: number, night: number, quality: 'low' | 'high', rain: number) {
     this.bounds = b;
+    this.zoom = zoom;
     this.wet = quality === 'high' && zoom >= 0.6 ? rain : 0;
     if (!this.active || !this.cars.length) return;
     this.colours(night);
