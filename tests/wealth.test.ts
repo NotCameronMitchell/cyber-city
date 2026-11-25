@@ -12,7 +12,7 @@ import { PowerGrid } from '../src/game/sim/power';
 import { DAYS_PER_MONTH, LEGACY_SIZE, RoadKind, ZoneType, type SaveData, type WealthTier } from '../src/game/types';
 import { potentialTier, tierCap, tierCapAt, wealthScoreAt, zoneCapacity } from '../src/game/wealth';
 import { World } from '../src/game/world';
-import { ScriptedMayor, act, flatWorld, fullyBuiltWorld, makeSim, run } from './helpers';
+import { ScriptedMayor, act, flatWorld, fullyBuiltWorld, makeSim, run, startWorld } from './helpers';
 import { expansionFixture } from './expansion-fixture';
 import { LEGACY_REGION } from '../src/game/types';
 import { toV3 } from './legacy-save';
@@ -37,11 +37,14 @@ function rig(w: World) {
   return { g, power, growth, tick };
 }
 
-/** A powered street (y = 10) with a solar farm at its west end. */
-function street(seed: number): World {
-  const w = flatWorld(seed);
-  w.addBuilding('solar', 3, 10);
-  for (let x = 5; x <= 40; x++) w.setRoad(x, 10);
+/**
+ * A powered street (y = 10) with a solar farm at its west end, on the legacy 64 frame (`o` 0) or in the start slot of
+ * a 3×3 region (`o` 64): MEGACITY §11.5 moves the size-grep files onto regions, and O1 makes the two equal.
+ */
+function street(seed: number, o = 0): World {
+  const w = o ? startWorld(3, seed) : flatWorld(seed);
+  w.addBuilding('solar', o + 3, o + 10);
+  for (let x = 5; x <= 40; x++) w.setRoad(o + x, o + 10);
   return w;
 }
 
@@ -78,71 +81,74 @@ describe('wealth score (§4.2)', () => {
   });
 });
 
-describe('hysteresis and the latch (§4.3)', () => {
+describe.each([
+  ['64 frame', 0],
+  ['3×3 start slot', 64],
+] as [string, number][])('hysteresis and the latch (§4.3, %s)', (_frame, o) => {
   it('a score oscillating inside the band never moves a tier; a steady one steps after WEALTH.streak samples', () => {
-    const w = street(43);
+    const w = street(43, o);
     for (let x = 6; x <= 30; x++) {
-      w.setZone(x, 11, RES);
-      w.setLevel(x, 11, 1, false, x <= 15 ? 1 : 0);
+      w.setZone(o + x, o + 11, RES);
+      w.setLevel(o + x, o + 11, 1, false, x <= 15 ? 1 : 0);
     }
     const { tick } = rig(w);
     const score = w.fields.wealth;
     for (let t = 0; t < 600; t++) {
-      for (let x = 6; x <= 15; x++) score[w.idx(x, 11)] = t % 2 ? WEALTH.down[0] + 0.01 : WEALTH.up[1] - 0.01; // $$ band
-      for (let x = 16; x <= 22; x++) score[w.idx(x, 11)] = t % 2 ? 0.05 : WEALTH.up[0] - 0.01; // under $$
-      for (let x = 23; x <= 30; x++) score[w.idx(x, 11)] = (WEALTH.up[0] + WEALTH.up[1]) / 2; // steady $$
+      for (let x = 6; x <= 15; x++) score[w.idx(o + x, o + 11)] = t % 2 ? WEALTH.down[0] + 0.01 : WEALTH.up[1] - 0.01; // $$ band
+      for (let x = 16; x <= 22; x++) score[w.idx(o + x, o + 11)] = t % 2 ? 0.05 : WEALTH.up[0] - 0.01; // under $$
+      for (let x = 23; x <= 30; x++) score[w.idx(o + x, o + 11)] = (WEALTH.up[0] + WEALTH.up[1]) / 2; // steady $$
       tick();
     }
-    for (let x = 6; x <= 15; x++) expect(w.tileAt(x, 11)!.wealth).toBe(1);
-    for (let x = 16; x <= 22; x++) expect(w.tileAt(x, 11)!.wealth).toBe(0);
-    for (let x = 23; x <= 30; x++) expect(w.tileAt(x, 11)!.wealth).toBe(1);
+    for (let x = 6; x <= 15; x++) expect(w.tileAt(o + x, o + 11)!.wealth).toBe(1);
+    for (let x = 16; x <= 22; x++) expect(w.tileAt(o + x, o + 11)!.wealth).toBe(0);
+    for (let x = 23; x <= 30; x++) expect(w.tileAt(o + x, o + 11)!.wealth).toBe(1);
     // No tier change ever abandons a building.
-    for (let x = 6; x <= 30; x++) expect(w.tileAt(x, 11)!.abandoned).toBe(false);
+    for (let x = 6; x <= 30; x++) expect(w.tileAt(o + x, o + 11)!.abandoned).toBe(false);
   });
 
   it('a falling block filters down one step at a time, and a cap pulls it down too', () => {
-    const w = street(44);
+    const w = street(44, o);
     for (let x = 6; x <= 12; x++) {
-      w.setZone(x, 11, RES);
-      w.setLevel(x, 11, 2, false, 2);
+      w.setZone(o + x, o + 11, RES);
+      w.setLevel(o + x, o + 11, 2, false, 2);
     }
     const { tick } = rig(w);
     const seen = new Set<number>();
     for (let t = 0; t < 400; t++) {
-      for (let x = 6; x <= 12; x++) w.fields.wealth[w.idx(x, 11)] = 0.1;
+      for (let x = 6; x <= 12; x++) w.fields.wealth[w.idx(o + x, o + 11)] = 0.1;
       tick();
-      seen.add(w.tileAt(6, 11)!.wealth);
+      seen.add(w.tileAt(o + 6, o + 11)!.wealth);
     }
-    expect(w.tileAt(6, 11)!.wealth).toBe(0);
+    expect(w.tileAt(o + 6, o + 11)!.wealth).toBe(0);
     expect(seen.has(1)).toBe(true);
     // High score but heavy crime: capped at $, the block steps down.
-    for (let x = 6; x <= 12; x++) w.setLevel(x, 11, 2, false, 1);
+    for (let x = 6; x <= 12; x++) w.setLevel(o + x, o + 11, 2, false, 1);
     for (let t = 0; t < 300; t++) {
       for (let x = 6; x <= 12; x++) {
-        w.fields.wealth[w.idx(x, 11)] = 0.7;
-        w.fields.crime[w.idx(x, 11)] = WEALTH.caps.midMaxCrime + 0.05;
+        w.fields.wealth[w.idx(o + x, o + 11)] = 0.7;
+        w.fields.crime[w.idx(o + x, o + 11)] = WEALTH.caps.midMaxCrime + 0.05;
       }
       tick();
     }
-    for (let x = 6; x <= 12; x++) expect(w.tileAt(x, 11)!.wealth).toBe(0);
+    for (let x = 6; x <= 12; x++) expect(w.tileAt(o + x, o + 11)!.wealth).toBe(0);
   });
 
   it('a new lot latches its potential tier, and falls back to what the grid can feed', () => {
     const make = (headroom: number) => {
-      const w = street(45);
+      const w = street(45, o);
       for (let x = 6; x <= 17; x++) {
-        w.setZone(x, 9, RES);
-        w.setLevel(x, 9, 1);
+        w.setZone(o + x, o + 9, RES);
+        w.setLevel(o + x, o + 9, 1);
       }
-      for (let x = 6; x <= 30; x++) w.setZone(x, 11, RES);
+      for (let x = 6; x <= 30; x++) w.setZone(o + x, o + 11, RES);
       w.mods.powerSupplyMul = (12 * ZONES.res.power[1] + headroom) / 100;
       const r = rig(w);
       for (let t = 0; t < 120; t++) {
-        for (let x = 6; x <= 30; x++) w.fields.wealth[w.idx(x, 11)] = 0.6;
+        for (let x = 6; x <= 30; x++) w.fields.wealth[w.idx(o + x, o + 11)] = 0.6;
         r.tick({ res: 1, com: 0, ind: 0 });
       }
       const grown: WealthTier[] = [];
-      for (let x = 6; x <= 30; x++) if (w.tileAt(x, 11)!.level > 0) grown.push(w.tileAt(x, 11)!.wealth);
+      for (let x = 6; x <= 30; x++) if (w.tileAt(o + x, o + 11)!.level > 0) grown.push(w.tileAt(o + x, o + 11)!.wealth);
       return grown;
     };
     // Plenty of power: every new home opens at $$$.
@@ -155,10 +161,10 @@ describe('hysteresis and the latch (§4.3)', () => {
   });
 
   it('a $$$ Fab stepping down to $$ draws more, so it waits for grid headroom: no brownout (review sim-4)', () => {
-    const w = street(48);
+    const w = street(48, o);
     for (let x = 6; x <= 12; x++) {
-      w.setZone(x, 11, ZoneType.Industrial);
-      w.setLevel(x, 11, 3, false, 2);
+      w.setZone(o + x, o + 11, ZoneType.Industrial);
+      w.setLevel(o + x, o + 11, 3, false, 2);
     }
     const r = rig(w);
     const solar = 100; // MW before powerSupplyMul
@@ -166,31 +172,31 @@ describe('hysteresis and the latch (§4.3)', () => {
       // A plateaued grid: `spare` MW over demand. One Fab step ($$$ 12.6 → $$ 14 MW) needs 1.4.
       w.mods.powerSupplyMul = (r.power.demand + spare) / solar;
       for (let t = 0; t < 300; t++) {
-        for (let x = 6; x <= 12; x++) w.fields.wealth[w.idx(x, 11)] = 0;
+        for (let x = 6; x <= 12; x++) w.fields.wealth[w.idx(o + x, o + 11)] = 0;
         r.tick();
         expect(r.power.overloaded).toBe(false);
       }
       let fell = 0;
-      for (let x = 6; x <= 12; x++) if (w.tileAt(x, 11)!.wealth < 2) fell++;
+      for (let x = 6; x <= 12; x++) if (w.tileAt(o + x, o + 11)!.wealth < 2) fell++;
       return fell;
     };
     expect(fall(0.5)).toBe(0);
     expect(fall(3)).toBe(2); // room for two steps; those two go on to $ (no extra draw)
-    for (let x = 6; x <= 12; x++) expect(w.tileAt(x, 11)!.abandoned).toBe(false);
+    for (let x = 6; x <= 12; x++) expect(w.tileAt(o + x, o + 11)!.abandoned).toBe(false);
   });
 
   it('tier steps draw nothing from world.rng (other rolls never shift)', () => {
     const make = (lift: boolean) => {
-      const w = street(46);
+      const w = street(46, o);
       for (let x = 6; x <= 30; x++) {
-        w.setZone(x, 11, RES);
-        w.setLevel(x, 11, 1);
+        w.setZone(o + x, o + 11, RES);
+        w.setLevel(o + x, o + 11, 1);
       }
       const { tick } = rig(w);
       if (lift) {
         for (let x = 6; x <= 30; x++) {
-          w.fields.wealth[w.idx(x, 11)] = 0.4;
-          w.wealthStreak[w.idx(x, 11)] = WEALTH.streak - 1;
+          w.fields.wealth[w.idx(o + x, o + 11)] = 0.4;
+          w.wealthStreak[w.idx(o + x, o + 11)] = WEALTH.streak - 1;
         }
       }
       tick();
