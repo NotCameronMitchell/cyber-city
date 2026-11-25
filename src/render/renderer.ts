@@ -256,6 +256,15 @@ function worldId(w: World): number {
 
 /** Bodies the centre-first pass visits at most in a frame (each costs a body pick and a cache lookup, ≈ 0.6 µs). */
 const PREPAINT_VISITS = 3000;
+/** The warm ring (Renderer.warmRing): how far past each screen edge it paints, as a share of the view's size. */
+const WARM_MARGIN = 0.5;
+/** Frames the camera must rest before the warm ring starts. */
+const WARM_STILL = 12;
+/** Bodies the warm ring visits at most in a frame, and tiles it checks at most (≈ 0.1 µs each when empty). */
+const WARM_VISITS = 1200;
+const WARM_CHECKS = 6000;
+/** The warm ring stops while the sprite cache holds more than this share of its cap. */
+const WARM_CACHE = 0.7;
 
 export class Renderer {
   readonly stats = { fps: 60, drawMs: 0 };
@@ -318,7 +327,7 @@ export class Renderer {
     limits: null as SpriteLimits | null,
     /** The building sweep's time this frame (ms, painting included) and the sprite cache after it (V1 desktop rows). */
     sweepMs: 0,
-    sprites: { bytes: 0, built: 0, fallbacks: 0 },
+    sprites: { bytes: 0, built: 0, fallbacks: 0, stale: 0, paintMs: 0, budgetMs: 0 },
   };
 
   constructor(
@@ -835,14 +844,31 @@ export class Renderer {
     const band: SkylineBand = { on: skyline, maxD2: Infinity };
     if (skyline) this.skylineBudget(world, tilesObj, view, band, skylineCap(this.cls, quality, lowerDetail));
     const ts = performance.now();
-    // Bodies still showing a fallback last frame: spend this frame's paint budget from the screen centre outward.
-    if (this.view.sprites.fallbacks > 0) this.prepaintCentre(target, world, tilesObj, view, env, band);
+    // Bodies still showing a stand-in last frame: spend this frame's paint budget from the screen centre outward.
+    const sp = this.view.sprites;
+    if (sp.fallbacks > 0 || sp.stale > 0) this.prepaintCentre(target, world, tilesObj, view, env, band);
     this.drawObjects(target, world, tilesObj, view, env, band, lanes);
+    let cs = buildingCacheStats();
+    // At rest with the view painted: the idle budget warms the bodies just off the screen (the warm ring).
+    const warm = this.warm;
+    const warmKey = `${cam.x.toFixed(1)},${cam.y.toFixed(1)},${zoom.toFixed(5)},${Math.round(night * 6)},${skyline ? 1 : 0},${this.worldToken}`;
+    if (warmKey !== warm.key) {
+      warm.key = warmKey;
+      warm.still = 0;
+      warm.ring = 0;
+      warm.done = false;
+    } else warm.still++;
+    if (!warm.done && warm.still >= WARM_STILL && cs.fallbacks === 0 && cs.stale === 0 && cs.paintMs < cs.budgetMs * 0.5) {
+      this.warmRing(target, world, view, env, band);
+      cs = buildingCacheStats();
+    }
     this.view.sweepMs = performance.now() - ts;
-    const cs = buildingCacheStats();
-    this.view.sprites.bytes = cs.bytes;
-    this.view.sprites.built = cs.builtThisFrame;
-    this.view.sprites.fallbacks = cs.fallbacks;
+    sp.bytes = cs.bytes;
+    sp.built = cs.builtThisFrame;
+    sp.fallbacks = cs.fallbacks;
+    sp.stale = cs.stale;
+    sp.paintMs = cs.paintMs;
+    sp.budgetMs = cs.budgetMs;
     if (target !== ctx) {
       ctx.setTransform(1, 0, 0, 1, 0, 0);
       ctx.globalAlpha = OVERLAY_FADE;
@@ -966,45 +992,112 @@ export class Renderer {
   }
 
   /**
+   * One body of the paint-ahead passes: 0 when tile (x, y) draws no zone body to paint here (empty, a member, a low body
+   * in the skyline view, or on the wrong side of the screen edge for `onScreen`), 1 when its sprite is (now) painted,
+   * -1 once the frame's paint budget is spent. `onScreen`: the sweep's cull (centre-first); otherwise the body must lie
+   * off the screen but inside `reach` (the warm ring).
+   */
+  private prepaintAt(ctx: CanvasRenderingContext2D, world: World, env: ArtEnv, band: SkylineBand, view: Rect, x: number, y: number, onScreen: boolean, reach: Rect): number {
+    const N = world.N;
+    const i = y * N + x;
+    const t = world.tiles[i];
+    if (t.zone === ZoneType.None || t.level < 1 || t.buildingId >= 0) return 0;
+    const pmap = this.parcels.map;
+    const bits = pmap[i];
+    if (bits & PARCEL_MEMBER && !(bits & PARCEL_HEAD)) return 0;
+    const p = bits & PARCEL_MEMBER ? parcelFromMap(world, pmap, x, y, this.prepaintParcel) : null;
+    if (band.on && (p ? p.level : t.level) < 3) return 0;
+    const wide = p ? HALF_W : 0;
+    const wx = (x - y) * HALF_W;
+    const wy = (x + y) * HALF_H;
+    const top = wy + HALF_H - zoneBuildingHeight(t, p) - 24;
+    const seen = !(wx + HALF_W + wide < view.x0 || wx - HALF_W - wide > view.x1 || wy + 2 * HALF_H < view.y0 || top > view.y1);
+    if (onScreen !== seen) return 0;
+    if (!onScreen && (wx + HALF_W + wide < reach.x0 || wx - HALF_W - wide > reach.x1 || wy + 2 * HALF_H < reach.y0 || top > reach.y1)) return 0;
+    return prepaintZone(ctx, t, p, env, x, y) ? 1 : -1;
+  }
+
+  /**
+   * Walk the tiles of box `b` in square rings round (cx, cy) from ring `from`, calling `visit`; stops when it returns
+   * -1 or after `max` calls that returned 1. Returns the ring it stopped in, or -1 when the box is done.
+   */
+  private rings(b: Rect, cx: number, cy: number, from: number, max: number, visit: (x: number, y: number) => number): number {
+    const R = Math.max(cx - b.x0, b.x1 - cx, cy - b.y0, b.y1 - cy);
+    let n = 0;
+    const at = (x: number, y: number): boolean => {
+      if (x < b.x0 || x > b.x1 || y < b.y0 || y > b.y1) return true;
+      const v = visit(x, y);
+      if (v < 0) return false;
+      if (v > 0 && ++n >= max) return false;
+      return true;
+    };
+    for (let r = from; r <= R; r++) {
+      if (r === 0) {
+        if (!at(cx, cy)) return 0;
+        continue;
+      }
+      for (let x = cx - r; x <= cx + r; x++) if (!at(x, cy - r) || !at(x, cy + r)) return r;
+      for (let y = cy - r + 1; y <= cy + r - 1; y++) if (!at(cx - r, y) || !at(cx + r, y)) return r;
+    }
+    return -1;
+  }
+
+  /** The tile under the screen centre, clamped into `b`. */
+  private centreTile(b: Rect): { x: number; y: number } {
+    const c = this.camera.screenToTile(this.cssW / 2, this.cssH / 2);
+    return { x: Math.max(b.x0, Math.min(b.x1, Math.round(c.x))), y: Math.max(b.y0, Math.min(b.y1, Math.round(c.y))) };
+  }
+
+  /**
    * Centre-first painting (§11.1, V1 fallback frames after a pan): visit the zone bodies of the clipped box in square
    * rings round the tile under the screen centre and paint the missing ones within the frame's paint budget, so the
-   * middle of the screen shows its real bodies first and the cross-family fallbacks stay at the edges. Only while the
-   * last frame drew a fallback; at most PREPAINT_VISITS bodies a frame.
+   * middle of the screen shows its real bodies first and the stand-ins stay at the edges. Only while the last frame drew
+   * a cross-family fallback or a stale same-family sprite (a night-bucket change, a zoom); at most PREPAINT_VISITS
+   * bodies a frame.
    */
   private prepaintCentre(ctx: CanvasRenderingContext2D, world: World, b: Rect, view: Rect, env: ArtEnv, band: SkylineBand) {
-    const N = world.N;
-    const c = this.camera.screenToTile(this.cssW / 2, this.cssH / 2);
-    const cx = Math.max(b.x0, Math.min(b.x1, Math.round(c.x)));
-    const cy = Math.max(b.y0, Math.min(b.y1, Math.round(c.y)));
-    const pmap = this.parcels.map;
-    const head = this.prepaintParcel;
-    const tiles = world.tiles;
-    const R = Math.max(cx - b.x0, b.x1 - cx, cy - b.y0, b.y1 - cy);
-    let visits = 0;
-    const visit = (x: number, y: number): boolean => {
-      if (x < b.x0 || x > b.x1 || y < b.y0 || y > b.y1) return true;
-      const i = y * N + x;
-      const t = tiles[i];
-      if (t.zone === ZoneType.None || t.level < 1 || t.buildingId >= 0) return true;
-      const bits = pmap[i];
-      if (bits & PARCEL_MEMBER && !(bits & PARCEL_HEAD)) return true;
-      const p = bits & PARCEL_MEMBER ? parcelFromMap(world, pmap, x, y, head) : null;
-      if (band.on && (p ? p.level : t.level) < 3) return true;
-      // On screen only (the sweep's cull): the clipped box's corners lie off the screen's sides.
-      const wide = p ? HALF_W : 0;
-      const wx = (x - y) * HALF_W;
-      const wy = (x + y) * HALF_H;
-      if (wx + HALF_W + wide < view.x0 || wx - HALF_W - wide > view.x1) return true;
-      if (wy + 2 * HALF_H < view.y0 || wy + HALF_H - zoneBuildingHeight(t, p) - 24 > view.y1) return true;
-      if (++visits > PREPAINT_VISITS) return false;
-      return prepaintZone(ctx, t, p, env, x, y);
-    };
-    if (!visit(cx, cy)) return;
-    for (let r = 1; r <= R; r++) {
-      for (let x = cx - r; x <= cx + r; x++) if (!visit(x, cy - r) || !visit(x, cy + r)) return;
-      for (let y = cy - r + 1; y <= cy + r - 1; y++) if (!visit(cx - r, y) || !visit(cx + r, y)) return;
-    }
+    const c = this.centreTile(b);
+    this.rings(b, c.x, c.y, 0, PREPAINT_VISITS, (x, y) => this.prepaintAt(ctx, world, env, band, view, x, y, true, view));
   }
+
+  /**
+   * The warm ring (§11.1 fallback frames after a pan, V1 paint rate): while the camera rests and the view is fully
+   * painted, spend the idle paint budget on the bodies just off the screen (up to WARM_MARGIN of the view past each
+   * edge), nearest the centre first, so a pan from rest lands on painted bodies. Stops at the cache's warm share
+   * (WARM_CACHE of the cap: it never evicts what the view draws) and when the ring is done; any camera move, zoom or
+   * night-bucket change starts it again.
+   */
+  private warmRing(ctx: CanvasRenderingContext2D, world: World, view: Rect, env: ArtEnv, band: SkylineBand) {
+    const w = this.warm;
+    const mx = (view.x1 - view.x0) * WARM_MARGIN;
+    const my = (view.y1 - view.y0) * WARM_MARGIN;
+    const reach: Rect = { x0: view.x0 - mx, y0: view.y0 - my, x1: view.x1 + mx, y1: view.y1 + my + 260 };
+    // The tile box of the reach (world → tile: x = (wy / HALF_H + wx / HALF_W) / 2, y = (wy / HALF_H − wx / HALF_W) / 2).
+    const tx = (wx: number, wy: number) => (wy / HALF_H + wx / HALF_W) / 2;
+    const ty = (wx: number, wy: number) => (wy / HALF_H - wx / HALF_W) / 2;
+    const ob = world.ownedBox;
+    const b: Rect = {
+      x0: Math.max(ob.x0, Math.floor(tx(reach.x0, reach.y0))),
+      x1: Math.min(ob.x1, Math.ceil(tx(reach.x1, reach.y1))),
+      y0: Math.max(ob.y0, Math.floor(ty(reach.x1, reach.y0))),
+      y1: Math.min(ob.y1, Math.ceil(ty(reach.x0, reach.y1))),
+    };
+    if (b.x0 > b.x1 || b.y0 > b.y1) {
+      w.done = true;
+      return;
+    }
+    const c = this.centreTile(b);
+    const cap = buildingCacheStats().capBytes * WARM_CACHE;
+    let checks = 0;
+    const r = this.rings(b, c.x, c.y, w.ring, WARM_VISITS, (x, y) => {
+      if (++checks > WARM_CHECKS || buildingCacheStats().bytes > cap) return -1;
+      return this.prepaintAt(ctx, world, env, band, view, x, y, false, reach);
+    });
+    if (r < 0) w.done = true;
+    else w.ring = r;
+  }
+  private readonly warm = { key: '', still: 0, ring: 0, done: false };
+
   private readonly prepaintParcel: Parcel = { hx: 0, hy: 0, x: 0, y: 0, w: 1, h: 1, level: 0, tier: 0 };
 
   private fadeLayer(): CanvasRenderingContext2D | null {

@@ -276,6 +276,88 @@ describe('centre-first painting after a pan (§11.1 fallback frames, V1)', () =>
   });
 });
 
+describe('stale sprites and the warm ring (§11.1 fallback frames after a pan, V1 paint rate)', () => {
+  it('after a night-bucket change the stale sprites repaint from the screen centre outward', async () => {
+    const art = await import('../src/render/buildings');
+    const g = new Game();
+    g.restore(megacityWorld(3, 9, 7).serialize());
+    const { r, cam } = await renderer(g);
+    try {
+      art.clearBuildingCache();
+      cam.zoom = 1;
+      cam.centerOnTile(96, 96);
+      g.clock = 240 * 100 + 120; // noon
+      rec.budget = 1e6;
+      for (let k = 0; k < 3; k++) r.render(1 / 60, 1 + k / 60);
+      expect(r.view.sprites.fallbacks + r.view.sprites.stale).toBe(0);
+      // Midnight: every body's sprite is a night bucket away; with a small budget most draw their day sprite.
+      g.clock = 240 * 100;
+      rec.budget = 0.02;
+      r.render(1 / 60, 1.1);
+      expect(r.view.sprites.stale).toBeGreaterThan(0);
+      record(() => r.render(1 / 60, 1.12));
+      expect(rec.pre.length).toBeGreaterThan(0);
+      const c = cam.screenToTile(195, 422);
+      const d = rec.pre.map((q) => Math.max(Math.abs(q.x - c.x), Math.abs(q.y - c.y)));
+      expect(d[0]).toBeLessThanOrEqual(2);
+      for (let k = 1; k < d.length; k++) expect(d[k]).toBeGreaterThanOrEqual(d[k - 1]);
+    } finally {
+      rec.budget = null;
+      r.destroy();
+    }
+  });
+
+  it('at rest the idle budget paints the bodies just off the screen, nearest first, then stops; a short pan lands on painted bodies', async () => {
+    const art = await import('../src/render/buildings');
+    const g = new Game();
+    g.restore(megacityWorld(3, 9, 7).serialize());
+    const pan = async (warmFirst: boolean): Promise<number> => {
+      const { r, cam } = await renderer(g);
+      try {
+        art.clearBuildingCache();
+        cam.zoom = 1;
+        cam.centerOnTile(96, 96);
+        rec.budget = 1e6;
+        r.render(1 / 60, 1);
+        let t = 1;
+        if (warmFirst) {
+          const warm = (r as unknown as { warm: { done: boolean } }).warm;
+          let frames = 0;
+          const offScreen: { x: number; y: number }[] = [];
+          for (; frames < 120 && !warm.done; frames++) {
+            record(() => r.render(1 / 60, (t += 1 / 60)));
+            offScreen.push(...rec.pre);
+          }
+          expect(warm.done).toBe(true);
+          // Nothing before the camera rested WARM_STILL frames; then only bodies off the screen.
+          expect(offScreen.length).toBeGreaterThan(20);
+          for (const q of offScreen) {
+            const p = cam.tileToScreen(q.x, q.y);
+            const inside = p.x > 40 && p.x < 350 && p.y > 40 && p.y < 804;
+            expect(inside, `${q.x},${q.y} at ${Math.round(p.x)},${Math.round(p.y)}`).toBe(false);
+          }
+          // Done: no more paint-ahead while the camera rests.
+          record(() => r.render(1 / 60, (t += 1 / 60)));
+          expect(rec.pre.length).toBe(0);
+          expect(r.view.sprites.bytes).toBeLessThanOrEqual((r.view.limits?.capBytes ?? 32 * 1024 * 1024) * 0.75);
+        }
+        // A pan of a third of the screen with almost no paint budget.
+        rec.budget = 0.02;
+        cam.panBy(-130, -280);
+        r.render(1 / 60, (t += 1 / 60));
+        return r.view.sprites.fallbacks;
+      } finally {
+        rec.budget = null;
+        r.destroy();
+      }
+    };
+    const cold = await pan(false);
+    const warmed = await pan(true);
+    expect(cold).toBeGreaterThan(10);
+    expect(warmed).toBeLessThan(cold / 4);
+  });
+});
+
 /** A level-3, powered tower tile (a tall zone anchor). */
 function tower(w: World, x: number, y: number, level = 3, zone = ZoneType.Residential): void {
   w.setZone(x, y, zone);

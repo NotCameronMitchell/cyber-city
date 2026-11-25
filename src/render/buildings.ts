@@ -1287,7 +1287,20 @@ export function clearBuildingCache() {
 
 /** Debug stats for perf overlays / harnesses. */
 export function buildingCacheStats() {
-  return { sprites: cache.size, bytes: cache.bytes, builtThisFrame: cache.built, models: models.size, kitModels: kitIds.size, fallbacks: cache.fallbacks };
+  return {
+    sprites: cache.size,
+    bytes: cache.bytes,
+    builtThisFrame: cache.built,
+    models: models.size,
+    kitModels: kitIds.size,
+    fallbacks: cache.fallbacks,
+    /** Same-family stand-ins (another night or scale bucket) drawn this frame. */
+    stale: cache.stale,
+    /** Ms spent painting sprites this frame, and the frame's budget and cache cap (V1 paint p95, §11.1). */
+    paintMs: cache.spentMs,
+    budgetMs: cache.budgetMs,
+    capBytes: cache.capBytes,
+  };
 }
 
 /** The design families the kit and the landmarks reuse (tests enumerate them). */

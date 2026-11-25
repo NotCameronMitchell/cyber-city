@@ -70,12 +70,18 @@ export class SpriteCache {
   built = 0;
   /** Cross-family fallback draws this frame (stats: frames showing a fallback body, V1). */
   fallbacks = 0;
+  /**
+   * Same-family stand-ins this frame: a body drawn from its sprite at another night or scale bucket because the budget
+   * was spent (after a night-bucket change or a zoom). The Renderer then paints from the screen centre outward.
+   */
+  stale = 0;
 
   newFrame() {
     this.frame++;
     this.spent = 0;
     this.built = 0;
     this.fallbacks = 0;
+    this.stale = 0;
   }
 
   /** Ms spent painting sprites this frame (stats: paint p95, V1). */
@@ -107,6 +113,7 @@ export class SpriteCache {
     const fb = this.latest.get(family);
     if (fb && this.spent >= this.budgetMs) {
       fb.used = this.frame;
+      this.stale++;
       return fb;
     }
     if (!fb && fallback && this.spent >= this.budgetMs) {
