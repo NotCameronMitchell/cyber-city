@@ -115,8 +115,13 @@ export class Effects {
   private cf: CrowdFrame = { tod: 0.5, boostSlot: -1, boostHubs: false, view: null };
   /** This frame's fog morning strength for the district in view (tests, captures). */
   fogTarget = 0;
-  /** Per-layer ms of the last update + draws (tests, the §11.1 life budget). */
+  /** Per-pass ms of the last update + draws (tests, the §11.1 life budget). */
   readonly ms = { update: 0, ground: 0, sky: 0, screen: 0 };
+  /**
+   * The §6.4 items' ms this frame, update and draws together (§11.1: crowds 0.6, weather 0.5, boats 0.2, City life
+   * 0.4): weather is the rain, gloom, fog bands and haze, the ripples, reflections and fog patches. Reset by update().
+   */
+  readonly itemMs = { crowds: 0, weather: 0, boats: 0, cityLife: 0 };
 
   constructor(
     public game: Game,
@@ -194,6 +199,8 @@ export class Effects {
 
   update(dt: number): void {
     const t0 = performance.now();
+    const im = this.itemMs;
+    im.crowds = im.weather = im.boats = im.cityLife = 0;
     dt = Math.min(Math.max(dt, 0), 0.1);
     const game = this.game;
     const world = game.world;
@@ -201,11 +208,12 @@ export class Effects {
     const band = this.view?.band ?? 'street';
     const lv = (this.levers = lifeLevers(game.settings, game.settings.quality, game.lowerDetail, band));
     const b = this.bounds;
-    this.street.update(dt, world, q, band);
+    this.street.update(dt, world, q, band, this.viewRect);
     // Weather: the setting, the fog morning of the district in view, the haze and the Shoals' slant.
     const kind = this.viewKind();
     const tod = game.timeOfDay;
     const fog = (this.fogTarget = game.settings.dayNight ? fogMorning(game.clock, tod, DISTRICTS[kind]?.fog ?? 0.25, world.seed) : 0);
+    let t = performance.now();
     this.screen.update(dt, game.clock, {
       level: lv.weather,
       fog,
@@ -213,6 +221,7 @@ export class Effects {
       hazeMul: kind === 'flats' ? 1.5 : 1,
       steep: kind === 'shoals',
     });
+    im.weather += performance.now() - t;
     // A storm the player can see makes a storm watch eligible (City life).
     game.cityEvents.noteSky(lv.weather > 0 && this.screen.kind === Sky.Storm ? 2 : lv.weather > 0 && this.screen.kind === Sky.Drizzle ? 1 : 0);
     // Crowds (City life doubles them in its district: Market streets on a night market, stations on an arena night).
@@ -221,8 +230,13 @@ export class Effects {
     this.cf.boostSlot = ev && (ev.id === 'nightmarket' || ev.id === 'arenanight') && lv.cityLife ? (ev.slot ?? -1) : -1;
     this.cf.boostHubs = ev?.id === 'arenanight';
     this.cf.view = this.viewRect;
+    t = performance.now();
     this.crowds.update(dt, world, b, lv.crowds && this.zoom >= CROWD_MIN_ZOOM, this.cf);
+    const t1 = performance.now();
+    im.crowds += t1 - t;
     this.boats.update(dt, world, b, lv.boats, this.viewRect);
+    t = performance.now();
+    im.boats += t - t1;
     this.sky.update(dt, world, q, b, this.night, lv.drones);
     const gf = this.gf;
     gf.zoom = this.zoom;
@@ -232,8 +246,12 @@ export class Effects {
     gf.patches = lv.fogPatches;
     gf.reflections = lv.reflections;
     gf.view = this.viewRect;
+    t = performance.now();
     this.groundFx.update(dt, world, b, this.streets, gf);
+    const t2 = performance.now();
+    im.weather += t2 - t;
     this.festival.update(dt, world, ev, b, this.streets, lv.cityLife, this.viewRect);
+    im.cityLife += performance.now() - t2;
     this.ports.update(dt, game.clockRate, world);
     // The Seaport placement ghost shows the side that would face the water.
     const plan = game.preview;
@@ -264,22 +282,34 @@ export class Effects {
     const lv = this.levers;
     const rain = this.screen.rain;
     const world = this.game.world;
+    const im = this.itemMs;
     if (lv.street && rain > 0.05 && env.quality === 'high' && env.zoom >= 0.5) this.ripples(ctx, bounds, env, rain);
     this.gf.time = env.time;
     this.groundFx.draw(ctx, world, this.gf);
+    let t = performance.now();
+    im.weather += t - t0;
     this.boats.draw(ctx, env.zoom, env.night, env.quality);
+    let t1 = performance.now();
+    im.boats += t1 - t;
     this.ports.drawGround(ctx, env);
     this.street.draw(ctx, bounds, env.zoom, env.night, env.quality, rain);
+    t = performance.now();
     this.crowds.draw(ctx, env.night, rain, env.time);
+    t1 = performance.now();
+    im.crowds += t1 - t;
     this.festival.drawGround(ctx, world, env.time, env.night, env.zoom);
-    this.ms.ground = performance.now() - t0;
+    const t2 = performance.now();
+    im.cityLife += t2 - t1;
+    this.ms.ground = t2 - t0;
   }
 
   /** Flying vehicles, searchlights, planes and launches, world space, drawn after buildings. */
   drawSky(ctx: CanvasRenderingContext2D, bounds: TileBounds, env: ArtEnv): void {
     const t0 = performance.now();
     this.sky.draw(ctx, bounds, env.time, env.night, env.zoom, env.quality);
+    const t1 = performance.now();
     this.festival.drawSky(ctx, this.game.world, env.time, env.night, env.zoom);
+    this.itemMs.cityLife += performance.now() - t1;
     this.ports.drawSky(ctx, env);
     this.ms.sky = performance.now() - t0;
   }
@@ -289,6 +319,7 @@ export class Effects {
     const t0 = performance.now();
     this.screen.draw(ctx, width, height, env.night, env.quality);
     this.ms.screen = performance.now() - t0;
+    this.itemMs.weather += this.ms.screen;
   }
 
   /** Stateless expanding rings where raindrops hit the ground. */

@@ -48,6 +48,8 @@ const LANES: readonly (readonly [number, number])[] = [
 /** Spawn weight per RoadKind (§3.11). */
 const SPAWN_W = [1, 1.3, 1.6, 0.3, 1];
 const SPAWN_W_MAX = 1.6;
+/** Spawning only on the roads in view (rather than the renderer's box, about twice the screen): a busier street. */
+const ON_SCREEN_DENSITY = 2.5;
 /** Car speed multiplier per RoadKind (ROAD_KINDS[k].speed). */
 const SPEED = ROAD_KINDS.map((d) => d.speed);
 /** Share of spawns that enter from a visible border road (X2). */
@@ -304,6 +306,8 @@ export class StreetTraffic {
   private changed = false;
   private sinceCheck = 0;
   private bounds: Bounds | null = null;
+  /** The screen in world px (Effects): cars spawn on the roads in view, not across the renderer's wider tile box. */
+  private view: ViewRect | null = null;
   private quality: 'low' | 'high' = 'high';
   /** Off in the skyline view and under the City map (§3.9). */
   private active = true;
@@ -330,6 +334,8 @@ export class StreetTraffic {
   private hv = 0;
   /** Visible-rect walks since construction (tests: R0). */
   counts = 0;
+  /** Rain on the road this frame (head and tail lights reflect on the wet road at night, MEGACITY §6.4). */
+  private wet = 0;
 
   constructor(private readonly index: StreetIndex = new StreetIndex()) {}
 
@@ -378,14 +384,17 @@ export class StreetTraffic {
     const traffic = world.fields.traffic;
     const tiles = world.tiles;
     let sum = 0;
+    const view = this.view;
     for (let y = y0; y <= y1; y++) {
       let i = y * N + x0;
       for (let x = x0; x <= x1; x++, i++) {
         if (!(side[i] & SIDE_ROAD)) continue;
-        this.visRoads.push(i);
-        sum += (0.05 + traffic[i] * 0.85) * SPAWN_W[tiles[i].roadKind];
         // A boundary road (MEGACITY §3.5): owned land beside the map edge or a locked slot.
         if (tiles[i].terrain === 0 && outward(world, x, y) >= 0) this.visEdge.push(i);
+        // Spawns and the target come from the roads on screen (a tile's margin), where they are seen.
+        if (!tileOnScreen(view, x, y, 40, 40)) continue;
+        this.visRoads.push(i);
+        sum += (0.05 + traffic[i] * 0.85) * SPAWN_W[tiles[i].roadKind];
       }
     }
     // Precincts near the view (police cruisers).
@@ -400,15 +409,16 @@ export class StreetTraffic {
     const pop = world.stats.population;
     const popK = Math.pow(Math.min(1, pop / 12000), 0.7); // ×10 units (MEGACITY §4.4)
     const cap = this.quality === 'low' ? 90 : 260;
-    this.targetCars = Math.min(cap, Math.round(sum * popK));
+    this.targetCars = Math.min(cap, Math.round(sum * popK * (view ? ON_SCREEN_DENSITY : 1)));
   }
 
   /**
    * One frame. `band`: the renderer's view band (§3.9): street cars only in the street view; the skyline view and the
    * City map drop them.
    */
-  update(dt: number, world: World, quality: 'low' | 'high', band: 'street' | 'skyline' | 'map' = 'street') {
+  update(dt: number, world: World, quality: 'low' | 'high', band: 'street' | 'skyline' | 'map' = 'street', view: ViewRect | null = null) {
     this.quality = quality;
+    this.view = view;
     if (this.N !== world.N) {
       // A world of another side: nothing carries over.
       this.N = world.N;
@@ -704,10 +714,10 @@ export class StreetTraffic {
     this.shadowCss = `rgba(0,0,0,${(0.3 - 0.15 * k).toFixed(2)})`;
   }
 
-  /** World-space draw. `rain` 0..1 (kept for the frozen call shape; umbrellas moved to art/crowds.ts). */
+  /** World-space draw. `rain` 0..1: at night the head and tail lights streak on the wet road (umbrellas: art/crowds.ts). */
   draw(ctx: CanvasRenderingContext2D, b: Bounds, zoom: number, night: number, quality: 'low' | 'high', rain: number) {
-    void rain;
     this.bounds = b;
+    this.wet = quality === 'high' && zoom >= 0.6 ? rain : 0;
     if (!this.active || !this.cars.length) return;
     this.colours(night);
     if (!this.headGlow) {
@@ -903,6 +913,12 @@ export class StreetTraffic {
         const bx = x + fx * 3.4;
         const by = y + fy * 3.4 + 2;
         ctx.drawImage(this.headGlow!, bx - 9, by - 5, 18, 10);
+      }
+      // On a wet road the lights run down in long streaks.
+      if (this.wet > 0.15) {
+        ctx.globalAlpha = alpha * n * Math.min(1, this.wet * 1.3) * 0.7;
+        ctx.drawImage(this.headGlow!, x + fx - 1.6, y + fy + 0.6, 3.2, 11);
+        ctx.drawImage(this.tailGlow!, x - fx - 1.4, y - fy + 0.6, 2.8, 8);
       }
       ctx.globalAlpha = alpha * n;
       ctx.fillStyle = '#fff4d0';

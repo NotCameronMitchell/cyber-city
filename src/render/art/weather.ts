@@ -458,7 +458,7 @@ export class GroundWeather {
     if (this.refl.length && f.reflections && f.rain > 0.05 && f.night > 0.35 && f.zoom >= REFLECTION_MIN_ZOOM) {
       this.neon ??= NEON.map((c) => streak(c));
       ctx.globalCompositeOperation = 'lighter';
-      const base = Math.min(1, f.rain * 1.6) * Math.min(1, (f.night - 0.35) * 2.5) * 0.6;
+      const base = Math.min(1, f.rain * 1.6) * Math.min(1, (f.night - 0.35) * 2.5) * 0.85;
       for (const i of this.refl) {
         const x = i % N;
         const y = (i / N) | 0;
@@ -470,7 +470,7 @@ export class GroundWeather {
           const px = (u - v) * HALF_W;
           const py = (u + v) * HALF_H;
           ctx.globalAlpha = base * (0.65 + 0.35 * Math.sin(t * 2.3 + h * 20));
-          ctx.drawImage(this.neon[((h * 977) | 0) % NEON.length], px - 2.5, py - 3, 5, 22);
+          ctx.drawImage(this.neon[((h * 977) | 0) % NEON.length], px - 3, py - 4, 6, 28);
           this.reflectionsDrawn++;
         }
       }

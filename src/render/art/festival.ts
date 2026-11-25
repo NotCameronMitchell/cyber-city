@@ -19,6 +19,7 @@
 
 import { CITY_LIFE_DEFS, longestAvenue } from '../../game/cityEvents';
 import { slotRect } from '../../game/districts/slots';
+import { heightOf } from '../../game/heights';
 import { hash2 } from '../../game/rng';
 import { Terrain, type BuildingType, type CityEventId, type CityEventState } from '../../game/types';
 import type { World } from '../../game/world';
@@ -29,6 +30,8 @@ import { SIDE_GATHER, SIDE_HAB, SIDE_MARKET, SIDE_ROAD, tileOnScreen, type Bound
 /** Caps (§6.4.1 and the 0.4 ms budget). */
 export const SKY_LANTERN_CAP = 60;
 const STRING_CAP = 70;
+/** Night market string spans drawn at most (three lanterns each). */
+const SPAN_CAP = 96;
 const BARRIER_CAP = 160;
 const KITE_CAP = 20;
 const CONFETTI_CAP = 80;
@@ -104,6 +107,11 @@ export class Festival {
   private ev: CityEventState | null = null;
   private bounds: Bounds | null = null;
   private view: ViewRect | null = null;
+  /** Scratch: the night market's visible street tiles and its string spans (u0, v0, u1, v1). */
+  private vis: number[] = [];
+  private spans: number[] = [];
+  /** Night market street tiles behind a tall body (lanterns there would float over its roof), memoised per happening. */
+  private behind = new Map<number, boolean>();
   /** Things drawn last frame (tests). */
   drawn = 0;
 
@@ -156,6 +164,7 @@ export class Festival {
 
   private prepare(world: World, ev: CityEventState, index: StreetIndex) {
     this.id = ev.id;
+    this.behind.clear();
     this.tiles.length = 0;
     this.dirs.length = 0;
     this.points.length = 0;
@@ -225,9 +234,26 @@ export class Festival {
         break;
       }
       case 'parade':
-        this.avenue = longestAvenue(world);
+        // The longest avenue run in the parade's district (one district's walk; the whole city's is City life's).
+        this.avenue = longestAvenue(world, r);
         break;
     }
+  }
+
+  /**
+   * Is the street tile `i` hidden behind a body in front of it (south and east on screen)? Its lanterns hang 12 px up:
+   * a neighbour in front over 24 px, or the one two tiles in front over 56 px, would cover them.
+   */
+  private hidden(world: World, i: number): boolean {
+    let h = this.behind.get(i);
+    if (h === undefined) {
+      const N = world.N;
+      const x = i % N;
+      const y = (i / N) | 0;
+      h = heightOf(world, x + 1, y + 1) > 24 || heightOf(world, x + 1, y) > 30 || heightOf(world, x, y + 1) > 30 || heightOf(world, x + 2, y + 2) > 56;
+      this.behind.set(i, h);
+    }
+    return h;
   }
 
   /** On screen (the view rect, `m` tiles of margin), else inside the tile bounds. */
@@ -456,47 +482,85 @@ export class Festival {
     if (env <= 0.01) return;
     const N = world.N;
     if (ev.id === 'nightmarket') {
-      // Paper lanterns strung across the district's streets, three to a string.
-      const vis: number[] = [];
+      // Paper lanterns on strings that follow the district's streets from tile to tile (a festoon along each run,
+      // sagging between the tile edges), three lanterns a tile; every few tiles a string crosses the street. Drawn in
+      // the sky pass so the building just behind a street does not hide them; a street behind a tall body is skipped.
+      const vis = this.vis;
+      vis.length = 0;
       for (const i of this.tiles) {
         if (vis.length >= STRING_CAP) break;
-        if (this.visible(i % N, (i / N) | 0, 1)) vis.push(i);
-      }
-      ctx.globalCompositeOperation = 'source-over';
-      ctx.globalAlpha = env * 0.6;
-      ctx.strokeStyle = night > 0.5 ? '#4a3a40' : '#2a2230';
-      ctx.lineWidth = 0.4;
-      ctx.beginPath();
-      for (const i of vis) {
         const x = i % N;
         const y = (i / N) | 0;
-        const ax = (x - (y + 1)) * HALF_W;
-        const ay = (x + y + 1) * HALF_H - 11;
-        const bx = (x + 1 - y) * HALF_W;
-        const by = (x + 1 + y) * HALF_H - 11;
+        if (this.visible(x, y, 1) && !this.hidden(world, i)) vis.push(i);
+      }
+      const spans = this.spans;
+      spans.length = 0;
+      for (const i of vis) {
+        if (spans.length >= SPAN_CAP * 4) break;
+        const x = i % N;
+        const y = (i / N) | 0;
+        const mask = world.roadMask(x, y);
+        const ew = (mask & 10) !== 0;
+        const ns = (mask & 5) !== 0;
+        // Along the street: east-west runs at mid v, north-south runs at mid u (both at a crossing).
+        if (ew || !ns) spans.push(x, y + 0.5, x + 1, y + 0.5);
+        if (ns) spans.push(x + 0.5, y, x + 0.5, y + 1);
+        // Across the street now and then.
+        if (hash2(x, y, 67) < 0.22) {
+          if (ew && !ns) spans.push(x + 0.5, y + 0.05, x + 0.5, y + 0.95);
+          else if (ns && !ew) spans.push(x + 0.05, y + 0.5, x + 0.95, y + 0.5);
+        }
+      }
+      const LIFT = 12;
+      const SAG = 3;
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.globalAlpha = env * 0.8;
+      ctx.strokeStyle = night > 0.5 ? '#a0705a' : '#3a2a34';
+      ctx.lineWidth = 0.5;
+      ctx.beginPath();
+      for (let k = 0; k < spans.length; k += 4) {
+        const ax = (spans[k] - spans[k + 1]) * HALF_W;
+        const ay = (spans[k] + spans[k + 1]) * HALF_H - LIFT;
+        const bx = (spans[k + 2] - spans[k + 3]) * HALF_W;
+        const by = (spans[k + 2] + spans[k + 3]) * HALF_H - LIFT;
         ctx.moveTo(ax, ay);
-        ctx.quadraticCurveTo((ax + bx) / 2, (ay + by) / 2 + 4, bx, by);
+        ctx.quadraticCurveTo((ax + bx) / 2, (ay + by) / 2 + SAG * 2, bx, by);
       }
       ctx.stroke();
-      for (const i of vis) {
-        const x = i % N;
-        const y = (i / N) | 0;
-        for (let k = 1; k <= 3; k++) {
-          const s = k / 4;
-          const u = x + s;
-          const v = y + 1 - s;
-          const px = (u - v) * HALF_W;
-          const py = (u + v) * HALF_H - 11 + 2 * (1 - (2 * s - 1) * (2 * s - 1));
-          const c = (x + y + k) % WARM.length;
-          const flick = 0.8 + 0.2 * Math.sin(time * 3 + x * 1.7 + k);
-          ctx.globalCompositeOperation = 'lighter';
-          ctx.globalAlpha = env * (0.5 + 0.5 * night) * flick;
-          ctx.drawImage(this.glows[c], px - 5.5, py - 5.5, 11, 11);
+      // Glows first (one composite switch), then the paper bodies batched by colour.
+      ctx.globalCompositeOperation = 'lighter';
+      for (let pass = 0; pass < 1 + WARM.length; pass++) {
+        if (pass === 1) {
           ctx.globalCompositeOperation = 'source-over';
           ctx.globalAlpha = env;
-          ctx.fillStyle = this.warmCss[c];
-          ctx.fillRect(px - 1.1, py - 1.4, 2.2, 2.8);
-          this.drawn++;
+        }
+        if (pass > 0) ctx.beginPath();
+        for (let k = 0; k < spans.length; k += 4) {
+          const u0 = spans[k];
+          const v0 = spans[k + 1];
+          const du = spans[k + 2] - u0;
+          const dv = spans[k + 3] - v0;
+          const seed = ((u0 * 7) | 0) + ((v0 * 13) | 0);
+          for (let j = 0; j < 3; j++) {
+            const f = (j + 0.5) / 3;
+            const u = u0 + du * f;
+            const v = v0 + dv * f;
+            const px = (u - v) * HALF_W;
+            const py = (u + v) * HALF_H - LIFT + SAG * 4 * f * (1 - f);
+            const c = (seed + j) % WARM.length;
+            if (pass === 0) {
+              const flick = 0.8 + 0.2 * Math.sin(time * 3 + seed * 1.7 + j);
+              ctx.globalAlpha = env * (0.45 + 0.55 * night) * flick;
+              ctx.drawImage(this.glows[c], px - 5, py - 4.5, 10, 10);
+            } else if (c === pass - 1) {
+              ctx.rect(px - 1, py - 1.2, 2, 2.6);
+              this.drawn++;
+            }
+          }
+        }
+        if (pass > 0) {
+          ctx.fillStyle = this.warmCss[pass - 1];
+          ctx.fill();
         }
       }
     } else if (ev.id === 'lanterns') {

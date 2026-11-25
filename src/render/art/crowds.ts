@@ -27,6 +27,8 @@ export const CROWD_CAP = 300;
 /** Crowds draw from this zoom up (§6.4). */
 export const CROWD_MIN_ZOOM = 0.8;
 const SIDEWALK = 0.41;
+/** Figures per unit of sidewalk weight at the evening peak. */
+const DENSITY = 7;
 
 const BODY: RGB[] = [
   [232, 64, 150],
@@ -195,7 +197,8 @@ export class Crowds {
         const hub = s & (SIDE_GATHER | SIDE_HUB);
         if (!m && !(s & SIDE_HAB) && !hub) continue;
         if (!tileOnScreen(f.view, x, y, 24, 24)) continue;
-        let w = m === 3 ? 1.4 : m === 2 ? 0.9 : m === 1 ? 0.5 : 0.15;
+        // Busy Market streets fill up; tower blocks of homes keep a steady trickle.
+        let w = m === 3 ? 2 : m === 2 ? 1.25 : m === 1 ? 0.6 : 0.3;
         if (hub) {
           w += 0.6;
           this.gather.push(i);
@@ -206,7 +209,7 @@ export class Crowds {
       }
     }
     const popK = Math.pow(Math.min(1, world.stats.population / 15000), 0.6); // ×10 units
-    this.target = Math.min(CROWD_CAP, Math.round(sum * 5 * crowdTime(f.tod) * popK));
+    this.target = Math.min(CROWD_CAP, Math.round(sum * DENSITY * crowdTime(f.tod) * popK));
   }
 
   private step(dt: number, world: World, b: Bounds) {
@@ -353,10 +356,11 @@ export class Crowds {
     const b = Math.round(night * 8);
     if (b === this.nightB) return;
     this.nightB = b;
-    // Under the street lights at night: a little darker, a touch of neon from the signs, never lost on the asphalt.
-    const dark: RGB = [40, 30, 60];
-    this.bodyCss = BODY.map((c) => css(mix(c, mix(dark, mix(c, [255, 255, 255], 0.2), 0.7), night)));
-    this.headCss = css(mix(HEAD, mix(dark, HEAD, 0.8), night));
+    // Under the street lights and the signs at night: the colours stay bright (a touch toward neon), never lost on the
+    // dark asphalt.
+    const neon: RGB = [255, 150, 230];
+    this.bodyCss = BODY.map((c) => css(mix(c, mix(c, neon, 0.18), night)));
+    this.headCss = css(mix(HEAD, [244, 214, 190], night));
   }
 
   private pos(a: Walker) {

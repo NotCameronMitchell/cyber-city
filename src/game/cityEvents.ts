@@ -20,6 +20,12 @@
 // Settings › City life Off starts none (and ends one in progress); lower
 // detail hides the visuals only (Effects), the terms still apply (§3.11).
 // Nothing here touches world.rng: City life never changes the sim's stream.
+//
+// The land checks (Market tiles per district, the Kites' turf, the longest
+// avenue) read the whole owned area: while a gap is open a survey walks it a
+// band of rows a frame (≤ SURVEY_TILES tiles), so no frame pays for the walk
+// (a whole pass is ≈ 5 ms in Node at 25 districts) and a gap's checks read the
+// last finished pass.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { CITY_LIFE, DISTRICTS, STANDING } from './config';
@@ -161,62 +167,170 @@ interface Place {
   y: number;
 }
 
-/** Developed, lived-in Market tiles per owned slot, and the busiest tile of each (night markets). */
-function marketsBySlot(world: World): { slot: SlotId; count: number; x: number; y: number }[] {
-  const out: { slot: SlotId; count: number; x: number; y: number }[] = [];
-  const N = world.N;
-  for (const s of world.districts.owned) {
-    const r = slotRect(world, s);
-    let count = 0;
-    let best = -1;
-    let bx = r.x0;
-    let by = r.y0;
-    for (let y = r.y0; y <= r.y1; y++)
-      for (let x = r.x0; x <= r.x1; x++) {
-        const t = world.tiles[y * N + x];
-        if (t.zone !== ZoneType.Commercial || t.level < 1 || t.abandoned) continue;
-        count++;
-        if (t.level > best) {
-          best = t.level;
-          bx = x;
-          by = y;
+/** Tiles a survey step reads at most (one frame's share of the land checks). */
+export const SURVEY_TILES = 2560;
+
+type Avenue = { x0: number; y0: number; x1: number; y1: number; len: number };
+
+/**
+ * One pass over the owned land for the City life checks, a band of rows at a time: developed, lived-in Market tiles
+ * per owned slot (and the busiest tile of each), the Glass Kites' turf per owned slot (count and centre) and the
+ * longest straight run of Avenue tiles (vertical runs carry across bands in a per-column counter).
+ */
+export class LandSurvey {
+  /** The finished pass (null until one completes for this world). */
+  markets: { slot: SlotId; count: number; x: number; y: number }[] | null = null;
+  kites: { slot: SlotId; n: number; x: number; y: number }[] | null = null;
+  avenue: Avenue | null = null;
+  private world: World | null = null;
+  private y = 0;
+  private x0 = 0;
+  private x1 = -1;
+  private y1 = -1;
+  private col = new Int32Array(0);
+  private mCount = new Int32Array(0);
+  private mBest = new Int32Array(0);
+  private mAt = new Int32Array(0);
+  private kN = new Int32Array(0);
+  private kX = new Float64Array(0);
+  private kY = new Float64Array(0);
+  private best: Avenue | null = null;
+  /** Passes finished (tests, diagnostics). */
+  passes = 0;
+
+  get ready(): boolean {
+    return this.markets !== null;
+  }
+
+  /**
+   * Start a new pass over `box` (default the owned box; the finished pass stays readable until this one completes);
+   * another world drops everything.
+   */
+  restart(world: World, box?: { x0: number; y0: number; x1: number; y1: number }): void {
+    if (world !== this.world) {
+      this.world = world;
+      this.markets = this.kites = null;
+      this.avenue = null;
+    }
+    const b = box ?? world.ownedBox;
+    this.x0 = b.x0;
+    this.x1 = b.x1;
+    this.y = b.y0;
+    this.y1 = b.y1;
+    const w = Math.max(0, b.x1 - b.x0 + 1);
+    if (this.col.length < w) this.col = new Int32Array(w);
+    else this.col.fill(0, 0, w);
+    const n = world.region * world.region;
+    if (this.mCount.length !== n) {
+      this.mCount = new Int32Array(n);
+      this.mBest = new Int32Array(n);
+      this.mAt = new Int32Array(n);
+      this.kN = new Int32Array(n);
+      this.kX = new Float64Array(n);
+      this.kY = new Float64Array(n);
+    }
+    this.mCount.fill(0);
+    this.mBest.fill(-1);
+    this.mAt.fill(-1);
+    this.kN.fill(0);
+    this.kX.fill(0);
+    this.kY.fill(0);
+    this.best = null;
+  }
+
+  /** Read up to `budget` tiles of the pass (whole rows; at least one). True when the pass finished on this call. */
+  step(world: World, budget = SURVEY_TILES): boolean {
+    if (world !== this.world) this.restart(world);
+    const { x0, x1 } = this;
+    const w = x1 - x0 + 1;
+    if (w <= 0 || this.y > this.y1) return this.finish(world);
+    const N = world.N;
+    const R = world.region;
+    const tiles = world.tiles;
+    const owned = world.slotOwned;
+    const turf = world.turf?.owner;
+    const kites = turf && turf.length === world.area ? turf : null;
+    const col = this.col;
+    let rows = Math.max(1, Math.floor(budget / w));
+    for (; rows > 0 && this.y <= this.y1; rows--, this.y++) {
+      const y = this.y;
+      const sy = (y >> 6) * R;
+      let run = 0;
+      let i = y * N + x0;
+      for (let x = x0; x <= x1; x++, i++) {
+        const s = sy + (x >> 6);
+        const t = tiles[i];
+        const own = owned[s] === 1;
+        const ave = own && t.road && t.roadKind === RoadKind.Avenue;
+        // Horizontal runs end at the row's end; vertical runs at the column's first non-avenue tile.
+        if (ave) run++;
+        else if (run) {
+          this.offer(x - run, y, x - 1, y, run);
+          run = 0;
+        }
+        const c = x - x0;
+        if (ave) col[c]++;
+        else if (col[c]) {
+          this.offer(x, y - col[c], x, y - 1, col[c]);
+          col[c] = 0;
+        }
+        if (!own) continue;
+        if (t.zone === ZoneType.Commercial && t.level >= 1 && !t.abandoned) {
+          this.mCount[s]++;
+          if (t.level > this.mBest[s]) {
+            this.mBest[s] = t.level;
+            this.mAt[s] = i;
+          }
+        }
+        if (kites && kites[i] === 2) {
+          this.kN[s]++;
+          this.kX[s] += x;
+          this.kY[s] += y;
         }
       }
-    out.push({ slot: s, count, x: bx, y: by });
+      if (run) this.offer(x1 - run + 1, y, x1, y, run);
+    }
+    if (this.y <= this.y1) return false;
+    // Columns still running at the bottom row.
+    for (let c = 0; c < w; c++) if (col[c]) this.offer(x0 + c, this.y1 - col[c] + 1, x0 + c, this.y1, col[c]);
+    return this.finish(world);
   }
-  return out;
+
+  /** Run a whole pass over `box` (default the owned box) now (tests; checks outside a running game). */
+  full(world: World, box?: { x0: number; y0: number; x1: number; y1: number }): this {
+    this.restart(world, box);
+    while (!this.step(world, Infinity));
+    return this;
+  }
+
+  private offer(x0: number, y0: number, x1: number, y1: number, len: number) {
+    if (len > (this.best?.len ?? 0)) this.best = { x0, y0, x1, y1, len };
+  }
+
+  private finish(world: World): true {
+    const N = world.N;
+    const markets: { slot: SlotId; count: number; x: number; y: number }[] = [];
+    const kites: { slot: SlotId; n: number; x: number; y: number }[] = [];
+    for (const s of world.districts.owned) {
+      if (s >= this.mCount.length) continue;
+      const r = slotRect(world, s);
+      const at = this.mAt[s];
+      markets.push({ slot: s, count: this.mCount[s], x: at >= 0 ? at % N : r.x0, y: at >= 0 ? (at / N) | 0 : r.y0 });
+      const n = this.kN[s];
+      if (n > 0) kites.push({ slot: s, n, x: Math.round(this.kX[s] / n), y: Math.round(this.kY[s] / n) });
+    }
+    this.markets = markets;
+    this.kites = kites;
+    this.avenue = this.best;
+    this.passes++;
+    this.restart(world);
+    return true;
+  }
 }
 
-/** The longest straight run of Avenue tiles on owned land (the parade route): its ends, or null. */
-export function longestAvenue(world: World): { x0: number; y0: number; x1: number; y1: number; len: number } | null {
-  const N = world.N;
-  const b = world.ownedBox;
-  let best: { x0: number; y0: number; x1: number; y1: number; len: number } | null = null;
-  const isAve = (x: number, y: number) => {
-    const t = world.tiles[y * N + x];
-    return t.road && t.roadKind === RoadKind.Avenue && world.isOwned(x, y);
-  };
-  for (let y = b.y0; y <= b.y1; y++) {
-    let run = 0;
-    for (let x = b.x0; x <= b.x1 + 1; x++) {
-      if (x <= b.x1 && isAve(x, y)) run++;
-      else {
-        if (run > (best?.len ?? 0)) best = { x0: x - run, y0: y, x1: x - 1, y1: y, len: run };
-        run = 0;
-      }
-    }
-  }
-  for (let x = b.x0; x <= b.x1; x++) {
-    let run = 0;
-    for (let y = b.y0; y <= b.y1 + 1; y++) {
-      if (y <= b.y1 && isAve(x, y)) run++;
-      else {
-        if (run > (best?.len ?? 0)) best = { x0: x, y0: y - run, x1: x, y1: y - 1, len: run };
-        run = 0;
-      }
-    }
-  }
-  return best;
+/** The longest straight run of Avenue tiles on owned land (the parade route), inside `box` when given: its ends, or null. */
+export function longestAvenue(world: World, box?: { x0: number; y0: number; x1: number; y1: number }): Avenue | null {
+  return new LandSurvey().full(world, box).avenue;
 }
 
 export class CityEvents {
@@ -240,6 +354,12 @@ export class CityEvents {
   private sky: CitySky = 0;
   /** Happenings started since the last reset (tests, diagnostics). */
   started = 0;
+  /** The banded land survey a gap's checks read (night markets, Kites turf, the parade avenue). */
+  readonly survey = new LandSurvey();
+  /** The survey finished a pass since the gap's last check. */
+  private surveyed = false;
+  /** A survey for checks outside a gap (eligible() without one). */
+  private adhoc: LandSurvey | null = null;
 
   constructor(private readonly host: CityEventsHost) {}
 
@@ -279,11 +399,16 @@ export class CityEvents {
       this.gaps++;
       this.checkIn = 0;
       this.reserved = this.reserveFor(world);
+      this.survey.restart(world);
+      this.surveyed = false;
     }
     if (!cityLifeOn(host.settings)) return;
+    // A band of the land survey a frame until a pass is ready for the next check.
+    if (!this.surveyed && this.survey.step(world)) this.surveyed = true;
     this.checkIn -= dt;
-    if (this.checkIn > 0) return;
+    if (this.checkIn > 0 || !this.surveyed) return;
     this.checkIn = CITY_LIFE_RULES.checkSec;
+    this.surveyed = false;
     this.tryStart(world);
   }
 
@@ -302,6 +427,8 @@ export class CityEvents {
     this.lanternYear = -1;
     this.checkIn = 0;
     this.started = 0;
+    this.surveyed = false;
+    if (world) this.survey.restart(world);
   }
 
   /** The happening a just-opened gap is kept for, or null (the first eligible one starts). */
@@ -326,7 +453,7 @@ export class CityEvents {
       if (r === 'lanterns' && world.year === this.lanternYear) this.reserved = null;
       else if (r === 'arenanight' && !this.arena(world)) this.reserved = null;
       else {
-        const p = this.eligible(world, r);
+        const p = this.eligible(world, r, this.survey);
         if (p) this.start(world, r, p);
         return;
       }
@@ -339,7 +466,7 @@ export class CityEvents {
     for (let j = 0; j < order.length; j++) cands.push(order[(k + j) % order.length]);
     let fallback: { id: CityEventId; p: Place } | null = null;
     for (const id of cands) {
-      const p = this.eligible(world, id);
+      const p = this.eligible(world, id, this.survey);
       if (!p) continue;
       if (id !== this.lastId) {
         this.start(world, id, p);
@@ -350,13 +477,17 @@ export class CityEvents {
     if (fallback) this.start(world, fallback.id, fallback.p);
   }
 
-  /** Where `id` would run now, or null when its condition does not hold (§6.4.1 "When"). */
-  eligible(world: World, id: CityEventId): Place | null {
+  /**
+   * Where `id` would run now, or null when its condition does not hold (§6.4.1 "When"). `survey`: a finished land
+   * survey of this world to read (a gap's checks); without one the land is read now (tests, diagnostics).
+   */
+  eligible(world: World, id: CityEventId, survey?: LandSurvey): Place | null {
     const day = this.host.daylight;
+    const land = () => (survey?.ready ? survey : (this.adhoc ??= new LandSurvey()).full(world));
     switch (id) {
       case 'nightmarket': {
         if (day >= CITY_LIFE_RULES.nightBelow) return null;
-        const m = marketsBySlot(world).filter((s) => s.count >= CITY_LIFE_RULES.marketTiles);
+        const m = (land().markets ?? []).filter((s) => s.count >= CITY_LIFE_RULES.marketTiles);
         if (!m.length) return null;
         // The Bazaar first, then the busiest district.
         m.sort((a, b) => Number(world.districts.kinds[b.slot] === 'bazaar') - Number(world.districts.kinds[a.slot] === 'bazaar') || b.count - a.count);
@@ -385,11 +516,18 @@ export class CityEvents {
       case 'kiteday': {
         if (day <= CITY_LIFE_RULES.dayAbove) return null;
         if (standing(world, 'kites') < STANDING.friendly) return null;
-        return this.kitesTurf(world);
+        let best: Place | null = null;
+        let bestN = 0;
+        for (const k of land().kites ?? [])
+          if (k.n > bestN) {
+            bestN = k.n;
+            best = { slot: k.slot, x: k.x, y: k.y };
+          }
+        return bestN >= 8 ? best : null;
       }
       case 'parade': {
         if (world.stats.approval < CITY_LIFE_RULES.paradeApproval) return null;
-        const a = longestAvenue(world);
+        const a = land().avenue;
         if (!a || a.len < CITY_LIFE_RULES.paradeRun) return null;
         const x = (a.x0 + a.x1) >> 1;
         const y = (a.y0 + a.y1) >> 1;
@@ -414,33 +552,6 @@ export class CityEvents {
     for (const s of d.owned) if (d.kinds[s] === 'sunk') return s;
     if (world.story.seen?.['ch4.logs'] !== undefined) for (const s of d.owned) if (d.kinds[s] === 'shore') return s;
     return -1;
-  }
-
-  /** The owned slot where the Glass Kites hold the most turf, at its turf centre; null when they hold none. */
-  private kitesTurf(world: World): Place | null {
-    const owner = world.turf?.owner;
-    if (!owner || owner.length !== world.area) return null;
-    const N = world.N;
-    let best: Place | null = null;
-    let bestN = 0;
-    for (const s of world.districts.owned) {
-      const r = slotRect(world, s);
-      let n = 0;
-      let sx = 0;
-      let sy = 0;
-      for (let y = r.y0; y <= r.y1; y++)
-        for (let x = r.x0; x <= r.x1; x++)
-          if (owner[y * N + x] === 2) {
-            n++;
-            sx += x;
-            sy += y;
-          }
-      if (n > bestN) {
-        bestN = n;
-        best = { slot: s, x: Math.round(sx / n), y: Math.round(sy / n) };
-      }
-    }
-    return bestN >= 8 ? best : null;
   }
 
   private start(world: World, id: CityEventId, p: Place): void {
