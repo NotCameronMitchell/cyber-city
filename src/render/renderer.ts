@@ -23,7 +23,7 @@ import { deviceClass } from '../game/device';
 import { artOffset, slotRect } from '../game/districts/slots';
 import type { Game } from '../game/game';
 import { PARCEL_HEAD, PARCEL_MEMBER, PARCEL_SHAPE, fillParcelMap } from '../game/parcels';
-import { ZoneType, type Building, type Parcel, type Settings, type SlotId } from '../game/types';
+import { ZoneType, type Building, type Parcel, type Settings, type SlotId, type Tile } from '../game/types';
 import type { World } from '../game/world';
 import { buildingCacheStats, drawServiceBuilding, drawZone, resetFrame, serviceBuildingHeight, setSpriteLimits, zoneBuildingHeight, type ArtEnv } from './buildings';
 import { HALF_H, HALF_W, type Camera } from './camera';
@@ -227,6 +227,21 @@ export function buildingInView(bd: Building, vx0: number, vx1: number, view: Rec
   );
 }
 
+/** A tile's street-view ground signature (Renderer.groundChanged): everything the ground chunks read of it. */
+function groundSig(t: Tile, sky: number): number {
+  return (
+    t.terrain |
+    ((t.elev & 3) << 2) |
+    ((t.road ? 1 : 0) << 4) |
+    ((t.roadKind & 7) << 5) |
+    ((t.zone & 3) << 8) |
+    ((t.level > 0 ? 1 : 0) << 10) |
+    ((t.abandoned ? 1 : 0) << 11) |
+    ((t.ground & 7) << 12) |
+    ((sky & 255) << 15)
+  );
+}
+
 /** Identity tokens per World object, without keeping worlds alive. */
 const worldIds = new WeakMap<World, number>();
 let nextWorldId = 1;
@@ -280,6 +295,11 @@ export class Renderer {
   private turfBand = -1;
   private turfAgain = false;
   private turfBox = new Int32Array(0);
+  /** Ground signatures per tile (groundChanged): street view, building id, skyline roof tint. */
+  private sigWorld: World | null = null;
+  private sigStreet = new Uint32Array(0);
+  private sigBuilding = new Int32Array(0);
+  private sigSkyline = new Uint8Array(0);
   /** The pins drawn this frame (CSS px; input reads the same geometry through districts.annexPins). */
   pins: AnnexPin[] = [];
   /** Diagnostics (tests, the browser checks): the band drawn, sprites the skyline sweep drew and dropped. */
@@ -322,6 +342,7 @@ export class Renderer {
         const w = this.game.world;
         this.atlas.invalidate(w, slotRect(w, e.slot));
         this.seedTurf();
+        this.seedGroundSig();
         // The fog lifts off the new district (§1.4: 1.5 s).
         this.lift = { slot: e.slot, t0: this.lastTime };
       }),
@@ -340,6 +361,7 @@ export class Renderer {
       ev.on('settings', () => this.qualityMaybeChanged()),
     );
     this.seedTurf();
+    this.seedGroundSig();
     this.resize();
   }
 
@@ -350,7 +372,8 @@ export class Renderer {
    */
   onTiles(r: { x0: number; y0: number; x1: number; y1: number }): void {
     const w = this.game.world;
-    this.ground.invalidate(r);
+    const g = this.groundChanged(w, r);
+    if (g) this.ground.invalidate(r, g === 1);
     this.overlay.invalidate();
     this.access.invalidate(r, w);
     this.parcels.touch(w, r);
@@ -442,6 +465,66 @@ export class Renderer {
   }
 
   /**
+   * What the ground chunks paint of a tile (§3.9 R0): the street view reads terrain, step, road and kind, zone,
+   * developed or not, abandoned, the building, the ground kind and the deck mask; the skyline view's roof tints also
+   * read the level and the body's variant. Growth sends a 'tiles' event per level change, which most of the time
+   * changes neither: 0 = nothing to repaint, 1 = the skyline chunks only, 2 = every bucket.
+   */
+  private groundChanged(w: World, r: { x0: number; y0: number; x1: number; y1: number }): 0 | 1 | 2 {
+    if (this.sigWorld !== w || this.sigStreet.length !== w.area) this.seedGroundSig();
+    const N = w.N;
+    const tiles = w.tiles;
+    const sky = w.sky;
+    const st = this.sigStreet;
+    const bid = this.sigBuilding;
+    const sl = this.sigSkyline;
+    let out: 0 | 1 | 2 = 0;
+    // World.touch widens the changed rect by one tile on each side (inside the map) so the neighbours redraw: only the
+    // core can have changed, so only the core is compared (the ring still repaints with the rect).
+    const x0 = r.x0 <= 0 ? 0 : r.x0 + 1;
+    const y0 = r.y0 <= 0 ? 0 : r.y0 + 1;
+    const x1 = r.x1 >= N - 1 ? N - 1 : r.x1 - 1;
+    const y1 = r.y1 >= N - 1 ? N - 1 : r.y1 - 1;
+    for (let y = y0; y <= y1; y++)
+      for (let x = x0; x <= x1; x++) {
+        const i = y * N + x;
+        const t = tiles[i];
+        const a = groundSig(t, sky[i]);
+        const k = t.level | ((t.variant & 63) << 2);
+        if (a !== st[i] || t.buildingId !== bid[i]) {
+          st[i] = a;
+          bid[i] = t.buildingId;
+          sl[i] = k;
+          out = 2;
+        } else if (k !== sl[i]) {
+          sl[i] = k;
+          if (out === 0) out = 1;
+        }
+      }
+    return out;
+  }
+
+  /** The ground signatures as the chunks paint them now (a new world, an annex: every chunk repaints anyway). */
+  private seedGroundSig() {
+    const w = this.game.world;
+    countPass('region:groundSig');
+    this.sigWorld = w;
+    if (this.sigStreet.length !== w.area) {
+      this.sigStreet = new Uint32Array(w.area);
+      this.sigBuilding = new Int32Array(w.area);
+      this.sigSkyline = new Uint8Array(w.area);
+    }
+    const tiles = w.tiles;
+    const sky = w.sky;
+    for (let i = 0; i < w.area; i++) {
+      const t = tiles[i];
+      this.sigStreet[i] = groundSig(t, sky[i]);
+      this.sigBuilding[i] = t.buildingId;
+      this.sigSkyline[i] = t.level | ((t.variant & 63) << 2);
+    }
+  }
+
+  /**
    * The wash levels the ground chunks paint with now (a new world, or an annex, which repaints every chunk): the next
    * 'turf' diff then repaints only what moved, instead of every tile with turf on the first month after a load.
    */
@@ -497,6 +580,7 @@ export class Renderer {
     this.parcels.reset();
     this.atlas.reset();
     this.seedTurf();
+    this.seedGroundSig();
     this.lift = null;
     this.runsKey = -1;
     this.qualityMaybeChanged();

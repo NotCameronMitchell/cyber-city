@@ -168,3 +168,56 @@ describe('R0: an annex rebuilds the region caches once; a world swap too', () =>
     }
   });
 });
+
+describe('R0: growth that changes nothing on the ground repaints no ground chunk', () => {
+  it('a level change dirties only the skyline chunks; zoning, a road or abandonment dirties the street ones too', async () => {
+    const { Renderer } = await import('../src/render/renderer');
+    const { Camera } = await import('../src/render/camera');
+    const g = new Game();
+    expect(g.restore(cachedMegacity(3, 3).serialize())).toBe(true);
+    const canvas = document.createElement('canvas');
+    canvas.width = 390;
+    canvas.height = 844;
+    const cam = new Camera(g.world.N);
+    const r = new Renderer(canvas, g, cam);
+    try {
+      const w = g.world;
+      // A developed tile in view: paint both views' chunks once.
+      let x = -1;
+      let y = -1;
+      for (let i = 0; i < w.area && x < 0; i++) {
+        const t = w.tiles[i];
+        if (t.zone && t.level === 1 && !t.abandoned && w.isOwned(i % w.N, (i / w.N) | 0)) {
+          x = i % w.N;
+          y = (i / w.N) | 0;
+        }
+      }
+      expect(x).toBeGreaterThanOrEqual(0);
+      cam.centerOnTile(x, y);
+      for (const z of [0.3, 0.6]) {
+        cam.zoom = z;
+        for (let k = 0; k < 30; k++) r.render(1 / 60, k / 60);
+      }
+      const ground = (r as unknown as { ground: { chunks: Map<number, { sky: boolean; dirty: unknown; rendered: boolean }> } }).ground;
+      const dirty = () => {
+        let street = 0;
+        let sky = 0;
+        for (const c of ground.chunks.values()) if (c.rendered && c.dirty) c.sky ? sky++ : street++;
+        return { street, sky };
+      };
+      const before = [...ground.chunks.values()].filter((c) => c.rendered);
+      expect(before.some((c) => c.sky)).toBe(true);
+      expect(before.some((c) => !c.sky)).toBe(true);
+      expect(dirty()).toEqual({ street: 0, sky: 0 });
+      w.setLevel(x, y, 2);
+      const d1 = dirty();
+      expect(d1.street).toBe(0);
+      expect(d1.sky).toBeGreaterThan(0);
+      w.setLevel(x, y, 2, true);
+      expect(dirty().street).toBeGreaterThan(0);
+    } finally {
+      r.destroy();
+    }
+  });
+});
+

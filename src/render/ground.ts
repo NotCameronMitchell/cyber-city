@@ -2819,8 +2819,13 @@ interface Chunk {
   rendered: boolean;
   /** Night bucket the content was baked with. */
   night: number;
-  /** World rect that changed since the last render (partial redraw), or null. */
-  dirty: Rect | null;
+  /**
+   * World rects that changed since the last render (partial redraws, each clipped to its own rect), or null. Kept as
+   * a short list, not one union, so scattered growth repaints its own tiles rather than the whole chunk (§3.9 R0).
+   */
+  dirty: Rect[] | null;
+  /** When the dirty rects were last repainted (ms): a heavily churned chunk repaints at most every CHURN_MS. */
+  paintedAt: number;
   /** Frame stamp of last use (LRU). */
   used: number;
 }
@@ -2843,6 +2848,43 @@ const now = () => (typeof performance !== 'undefined' ? performance.now() : Date
 
 /** The overview fallback's memory cap (§3.9: within 4 MB, unless the view itself needs more chunks). */
 const OVERVIEW_BUDGET = 4 * 1024 * 1024;
+/** Least time between two repaints of a chunk's edits (ms, §3.9 R0): a quiet chunk repaints an edit at once. */
+const CHURN_MS = 250;
+/** Dirty rects kept per chunk; past it, a new rect merges into the one it grows least. */
+const DIRTY_MAX = 12;
+
+/** Add a dirty world rect to a chunk: merged into an overlapping one, else listed, else into the nearest. */
+function addDirty(c: Chunk, x0: number, y0: number, x1: number, y1: number) {
+  const list = c.dirty;
+  if (!list) {
+    c.dirty = [{ x0, y0, x1, y1 }];
+    return;
+  }
+  let best: Rect | null = null;
+  let grow = Infinity;
+  for (const d of list) {
+    if (x0 <= d.x1 && x1 >= d.x0 && y0 <= d.y1 && y1 >= d.y0) {
+      best = d;
+      break;
+    }
+    if (list.length >= DIRTY_MAX) {
+      const g = (Math.max(x1, d.x1) - Math.min(x0, d.x0)) * (Math.max(y1, d.y1) - Math.min(y0, d.y0)) - (d.x1 - d.x0) * (d.y1 - d.y0);
+      if (g < grow) {
+        grow = g;
+        best = d;
+      }
+    }
+  }
+  if (!best) {
+    list.push({ x0, y0, x1, y1 });
+    return;
+  }
+  if (x0 < best.x0) best.x0 = x0;
+  if (y0 < best.y0) best.y0 = y0;
+  if (x1 > best.x1) best.x1 = x1;
+  if (y1 > best.y1) best.y1 = y1;
+}
+
 /**
  * A chunk's map key (§3.9 R0: a number, not a string, so the dozens to thousands of 'tiles' events a frame at speed 3
  * look chunks up without building strings): bucket k (OVERVIEW −100 .. 12), the view band and the grid cell.
@@ -2891,11 +2933,12 @@ export class GroundCache {
   }
 
   /**
-   * Tiles changed: mark the affected world rect dirty on the rendered chunks it touches. MEGACITY §3.9 R0: the chunks
+   * Tiles changed: mark the affected world rect dirty on the rendered chunks it touches (`skylineOnly`: only the
+   * skyline view's chunks, whose roof tints read a body's level and look). MEGACITY §3.9 R0: the chunks
    * are looked up by index range in each bucket in use (a growth event touches one to four per bucket), not by a walk
    * over every chunk, so dozens of 'tiles' events a frame at speed 3 stay cheap.
    */
-  invalidate(tiles: Rect) {
+  invalidate(tiles: Rect, skylineOnly = false) {
     if (!this.N) return;
     // The world rect the tiles' ground art covers (tileRectToWorld, inlined: no allocation unless a chunk takes it).
     const x0 = (tiles.x0 - tiles.y1 - 1) * HALF_W - SPILL;
@@ -2904,6 +2947,8 @@ export class GroundCache {
     const y1 = (tiles.x1 + tiles.y1 + 2) * HALF_H + SPILL;
     const N = this.N;
     for (const b of this.buckets.values()) {
+      // Growth that only changes a body's level or look repaints the skyline view's roof tints, not the street ground.
+      if (skylineOnly && !b.sky) continue;
       const s = scaleOf(b.k);
       const W = CHUNK_PX / s;
       const p = PAD / s;
@@ -2921,13 +2966,7 @@ export class GroundCache {
           const cx0 = this.OX + i * W - p;
           const cy0 = OY + j * W - p;
           if (!(x0 < cx0 + W + 2 * p && x1 > cx0 && y0 < cy0 + W + 2 * p && y1 > cy0)) continue;
-          const d = c.dirty;
-          if (d) {
-            if (x0 < d.x0) d.x0 = x0;
-            if (y0 < d.y0) d.y0 = y0;
-            if (x1 > d.x1) d.x1 = x1;
-            if (y1 > d.y1) d.y1 = y1;
-          } else c.dirty = { x0, y0, x1, y1 };
+          addDirty(c, x0, y0, x1, y1);
         }
     }
   }
@@ -3005,7 +3044,7 @@ export class GroundCache {
     if (!c) {
       const bk = `${k}:${sky ? 1 : 0}`;
       if (!this.buckets.has(bk)) this.buckets.set(bk, { k, sky });
-      c = { k, sky, i, j, canvas: null, ctx: null, empty: false, rendered: false, night: -1, dirty: null, used: 0 };
+      c = { k, sky, i, j, canvas: null, ctx: null, empty: false, rendered: false, night: -1, dirty: null, paintedAt: -1e9, used: 0 };
       c.empty = this.collectTiles(this.chunkRect(c)) === 0;
       this.chunks.set(key, c);
     }
@@ -3110,12 +3149,27 @@ export class GroundCache {
     P.end();
     if (clip) ctx.restore();
     ctx.setTransform(1, 0, 0, 1, 0, 0);
-    c.dirty = null;
     if (!clip) {
+      c.dirty = null;
       c.rendered = true;
       c.night = nightBucket;
       this.lastChunkMs = now() - t0;
     }
+  }
+
+  /**
+   * Repaint a chunk's dirty rects, each clipped to itself (in the chunk's own night bucket, so a stale chunk stays
+   * self-consistent). A chunk repaints its edits at most every CHURN_MS: a quiet chunk shows an edit (a player's road,
+   * zone or building) at once, a chunk under sim churn (abandonment, cleared brownfield all over the map at speed 3)
+   * gathers its edits for a few frames and repaints them together.
+   */
+  private repaintDirty(c: Chunk, world: World, t: number) {
+    const list = c.dirty;
+    if (!list) return;
+    if (t - c.paintedAt < CHURN_MS) return;
+    c.dirty = null;
+    c.paintedAt = t;
+    for (const r of list) this.renderChunk(c, world, c.night, r);
   }
 
   /** Visible chunk index range of bucket k for a world rect. */
@@ -3220,7 +3274,8 @@ export class GroundCache {
     const fallbackReady = k === OVERVIEW || ovView.every((c) => c.rendered);
     // 1) partial redraws of visible chunks (edits must show immediately)
     //    (in the chunk's own night bucket so a stale chunk stays self-consistent)
-    for (const c of vis) if (c.rendered && c.dirty) this.renderChunk(c, world, c.night, c.dirty);
+    const tNow = now();
+    for (const c of vis) if (c.rendered && c.dirty) this.repaintDirty(c, world, tNow);
     let did = 0;
     // Most of a chunk's cost is rasterisation, which the browser defers to the
     // blit, so besides the time budget the number of full renders per frame is
@@ -3242,7 +3297,7 @@ export class GroundCache {
     // 4) keep the fallback overview reasonably fresh: edits whenever there is
     //    time; night changes only on otherwise idle frames, at most every 1.5 s.
     for (const c of ov) {
-      if (c.rendered && c.dirty && spent() < budgetMs * 0.5) this.renderChunk(c, world, c.night, c.dirty);
+      if (c.rendered && c.dirty && spent() < budgetMs * 0.5) this.repaintDirty(c, world, tNow);
       if (c.night !== nightBucket && did === 0 && spent() < 1 && now() - this.overviewNightAt > 1500) {
         this.renderChunk(c, world, nightBucket, null);
         this.overviewNightAt = now();
