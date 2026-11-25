@@ -50,6 +50,8 @@ const SPAWN_W = [1, 1.3, 1.6, 0.3, 1];
 const SPAWN_W_MAX = 1.6;
 /** Spawning only on the roads in view (rather than the renderer's box, about twice the screen): a busier street. */
 const ON_SCREEN_DENSITY = 2.5;
+/** Cars on screen at most (high quality): a wide desktop view fills up long before the old 260 over twice the area. */
+const ON_SCREEN_CAP = 180;
 /** Car speed multiplier per RoadKind (ROAD_KINDS[k].speed). */
 const SPEED = ROAD_KINDS.map((d) => d.speed);
 /** Share of spawns that enter from a visible border road (X2). */
@@ -408,7 +410,7 @@ export class StreetTraffic {
     }
     const pop = world.stats.population;
     const popK = Math.pow(Math.min(1, pop / 12000), 0.7); // ×10 units (MEGACITY §4.4)
-    const cap = this.quality === 'low' ? 90 : 260;
+    const cap = this.quality === 'low' ? 90 : view ? ON_SCREEN_CAP : 260;
     this.targetCars = Math.min(cap, Math.round(sum * popK * (view ? ON_SCREEN_DENSITY : 1)));
   }
 

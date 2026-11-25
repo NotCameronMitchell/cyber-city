@@ -35,7 +35,7 @@ const STRING_CAP = 70;
 const SIGN_POOL = 600;
 const SIGN_CAP = 40;
 /** Night market string spans drawn at most (three lanterns each). */
-const SPAN_CAP = 96;
+const SPAN_CAP = 72;
 const BARRIER_CAP = 160;
 const KITE_CAP = 20;
 const CONFETTI_CAP = 120;
@@ -451,26 +451,32 @@ export class Festival {
     const N = world.N;
     if (ev.id === 'nightmarket') {
       // Stalls: an awning on the sidewalk of some Market streets (the strings of lanterns hang in the sky pass).
-      for (const i of this.onTiles) {
-        const x = i % N;
-        const y = (i / N) | 0;
-        const h = hash2(x, y, 61);
-        if (h >= 0.3) continue;
-        const su = x + 0.15 + h;
-        const sv = y + 0.85;
-        const px = (su - sv) * HALF_W;
-        const py = (su + sv) * HALF_H;
-        ctx.globalAlpha = env;
-        ctx.fillStyle = this.brightCss[((h * 60) | 0) % BRIGHT.length];
-        ctx.fillRect(px - 2.5, py - 4, 5, 1.5);
-        ctx.fillStyle = '#2a2030';
-        ctx.fillRect(px - 2.2, py - 2.5, 4.4, 2.5);
-        ctx.globalCompositeOperation = 'lighter';
-        ctx.globalAlpha = env * (0.3 + 0.5 * night);
-        ctx.drawImage(this.glows[1], px - 5, py - 5, 10, 8);
-        ctx.globalCompositeOperation = 'source-over';
-        this.drawn++;
+      // Bodies first, then every glow under one 'lighter' switch.
+      ctx.globalAlpha = env;
+      for (let pass = 0; pass < 2; pass++) {
+        if (pass === 1) {
+          ctx.globalCompositeOperation = 'lighter';
+          ctx.globalAlpha = env * (0.3 + 0.5 * night);
+        }
+        for (const i of this.onTiles) {
+          const x = i % N;
+          const y = (i / N) | 0;
+          const h = hash2(x, y, 61);
+          if (h >= 0.3) continue;
+          const su = x + 0.15 + h;
+          const sv = y + 0.85;
+          const px = (su - sv) * HALF_W;
+          const py = (su + sv) * HALF_H;
+          if (pass === 0) {
+            ctx.fillStyle = this.brightCss[((h * 60) | 0) % BRIGHT.length];
+            ctx.fillRect(px - 2.5, py - 4, 5, 1.5);
+            ctx.fillStyle = '#2a2030';
+            ctx.fillRect(px - 2.2, py - 2.5, 4.4, 2.5);
+            this.drawn++;
+          } else ctx.drawImage(this.glows[1], px - 5, py - 5, 10, 8);
+        }
       }
+      ctx.globalCompositeOperation = 'source-over';
     } else if (ev.id === 'stormwatch') {
       // Barriers rise along the water-facing edge of each shore tile in view.
       const rise = 9 * env;
@@ -569,7 +575,7 @@ export class Festival {
         ctx.quadraticCurveTo((ax + bx) / 2, (ay + by) / 2 + SAG * 2, bx, by);
       }
       ctx.stroke();
-      // Glows first (one composite switch), then the paper bodies batched by colour.
+      // Glows first (one composite switch, one a span), then the paper bodies batched by colour.
       ctx.globalCompositeOperation = 'lighter';
       for (let pass = 0; pass < 1 + WARM.length; pass++) {
         if (pass === 1) {
@@ -591,9 +597,11 @@ export class Festival {
             const py = (u + v) * HALF_H - LIFT + SAG * 4 * f * (1 - f);
             const c = (seed + j) % WARM.length;
             if (pass === 0) {
-              const flick = 0.8 + 0.2 * Math.sin(time * 3 + seed * 1.7 + j);
-              ctx.globalAlpha = env * (0.45 + 0.55 * night) * flick;
-              ctx.drawImage(this.glows[c], px - 5, py - 4.5, 10, 10);
+              // One wide glow a span, round its middle lantern (a third of the draws of a glow a lantern).
+              if (j !== 1) continue;
+              const flick = 0.8 + 0.2 * Math.sin(time * 3 + seed * 1.7);
+              ctx.globalAlpha = env * (0.5 + 0.5 * night) * flick;
+              ctx.drawImage(this.glows[c], px - 12, py - 6, 24, 12);
             } else if (c === pass - 1) {
               ctx.rect(px - 1, py - 1.2, 2, 2.6);
               this.drawn++;

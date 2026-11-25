@@ -324,27 +324,42 @@ export class Effects {
     this.itemMs.weather += this.ms.screen;
   }
 
-  /** Stateless expanding rings where raindrops hit the ground. */
+  /**
+   * Stateless expanding rings where raindrops hit the ground: placed on the screen (the view rect; the tile bounds are
+   * about twice its area), stroked in four fading batches rather than one path each.
+   */
   private ripples(ctx: CanvasRenderingContext2D, b: TileBounds, env: ArtEnv, rain: number) {
-    const count = Math.round(70 * rain);
+    const vr = this.viewRect;
+    const count = Math.round((vr ? 40 : 70) * rain);
     const w = b.x1 - b.x0 + 1;
     const h = b.y1 - b.y0 + 1;
     const t = env.time;
     ctx.globalCompositeOperation = env.night > 0.4 ? 'lighter' : 'source-over';
     ctx.strokeStyle = env.night > 0.4 ? '#7fa8ff' : '#c8d4ee';
     ctx.lineWidth = 0.5;
-    for (let i = 0; i < count; i++) {
-      const cyc = t * 1.6 + i * 0.618;
-      const k = cyc % 1;
-      const n = Math.floor(cyc);
-      const u = b.x0 + hash2(i, n, 11) * w;
-      const v = b.y0 + hash2(i, n, 12) * h;
-      const x = (u - v) * HALF_W;
-      const y = (u + v) * HALF_H;
-      const r = 0.6 + k * 3.2;
-      ctx.globalAlpha = (1 - k) * 0.5;
+    for (let bucket = 0; bucket < 4; bucket++) {
       ctx.beginPath();
-      ctx.ellipse(x, y, r, r * 0.5, 0, 0, Math.PI * 2);
+      for (let i = 0; i < count; i++) {
+        const cyc = t * 1.6 + i * 0.618;
+        const k = cyc % 1;
+        if (Math.min(3, (k * 4) | 0) !== bucket) continue;
+        const n = Math.floor(cyc);
+        let x: number;
+        let y: number;
+        if (vr) {
+          x = vr.x0 + hash2(i, n, 11) * (vr.x1 - vr.x0);
+          y = vr.y0 + hash2(i, n, 12) * (vr.y1 - vr.y0);
+        } else {
+          const u = b.x0 + hash2(i, n, 11) * w;
+          const v = b.y0 + hash2(i, n, 12) * h;
+          x = (u - v) * HALF_W;
+          y = (u + v) * HALF_H;
+        }
+        const r = 0.6 + k * 3.2;
+        ctx.moveTo(x + r, y);
+        ctx.ellipse(x, y, r, r * 0.5, 0, 0, Math.PI * 2);
+      }
+      ctx.globalAlpha = (1 - (bucket + 0.5) / 4) * 0.5;
       ctx.stroke();
     }
     ctx.globalAlpha = 1;

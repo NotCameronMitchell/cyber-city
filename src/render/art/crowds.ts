@@ -97,7 +97,7 @@ function rand(): number {
 /** People out at this time of day: an evening peak, a busy day, a quiet night. */
 export function crowdTime(tod: number): number {
   if (tod >= 0.7 && tod < 0.9) return 1;
-  if (tod >= 0.3 && tod < 0.7) return 0.7 + 0.2 * Math.max(0, (tod - 0.55) / 0.15);
+  if (tod >= 0.3 && tod < 0.7) return 0.8 + 0.15 * Math.max(0, (tod - 0.55) / 0.15);
   if (tod >= 0.24 && tod < 0.3) return 0.45;
   if (tod >= 0.9 && tod < 0.97) return 0.55;
   return 0.25;
@@ -108,7 +108,7 @@ export class Crowds {
   private pool: number[] = [];
   private gather: number[] = [];
   private target = 0;
-  private recount = 0;
+  private recount = 0.25;
   private N = 0;
   private nightB = -1;
   private bodyCss: string[] = [];
@@ -133,7 +133,8 @@ export class Crowds {
 
   reset() {
     this.list.length = 0;
-    this.recount = 0;
+    // Half a recount out of step with the street cars' (both every 0.5 s), so their walks never share a frame.
+    this.recount = 0.25;
   }
 
   /** Tiles changed: recount soon (walkers on a tile that is no longer a road drop at the next recount). */
@@ -150,7 +151,7 @@ export class Crowds {
     this.on = on;
     if (!on || !b) {
       this.list.length = 0;
-      this.recount = 0;
+      this.recount = 0.25;
       return;
     }
     this.recount -= dt;
@@ -312,8 +313,8 @@ export class Crowds {
 
   private spawn(world: World) {
     const N = this.N;
-    // A group by a gathering place (a third of spawns where there is one), else a walker on the busiest of two picks.
-    const grp = this.gather.length > 0 && rand() < 0.33;
+    // A group by a gathering place (a quarter of spawns where there is one), else a walker on the busiest of two picks.
+    const grp = this.gather.length > 0 && rand() < 0.25;
     const i = grp ? this.gather[(rand() * this.gather.length) | 0] : this.pick();
     const x = i % N;
     const y = (i / N) | 0;
