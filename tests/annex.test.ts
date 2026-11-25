@@ -9,9 +9,21 @@ import { finishFrame, frameStatus } from '../src/game/actions';
 import { DISTRICTS } from '../src/game/config';
 import { districtDaily, kingTides, pumpHouses, pumpRings } from '../src/game/districts/daily';
 import { brownfieldSites, framesOf, isRuin, pumpHallSite, tarmacSites } from '../src/game/districts/annex';
-import { halfLifeShare, isFloodplain, kingTideAt, maxLevelAt, updateDistrictLayers, writeDistrictPart } from '../src/game/districts/effects';
+import {
+  apron,
+  clearBrownfield,
+  clearRuins,
+  countGround,
+  drainReeds,
+  halfLifeShare,
+  isFloodplain,
+  kingTideAt,
+  maxLevelAt,
+  updateDistrictLayers,
+  writeDistrictPart,
+} from '../src/game/districts/effects';
 import { alleysIn, ruinsIn } from '../src/game/districts/goals';
-import { slotRect } from '../src/game/districts/slots';
+import { slotOffset, slotRect } from '../src/game/districts/slots';
 import { Simulation } from '../src/game/sim';
 import { DAYS_PER_MONTH, Ground, REGIONS, RoadKind, Terrain, ZoneType, type DistrictKind, type Region } from '../src/game/types';
 import { World } from '../src/game/world';
@@ -336,5 +348,94 @@ describe.each(REGIONS)('%i×%i: D5, a new district grows', (R) => {
         }
     }
     expect(developed).toBeGreaterThan(0);
+  });
+});
+
+describe.each(REGIONS)('%i×%i: story effects that name a district (§8.4)', (R) => {
+  it('brownfield clear: every brownfield tile of every owned Flats district turns Plain; the smog goes', () => {
+    const { w, s } = annexed(R, 'flats');
+    updateDistrictLayers(w, true);
+    expect(countGround(w, s, Ground.Brownfield)).toBeGreaterThan(500);
+    const n = clearBrownfield(w);
+    expect(n).toBeGreaterThan(500);
+    expect(countGround(w, s, Ground.Brownfield)).toBe(0);
+    const r = slotRect(w, s);
+    let smog = 0;
+    for (let y = r.y0; y <= r.y1; y++) for (let x = r.x0; x <= r.x1; x++) smog += w.layerParts.district.pollutionAdd[w.idx(x, y)];
+    expect(smog).toBe(0);
+    expect(clearBrownfield(w)).toBe(0);
+  });
+
+  it("ruins clear: the Sunk's ruins become empty zoned lots (never abandoned), ground Plain", () => {
+    const { w, s } = annexed(R, 'sunk');
+    const before = ruinsIn(w, s);
+    expect(before).toBeGreaterThan(100);
+    const r = slotRect(w, s);
+    const zoned: number[] = [];
+    for (let y = r.y0; y <= r.y1; y++) for (let x = r.x0; x <= r.x1; x++) if (isRuin(w.tiles[w.idx(x, y)])) zoned.push(w.idx(x, y));
+    expect(clearRuins(w)).toBe(before);
+    expect(ruinsIn(w, s)).toBe(0);
+    for (const i of zoned) {
+      const t = w.tiles[i];
+      expect(t.zone).not.toBe(ZoneType.None);
+      expect(t.level).toBe(0);
+      expect(t.abandoned).toBe(false);
+      expect(t.ground).toBe(Ground.Plain);
+    }
+  });
+
+  it('reeds drain: reed ground turns Plain on the half of the marsh nearer the start slot only', () => {
+    const { w, s } = annexed(R, 'reedmere');
+    const r = slotRect(w, s);
+    const [dx, dy] = slotOffset(w.region, s);
+    const halves = () => {
+      let near = 0;
+      let far = 0;
+      for (let ly = 0; ly < 64; ly++)
+        for (let lx = 0; lx < 64; lx++) {
+          if (w.tiles[w.idx(r.x0 + lx, r.y0 + ly)].ground !== Ground.Reed) continue;
+          if ((lx - 31.5) * dx + (ly - 31.5) * dy < 0) near++;
+          else far++;
+        }
+      return { near, far };
+    };
+    const b = halves();
+    expect(b.near).toBeGreaterThan(0);
+    expect(b.far).toBeGreaterThan(0);
+    expect(drainReeds(w)).toBe(b.near);
+    expect(halves()).toEqual({ near: 0, far: b.far });
+  });
+
+  it('apron rehouse lifts the families to level 2 at $$; apron clear removes the block; only on Tarmac Reach itself', () => {
+    for (const mode of ['rehouse', 'clear'] as const) {
+      const { w, s } = annexed(R, 'tarmac');
+      const f = tarmacSites(w, s).families!;
+      expect(f).not.toBeNull();
+      let hab = 0;
+      for (let y = f.y0; y <= f.y1; y++) for (let x = f.x0; x <= f.x1; x++) if (w.tileAt(x, y)!.zone === ZoneType.Residential) hab++;
+      expect(hab).toBe(24);
+      expect(apron(w, mode)).toBeGreaterThanOrEqual(24);
+      for (let y = f.y0; y <= f.y1; y++)
+        for (let x = f.x0; x <= f.x1; x++) {
+          const t = w.tileAt(x, y)!;
+          if (mode === 'rehouse') {
+            if (t.zone === ZoneType.Residential) {
+              expect(t.level).toBe(2);
+              expect(t.wealth).toBe(1);
+            }
+          } else {
+            expect(t.zone).toBe(ZoneType.None);
+            expect(t.road).toBe(false);
+          }
+        }
+    }
+  });
+
+  it('an effect whose district is not owned does nothing', () => {
+    const w = World.generate(2091, 'Bare', undefined, R);
+    expect(clearBrownfield(w)).toBe(0);
+    expect(clearRuins(w)).toBe(0);
+    expect(drainReeds(w)).toBe(0);
+    expect(apron(w, 'clear')).toBe(0);
   });
 });
