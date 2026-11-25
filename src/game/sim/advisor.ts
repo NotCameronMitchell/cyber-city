@@ -15,7 +15,7 @@
 import { BUILDINGS, BUILDING_ORDER, CURRENCY, ROAD_KINDS, SKYWAY, ZONES, milestonesFor, type BuildingDef } from '../config';
 import type { HintId } from '../events';
 import { HeadlineDeck } from '../news';
-import { ZoneType, type Demand, type NewsItem } from '../types';
+import { Ground, ZoneType, type Demand, type NewsItem } from '../types';
 import type { World } from '../world';
 import type { Census } from './census';
 import type { SimGrid } from './grid';
@@ -271,6 +271,23 @@ export class Advisor {
       }
       if (census.abandoned >= 10) {
         this.say(world, 'abandoned', 90, 'warn', `${census.abandoned} buildings stand abandoned. Check power, roads, crime and pollution.`);
+      }
+      // Districts (MEGACITY Appendix B): ruins (never in `abandoned`), the floodplain cap, brownfield.
+      if (census.ruins >= 40) this.say(world, 'ruins', 300, 'info', 'Advisor: ruins in the Sunk come back as homes with a road and power.');
+      if (g) {
+        let capped = 0;
+        let brown = 0;
+        const res = world.fields.resilience;
+        for (let k = 0; k < g.zonedCount; k++) {
+          const i = g.zoned[k];
+          if (g.ground[i] === Ground.Brownfield) brown++;
+          const cap = g.floodCap[i];
+          if (cap < 3 && g.level[i] >= cap && !g.abandoned[i] && res[i] <= 0) capped++;
+        }
+        if (capped >= 20)
+          this.say(world, 'floodplain', 240, 'warn', "Advisor: Reedmere's floodplain holds homes at level 2. A Floodwatch Station lifts the limit.");
+        if (brown > 0)
+          this.say(world, 'brownfield', 300, 'info', 'Advisor: brownfield smog over Kessel Flats. Build on it, or add parks and a Reclaim Works.');
       }
     }
     if (world.taxRate >= 13 && pop > 2000) {
