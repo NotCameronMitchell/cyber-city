@@ -97,7 +97,7 @@ import { annexPins, pinAt } from '../render/districts';
 import { HAPTIC_CONFIRM_MS, HAPTIC_TICK_MS, haptic } from './haptics';
 import { KeyboardInput, isTypingTarget } from './keyboard';
 import { MAP_PINCH_IN, MAP_PINCH_OUT, SKY_FLASH_MS, mapBus, skyBus } from './mapbus';
-import { badgeAt, pickAnchor, pickTube, reachView, snapPartner } from './skybridge';
+import { badgeAt, pickAnchor, pickTube, reachView, snapPartner, tubeBeatsFront } from './skybridge';
 import { ghostPick, partnerBadges } from '../render/overlay';
 import { ZoneType as Z } from '../game/types';
 
@@ -985,7 +985,8 @@ export class InputController {
       const fb = front && front.buildingId >= 0 ? this.game.world.buildings.get(front.buildingId) : null;
       const depth = fb ? fb.x + fb.y + 2 * (fb.size - 1) : t.x + t.y;
       const tall = front ? heightOf(this.game.world, t.x, t.y) : 0;
-      if (depth <= tube.depth || tall < tube.bottom) {
+      const zone = !fb && !!front && front.zone !== Z.None && front.level > 0;
+      if (tubeBeatsFront(this.camera, { x: t.x, y: t.y, size: fb ? fb.size : 1, depth, height: tall, zone }, tube, sx)) {
         // Game.select treats two selections of one tile alike: clear first so the tube replaces the ground's sheet.
         const again = sel?.link === tube.link;
         this.game.select(null);

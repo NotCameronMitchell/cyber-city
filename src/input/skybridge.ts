@@ -149,6 +149,28 @@ export function pickTube(world: World, u: number, v: number): TubeHit | null {
   return best;
 }
 
+/** A zone tower's drawn body fills about this share of its tile's width (the kit bodies sit inside the diamond). */
+export const TOWER_BODY_SHARE = 0.6;
+
+/**
+ * Does a tap that crosses a tube's slab select the tube rather than what pickTile found in front of it (§7.4)? The
+ * tube wins when that thing sorts behind the tube, stands lower than the tube's bottom, or is a single-tile zone tower
+ * whose narrower body leaves the tube visible where the finger is (the outer part of the tile's width).
+ */
+export function tubeBeatsFront(
+  cam: Pick<Camera, 'worldToScreen' | 'zoom'>,
+  front: { x: number; y: number; size: number; depth: number; height: number; zone: boolean },
+  tube: Pick<TubeHit, 'depth' | 'bottom'>,
+  sx: number,
+): boolean {
+  if (front.depth <= tube.depth || front.height < tube.bottom) return true;
+  if (!front.zone || front.size !== 1) return false;
+  const cx = front.x + 0.5;
+  const cy = front.y + 0.5;
+  const c = cam.worldToScreen((cx - cy) * HALF_W, (cx + cy) * HALF_H);
+  return Math.abs(sx - c.x) > HALF_W * cam.zoom * TOWER_BODY_SHARE;
+}
+
 /**
  * The view that shows anchor A and its 10-tile reach (§5.4 step 2): A's centre in the uncovered area at the zoom that
  * fits A ± 10 tiles, never zooming in and never below REACH_MIN_ZOOM (or the street view's floor).

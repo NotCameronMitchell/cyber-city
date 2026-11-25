@@ -21,7 +21,7 @@ import {
   type PickHit,
 } from '../src/input/gestures';
 import { SKYWAY } from '../src/game/config';
-import { Camera, tileCenterWorld } from '../src/render/camera';
+import { Camera, HALF_W, tileCenterWorld } from '../src/render/camera';
 import { LEGACY_SIZE } from '../src/game/types';
 
 function camera(w = 390, h = 844, zoom = 1.3): Camera {
@@ -336,7 +336,7 @@ import { heightOf } from '../src/game/heights';
 import * as vertical from '../src/game/story/vertical';
 import { ZoneType } from '../src/game/types';
 import { World } from '../src/game/world';
-import { ANCHOR_SLOP_PX, BADGE_TAP_R, badgeAt, inReach, pickAnchor, pickTube, reachView, silhouetteDistance, snapPartner } from '../src/input/skybridge';
+import { ANCHOR_SLOP_PX, BADGE_TAP_R, badgeAt, inReach, pickAnchor, pickTube, reachView, silhouetteDistance, snapPartner, tubeBeatsFront } from '../src/input/skybridge';
 import { annexPins, pinAt } from '../src/render/districts';
 import { partnerBadges, BADGE_MAX } from '../src/render/overlay';
 import { startWorld, sx, sy } from './helpers';
@@ -492,6 +492,25 @@ describe('skybridge tube pick (§7.4, §5.5): a slab at the tube height selects 
     // On the ground under it: no tube.
     const g0 = screenToTileF(cam, c.x, c.y, { x: 0, y: 0 });
     expect(pickTube(w, g0.x, g0.y)).toBeNull();
+  });
+
+  it('a tower in front keeps a tap on its body, but the tube wins beside a narrow zone tower and over anything lower', () => {
+    const cam = new Camera(192);
+    cam.setViewport(390, 844);
+    cam.zoom = 0.7;
+    cam.centerOnTile(80, 70);
+    const tube = { depth: 150, bottom: 126 };
+    const tower = { x: 82, y: 73, size: 1, depth: 155, height: 213, zone: true };
+    const c = cam.tileToScreen(82, 73);
+    // On the tower's body: the tower.
+    expect(tubeBeatsFront(cam, tower, tube, c.x)).toBe(false);
+    expect(tubeBeatsFront(cam, tower, tube, c.x + HALF_W * cam.zoom * 0.5)).toBe(false);
+    // At the edge of its tile, where the narrower body leaves the tube showing: the tube.
+    expect(tubeBeatsFront(cam, tower, tube, c.x + HALF_W * cam.zoom * 0.8)).toBe(true);
+    // A wide service building in front keeps its whole box; a lower one or one behind never hides the tube.
+    expect(tubeBeatsFront(cam, { ...tower, size: 3, zone: false }, tube, c.x + HALF_W * cam.zoom * 0.8)).toBe(false);
+    expect(tubeBeatsFront(cam, { ...tower, height: 90 }, tube, c.x)).toBe(true);
+    expect(tubeBeatsFront(cam, { ...tower, depth: 148 }, tube, c.x)).toBe(true);
   });
 });
 

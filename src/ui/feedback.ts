@@ -255,7 +255,8 @@ export class ActionPill {
       if (this.reachKey.split('#')[0] !== k) this.reachN = inReach(game.skybridgePartners());
       this.reachKey = `${k}#${quick}`;
     } else this.reachKey = `#${quick}`;
-    const showRoutes = !!src && !flash;
+    // The Show routes chip belongs to the source state; a route's ✓ / ✕ needs the room (and has nothing to toggle).
+    const showRoutes = !!src && !flash && !confirm;
     setHidden(this.routesBtn, !showRoutes);
     if (showRoutes) {
       setText(this.routesBtn, skybridgeView.showRoutes ? 'Hide routes' : 'Show routes');
@@ -350,7 +351,9 @@ export function pillLabel(world: World, plan: ActionPlan): string {
     return n > 1 ? `${name} ×${n}` : name;
   }
   const name = toolMeta(tool).name;
-  if (isBuildingTool(tool) || tool === 'skybridge') return name;
+  // A two-bridge route (MEGACITY §5.4 step 4): "2 SKYBRIDGES · 3,100 CR".
+  if (tool === 'skybridge') return plan.route ? '2 Skybridges' : name;
+  if (isBuildingTool(tool)) return name;
   const count = changedTiles(world, plan);
   let s = count > 1 ? `${name} ×${count}` : name;
   if (isRoadTool(tool) && (plan.upgrades ?? 0) > 0) s += ` · ${plan.upgrades} widened`;

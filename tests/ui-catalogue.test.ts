@@ -13,6 +13,7 @@ import { RoadKind, type OverlayId, type ToolId } from '../src/game/types';
 import { World } from '../src/game/world';
 import { OVERLAY_CYCLE } from '../src/input/keyboard';
 import { bannerUnlocks, changedTiles, pillLabel, trayName } from '../src/ui/feedback';
+import type { ActionPlan } from '../src/game/types';
 import { icon } from '../src/ui/icons';
 import { TIPS, TIP_GAP, TIP_SEC, Tips, toolTip, type TipId } from '../src/ui/tips';
 import {
@@ -316,6 +317,11 @@ describe('action pill (§7.5)', () => {
     const demo = planAction(w, 'bulldoze', { x: 40, y: 30 }, { x: 45, y: 30 });
     expect(demo.layer).toBe('sky');
     expect(pillLabel(w, demo)).toBe('Demolish skyway ×6');
+    // Skybridges (MEGACITY §5.4): one bridge by its name, a two-bridge route as "2 Skybridges".
+    const one = { tool: 'skybridge', tiles: [{ x: 1, y: 1, ok: true }], cost: 1450, valid: true } as ActionPlan;
+    expect(pillLabel(w, one)).toBe('Skybridge');
+    const route = { ...one, cost: 3100, route: { via: { x: 2, y: 2 }, second: { ax: 2, ay: 2, bx: 2, by: 6, gap: 3 } } } as ActionPlan;
+    expect(pillLabel(w, route)).toBe('2 Skybridges');
   });
 });
 
