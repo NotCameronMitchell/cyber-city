@@ -262,6 +262,21 @@ export function metroLine(net: MetroNet, slot: SlotId): string {
   return `Metro: linked to ${n} other ${n === 1 ? 'district' : 'districts'}`;
 }
 
+/**
+ * Leave the City map for the view the player had when it opened (✕, Esc): its centre and zoom, through the §3.9 snap.
+ * Without one (the map opened straight from another map state), snap back towards `fallback` (screen px; the start
+ * district) at minZoom.
+ */
+export function leaveMapTo(cam: Camera, back: { x: number; y: number; zoom: number } | null, fallback: { x: number; y: number }): void {
+  if (!back) {
+    cam.snapFromMap(fallback.x, fallback.y);
+    return;
+  }
+  const p = cam.worldToScreen(back.x, back.y);
+  cam.snapFromMap(p.x, p.y);
+  if (back.zoom > cam.minZoom) cam.easeTo(back.x, back.y, Math.min(cam.maxZoom, back.zoom), 0.3);
+}
+
 // ── The panel ───────────────────────────────────────────────────────────────
 
 export class CityMap {
@@ -307,6 +322,8 @@ export class CityMap {
   private polyKey = '';
   private expanded = false;
   private side = false;
+  /** Where the city view was when the map opened (world px, zoom): ✕ and Esc go back there. */
+  private back: { x: number; y: number; zoom: number } | null = null;
   /** Called when the map opens or closes (the UI root hides the HUD and re-sets the camera insets). */
   onToggle: ((open: boolean) => void) | null = null;
 
@@ -413,26 +430,37 @@ export class CityMap {
     this.select(defaultSlot(this.view, slot ?? null, start), false);
     this.layout();
     if (!was) {
+      const cam = this.ctx.camera;
+      this.back = cam.mapView ? null : { x: cam.x, y: cam.y, zoom: cam.zoom };
       this.onToggle?.(true);
       this.snap();
     }
     this.ctx.sfx('click');
   }
 
-  /** Close: back to the city view at minZoom centred on `toward` (a slot or a screen point), or as it was. */
+  /**
+   * Close: back to the city view at minZoom centred on `toward` (a slot, or a screen point under a pinch), or, for ✕
+   * and Esc, as it was when the map opened (its centre and zoom). The screen's centre is the last resort: on the map it
+   * sits low on the atlas (the sheet covers the bottom half), so it would land on the region's far fogged corner.
+   */
   close(toward?: { slot?: SlotId; sx?: number; sy?: number }): void {
     if (!this.open_) return;
     this.open_ = false;
     this.confirming = false;
     this.el.hidden = true;
     this.onToggle?.(false);
+    const back = this.back;
+    this.back = null;
     const cam = this.ctx.camera;
     if (!cam.mapView) return;
     if (toward?.slot !== undefined && toward.slot >= 0) {
       const p = this.slotCentreScreen(toward.slot);
       cam.snapFromMap(p.x, p.y);
     } else if (toward?.sx !== undefined && toward.sy !== undefined) cam.snapFromMap(toward.sx, toward.sy);
-    else cam.snapFromMap(cam.width / 2, cam.height / 2);
+    else {
+      const start = this.ctx.game.world.districts.owned[0];
+      leaveMapTo(cam, back, start !== undefined ? this.slotCentreScreen(start) : { x: cam.width / 2, y: cam.height / 2 });
+    }
   }
 
   /**
@@ -893,6 +921,9 @@ export class CityMap {
     this.confirming = false;
     this.bodyKey = '';
     this.chipsKey = '';
+    this.back = null;
+    this.netKey = '';
+    this.net = { stops: [], lines: [], live: [] };
     mapBus.flyIn = null;
   }
 }

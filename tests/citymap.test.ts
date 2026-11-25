@@ -20,6 +20,7 @@ import {
   censusLine,
   defaultSlot,
   footerModel,
+  leaveMapTo,
   metroLine,
   metroNet,
   reactionSummary,
@@ -202,6 +203,56 @@ describe('City map model (§7.2)', () => {
     expect(balanceLine(c(0, 5000, 0.1))).toBe('Jobs, no homes yet · Land value 10%');
     expect(balanceLine(c(0, 0))).toBe('');
     expect(balanceLine(undefined)).toBe('');
+  });
+});
+
+describe('Leaving the City map (§3.9, §7.2)', () => {
+  /** A 5×5 camera on a city that owns the middle slots, as the partial 5×5 save does. */
+  function cityCamera(): Camera {
+    const cam = new Camera(320);
+    cam.setViewport(390, 844);
+    cam.minZoom = 0.22;
+    cam.setBounds({ x0: 58, y0: 58, x1: 261, y1: 197 });
+    cam.easeTo(1024, 4608, 0.8, 0);
+    return cam;
+  }
+
+  it('✕ and Esc go back to the view the map opened from: its centre and its zoom', () => {
+    const cam = cityCamera();
+    const back = { x: cam.x, y: cam.y, zoom: cam.zoom };
+    cam.setInsets({ top: 48 });
+    cam.snapToMap(422, 2, 0);
+    expect(cam.mapView).toBe(true);
+    leaveMapTo(cam, back, { x: 195, y: 422 });
+    expect(cam.mapView).toBe(false);
+    cam.update(1);
+    expect(cam.x).toBeCloseTo(1024, 3);
+    expect(cam.y).toBeCloseTo(4608, 3);
+    expect(cam.zoom).toBeCloseTo(0.8, 6);
+  });
+
+  it('opened from minZoom it comes back to minZoom at the same place', () => {
+    const cam = cityCamera();
+    cam.easeTo(1024, 4608, 0.22, 0);
+    const back = { x: cam.x, y: cam.y, zoom: cam.zoom };
+    cam.setInsets({ top: 48 });
+    cam.snapToMap(422, 2, 0);
+    leaveMapTo(cam, back, { x: 195, y: 422 });
+    cam.update(1);
+    expect(cam.zoom).toBeCloseTo(0.22, 6);
+    expect(Math.hypot(cam.x - 1024, cam.y - 4608)).toBeLessThan(1);
+  });
+
+  it("the screen's centre would have landed on the far fogged corner of the owned box (the bug this replaces)", () => {
+    const cam = cityCamera();
+    cam.setInsets({ top: 48 });
+    cam.snapToMap(422, 2, 0);
+    cam.snapFromMap(195, 422);
+    cam.update(1);
+    const t = cam.screenToTile(195, 422);
+    // Clamped to the bounds' bottom corner: outside every owned slot (6, 7, 8, 11, 12).
+    expect(t.x).toBeGreaterThan(255);
+    expect(t.y).toBeGreaterThan(191);
   });
 });
 
