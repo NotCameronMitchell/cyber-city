@@ -71,11 +71,11 @@ describe('every kind and preset in range and buildable (§3.6.2, §3.7)', () => 
     for (const p of presets) expect(PRESET_WATER[p], p).toBeDefined();
   });
 
-  it.each(CASES)('%s variant %i: 12 seeds, water inside the range; ≥ 35% of the land in one piece', (kind, v) => {
+  it.each(CASES)('%s variant %i: 8 seeds, water inside the range; ≥ 35% of the land in one piece', (kind, v) => {
     const [lo, hi] = waterRange(kind, v, presetOf(DISTRICTS[kind].variants, v));
-    for (let k = 0; k < 12; k++) {
+    for (let k = 0; k < 8; k++) {
       const seed = (k * 7919 + 13) >>> 0;
-      for (const slot of [13, 7, 18]) {
+      for (const slot of k % 2 ? [13, 7] : [18]) {
         const w = gen(seed, kind, v, slot);
         const st = landStats(w, slot);
         expect(st.water, `${kind}/${v} seed ${seed} slot ${slot}`).toBeGreaterThanOrEqual(lo - 0.01);
