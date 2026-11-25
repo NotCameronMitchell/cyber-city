@@ -25,7 +25,7 @@ import type { Game } from '../game/game';
 import { PARCEL_HEAD, PARCEL_MEMBER, PARCEL_SHAPE, fillParcelMap } from '../game/parcels';
 import { ZoneType, type Building, type Parcel, type Settings, type SlotId, type Tile } from '../game/types';
 import type { World } from '../game/world';
-import { buildingCacheStats, drawServiceBuilding, drawZone, resetFrame, serviceBuildingHeight, setSpriteLimits, zoneBuildingHeight, type ArtEnv } from './buildings';
+import { buildingCacheStats, drawServiceBuilding, drawZone, prepaintZone, resetFrame, serviceBuildingHeight, setSpriteLimits, zoneBuildingHeight, type ArtEnv } from './buildings';
 import { HALF_H, HALF_W, type Camera } from './camera';
 import { Atlas } from './atlas';
 import {
@@ -253,6 +253,9 @@ function worldId(w: World): number {
   }
   return id;
 }
+
+/** Bodies the centre-first pass visits at most in a frame (each costs a body pick and a cache lookup, ≈ 0.6 µs). */
+const PREPAINT_VISITS = 3000;
 
 export class Renderer {
   readonly stats = { fps: 60, drawMs: 0 };
@@ -820,6 +823,8 @@ export class Renderer {
     const band: SkylineBand = { on: skyline, maxD2: Infinity };
     if (skyline) this.skylineBudget(world, tilesObj, view, band, skylineCap(this.cls, quality, lowerDetail));
     const ts = performance.now();
+    // Bodies still showing a fallback last frame: spend this frame's paint budget from the screen centre outward.
+    if (this.view.sprites.fallbacks > 0) this.prepaintCentre(target, world, tilesObj, view, env, band);
     this.drawObjects(target, world, tilesObj, view, env, band, lanes);
     this.view.sweepMs = performance.now() - ts;
     const cs = buildingCacheStats();
@@ -947,6 +952,48 @@ export class Renderer {
       acc += hist[k];
     }
   }
+
+  /**
+   * Centre-first painting (§11.1, V1 fallback frames after a pan): visit the zone bodies of the clipped box in square
+   * rings round the tile under the screen centre and paint the missing ones within the frame's paint budget, so the
+   * middle of the screen shows its real bodies first and the cross-family fallbacks stay at the edges. Only while the
+   * last frame drew a fallback; at most PREPAINT_VISITS bodies a frame.
+   */
+  private prepaintCentre(ctx: CanvasRenderingContext2D, world: World, b: Rect, view: Rect, env: ArtEnv, band: SkylineBand) {
+    const N = world.N;
+    const c = this.camera.screenToTile(this.cssW / 2, this.cssH / 2);
+    const cx = Math.max(b.x0, Math.min(b.x1, Math.round(c.x)));
+    const cy = Math.max(b.y0, Math.min(b.y1, Math.round(c.y)));
+    const pmap = this.parcels.map;
+    const head = this.prepaintParcel;
+    const tiles = world.tiles;
+    const R = Math.max(cx - b.x0, b.x1 - cx, cy - b.y0, b.y1 - cy);
+    let visits = 0;
+    const visit = (x: number, y: number): boolean => {
+      if (x < b.x0 || x > b.x1 || y < b.y0 || y > b.y1) return true;
+      const i = y * N + x;
+      const t = tiles[i];
+      if (t.zone === ZoneType.None || t.level < 1 || t.buildingId >= 0) return true;
+      const bits = pmap[i];
+      if (bits & PARCEL_MEMBER && !(bits & PARCEL_HEAD)) return true;
+      const p = bits & PARCEL_MEMBER ? parcelFromMap(world, pmap, x, y, head) : null;
+      if (band.on && (p ? p.level : t.level) < 3) return true;
+      // On screen only (the sweep's cull): the clipped box's corners lie off the screen's sides.
+      const wide = p ? HALF_W : 0;
+      const wx = (x - y) * HALF_W;
+      const wy = (x + y) * HALF_H;
+      if (wx + HALF_W + wide < view.x0 || wx - HALF_W - wide > view.x1) return true;
+      if (wy + 2 * HALF_H < view.y0 || wy + HALF_H - zoneBuildingHeight(t, p) - 24 > view.y1) return true;
+      if (++visits > PREPAINT_VISITS) return false;
+      return prepaintZone(ctx, t, p, env, x, y);
+    };
+    if (!visit(cx, cy)) return;
+    for (let r = 1; r <= R; r++) {
+      for (let x = cx - r; x <= cx + r; x++) if (!visit(x, cy - r) || !visit(x, cy + r)) return;
+      for (let y = cy - r + 1; y <= cy + r - 1; y++) if (!visit(cx - r, y) || !visit(cx + r, y)) return;
+    }
+  }
+  private readonly prepaintParcel: Parcel = { hx: 0, hy: 0, x: 0, y: 0, w: 1, h: 1, level: 0, tier: 0 };
 
   private fadeLayer(): CanvasRenderingContext2D | null {
     if (!this.fade) {

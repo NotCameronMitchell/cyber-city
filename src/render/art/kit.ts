@@ -2026,6 +2026,8 @@ interface CellBodies {
   /** Every body of the cell (tests, contact sheets): today's forms with their 4 dressings, templates, silhouettes. */
   all: Body[];
   styleCount: number;
+  /** The LOD set (§6.1), built on first use: the cell's ≤ 4 representative kit bodies, and parameter set 0 of each form. */
+  lod?: { reps: Body[]; plain: Map<number, Body> };
 }
 
 const cells = new Map<number, CellBodies>();
@@ -2115,18 +2117,26 @@ export function pickForm(zone: number, level: number, shape: number, tier: numbe
   return { form: classicForm & 7, seed: 0 };
 }
 
-/** Below LOD_ZOOM a kit body collapses to one of 4 silhouettes per cell and style (§6.1): form mod 4 of the cell's kit forms. */
+/**
+ * Below LOD_ZOOM a body collapses to the cell's small LOD set (§6.1): a template to one of the cell's ≤ 4 representative
+ * templates (form mod 4), a silhouette to its parameter set 0, a today's form to set 0 or its roof garden (it keeps its
+ * own height, the tile's truth). Memoised per cell and returns shared Body objects: it runs once per drawn body per frame.
+ */
 export function lodBody(zone: number, level: number, shape: number, tier: number, style: DistrictKind, b: Body): Body {
-  if (b.form < KIT_FIRST) return b;
   const c = cellOf(zone, level, shape, tier, style);
-  const forms: number[] = [];
-  for (const x of c.all) if (x.form >= KIT_FIRST && !forms.includes(x.form)) forms.push(x.form);
-  forms.sort((a, z) => a - z);
-  if (b.form >= SIL_FIRST) return { form: b.form, seed: 0 };
-  const kitForms = forms.filter((f) => f < SIL_FIRST);
-  const reps = kitForms.slice(0, 4);
-  if (!reps.length) return b;
-  return { form: reps[b.form % reps.length], seed: 0 };
+  let L = c.lod;
+  if (!L) {
+    const forms: number[] = [];
+    for (const x of c.all) if (x.form >= KIT_FIRST && x.form < SIL_FIRST && !forms.includes(x.form)) forms.push(x.form);
+    forms.sort((a, z) => a - z);
+    L = c.lod = { reps: forms.slice(0, 4).map((form) => ({ form, seed: 0 })), plain: new Map() };
+  }
+  if (b.form >= KIT_FIRST && b.form < SIL_FIRST && L.reps.length) return L.reps[b.form % L.reps.length];
+  // A today's form keeps its roof garden (parameter set 1, which still reads at LOD); its sign band and roof plant go.
+  if (b.seed === 0 || (b.form < KIT_FIRST && b.seed === 1)) return b;
+  let p = L.plain.get(b.form);
+  if (!p) L.plain.set(b.form, (p = { form: b.form, seed: 0 }));
+  return p;
 }
 
 /**

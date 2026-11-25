@@ -338,7 +338,17 @@ interface ZoneSpec {
   lantern: boolean;
   /** The current ending's facade dressing (§9.2 street look): ENDING_DRESS index, 0 none. */
   ending: number;
+  /** Drawn below LOD (§6.1 LOD set): a template keys on its height band, not the tile's form and palette. */
+  lod?: boolean;
 }
+
+/**
+ * LOD height step (world px): below LOD an L3 template's mass is drawn at its truth top rounded to this step (L1–L2 to
+ * twice it: they stand far under every tube), so one sprite serves every tile of the cell whose top falls in the band.
+ * Half of it (6 px) is within SKYBRIDGE.tubeBelowRoof and .clearance, so a tube still meets the drawn roof and still
+ * clears the bodies under its lane.
+ */
+const LOD_TOP_STEP = 12;
 
 /** Height truth of a body: the classic top of the tile's form at the drawn level (heights.ts heightOf). */
 function truthTop(zone: number, level: number, variant: number, tier: number): number {
@@ -347,13 +357,22 @@ function truthTop(zone: number, level: number, variant: number, tier: number): n
 
 function kitModel(sp: ZoneSpec): Model {
   const { zone, level, tier, shape, W, H, variant, kind, dvar, body, lang, lantern, ending } = sp;
-  const palBit = (variant >> 3) & 1;
   const hc = variant & 7;
+  // Below LOD a template (or silhouette) does not depend on the tile's today's form: it keys on its height band (§6.1
+  // LOD set: one sprite per cell, style, representative form, palette and band).
+  const lodKit = !!sp.lod && !lang && body.form >= KIT_FIRST;
+  // Both palettes stay (colour is most of what tells two LOD bodies of a cell apart); L1–L2 bodies (well under every
+  // tube) take a coarser band.
+  const palBit = (variant >> 3) & 1;
+  const step = level >= 3 ? LOD_TOP_STEP : LOD_TOP_STEP * 2;
   const st = STYLES[kind];
   const styleKey = lang ? 9 + LEGACY_LANGS.indexOf(lang) : st.index;
   // Charter Shore, a today's form, parameter set 0, no lantern: exactly today's model.
   if (!lang && !lantern && !ending && body.form < KIT_FIRST && body.form === hc && body.seed === 0 && kind === 'shore') return zoneModel(zone, level, variant, tier);
-  const key = ((((((((((zone * 4 + level) * 3 + tier) * 16 + styleKey) * 4 + (dvar & 3)) * 32 + body.form) * 3 + shape) * 2 + palBit) * 4 + body.seed) * 8 + hc) * 2 + (lantern ? 1 : 0)) * 6 + ending;
+  const truth = truthTop(zone, level, variant, tier);
+  const band = lodKit ? Math.max(1, Math.round(truth / step)) : 0;
+  const hk = lodKit ? 8 + band : hc;
+  const key = ((((((((((zone * 4 + level) * 3 + tier) * 16 + styleKey) * 4 + (dvar & 3)) * 32 + body.form) * 3 + shape) * 2 + palBit) * 4 + body.seed) * 64 + hk) * 2 + (lantern ? 1 : 0)) * 6 + ending;
   let id = kitIds.get(key);
   if (id !== undefined) {
     const hit = models.get(id);
@@ -362,13 +381,13 @@ function kitModel(sp: ZoneSpec): Model {
     id = KIT_BASE + (kitNext++ % KIT_ID_CAP);
     kitIds.set(key, id);
   }
-  const T = truthTop(zone, level, variant, tier);
+  const T = lodKit ? band * step : truth;
   const acc = variantAccent(kind, dvar);
   // The body's neon pick (§3.7, §6.1): the district accent on a share of the bodies, a style sign colour on the rest.
-  const pick = hash2(body.form * 7 + body.seed * 3 + shape, hc * 5 + palBit * 2 + level * 13, 0x5a1e + st.index);
+  const pick = hash2(body.form * 7 + body.seed * 3 + shape, (lodKit ? band : hc) * 5 + palBit * 2 + level * 13, 0x5a1e + st.index);
   const accBody = accentBody(st, pick);
   const pal = lang ? legacyPal(lang) : stylePal(ZONE_PALS[zone - 1][tier][palBit], st, acc, pick);
-  const seed = classicSeed(zone, level, hc, palBit) + body.form * 131 + body.seed * 17 + styleKey * 1009;
+  const seed = classicSeed(zone, level, lodKit ? 0 : hc, palBit) + body.form * 131 + body.seed * 17 + styleKey * 1009;
   const fallback = zoneModelId(zone, level, variant, tier);
   let recipe: Recipe;
   let sty: StyleDef['tint'] = null;
@@ -422,7 +441,7 @@ function zoneSpec(tile: Tile, x: number, y: number, parcel: Parcel | null, env: 
     if (lodPick) body = lodBody(zone, level, shape, tier, kind, body);
   }
   const ending = endingIndex(art.ending);
-  return { zone, level, tier, shape, W, H, variant: tile.variant, kind, dvar, body, lang, lantern, ending };
+  return { zone, level, tier, shape, W, H, variant: tile.variant, kind, dvar, body, lang, lantern, ending, lod: lodPick };
 }
 
 /** The body a zone tile draws (tests, contact sheets, inspect): its spec's form and parameter set. */
@@ -1000,6 +1019,26 @@ export function drawZone(
   drawZoneAt(ctx, at.wx, at.wy, tile, at.x, at.y, null, env);
 }
 
+/**
+ * Centre-first painting (§11.1 fallback frames after a pan): paint the body a zone tile (or parcel head) draws if its
+ * sprite is missing and the frame's paint budget has room, without drawing it; the sweep then blits it. The Renderer
+ * calls this from the screen centre outward while bodies are still showing a fallback, so the budget goes to the middle
+ * of the screen first. Returns false once the budget is spent.
+ */
+export function prepaintZone(ctx: CanvasRenderingContext2D, tile: Tile, parcel: Parcel | null, env: ArtEnv, x: number, y: number): boolean {
+  sync(ctx, env);
+  if (!cache.canBuild()) return false;
+  const level = parcel ? parcel.level : tile.level;
+  if (level <= 0 || tile.zone === ZoneType.None) return true;
+  const lod = env.zoom < LOD_ZOOM;
+  const m = kitModel(zoneSpec(tile, x, y, parcel, env, lod));
+  if (m.empty || m.fallback < 0) return true;
+  const building = !tile.abandoned && tile.age < BUILD_TICKS;
+  const state = tile.abandoned ? ST_ABANDONED : building || !tile.powered ? ST_DARK : ST_ON;
+  if (!cache.has(spriteKey(m, state, lod))) sprite(m, state, lod);
+  return cache.canBuild();
+}
+
 /** Zone building on tile (tx,ty) whose top corner is world (wx,wy). Handles level 0 lot props, abandoned look and construction (tile.age small). */
 export function drawZoneBuilding(ctx: CanvasRenderingContext2D, wx: number, wy: number, tile: Tile, tx: number, ty: number, env: ArtEnv): void {
   if (tile.zone === ZoneType.None) return;
@@ -1080,6 +1119,7 @@ export function drawZoneBody(
     lang: o.lang ?? null,
     lantern: !!o.lantern,
     ending: endingIndex(o.ending),
+    lod,
   };
   const m = tile.level <= 0 ? zoneModel(tile.zone, 0, tile.variant, 0) : kitModel(sp);
   drawZoneModel(ctx, wx, wy, tile, 0, 0, m, env, lod);
@@ -1211,11 +1251,11 @@ export function zoneBodyInfo(
   variant: number,
   tier: number,
   body: Body,
-  o: { kind?: DistrictKind; variant?: number; shape?: number; lang?: LegacyLang | null; lantern?: boolean; ending?: EndingId | null } = {},
+  o: { kind?: DistrictKind; variant?: number; shape?: number; lang?: LegacyLang | null; lantern?: boolean; ending?: EndingId | null; lod?: boolean } = {},
 ): { id: number; top: number; truth: number; fx: number; sig: number; fallback: number } {
   const shape = o.shape ?? 0;
   const t: 0 | 1 | 2 = tier === 1 || tier === 2 ? tier : 0;
-  const m = kitModel({ zone, level, tier: t, shape, W: shape === 0 ? 1 : 2, H: shape === 2 ? 2 : 1, variant, kind: o.kind ?? 'shore', dvar: o.variant ?? 0, body, lang: o.lang ?? null, lantern: !!o.lantern, ending: endingIndex(o.ending) });
+  const m = kitModel({ zone, level, tier: t, shape, W: shape === 0 ? 1 : 2, H: shape === 2 ? 2 : 1, variant, kind: o.kind ?? 'shore', dvar: o.variant ?? 0, body, lang: o.lang ?? null, lantern: !!o.lantern, ending: endingIndex(o.ending), lod: !!o.lod });
   return { id: m.id, top: m.top, truth: truthTop(zone, level, variant, t), fx: m.fx.length, sig: m.sig.length, fallback: m.fallback };
 }
 

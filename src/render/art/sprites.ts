@@ -88,6 +88,11 @@ export class SpriteCache {
     return this.spent < this.budgetMs;
   }
 
+  /** Is `key` painted (no LRU touch)? */
+  has(key: number): boolean {
+    return this.map.has(key);
+  }
+
   /**
    * Fetch the sprite for `key`, painting it with `build` if missing (subject to
    * the frame budget when a fallback for `family` exists, or when `fallback`

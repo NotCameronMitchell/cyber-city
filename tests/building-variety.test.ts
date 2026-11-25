@@ -154,6 +154,57 @@ describe('height truth (§6.1 heights, heights.ts)', () => {
     expect(checked).toBeGreaterThan(2000);
   });
 
+  it('below LOD a template keys on its height band: its mass stays within half a band of the truth (6 px at L3, so a tube still meets the roof and clears the lane)', () => {
+    let checked = 0;
+    for (const style of ['shore', 'flats', 'bazaar'] as DistrictKind[])
+      for (let zone = 1; zone <= 3; zone++)
+        for (let level = 1; level <= 3; level++)
+          for (const b of kit.cellBodies(zone, level, 0, 0, style).all) {
+            if (b.form < kit.KIT_FIRST) continue;
+            const l = kit.lodBody(zone, level, 0, 0, style, b);
+            for (let v = 0; v < 16; v++) {
+              const T = CLASSIC_TOPS[classicId(zone, level, v, 0)];
+              const full = art.zoneBodyInfo(zone, level, v, 0, l, { kind: style });
+              const lod = art.zoneBodyInfo(zone, level, v, 0, l, { kind: style, lod: true });
+              // The mass reaches at least half a band under the truth (6 px at L3, so a tube attached 6 px under the true
+              // roof meets the drawn body; 12 px at L1–L2, far under every tube); a crown may rise past it as at full
+              // detail (+24), plus the band.
+              const half = level >= 3 ? 6 : 12;
+              const tag = `${style} z${zone} L${level} form ${l.form} v${v}`;
+              expect(lod.top, tag).toBeGreaterThanOrEqual(T - half - 1);
+              expect(lod.top, tag).toBeLessThanOrEqual(Math.max(full.top, T + 24) + 2 * half);
+              expect(lod.truth).toBe(T);
+              checked++;
+            }
+          }
+    expect(checked).toBeGreaterThan(500);
+  });
+
+  it('below LOD the megacity fixture draws far fewer distinct zone bodies than at full detail (the LOD set, §6.1)', async () => {
+    const { megacityWorld } = await import('./megacity-fixture');
+    const { parcelAt } = await import('../src/game/parcels');
+    const w = megacityWorld(3, 9, 7);
+    const lod = new Set<number>();
+    const full = new Set<number>();
+    let bodies = 0;
+    const env = { world: w, artOffset: 64 };
+    for (let y = 0; y < w.N; y++)
+      for (let x = 0; x < w.N; x++) {
+        const t = w.tiles[y * w.N + x];
+        if (t.zone === ZoneType.None || t.level < 1 || t.buildingId >= 0) continue;
+        const p = parcelAt(w, x, y);
+        if (p && (p.hx !== x || p.hy !== y)) continue;
+        bodies++;
+        lod.add(art.zoneBodyAt(t, x, y, p, { ...env, zoom: 0.4 }).id);
+        full.add(art.zoneBodyAt(t, x, y, p, { ...env, zoom: 1 }).id);
+      }
+    // Measured: 10,289 bodies, 8,487 full-detail and 4,011 LOD models (7,337 before the LOD set keyed on height bands).
+    console.log(`[LOD set] ${bodies} bodies: ${full.size} full-detail models, ${lod.size} LOD models`);
+    expect(bodies).toBeGreaterThan(9000);
+    expect(lod.size).toBeLessThan(0.42 * bodies);
+    expect(lod.size).toBeLessThan(0.5 * full.size);
+  });
+
   it("today's forms in any style keep their exact top; zoneBuildingHeight is the truth whatever body a tile picked", () => {
     for (const style of DISTRICT_KINDS)
       for (let zone = 1; zone <= 3; zone++)
@@ -661,7 +712,7 @@ describe('V1 in a scripted pan over the megacity fixture (§6.1 targets, §11.4 
     }
   }
 
-  it('phone 390×844: zoom 1 at DPR 2 ≤ 260 distinct bodies and ≤ 26 MB; zoom 0.55 and 0.4 within the cache; fallback bodies gone ≤ 30 frames after the pan; adjacent-identical ≤ 3%, no body over 15% of its cell on screen', async () => {
+  it('phone 390×844: zoom 1 at DPR 2 ≤ 260 distinct bodies and ≤ 26 MB; zoom 0.55 and 0.4 within the cache; fallback bodies gone ≤ 30 frames after the pan; adjacent-identical ≤ 3%, no body over 15% of its cell on screen (a third below LOD)', async () => {
     const out: Record<string, Row> = {};
     for (const zoom of [1, 0.55, 0.4]) {
       const row = await pan({ region: 3, slots: 9, w: 390, h: 844, dpr: 2, pc: false, zoom });
@@ -671,7 +722,9 @@ describe('V1 in a scripted pan over the megacity fixture (§6.1 targets, §11.4 
       expect(row.maxCellShare, `z${zoom}`).toBeGreaterThan(0);
       expect(row.fallbackFramesAfterStop, `z${zoom}`).toBeLessThanOrEqual(30);
       expect(row.adjIdentical, `z${zoom}`).toBeLessThanOrEqual(0.03);
-      expect(row.maxCellShare, `z${zoom}`).toBeLessThanOrEqual(0.15);
+      // Below LOD a cell collapses to its LOD set (§6.1: ≤ 4 templates per cell and style, by palette and height band),
+      // so a body can hold more than 15% of a cell there; it may still never hold more than a third.
+      expect(row.maxCellShare, `z${zoom}`).toBeLessThanOrEqual(zoom < 0.55 ? 1 / 3 : 0.15);
       if (zoom === 1) {
         expect(row.maxBodies).toBeLessThanOrEqual(260);
         // The sprites the view itself needs (the cache may hold more, up to its cap, for panning back).

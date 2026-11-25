@@ -27,6 +27,9 @@ import { megacityWorld } from './megacity-fixture';
 
 const rec = vi.hoisted(() => ({
   on: false,
+  /** A paint budget for the Renderer's sprite limits (ms), or null for the real one. */
+  budget: null as number | null,
+  pre: [] as { x: number; y: number }[],
   zone: [] as { x: number; y: number; p: Parcel | null; alpha: number }[],
   tube: [] as { wx: number; wy: number; z: number; kind: number }[],
 }));
@@ -35,10 +38,25 @@ vi.mock('../src/render/buildings', async (orig) => {
   const m = await orig<typeof import('../src/render/buildings')>();
   return {
     ...m,
+    prepaintZone: (...a: Parameters<typeof m.prepaintZone>) => {
+      if (rec.on) rec.pre.push({ x: a[4], y: a[5] });
+      return m.prepaintZone(...a);
+    },
     drawZone: (...a: Parameters<typeof m.drawZone>) => {
       const [ctx, , p, , at] = a;
       if (rec.on) rec.zone.push({ x: at.x, y: at.y, p: p ? { ...p } : null, alpha: ctx.globalAlpha });
       return m.drawZone(...a);
+    },
+  };
+});
+
+vi.mock('../src/render/districts', async (orig) => {
+  const m = await orig<typeof import('../src/render/districts')>();
+  return {
+    ...m,
+    spriteLimits: (...a: Parameters<typeof m.spriteLimits>) => {
+      const l = m.spriteLimits(...a);
+      return rec.budget === null ? l : { ...l, budgetMs: rec.budget };
     },
   };
 });
@@ -72,6 +90,7 @@ function renderer(g: Game, w = 390, h = 844) {
 }
 
 function record(fn: () => void) {
+  rec.pre.length = 0;
   rec.zone.length = 0;
   rec.tube.length = 0;
   rec.on = true;
@@ -168,6 +187,39 @@ describe('the sweep order and parcels (§6.1: WP-3 caches and sorts them, WP-4 d
       expect(checked.left).toBeGreaterThan(5);
       expect(checked.right).toBeGreaterThan(5);
     } finally {
+      r.destroy();
+    }
+  });
+});
+
+describe('centre-first painting after a pan (§11.1 fallback frames, V1)', () => {
+  it('while bodies show a fallback, the next frame paints from the tile under the screen centre outward; none without', async () => {
+    const art = await import('../src/render/buildings');
+    const g = new Game();
+    g.restore(megacityWorld(3, 9, 7).serialize());
+    const { r, cam } = await renderer(g);
+    try {
+      art.clearBuildingCache();
+      cam.zoom = 1;
+      cam.centerOnTile(70, 120);
+      // A paint budget too small for the view: most kit bodies show the classic fallback.
+      rec.budget = 0.02;
+      r.render(1 / 60, 1);
+      expect(r.view.sprites.fallbacks).toBeGreaterThan(0);
+      record(() => r.render(1 / 60, 1.02));
+      expect(rec.pre.length).toBeGreaterThan(0);
+      const c = cam.screenToTile(195, 422);
+      const d = rec.pre.map((q) => Math.max(Math.abs(q.x - c.x), Math.abs(q.y - c.y)));
+      expect(d[0]).toBeLessThanOrEqual(2);
+      for (let k = 1; k < d.length; k++) expect(d[k]).toBeGreaterThanOrEqual(d[k - 1]);
+      // With room to paint everything, no fallback remains and the pass stops running.
+      rec.budget = 1e6;
+      for (let k = 0; k < 3; k++) r.render(1 / 60, 1.04 + k / 60);
+      expect(r.view.sprites.fallbacks).toBe(0);
+      record(() => r.render(1 / 60, 1.2));
+      expect(rec.pre.length).toBe(0);
+    } finally {
+      rec.budget = null;
       r.destroy();
     }
   });
