@@ -487,6 +487,8 @@ export class Game {
     this.tool = tool;
     this.preview = null;
     this.pendingConfirm = null;
+    // Leaving the Skybridge tool deselects its tower (§5.4 step 5: the tool chip's ✕ leaves the tool).
+    if (tool !== 'skybridge') this.bridgeSource = null;
     if (tool !== 'inspect') this.select(null);
     this.events.emit('tool', tool);
   }

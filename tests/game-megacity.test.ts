@@ -414,6 +414,12 @@ describe('skybridge source / plan / apply with undo (§5.4, §5.3 rule 8)', () =
     expect(g.skybridgeSource(a.x, a.y)).toBeNull();
     expect(g.bridgeSource).toBeNull();
     expect(g.skybridgeSource(a.x, a.y + 1)).toBeNull();
+    // Leaving the tool deselects too.
+    g.setTool('skybridge');
+    expect(g.skybridgeSource(a.x, a.y)).not.toBeNull();
+    g.setTool('road');
+    expect(g.bridgeSource).toBeNull();
+    expect(g.skybridgeLanes()).toEqual([]);
   });
 });
 
