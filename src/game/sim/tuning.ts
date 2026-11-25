@@ -14,10 +14,13 @@ import { RoadKind } from '../types';
 /** Fraction of zoned tiles evaluated for growth each tick. */
 export const GROWTH_SAMPLE = 1 / 6;
 /**
- * Heavy field passes are spread over this many ticks inside step() (MEGACITY §3.3, O4): 0 traffic; 1 pollution +
- * noise; 2 neighbourhood + land value; 3 crime + wealth score. Field latency 4 days (2 s at speed 1).
+ * Heavy field passes are spread over this many ticks inside step() (MEGACITY §3.3, O4). 2 (today's latency):
+ * 0 traffic + pollution + noise; 1 neighbourhood + land value + crime + wealth score. 4 (O4's stagger, a quarter of
+ * the field work a day): 0 traffic; 1 pollution + noise; 2 neighbourhood + land value; 3 crime + wealth score.
+ * Both are implemented (Simulation.fieldStagger); the default stays 2 because the 4-day field latency moves the
+ * existing balance tests (EXPANSION B4 on seed 2091, MEGACITY S4) below their thresholds (WP-1 report, Step 9).
  */
-export const FIELD_STAGGER = 4;
+export const FIELD_STAGGER: 2 | 4 = 2;
 
 // ── Traffic ──────────────────────────────────────────────────────────────────
 /** Trips emitted per resident / job by zone (index = ZoneType). */

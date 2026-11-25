@@ -29,9 +29,9 @@
 //   A1 scan (row bands; the tile ages ride along), incidents, decay, ports;
 //   A2 power (cached labels, banded sweep, resumable relabel and BFS, O2);
 //   A3 day counters, coverage only when its key changed (O3), the census;
-//   B  this day's field phase (O4, FIELD_STAGGER 4): 0 traffic; 1 pollution
-//      + noise; 2 neighbourhood + land value; 3 crime + wealth score, one pass
-//      per unit, banded, with resting districts' rows skipped (O8);
+//   B  this day's field phase (O4, fieldStagger 2 or 4; sim/tuning.ts says
+//      why the default is 2), one pass per unit, banded, with resting
+//      districts' rows skipped (O8);
 //   C1 averages, approval, trade, demand, growth, the district daily hook;
 //   C2 highlights, stats, the budget (projected every 3rd day and fresh on the
 //      month end, O7), settlement, milestones, incidents, advice.
@@ -105,6 +105,11 @@ export class Simulation {
    * district goals on the month tick). Called once per sim day with the world and whether this day ends a month.
    */
   districtDaily: ((world: World, monthEnd: boolean) => void) | null = null;
+  /**
+   * Field passes per cycle (MEGACITY §3.3, O4): 2 (the default, today's latency) or 4 (a quarter of the field work a
+   * day, field latency 4 days). Sleep cycles count in it (cycle = floor(tick / fieldStagger)).
+   */
+  fieldStagger: 2 | 4 = FIELD_STAGGER;
   /** The slot under the camera centre ('forced' sleep keeps its ring awake); −1 = the start slot. Game sets it. */
   sleepFocus: SlotId = -1;
   /** Slots resting in the current field cycle (the FPS readout's "· resting N"). */
@@ -280,10 +285,24 @@ export class Simulation {
     this.census.count(g, w);
 
     // ── B: this day's field phase ──
-    const phase = w.tick % FIELD_STAGGER;
-    this.updateSleep(Math.floor(w.tick / FIELD_STAGGER));
+    const stagger = this.fieldStagger;
+    const phase = w.tick % stagger;
+    this.updateSleep(Math.floor(w.tick / stagger));
     if (this.fullFieldsDue && phase === 0) this.fullFieldsDue = false;
-    if (phase === 0) yield* this.guard(() => f.trafficUnit(w, g, banded));
+    const jp = this.census.joblessPressure;
+    const pop = this.census.population;
+    if (stagger === 2) {
+      if (phase === 0) {
+        yield* this.guard(() => f.trafficUnit(w, g, banded));
+        yield* this.guard(() => f.pollutionUnit(w, g, banded, null));
+        yield* this.guard(() => f.noiseUnit(w, g, banded, null));
+      } else {
+        yield* this.guard(() => f.neighbourhoodUnit(g, banded, null));
+        yield* this.guard(() => f.landValueUnit(w, g, banded, null));
+        yield* this.guard(() => f.crimeUnit(w, g, jp, pop, banded, null));
+        yield* this.guard(() => f.wealthUnit(w, g, banded, null));
+      }
+    } else if (phase === 0) yield* this.guard(() => f.trafficUnit(w, g, banded));
     else if (phase === 1) {
       yield* this.guard(() => f.pollutionUnit(w, g, banded, null));
       yield* this.guard(() => f.noiseUnit(w, g, banded, null));
@@ -291,8 +310,6 @@ export class Simulation {
       yield* this.guard(() => f.neighbourhoodUnit(g, banded, null));
       yield* this.guard(() => f.landValueUnit(w, g, banded, null));
     } else {
-      const jp = this.census.joblessPressure;
-      const pop = this.census.population;
       yield* this.guard(() => f.crimeUnit(w, g, jp, pop, banded, null));
       yield* this.guard(() => f.wealthUnit(w, g, banded, null));
     }
