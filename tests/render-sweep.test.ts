@@ -1,8 +1,11 @@
 // WP-3 · the building sweep on the canvas mock (docs/MEGACITY.md §3.9, §5.4, §5.6, §6.1, §11.5 "parcel draw order"):
 // drawZone and drawSkybridgeTile are wrapped to record what the Renderer asks WP-4's art to draw, in order.
 //
-//  * The sweep visits tiles back to front (x + y, then x); a merged parcel's members come before its head (the front
-//    corner, its sort key), every member is called with its parcel, the head with parcels.ts' own parcelAt answer.
+//  * The sweep visits tiles back to front (x + y; within a diagonal multi-tile heads first, then by x); a merged
+//    parcel's members come before its head (the front corner, its sort key), every member is called with its parcel,
+//    the head with parcels.ts' own parcelAt answer; the tiles standing in front of a parcel on its head's diagonal
+//    ((hx − 1, hy + 1) for 2×1 and 2×2, (hx + 1, hy − 1) for 1×2 and 2×2) draw after the head, so its body never
+//    paints over them.
 //  * While a skybridge source is selected, every building standing in one of its lanes draws see-through (alpha
 //    0.35) and nothing else does; each lane's ghost tube is green up to the first blocker and red beyond, at bridge
 //    height; partner badges are at most 8 of each colour, nearest first, never overlapping, routes only after the
@@ -80,7 +83,7 @@ function record(fn: () => void) {
 }
 
 describe('the sweep order and parcels (§6.1: WP-3 caches and sorts them, WP-4 draws them)', () => {
-  it('back to front by x + y then x; a parcel’s members before its head, the head with parcelAt’s parcel', async () => {
+  it('back to front by x + y, multi-tile heads first in a diagonal, then x; a parcel’s members before its head, the head with parcelAt’s parcel', async () => {
     const g = new Game();
     g.restore(megacityWorld(3, 2, 7).serialize());
     const { r, cam } = await renderer(g);
@@ -92,10 +95,15 @@ describe('the sweep order and parcels (§6.1: WP-3 caches and sorts them, WP-4 d
       record(() => r.render(1 / 60, 1.02));
       const w = g.world;
       expect(rec.zone.length).toBeGreaterThan(200);
+      // Within a diagonal the multi-tile heads come first (each by x), then the other tiles (by x).
+      const isHead = (c: (typeof rec.zone)[number]) => !!c.p && c.x === c.p.hx && c.y === c.p.hy;
       for (let k = 1; k < rec.zone.length; k++) {
         const a = rec.zone[k - 1];
         const b = rec.zone[k];
-        expect(a.x + a.y < b.x + b.y || (a.x + a.y === b.x + b.y && a.x < b.x), `${a.x},${a.y} before ${b.x},${b.y}`).toBe(true);
+        const sa = a.x + a.y;
+        const sb = b.x + b.y;
+        const ok = sa < sb || (sa === sb && ((isHead(a) && !isHead(b)) || (isHead(a) === isHead(b) && a.x < b.x)));
+        expect(ok, `${a.x},${a.y} before ${b.x},${b.y}`).toBe(true);
       }
       const seen = new Map<number, number>();
       rec.zone.forEach((c, k) => seen.set(c.y * w.N + c.x, k));
@@ -123,6 +131,42 @@ describe('the sweep order and parcels (§6.1: WP-3 caches and sorts them, WP-4 d
       expect(heads).toBeGreaterThan(10);
       expect(members).toBeGreaterThan(10);
       expect(mockStats.errors).toEqual([]);
+    } finally {
+      r.destroy();
+    }
+  });
+
+  it('a tile in front of a parcel on its head’s diagonal draws after the head (no facade over the tower in front)', async () => {
+    const g = new Game();
+    g.restore(megacityWorld(3, 2, 7).serialize());
+    const { r, cam } = await renderer(g);
+    try {
+      cam.zoom = 1;
+      cam.centerOnTile(96, 96);
+      r.render(1 / 60, 1);
+      record(() => r.render(1 / 60, 1.02));
+      const w = g.world;
+      const order = new Map<number, number>();
+      rec.zone.forEach((c, k) => order.set(c.y * w.N + c.x, k));
+      const checked = { left: 0, right: 0 };
+      for (const [k, c] of rec.zone.entries()) {
+        const p = c.p;
+        if (!p || c.x !== p.hx || c.y !== p.hy) continue;
+        // Front-left neighbour of the left member (2×1, 2×2) and front-right of the back member (1×2, 2×2).
+        const fronts: [number, number, 'left' | 'right'][] = [];
+        if (p.w === 2) fronts.push([p.hx - 1, p.hy + 1, 'left']);
+        if (p.h === 2) fronts.push([p.hx + 1, p.hy - 1, 'right']);
+        for (const [fx, fy, side] of fronts) {
+          const j = order.get(fy * w.N + fx);
+          if (j === undefined) continue;
+          const t = w.tiles[fy * w.N + fx];
+          if (t.zone === ZoneType.None || t.level < 1) continue;
+          expect(j, `${fx},${fy} after the head ${p.hx},${p.hy}`).toBeGreaterThan(k);
+          checked[side]++;
+        }
+      }
+      expect(checked.left).toBeGreaterThan(5);
+      expect(checked.right).toBeGreaterThan(5);
     } finally {
       r.destroy();
     }

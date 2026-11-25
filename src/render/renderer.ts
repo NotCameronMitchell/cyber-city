@@ -288,6 +288,8 @@ export class Renderer {
   private mapOpen = false;
   private lastTime = 0;
   private readonly memberParcel: Parcel = { hx: 0, hy: 0, x: 0, y: 0, w: 1, h: 1, level: 0, tier: 0 };
+  /** Sweep scratch: which tiles of the current diagonal were drawn in its heads-first pass. */
+  private sweepDone = new Uint8Array(0);
   /** Turf wash levels the ground chunks were painted with (diffed on 'turf', §3.9 R0). */
   private turfSeen = new Uint8Array(0);
   private turfWorld: World | null = null;
@@ -961,7 +963,8 @@ export class Renderer {
   }
 
   /**
-   * Zone and service buildings back-to-front: ascending x+y, then x. A
+   * Zone and service buildings back-to-front: ascending x+y, then within a
+   * diagonal the multi-tile heads first, then the other tiles, each by x. A
    * multi-tile building draws once, when the sweep reaches its front corner;
    * a merged parcel likewise (MEGACITY §6.1: drawZone is called for every
    * member with its parcel; the head, its front corner, draws the body and the
@@ -1001,80 +1004,104 @@ export class Renderer {
     };
     const seeThrough = lanes.length > 0;
     let drawn = 0;
-    for (let s = b.x0 + b.y0; s <= b.x1 + b.y1; s++) {
-      const xa = Math.max(b.x0, s - b.y1);
-      const xb = Math.min(b.x1, s - b.y0);
-      for (let x = xa; x <= xb; x++) {
-        const y = s - x;
-        const i = y * N + x;
-        const t = tiles[i];
-        const wx0 = (x - y) * HALF_W;
-        const onScreenX = wx0 + HALF_W >= vx0 && wx0 - HALF_W <= vx1;
-        const mask = rail[i];
-        const railFirst = mask !== 0 && onScreenX && story.railBefore(t);
-        if (railFirst) story.drawRail(ctx, world, x, y, mask);
-        const deck = anySky && sky[i] !== 0 && onScreenX && !skyway.isDeferred(i);
-        let deckDone = false;
-        if (t.buildingId >= 0) {
-          // A deck over a taller building draws first: the building hides it (it docks).
-          if (deck) {
+    /** Everything the sweep draws at tile (x, y): rail, deck, the body (service or zone), the after-pass. */
+    const visit = (x: number, y: number): void => {
+      const i = y * N + x;
+      const t = tiles[i];
+      const wx0 = (x - y) * HALF_W;
+      const onScreenX = wx0 + HALF_W >= vx0 && wx0 - HALF_W <= vx1;
+      const mask = rail[i];
+      const railFirst = mask !== 0 && onScreenX && story.railBefore(t);
+      if (railFirst) story.drawRail(ctx, world, x, y, mask);
+      const deck = anySky && sky[i] !== 0 && onScreenX && !skyway.isDeferred(i);
+      let deckDone = false;
+      if (t.buildingId >= 0) {
+        // A deck over a taller building draws first: the building hides it (it docks).
+        if (deck) {
+          skyway.drawTile(ctx, world, x, y);
+          deckDone = true;
+        }
+        const bd = world.buildings.get(t.buildingId);
+        if (bd && bd.x + bd.size - 1 === x && bd.y + bd.size - 1 === y) {
+          const wx = (bd.x - bd.y) * HALF_W;
+          const wy = (bd.x + bd.y) * HALF_H;
+          const z = bd.size;
+          const visible = buildingInView(bd, vx0, vx1, view);
+          if (anySky) skyway.flushIfUnder(ctx, wx - z * HALF_W, wy + z * HALF_H - serviceBuildingHeight(bd.type, bd) - 24, wx + z * HALF_W, wy + z * 2 * HALF_H);
+          if (visible) {
+            const ghost = seeThrough && inLane(bd.x, bd.y, x, y);
+            if (ghost) ctx.globalAlpha = 0.35;
+            drawServiceBuilding(ctx, wx, wy, bd, env);
+            if (ghost) ctx.globalAlpha = 1;
+          }
+          if (anySky) skyway.afterBuilding(ctx, world, bd, visibleX);
+        }
+      } else if (t.zone !== ZoneType.None) {
+        const bits = pmap[i];
+        const p = bits & PARCEL_MEMBER ? parcelFromMap(world, pmap, x, y, bits & PARCEL_HEAD ? head : member) : null;
+        const isHead = !!p && (bits & PARCEL_HEAD) !== 0;
+        // A parcel body spreads over its members: widen the cull by its footprint and height (pairs ×1.3, quads ×1.6).
+        const wide = isHead ? HALF_W : 0;
+        if (onScreenX || (isHead && wx0 + HALF_W + wide >= vx0 && wx0 - HALF_W - wide <= vx1)) {
+          if (deck && skyway.beforeZone(world, i)) {
             skyway.drawTile(ctx, world, x, y);
             deckDone = true;
           }
-          const bd = world.buildings.get(t.buildingId);
-          if (bd && bd.x + bd.size - 1 === x && bd.y + bd.size - 1 === y) {
-            const wx = (bd.x - bd.y) * HALF_W;
-            const wy = (bd.x + bd.y) * HALF_H;
-            const z = bd.size;
-            const visible = buildingInView(bd, vx0, vx1, view);
-            if (anySky) skyway.flushIfUnder(ctx, wx - z * HALF_W, wy + z * HALF_H - serviceBuildingHeight(bd.type, bd) - 24, wx + z * HALF_W, wy + z * 2 * HALF_H);
-            if (visible) {
-              const ghost = seeThrough && inLane(bd.x, bd.y, x, y);
+          const level = p ? p.level : t.level;
+          const wy = (x + y) * HALF_H;
+          let skip = band.on && t.level > 0 && level < 3;
+          if (!skip && band.on && t.level > 0 && band.maxD2 !== Infinity) skip = (wx0 - cx) ** 2 + (wy - cy) ** 2 > band.maxD2;
+          if (!skip) {
+            // A parcel head's body is the whole parcel's (taller on bigger lots, §6.1).
+            const zh = zoneBuildingHeight(t, isHead ? p : null);
+            if (!(wy + 2 * HALF_H < view.y0 || wy + HALF_H - zh - 24 > view.y1)) {
+              // Cars queued on decks behind this tower are drawn before it, so it hides them.
+              if (anySky) skyway.flushIfUnder(ctx, wx0 - HALF_W - wide, wy + HALF_H - zh - 8, wx0 + HALF_W + wide, wy + 2 * HALF_H);
+              const ghost = seeThrough && (p ? inLane(p.x, p.y, p.hx, p.hy) : inLane(x, y, x, y));
               if (ghost) ctx.globalAlpha = 0.35;
-              drawServiceBuilding(ctx, wx, wy, bd, env);
+              at.wx = wx0;
+              at.wy = wy;
+              at.x = x;
+              at.y = y;
+              drawZone(ctx, t, p, env, at);
               if (ghost) ctx.globalAlpha = 1;
-            }
-            if (anySky) skyway.afterBuilding(ctx, world, bd, visibleX);
-          }
-        } else if (t.zone !== ZoneType.None) {
-          const bits = pmap[i];
-          const p = bits & PARCEL_MEMBER ? parcelFromMap(world, pmap, x, y, bits & PARCEL_HEAD ? head : member) : null;
-          const isHead = !!p && (bits & PARCEL_HEAD) !== 0;
-          // A parcel body spreads over its members: widen the cull by its footprint and height (pairs ×1.3, quads ×1.6).
-          const wide = isHead ? HALF_W : 0;
-          if (onScreenX || (isHead && wx0 + HALF_W + wide >= vx0 && wx0 - HALF_W - wide <= vx1)) {
-            if (deck && skyway.beforeZone(world, i)) {
-              skyway.drawTile(ctx, world, x, y);
-              deckDone = true;
-            }
-            const level = p ? p.level : t.level;
-            const wy = (x + y) * HALF_H;
-            let skip = band.on && t.level > 0 && level < 3;
-            if (!skip && band.on && t.level > 0 && band.maxD2 !== Infinity) skip = (wx0 - cx) ** 2 + (wy - cy) ** 2 > band.maxD2;
-            if (!skip) {
-              // A parcel head's body is the whole parcel's (taller on bigger lots, §6.1).
-              const zh = zoneBuildingHeight(t, isHead ? p : null);
-              if (!(wy + 2 * HALF_H < view.y0 || wy + HALF_H - zh - 24 > view.y1)) {
-                // Cars queued on decks behind this tower are drawn before it, so it hides them.
-                if (anySky) skyway.flushIfUnder(ctx, wx0 - HALF_W - wide, wy + HALF_H - zh - 8, wx0 + HALF_W + wide, wy + 2 * HALF_H);
-                const ghost = seeThrough && (p ? inLane(p.x, p.y, p.hx, p.hy) : inLane(x, y, x, y));
-                if (ghost) ctx.globalAlpha = 0.35;
-                at.wx = wx0;
-                at.wy = wy;
-                at.x = x;
-                at.y = y;
-                drawZone(ctx, t, p, env, at);
-                if (ghost) ctx.globalAlpha = 1;
-                if (band.on) drawn++;
-              }
+              if (band.on) drawn++;
             }
           }
         }
-        if (!onScreenX) continue;
-        if (mask !== 0 && !railFirst) story.drawRail(ctx, world, x, y, mask);
-        if (deck && !deckDone) skyway.drawTile(ctx, world, x, y);
-        story.drawAfter(ctx, world, x, y, t, env);
       }
+      if (!onScreenX) return;
+      if (mask !== 0 && !railFirst) story.drawRail(ctx, world, x, y, mask);
+      if (deck && !deckDone) skyway.drawTile(ctx, world, x, y);
+      story.drawAfter(ctx, world, x, y, t, env);
+    };
+    const done = this.sweepDone.length >= N ? this.sweepDone : (this.sweepDone = new Uint8Array(N));
+    for (let s = b.x0 + b.y0; s <= b.x1 + b.y1; s++) {
+      const xa = Math.max(b.x0, s - b.y1);
+      const xb = Math.min(b.x1, s - b.y0);
+      // Multi-tile heads first (parcels and buildings of size ≥ 2): a body drawn at its head spreads left over
+      // (hx − k, hy + k) and right over (hx + k, hy − k), the only tiles of this diagonal it touches, and every one of
+      // them stands in front of a member, so it must draw after the body (a 2×1 parcel would otherwise paint its
+      // left facade over the tower at (hx − 1, hy + 1)).
+      let heads = 0;
+      for (let x = xa; x <= xb; x++) {
+        const y = s - x;
+        const i = y * N + x;
+        let h = (pmap[i] & PARCEL_HEAD) !== 0;
+        if (!h) {
+          const id = tiles[i].buildingId;
+          if (id >= 0) {
+            const bd = world.buildings.get(id);
+            h = !!bd && bd.size > 1 && bd.x + bd.size - 1 === x && bd.y + bd.size - 1 === y;
+          }
+        }
+        done[x - xa] = h ? 1 : 0;
+        if (h) {
+          heads++;
+          visit(x, y);
+        }
+      }
+      for (let x = xa; x <= xb; x++) if (heads === 0 || done[x - xa] === 0) visit(x, s - x);
       story.drawSkybridges(ctx, s);
     }
     if (anySky) skyway.flushCars(ctx);
