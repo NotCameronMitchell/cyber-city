@@ -10,7 +10,7 @@ import { Game } from '../src/game/game';
 import type { Region, SlotId } from '../src/game/types';
 import { World } from '../src/game/world';
 import { zoomRange } from '../src/input/input';
-import { MAP_PINCH_IN, MAP_PINCH_OUT } from '../src/input/mapbus';
+import { MAP_PINCH_IN, MAP_PINCH_OUT, pinchMayLeaveMap } from '../src/input/mapbus';
 import { Camera, HALF_H, HALF_W } from '../src/render/camera';
 import {
   CITYMAP_HELP,
@@ -273,6 +273,12 @@ describe('5×5 City map (§7.2)', () => {
     // The pinch thresholds that open and leave the map need a deliberate gesture.
     expect(MAP_PINCH_OUT).toBeLessThan(0.9);
     expect(MAP_PINCH_IN).toBeGreaterThan(1.1);
+    // A pinch that zooms a 5×5 atlas in stops at 2× and stays on the map; only a new pinch at 2× leaves it. On a 3×3
+    // map (no headroom) a pinch-in leaves at once.
+    expect(pinchMayLeaveMap(fit, fit, 2)).toBe(false);
+    expect(pinchMayLeaveMap(fit * 1.6, fit, 2)).toBe(false);
+    expect(pinchMayLeaveMap(fit * 2, fit, 2)).toBe(true);
+    expect(pinchMayLeaveMap(cam3.mapZoom, cam3.mapZoom, 1)).toBe(true);
   });
 
   it('the region sits in the middle of the area the header and the sheet leave, on every phone size and region', () => {

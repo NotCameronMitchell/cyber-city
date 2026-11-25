@@ -32,6 +32,15 @@ export const MAP_PINCH_OUT = 0.8;
 export const MAP_PINCH_IN = 1.25;
 
 /**
+ * May this pinch leave the City map? Only a pinch that began at the map's largest zoom: on a 5×5 handheld map (zoom
+ * headroom 2×, §7.2) a pinch that zooms the atlas in stops at 2× and stays on the map, however far the fingers keep
+ * spreading; a new pinch at 2× leaves. A 3×3 map has no headroom, so any pinch-in on it leaves (§3.9).
+ */
+export function pinchMayLeaveMap(startZoom: number, mapZoom: number, headroom: number): boolean {
+  return startZoom >= mapZoom * Math.max(1, headroom) * 0.995;
+}
+
+/**
  * The skybridge tool's pill flash (§5.4 step 3): after a bridge builds, its payoff for 3 s ("SKYBRIDGE · 1,450 CR" /
  * "600 walkers · cars −20%"); after a tap on a level-2 tower, "Grows tall at level 3". Input writes it, the pill reads it.
  */

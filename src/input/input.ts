@@ -96,7 +96,7 @@ import {
 import { annexPins, pinAt } from '../render/districts';
 import { HAPTIC_CONFIRM_MS, HAPTIC_TICK_MS, haptic } from './haptics';
 import { KeyboardInput, isTypingTarget } from './keyboard';
-import { MAP_PINCH_IN, MAP_PINCH_OUT, SKY_FLASH_MS, mapBus, skyBus } from './mapbus';
+import { MAP_PINCH_IN, MAP_PINCH_OUT, SKY_FLASH_MS, mapBus, pinchMayLeaveMap, skyBus } from './mapbus';
 import { badgeAt, pickAnchor, pickTube, reachView, snapPartner, tubeBeatsFront } from './skybridge';
 import { ghostPick, partnerBadges } from '../render/overlay';
 import { ZoneType as Z } from '../game/types';
@@ -175,6 +175,8 @@ export class InputController {
   /** City map snap (MEGACITY §3.9): spread ratio accumulated while pinching out at minZoom / in at the map's largest zoom. */
   private pinchOut = 1;
   private pinchIn = 1;
+  /** This pinch began on the City map at its largest zoom, so it may leave the map (mapbus.pinchMayLeaveMap). */
+  private pinchMayLeave = false;
 
   // ── Build drag
   private readonly buildStart: Vec = { x: 0, y: 0 };
@@ -723,6 +725,8 @@ export class InputController {
       this.pinchMaxCount = 0;
       this.pinchOut = 1;
       this.pinchIn = 1;
+      const cam = this.camera;
+      this.pinchMayLeave = cam.mapView && pinchMayLeaveMap(cam.zoom, cam.mapZoom, cam.mapHeadroom);
     }
     this.pinchMaxCount = Math.max(this.pinchMaxCount, this.pointers.length);
   }
@@ -765,7 +769,7 @@ export class InputController {
     if (!hooks) return false;
     if (cam.mapView) {
       const top = cam.mapZoom * cam.mapHeadroom;
-      if (f > 1 && cam.zoom >= top * 0.995) {
+      if (f > 1 && this.pinchMayLeave && cam.zoom >= top * 0.995) {
         this.pinchIn *= f;
         if (this.pinchIn >= MAP_PINCH_IN) {
           hooks.leave(cx, cy);
