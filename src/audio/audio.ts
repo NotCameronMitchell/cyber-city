@@ -25,6 +25,7 @@
 
 import type { GameEventMap } from '../game/events';
 import type { Game } from '../game/game';
+import { cityLifeOn } from '../game/settings';
 
 type SfxKind = GameEventMap['sfx'];
 /** Event-driven cues with their own gap (not sfx kinds; STORY-CONTRACT keys a Record on those). */
@@ -80,7 +81,7 @@ export class AudioEngine {
     // Megacity (§10): the annex's fog lift, and the optional City life chime (only while City life is on).
     game.events.on('annex', () => this.play('milestone'));
     game.events.on('cityEvent', (e) => {
-      if (e.phase === 'start' && CHIME_EVENTS.has(e.id) && this.game.settings.cityLife !== false) this.cue('chime');
+      if (e.phase === 'start' && CHIME_EVENTS.has(e.id) && cityLifeOn(this.game.settings)) this.cue('chime');
     });
     game.events.on('settings', () => this.syncSettings());
     const unlock = () => this.unlock();

@@ -4510,6 +4510,10 @@ body {
   display: flex;
   align-items: flex-start;
   gap: 8px;
+  /* A whole quote is the tap that expands it: at least a 44 px target (§7.8), even at one or two lines. */
+  min-height: 44px;
+  padding: 4px 0;
+  box-sizing: border-box;
   list-style: none;
   cursor: pointer;
   font-size: 12.5px;
