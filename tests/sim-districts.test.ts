@@ -3,7 +3,7 @@
 // owned boundary and the Metro network. Each rule reads the district kind of its tile; a plain city is unchanged.
 
 import { describe, expect, it } from 'vitest';
-import { DISTRICTS, EDGE_LINKS, TURF } from '../src/game/config';
+import { DISTRICTS, EDGE_LINKS, TOURISM, TURF } from '../src/game/config';
 import { slotRect } from '../src/game/districts/slots';
 import { Simulation } from '../src/game/sim';
 import { Census } from '../src/game/sim/census';
@@ -111,6 +111,67 @@ describe('district rules (§3.3)', () => {
     w.annex(w.districts.kinds.findIndex((_, k) => !w.slotOwned[k]));
     s.step();
     expect(whole).toBe(1);
+  });
+
+  it('city life terms (MEGACITY §6.4.1): visitors, approval and Market demand while the happening has sim days left, one day at a time', () => {
+    const w = new World(12, 'Life', undefined, 3);
+    w.funds = 1e9;
+    for (let x = 70; x < 120; x++) w.setRoad(x, 96);
+    w.addBuilding('reactor', 66, 97);
+    for (let x = 70; x < 120; x++) {
+      w.setZone(x, 97, ZoneType.Residential);
+      w.setLevel(x, 97, 2);
+      if (x % 4 === 0) {
+        w.setZone(x, 95, ZoneType.Commercial);
+        w.setLevel(x, 95, 1);
+      }
+    }
+    const s = sim(w);
+    const approval = () => inner(s).census.approval(w, (s as unknown as { power: never }).power);
+    const plain = { visitors: s.ports.visitors, approval: approval() };
+    const target = { res: 0, com: 0, ind: 0 };
+    inner(s).census.demandTarget(w, 60, 0, target);
+    w.cityEvent = { id: 'parade', until: 60, daysLeft: 3, visitors: 5000, approval: 4, demandCom: 0.1 };
+    s.recomputeAll();
+    // A monthly rate, scaled by the tourism mood like every visitor source.
+    expect(s.ports.visitors).toBeGreaterThanOrEqual(plain.visitors + Math.floor(5000 * TOURISM.moodMin * (1 - TOURISM.crimeHit) * 0.95));
+    // On the same census: the happening's approval term is added as is.
+    // A bare test street reads 0 (no jobs, no services): lift it into range so the term is not clamped away.
+    const raw = () => {
+      w.cityEvent!.daysLeft = 0;
+      const lo = inner(s).census.approval(w, (s as unknown as { power: never }).power);
+      w.cityEvent!.daysLeft = 3;
+      return lo;
+    };
+    // Shift the approval into (0, 100) with the story's additive term, so the clamp cannot hide the happening's.
+    for (const a of [0, 50, 100, 150, 200, 300, 400, -50, -100]) {
+      w.mods.approvalAdd = a;
+      const v = raw();
+      if (v > 10 && v < 90) break;
+    }
+    expect(raw()).toBeGreaterThan(10);
+    const on = approval();
+    w.cityEvent!.daysLeft = 0;
+    const off = approval();
+    w.cityEvent!.daysLeft = 3;
+    expect(on - off).toBeCloseTo(4, 6);
+    void plain.approval;
+    const withLife = { res: 0, com: 0, ind: 0 };
+    inner(s).census.demandTarget(w, 60, 0, withLife);
+    // The term adds inside demandTarget's outer clamp to ±1.
+    expect(withLife.com).toBeGreaterThan(target.com);
+    if (target.com > -0.9 && target.com < 0.9) expect(withLife.com - target.com).toBeCloseTo(0.1, 6);
+    else expect(withLife.com - target.com).toBeLessThanOrEqual(0.1 + 1e-9);
+    // The terms count down one sim day per day and stop at 0.
+    s.step();
+    expect(w.cityEvent!.daysLeft).toBe(2);
+    s.step();
+    s.step();
+    expect(w.cityEvent!.daysLeft).toBe(0);
+    s.recomputeAll();
+    expect(s.ports.visitors).toBe(plain.visitors);
+    s.step();
+    expect(w.cityEvent!.daysLeft).toBe(0);
   });
 
   it('Kessel Flats adds 2,000 Fab jobs of demand while it has < 400 developed Fab tiles; the census has one row per owned district', () => {
