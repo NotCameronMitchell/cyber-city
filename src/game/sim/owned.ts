@@ -83,6 +83,8 @@ export class OwnedLayout {
   readonly area: number;
   /** 1 = the tile's slot is owned. */
   readonly mask: Uint8Array;
+  /** Slot id of every tile (static for the frame): per-district tallies read it instead of dividing per tile. */
+  readonly slot: Uint8Array;
   /** Every owned chunk. */
   readonly all: ChunkList;
   /** Owned rows and columns (inclusive); y1 < y0 when nothing is owned. */
@@ -100,6 +102,10 @@ export class OwnedLayout {
     this.R = world.region;
     this.area = world.area;
     this.mask = new Uint8Array(world.area);
+    this.slot = new Uint8Array(world.area);
+    const N = world.N;
+    const R = world.region;
+    for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) this.slot[y * N + x] = (y >> 6) * R + (x >> 6);
     this.all = new ChunkList(world.N, world.region);
     this.own = world.slotOwned;
   }

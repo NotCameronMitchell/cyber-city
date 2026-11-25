@@ -211,7 +211,8 @@ export class Census {
   /** Zoned entries k0..k1 of the grid into the accumulators (and the work tallies). */
   private countZoned(g: SimGrid, R: number, tally: DistrictTally[] | null, k0: number, k1: number): void {
     const acc = this.acc;
-    const N = g.N;
+    const slotOf = g.layout.slot;
+    void R;
     const si = this.workIndex;
     const ground = g.ground;
     const { zone, level, abandoned, wealth, alleyNear, zoned } = g;
@@ -233,7 +234,7 @@ export class Census {
       const l = level[i];
       const road = g.hasRoad(i);
       if (!road) noRoad++;
-      const d = tally ? tally[si[(((i / N) | 0) >> 6) * R + ((i % N) >> 6)]] : undefined;
+      const d = tally ? tally[si[slotOf[i]]] : undefined;
       if (abandoned[i]) {
         if (ground[i] === RUBBLE) {
           ruins++;
@@ -290,8 +291,7 @@ export class Census {
     const noise = f.noise;
     const tally = this.byDistrict.length ? this.byDistrict : null;
     if (tally) for (const d of tally) d.lvSum = 0;
-    const N = g.N;
-    const R = world.region;
+    const slotOf = g.layout.slot;
     const si = this.slotIndex;
     for (let k = 0; k < g.zonedCount; k++) {
       const i = g.zoned[k];
@@ -299,7 +299,7 @@ export class Census {
       n++;
       lv += f.landValue[i];
       if (tally) {
-        const d = tally[si[(((i / N) | 0) >> 6) * R + ((i % N) >> 6)]];
+        const d = tally[si[slotOf[i]]];
         if (d) d.lvSum += f.landValue[i];
       }
       cr += f.crime[i];
