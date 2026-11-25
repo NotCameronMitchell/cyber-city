@@ -50,14 +50,20 @@ function taxBase(world: World, g: SimGrid, base: number[], flat: number[], k0: n
   const lvField = world.fields.landValue;
   const taxMul = world.layers.taxMul;
   const tiles = world.tiles;
-  const { wealth, alleyNear } = g;
+  const { wealth, alleyNear, zoned, zone, level, abandoned } = g;
+  // The power grid's typed flags equal Tile.powered after every compute (the projection always follows one).
+  const pw = g.powered;
+  const LV_BASE = T.LV_TAX_BASE;
+  const LV_SLOPE = T.LV_TAX_SLOPE;
+  const UNPOWERED = T.UNPOWERED_TAX;
   for (let k = k0; k < k1; k++) {
-    const i = g.zoned[k];
-    if (!g.developed(i)) continue;
-    const z = g.zone[i];
-    const l = g.level[i];
+    const i = zoned[k];
+    const l = level[i];
+    if (l === 0 || abandoned[i] !== 0) continue;
+    const z = zone[i];
     const t = wealth[i];
-    const yieldMul = (T.LV_TAX_BASE + T.LV_TAX_SLOPE * lvField[i]) * (tiles[i].powered ? 1 : T.UNPOWERED_TAX) * taxMul[i];
+    const on = pw ? pw[i] === 1 : tiles[i].powered;
+    const yieldMul = (LV_BASE + LV_SLOPE * lvField[i]) * (on ? 1 : UNPOWERED) * taxMul[i];
     const cap0 = CAP_T[z * 12 + l * 3];
     if (t === 0 && !(z === RES && alleyNear[i])) base[z] += cap0 * yieldMul;
     else {

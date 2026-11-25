@@ -34,7 +34,6 @@ const NOISE_APPROVAL = NOISE.approval;
 
 const clampDemand = (v: number): number => (v < -1 ? -1 : v > 1 ? 1 : v);
 const RUBBLE = Ground.Rubble;
-const IND = ZoneType.Industrial;
 
 /** One owned district's tallies (MEGACITY §3.3): the census per slot, plus the demand rules' tile counts. */
 export interface DistrictTally {
@@ -102,7 +101,7 @@ export class Census {
   readonly byDistrict: DistrictTally[] = [];
   /** Slot → index in byDistrict (−1 unowned). */
   private slotIndex = new Int32Array(0);
-  /** A count in progress (countUnit): accumulators and the work tallies, published in its last step. */
+  /** A count in progress (countUnit): accumulators and the per-slot sums, published in its last step. */
   private readonly acc = {
     dev: [0, 0, 0, 0],
     lots: [0, 0, 0, 0],
@@ -116,9 +115,16 @@ export class Census {
     noRoad: 0,
     aband: 0,
     ruins: 0,
+    // Per slot (index SlotId), summed in tile order: typed arrays keep the hot loop free of object writes.
+    sDev: new Int32Array(1),
+    sRuins: new Int32Array(1),
+    sFab: new Int32Array(1),
+    sMkt: new Int32Array(1),
+    sRes: new Float64Array(1),
+    sJobs: new Float64Array(1),
   };
-  private readonly work: DistrictTally[] = [];
-  private workIndex = new Int32Array(0);
+  /** Σ land value over developed tiles per slot (averages()), copied into byDistrict[k].lvSum. */
+  private lvBySlot = new Float64Array(1);
 
   /**
    * Count heads, jobs and development from the grid (no field reads). With `world`, also the per-district tallies
@@ -147,32 +153,46 @@ export class Census {
     acc.noRoad = 0;
     acc.aband = 0;
     acc.ruins = 0;
-    const tally = world ? this.prepareWork(world) : null;
+    const R = world ? world.region : 1;
+    const slots = R * R;
+    if (acc.sDev.length !== slots) {
+      acc.sDev = new Int32Array(slots);
+      acc.sRuins = new Int32Array(slots);
+      acc.sFab = new Int32Array(slots);
+      acc.sMkt = new Int32Array(slots);
+      acc.sRes = new Float64Array(slots);
+      acc.sJobs = new Float64Array(slots);
+    } else {
+      acc.sDev.fill(0);
+      acc.sRuins.fill(0);
+      acc.sFab.fill(0);
+      acc.sMkt.fill(0);
+      acc.sRes.fill(0);
+      acc.sJobs.fill(0);
+    }
     const zc = g.zonedCount;
     const step = banded ? ZONED_CHUNK : zc + 1;
     for (let k0 = 0; k0 < zc; k0 += step) {
       yield K.Census;
-      this.countZoned(g, world ? world.region : 1, tally, k0, Math.min(zc, k0 + step));
+      this.countZoned(g, k0, Math.min(zc, k0 + step));
     }
     yield K.Census;
     // Stage-aware (Stratablocks count complete, powered stages only; §4.2).
     const st = STATS;
-    const si = this.workIndex;
     let pop = acc.pop;
     let jobsCom = acc.jobsCom;
     let jobsInd = acc.jobsInd;
-    const R = world ? world.region : 1;
+    const sRes = acc.sRes;
+    const sJobs = acc.sJobs;
     for (const b of g.buildings) {
       buildingStats(b, st);
       pop += st.residents;
       jobsCom += st.jobsCom;
       jobsInd += st.jobsInd;
-      if (tally) {
-        const d = tally[si[(b.y >> 6) * R + (b.x >> 6)]];
-        if (d) {
-          d.residents += st.residents;
-          d.jobs += st.jobsCom + st.jobsInd;
-        }
+      const s = (b.y >> 6) * R + (b.x >> 6);
+      if (s >= 0 && s < slots) {
+        sRes[s] += st.residents;
+        sJobs[s] += st.jobsCom + st.jobsInd;
       }
     }
     // Publish.
@@ -181,7 +201,7 @@ export class Census {
     this.lotsWithRoad.splice(0, 4, acc.lotsRoad[0], acc.lotsRoad[1], acc.lotsRoad[2], acc.lotsRoad[3]);
     this.levelCount.set(acc.lc);
     this.tierCount.set(acc.tc);
-    if (tally) this.publishTallies(world!);
+    if (world) this.publishTallies(world);
     this.ruins = acc.ruins;
     this.tierResidents = acc.tierRes;
     const r = this.roads;
@@ -208,19 +228,14 @@ export class Census {
     this.joblessPressure = this.unemployment * scale;
   }
 
-  /** Zoned entries k0..k1 of the grid into the accumulators (and the work tallies). */
-  private countZoned(g: SimGrid, R: number, tally: DistrictTally[] | null, k0: number, k1: number): void {
+  /** Zoned entries k0..k1 of the grid into the accumulators (and the per-slot tallies). */
+  private countZoned(g: SimGrid, k0: number, k1: number): void {
     const acc = this.acc;
     const slotOf = g.layout.slot;
-    void R;
-    const si = this.workIndex;
     const ground = g.ground;
     const { zone, level, abandoned, wealth, alleyNear, zoned } = g;
-    const dev = acc.dev;
-    const lots = acc.lots;
+    const { dev, lots, lc, tc, sDev, sRuins, sFab, sMkt, sRes, sJobs } = acc;
     const lotsRoad = acc.lotsRoad;
-    const lc = acc.lc;
-    const tc = acc.tc;
     let tierRes = acc.tierRes;
     let pop = acc.pop;
     let jobsCom = acc.jobsCom;
@@ -234,11 +249,10 @@ export class Census {
       const l = level[i];
       const road = g.hasRoad(i);
       if (!road) noRoad++;
-      const d = tally ? tally[si[slotOf[i]]] : undefined;
       if (abandoned[i]) {
         if (ground[i] === RUBBLE) {
           ruins++;
-          if (d) d.ruins++;
+          sRuins[slotOf[i]]++;
         } else aband++;
         continue;
       }
@@ -252,18 +266,20 @@ export class Census {
       const t = wealth[i];
       tc[z * 3 + t]++;
       const cap = z === RES && t === 0 && alleyNear[i] ? CAP_AFF[l] : CAP_T[z * 12 + l * 3 + t];
+      const s = slotOf[i];
+      sDev[s]++;
       if (z === RES) {
         pop += cap;
         tierRes += cap - CAP_T[z * 12 + l * 3];
-      } else if (z === COM) jobsCom += cap;
-      else jobsInd += cap;
-      if (d) {
-        d.developed++;
-        if (z === RES) d.residents += cap;
-        else {
-          d.jobs += cap;
-          if (z === IND) d.fabTiles++;
-          else d.marketTiles++;
+        sRes[s] += cap;
+      } else {
+        sJobs[s] += cap;
+        if (z === COM) {
+          jobsCom += cap;
+          sMkt[s]++;
+        } else {
+          jobsInd += cap;
+          sFab[s]++;
         }
       }
     }
@@ -289,30 +305,35 @@ export class Census {
     let noRes = 0;
     let nRes = 0;
     const noise = f.noise;
-    const tally = this.byDistrict.length ? this.byDistrict : null;
-    if (tally) for (const d of tally) d.lvSum = 0;
+    const tally = this.byDistrict;
     const slotOf = g.layout.slot;
-    const si = this.slotIndex;
-    for (let k = 0; k < g.zonedCount; k++) {
-      const i = g.zoned[k];
-      if (!g.developed(i)) continue;
+    const slots = world.region * world.region;
+    if (this.lvBySlot.length !== slots) this.lvBySlot = new Float64Array(slots);
+    const lvs = this.lvBySlot;
+    lvs.fill(0);
+    const { zoned, level, abandoned, zone } = g;
+    const { landValue, crime, pollution, security, health, park } = f;
+    const local = fields.localTraffic;
+    for (let k = 0, zc = g.zonedCount; k < zc; k++) {
+      const i = zoned[k];
+      // Developed: a zoned entry with a level and not abandoned (SimGrid.developed, inlined).
+      if (level[i] === 0 || abandoned[i] !== 0) continue;
       n++;
-      lv += f.landValue[i];
-      if (tally) {
-        const d = tally[si[slotOf[i]]];
-        if (d) d.lvSum += f.landValue[i];
-      }
-      cr += f.crime[i];
-      po += f.pollution[i];
-      tr += fields.localTraffic[i];
-      sv += (f.security[i] + f.health[i] + f.park[i]) / 3;
+      const l = landValue[i];
+      lv += l;
+      lvs[slotOf[i]] += l;
+      cr += crime[i];
+      po += pollution[i];
+      tr += local[i];
+      sv += (security[i] + health[i] + park[i]) / 3;
       const v = noise[i];
       no += v;
-      if (g.zone[i] === RES) {
+      if (zone[i] === RES) {
         nRes++;
         noRes += v;
       }
     }
+    for (const d of tally) d.lvSum = d.slot >= 0 && d.slot < slots ? lvs[d.slot] : 0;
     const inv = n > 0 ? 1 / n : 0;
     this.avgNoise = no * inv;
     this.avgNoiseRes = nRes > 0 ? noRes / nRes : 0;
@@ -387,54 +408,31 @@ export class Census {
     return out;
   }
 
-  /** Reset the work tallies for the world's owned slots (in annex order); `workIndex` maps a slot to its row. */
-  private prepareWork(world: World): DistrictTally[] {
-    const R = world.region;
-    if (this.workIndex.length !== R * R) this.workIndex = new Int32Array(R * R);
-    this.workIndex.fill(-1);
-    const owned = world.districts.owned;
-    const list = this.work;
-    list.length = owned.length;
-    for (let k = 0; k < owned.length; k++) {
-      const s = owned[k];
-      let d = list[k];
-      if (!d) d = list[k] = blankTally();
-      d.slot = s;
-      d.kind = world.districts.kinds[s] ?? 'shore';
-      d.residents = 0;
-      d.jobs = 0;
-      d.developed = 0;
-      d.ruins = 0;
-      d.fabTiles = 0;
-      d.marketTiles = 0;
-      d.lvSum = 0;
-      if (s >= 0 && s < R * R) this.workIndex[s] = k;
-    }
-    return list;
-  }
-
-  /** The finished work tallies become `byDistrict` (lvSum is averages()' own, kept). */
+  /** The finished per-slot sums become `byDistrict`, one row per owned slot in annex order (lvSum from averages()). */
   private publishTallies(world: World): void {
-    const src = this.work;
-    const out = this.byDistrict;
+    const acc = this.acc;
     const R = world.region;
     if (this.slotIndex.length !== R * R) this.slotIndex = new Int32Array(R * R);
-    this.slotIndex.set(this.workIndex);
-    out.length = src.length;
-    for (let k = 0; k < src.length; k++) {
-      const s = src[k];
+    this.slotIndex.fill(-1);
+    if (this.lvBySlot.length !== R * R) this.lvBySlot = new Float64Array(R * R);
+    const owned = world.districts.owned;
+    const out = this.byDistrict;
+    out.length = owned.length;
+    for (let k = 0; k < owned.length; k++) {
+      const s = owned[k];
       let d = out[k];
       if (!d) d = out[k] = blankTally();
-      const lv = d.slot === s.slot ? d.lvSum : 0;
-      d.slot = s.slot;
-      d.kind = s.kind;
-      d.residents = s.residents;
-      d.jobs = s.jobs;
-      d.developed = s.developed;
-      d.ruins = s.ruins;
-      d.fabTiles = s.fabTiles;
-      d.marketTiles = s.marketTiles;
-      d.lvSum = lv;
+      d.slot = s;
+      d.kind = world.districts.kinds[s] ?? 'shore';
+      const ok = s >= 0 && s < R * R;
+      if (ok) this.slotIndex[s] = k;
+      d.residents = ok ? acc.sRes[s] : 0;
+      d.jobs = ok ? acc.sJobs[s] : 0;
+      d.developed = ok ? acc.sDev[s] : 0;
+      d.ruins = ok ? acc.sRuins[s] : 0;
+      d.fabTiles = ok ? acc.sFab[s] : 0;
+      d.marketTiles = ok ? acc.sMkt[s] : 0;
+      d.lvSum = ok ? this.lvBySlot[s] : 0;
     }
   }
 

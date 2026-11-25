@@ -1,18 +1,18 @@
-// District rules in the sim (docs/MEGACITY.md §3.3, §3.5, §3.7, §11.5 WP-1): layers, fields, ruins, brownfield,
+// District rules in the sim (docs/MEGACITY.md §3.3, §3.5, §3.7, §11.5 WP-1): layers, fields, brownfield (ruins: ruins.test.ts),
 // the floodplain cap, demand and visitor adds, the per-district census, the turf demand term, regional links on the
 // owned boundary and the Metro network. Each rule reads the district kind of its tile; a plain city is unchanged.
 
 import { describe, expect, it } from 'vitest';
-import { DISTRICTS, EDGE_LINKS, RUINS } from '../src/game/config';
+import { DISTRICTS, EDGE_LINKS, TURF } from '../src/game/config';
 import { slotRect } from '../src/game/districts/slots';
 import { Simulation } from '../src/game/sim';
 import { Census } from '../src/game/sim/census';
 import { districtVisitors } from '../src/game/sim/ports';
 import { composeLayers } from '../src/game/story/mods';
+import * as turf from '../src/game/story/turf';
 import { turfPatch } from '../src/game/story/turf';
-import { Ground, Terrain, ZoneType, type DistrictKind, type SlotId } from '../src/game/types';
+import { ZoneType, type DistrictKind, type SlotId } from '../src/game/types';
 import { World } from '../src/game/world';
-import { fillSlot } from './megacity-fixture';
 
 /** A 3×3 world owning the start slot plus the slot of `kind` (the first one of that kind), its land flattened. */
 function withKind(kind: DistrictKind, seed = 2091): { w: World; slot: SlotId } {
@@ -66,56 +66,6 @@ describe('district rules (§3.3)', () => {
     f.pollution(w, (s as unknown as { grid: unknown }).grid);
     expect(w.fields.pollution[(y + 1) * w.N + x + 1]).toBeLessThan(before);
     expect(['resilience', 'filter'].every((e) => e in w.fields)).toBe(true);
-  });
-
-  it('ruins (ground Rubble) count apart from abandoned, never collapse, and recover ×2 in the Sunk with pay capped monthly', () => {
-    const { w, slot } = withKind('sunk');
-    const r = slotRect(w, slot);
-    fillSlot(w, slot);
-    let ruins = 0;
-    for (let y = r.y0; y <= r.y1; y++)
-      for (let x = r.x0; x <= r.x1; x++) {
-        const t = w.tileAt(x, y)!;
-        if (t.zone !== ZoneType.None && t.level > 0 && ruins < 120) {
-          w.setLevel(x, y, t.level, true);
-          w.setGround(x, y, Ground.Rubble);
-          ruins++;
-        }
-      }
-    const s = sim(w);
-    // The Sunk's annex content brings ruins of its own: count every zoned, abandoned Rubble tile.
-    let all = 0;
-    for (let i = 0; i < w.area; i++) {
-      const t = w.tiles[i];
-      if (w.ownedAt(i) && t.zone !== ZoneType.None && t.abandoned && t.ground === Ground.Rubble) all++;
-    }
-    expect(all).toBeGreaterThanOrEqual(ruins);
-    expect(w.stats.ruins).toBe(all);
-    expect(inner(s).census.abandoned).toBe(0);
-    const fundsBefore = w.funds;
-    for (let d = 0; d < 360; d++) s.step();
-    expect(w.districts.ruinsRestored ?? 0).toBeGreaterThan(0);
-    // Pay: restorePay each, capped at RUINS.payCapMonth a month.
-    expect(DISTRICTS.sunk.mods.recoverMul).toBe(2);
-    expect(w.funds).toBeGreaterThanOrEqual(fundsBefore - 1e9);
-    expect(RUINS.payCapMonth).toBeGreaterThan(0);
-  });
-
-  it('ruins with no road or power stand: ≥ 90% after 2 sim years (D2)', () => {
-    const { w, slot } = withKind('sunk');
-    const r = slotRect(w, slot);
-    let n = 0;
-    for (let y = r.y0 + 4; y < r.y0 + 40 && n < 200; y += 2)
-      for (let x = r.x0 + 4; x < r.x0 + 40 && n < 200; x += 2) {
-        if (w.tileAt(x, y)!.terrain !== Terrain.Land) continue;
-        w.setZone(x, y, ZoneType.Residential);
-        w.setLevel(x, y, 1, true);
-        w.setGround(x, y, Ground.Rubble);
-        n++;
-      }
-    const s = sim(w);
-    for (let d = 0; d < 720; d++) s.step();
-    expect(w.stats.ruins).toBeGreaterThanOrEqual(Math.ceil(0.9 * n));
   });
 
   it('the Reedmere floodplain: land within 1 of water stops at level 2 while no resilience covers it', () => {
@@ -187,5 +137,98 @@ describe('district rules (§3.3)', () => {
     w.addBuilding('metro', 150, 97);
     s.recomputeAll();
     expect(w.fields.transit[i]).toBeGreaterThan(alone);
+  });
+});
+
+describe('turf in districts (§3.7, §6.2, §8.4)', () => {
+  const month = (w: World) => {
+    w.tick += 30;
+    turf.update(w);
+  };
+
+  it('a frame keeps its turf (Skeleton Row, as world.ts TURF_KEEPING); other buildings do not', () => {
+    const w = new World(3, 'Frames', undefined, 3);
+    w.funds = 1e9;
+    expect(w.addBuilding('frame', 80, 80)).toBeTruthy();
+    expect(w.addBuilding('clinic', 90, 80)).toBeTruthy();
+    expect(turf.isEligible(w, 80, 80)).toBe(true);
+    expect(turf.isEligible(w, 90, 80)).toBe(false);
+    expect(turf.seedGang(w, 'kites', 81, 81, 60)).toBeGreaterThan(0);
+    expect(turf.ownerAt(w, 80, 80)).toBe('kites');
+  });
+
+  it('a Salvage crown shelters Undertow turf within r2 of its Stratablock (MEGACITY §6.2), as the Kite Nest does the Kites', () => {
+    const w = new World(4, 'Salvage', undefined, 3);
+    w.funds = 1e9;
+    w.maxPopulation = 1e9;
+    w.turf.seeded.undertow = true;
+    w.turf.seeded.kites = true;
+    const b = w.addBuilding('stack', 90, 90)!;
+    b.powered = true;
+    w.setStage(b, 3, 0, 'salvage');
+    // A strip of Undertow turf east of the block: tiles 1..2 past its footprint are sheltered, 3 and beyond are not.
+    const x1 = b.x + b.size - 1;
+    const y = b.y + 1;
+    for (let x = x1 + 1; x <= x1 + 8; x++) {
+      const i = w.idx(x, y);
+      w.turf.owner[i] = 1;
+      w.turf.str[i] = 60;
+    }
+    // Full security: the hold loses TURF.securityPenalty a month, more than the affinity gives back here.
+    w.fields.security.fill(1);
+    const aff = turf.affinity(w, 'undertow');
+    expect(Math.round((aff[w.idx(x1 + 1, y)] - TURF.holdPivot) * TURF.holdGain)).toBeLessThan(TURF.securityPenalty);
+    month(w);
+    month(w);
+    const str = (x: number) => (turf.ownerAt(w, x, y) === 'undertow' ? w.turf.str[w.idx(x, y)] : 0);
+    expect(str(x1 + 1)).toBeGreaterThanOrEqual(TURF.protectFloor);
+    expect(str(x1 + 2)).toBeGreaterThanOrEqual(TURF.protectFloor);
+    expect(str(x1 + 4)).toBeLessThan(TURF.protectFloor);
+    // Without the crown the same strip decays everywhere.
+    w.setStage(b, 3, 0, 'commons');
+    for (let x = x1 + 1; x <= x1 + 8; x++) {
+      const i = w.idx(x, y);
+      w.turf.owner[i] = 1;
+      w.turf.str[i] = 60;
+    }
+    month(w);
+    month(w);
+    expect(str(x1 + 1)).toBeLessThan(TURF.protectFloor);
+  });
+
+  it("the Undertow's first seed prefers an owned Sunk's best tile (§3.7), else the best tile near the city", () => {
+    const seedAt = (annexSunk: boolean): number => {
+      const { w, slot } = withKind('sunk');
+      if (!annexSunk) {
+        // The same city with the Sunk left locked: rebuild it without the annex.
+        const v = World.generate(2091, 'Districts', undefined, 3);
+        v.funds = 1e9;
+        v.maxPopulation = 1e9;
+        return seedOn(v, slot);
+      }
+      return seedOn(w, slot);
+    };
+    const seedOn = (w: World, sunk: SlotId): number => {
+      // A small city in the start slot: roads and developed Hab, so the best tile near the city is there.
+      for (let x = 70; x < 120; x++) w.setRoad(x, 96);
+      for (let x = 70; x < 120; x++) {
+        w.setZone(x, 97, ZoneType.Residential);
+        if (w.tileAt(x, 97)?.zone === ZoneType.Residential) w.setLevel(x, 97, 2);
+      }
+      w.turf.seeded.kites = true;
+      month(w);
+      expect(w.turf.seeded.undertow).toBe(true);
+      let inSunk = 0;
+      let total = 0;
+      for (let i = 0; i < w.area; i++)
+        if (w.turf.owner[i] === 1) {
+          total++;
+          if (w.slotAt(i % w.N, (i / w.N) | 0) === sunk) inSunk++;
+        }
+      expect(total).toBeGreaterThan(0);
+      return inSunk / total;
+    };
+    expect(seedAt(true)).toBe(1);
+    expect(seedAt(false)).toBe(0);
   });
 });

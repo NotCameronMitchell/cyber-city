@@ -19,7 +19,7 @@ import { BUILDINGS, CROWNS, GANG_IDS, GANG_NEWS_NAME, REGION, RIBBON, STANDING, 
 import { capitalizeFirst, districtName } from '../news';
 import { Rng } from '../rng';
 import { scratchFor } from '../frame';
-import { DAYS_PER_MONTH, RoadKind, Terrain, ZoneType, type Building, type BuildingType } from '../types';
+import { DAYS_PER_MONTH, RoadKind, Terrain, ZoneType, type Building, type BuildingType, type DistrictKind } from '../types';
 import type { World } from '../world';
 import { standing, tier } from './factions';
 import { composeLayers, onMonthBands, resetLayers } from './mods';
@@ -32,8 +32,8 @@ const COM = ZoneType.Commercial;
 const IND = ZoneType.Industrial;
 const U = 1; // TURF_OWNER.undertow
 const K = 2; // TURF_OWNER.kites
-/** Building types whose footprint keeps turf (§3.1). */
-const KEEPS_TURF: ReadonlySet<BuildingType> = new Set<BuildingType>(['tidemarket', 'roost']);
+/** Building types whose footprint keeps turf (§3.1; Skeleton Row's frames too, MEGACITY §3.7, as world.ts TURF_KEEPING). */
+const KEEPS_TURF: ReadonlySet<BuildingType> = new Set<BuildingType>(['tidemarket', 'roost', 'frame']);
 
 // ── Scratch (module-level, reused; one set per frame size, MEGACITY §3.1) ───
 
@@ -416,6 +416,10 @@ function buildingMaps(world: World, M: MapSet): void {
       if (b.crown === 'nest') {
         const n = CROWNS.nest.turfProtect ?? P.nest;
         fillRect(protK, b.x - n, b.y - n, x1 + n, y1 + n, N);
+      } else if (b.crown === 'salvage') {
+        // A Salvage crown shelters Undertow turf (MEGACITY §6.2: r2), as a Kite Nest shelters the Kites'.
+        const n = CROWNS.salvage.turfProtect ?? P.nest;
+        fillRect(protU, b.x - n, b.y - n, x1 + n, y1 + n, N);
       }
     } else if (b.type === 'spire' || b.type === 'arcology') {
       const r = TURF.pact.noSpreadRadius;
@@ -756,28 +760,48 @@ export function securityAvg(world: World): number {
  * city (a road or development within 3), else anywhere. Ties keep the lowest
  * index. `skip(i)` excludes tiles (scatter: the crackdown zone). Needs computeMaps.
  */
-function bestTileIn(world: World, gang: GangId, owner: Uint8Array, skip?: (i: number) => boolean): number {
-  const area = world.area;
+function bestTileIn(world: World, gang: GangId, owner: Uint8Array, skip?: (i: number) => boolean, kind?: DistrictKind): number {
   const { elig, nearCity, affU, affK } = scratch(world.area);
   const aff = gang === 'undertow' ? affU : affK;
   let best = -1;
   let bestA = -1;
   let any = -1;
   let anyA = -1;
-  for (let i = 0; i < area; i++) {
-    if (!elig[i] || owner[i]) continue;
-    if (skip && skip(i)) continue;
-    const a = aff[i];
-    if (a > anyA) {
-      anyA = a;
-      any = i;
-    }
-    if (nearCity[i] && a > bestA) {
-      bestA = a;
-      best = i;
+  // Owned land only (MEGACITY §3.3, O1: eligibility is 0 on locked tiles), in index order, so ties keep the lowest index.
+  const segs = world.segs;
+  const N = world.N;
+  const R = world.region;
+  const kinds = world.districts.kinds;
+  for (let s = 0; s < world.segCount; s += 2) {
+    const e = segs[s + 1];
+    // A segment runs over adjacent owned slots of one row: walk it slot by slot (64 tiles) for the kind filter.
+    for (let c = segs[s]; c < e; c += 64) {
+      if (kind !== undefined && kinds[(((c / N) | 0) >> 6) * R + ((c % N) >> 6)] !== kind) continue;
+      for (let i = c, ce = Math.min(e, c + 64); i < ce; i++) {
+        if (!elig[i] || owner[i]) continue;
+        if (skip && skip(i)) continue;
+        const a = aff[i];
+        if (a > anyA) {
+          anyA = a;
+          any = i;
+        }
+        if (nearCity[i] && a > bestA) {
+          bestA = a;
+          best = i;
+        }
+      }
     }
   }
   return best >= 0 ? best : any;
+}
+
+/** The Undertow's first seed prefers an owned Sunk's best tile (MEGACITY §3.7), else the best tile anywhere. */
+function seedTile(world: World, gang: GangId, owner: Uint8Array): number {
+  if (gang === 'undertow' && world.districts.owned.some((s) => world.districts.kinds[s] === 'sunk')) {
+    const c = bestTileIn(world, gang, owner, undefined, 'sunk');
+    if (c >= 0) return c;
+  }
+  return bestTileIn(world, gang, owner);
 }
 
 /**
@@ -875,7 +899,7 @@ export function update(world: World): void {
   // Seeding (§3.2).
   for (const g of GANG_IDS) {
     if (tk.seeded[g] || world.maxPopulation < T.seedPop[g]) continue;
-    const c = bestTileIn(world, g, owner);
+    const c = seedTile(world, g, owner);
     if (c < 0) continue;
     seedPatch(world, g, c, T.seedStr, cap);
     seedNews(world, g, c, false);

@@ -72,6 +72,11 @@ export class GrowthSystem {
   /** Ruin pay this month (MEGACITY §3.7) and the month it counts for. */
   private ruinPay = 0;
   private ruinPayMonth = -1;
+  /**
+   * When set (Game installs actions.ruinRestored), a recovered ruin goes through it: ground Plain, the count and the
+   * pay, with the monthly cap shared with the player's restores. Unset (headless), the sim does the same itself.
+   */
+  onRuinRestored: ((world: World, x: number, y: number) => number) | null = null;
   private readonly R: number;
 
   /** The per-world frame (MEGACITY §3.1): one counter per tile of `world`. */
@@ -286,9 +291,13 @@ export class GrowthSystem {
   /** A ruin came back (MEGACITY §3.7): ground Plain, one more restored, the district's pay up to the monthly cap. */
   private restoreRuin(world: World, g: SimGrid, i: number, pay: number): void {
     const N = world.N;
-    world.setGround(i % N, (i / N) | 0, Ground.Plain);
     g.ground[i] = Ground.Plain;
     g.blightW[i] = 0;
+    if (this.onRuinRestored) {
+      this.onRuinRestored(world, i % N, (i / N) | 0);
+      return;
+    }
+    world.setGround(i % N, (i / N) | 0, Ground.Plain);
     world.districts.ruinsRestored = (world.districts.ruinsRestored ?? 0) + 1;
     if (pay <= 0) return;
     const month = Math.floor(world.tick / DAYS_PER_MONTH);

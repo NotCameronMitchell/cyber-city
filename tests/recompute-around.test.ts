@@ -4,11 +4,12 @@
 
 import { describe, expect, it } from 'vitest';
 import { applyAction } from '../src/game/actions';
+import { slotRect } from '../src/game/districts/slots';
 import { Rng } from '../src/game/rng';
 import { Simulation } from '../src/game/sim';
 import type { ToolId } from '../src/game/types';
 import { World } from '../src/game/world';
-import { cachedMegacity } from './megacity-fixture';
+import { cachedMegacity, fillSlot } from './megacity-fixture';
 
 /** Pollution's three blur passes reach 3 tiles; the neighbourhood blurs 2. */
 const STENCIL = 3;
@@ -80,5 +81,53 @@ describe('recomputeAround (§3.3, O5)', () => {
     sim.recomputeEconomy();
     expect(w.budget.income).toBeLessThan(before);
     expect(Array.from(w.fields.landValue)).toEqual(Array.from(lv));
+  });
+});
+
+describe('recomputeAll keeps its caches only while their keys hold (§11.1: ≤ 30 ms at 25 districts)', () => {
+  /** The SimGrid's road caches and the coverage fields a whole recompute writes. */
+  const ROAD_ARRAYS = ['roadDist', 'nearestRoad', 'linkMask', 'alleyNear', 'hwComp', 'hwReach'] as const;
+  const COVER = ['security', 'health', 'park', 'transit', 'education', 'resilience', 'filter'] as const;
+  type Grid = Record<(typeof ROAD_ARRAYS)[number], ArrayLike<number>> & { edgePoints: number };
+  const grid = (s: Simulation) => (s as unknown as { grid: Grid }).grid;
+  function same(a: Simulation, b: Simulation, w: World, cover: Record<string, Float32Array>): void {
+    for (const k of ROAD_ARRAYS) expect([k, Array.from(grid(a)[k])]).toEqual([k, Array.from(grid(b)[k])]);
+    expect(grid(a).edgePoints).toBe(grid(b).edgePoints);
+    for (const k of COVER) expect([k, Array.from(cover[k])]).toEqual([k, Array.from(w.fields[k] as Float32Array)]);
+  }
+
+  it('an annex rebuilds the road caches (access reaches the new land) and coverage, as a fresh Simulation does', () => {
+    const w = new World(77, 'Caches', undefined, 3);
+    w.funds = 1e9;
+    w.maxPopulation = 1e9;
+    fillSlot(w, 4);
+    const sim = sims(w);
+    for (let d = 0; d < 20; d++) sim.step();
+    // Annex the slot east of the start: no new road, but access and regional links now see across the old border.
+    w.annex(5);
+    sim.recomputeAll();
+    const cover: Record<string, Float32Array> = {};
+    for (const k of COVER) cover[k] = (w.fields[k] as Float32Array).slice();
+    const fresh = sims(w);
+    same(sim, fresh, w, cover);
+    // A clinic in the new slot (coverageVersion) and nothing else: the next recomputeAll follows it too.
+    const r = slotRect(w, 5);
+    let placed = false;
+    for (let y = r.y0 + 2; y < r.y1 - 4 && !placed; y++)
+      for (let x = r.x0 + 2; x < r.x1 - 4 && !placed; x++) placed = !!w.addBuilding('clinic', x, y);
+    expect(placed).toBe(true);
+    sim.recomputeAll();
+    for (const k of COVER) cover[k] = (w.fields[k] as Float32Array).slice();
+    same(sim, sims(w), w, cover);
+  });
+
+  it('with nothing changed, a recomputeAll equals a fresh Simulation (roads, links and coverage)', () => {
+    const w = cachedMegacity(3, 2);
+    const sim = sims(w);
+    for (let d = 0; d < 12; d++) sim.step();
+    sim.recomputeAll();
+    const cover: Record<string, Float32Array> = {};
+    for (const k of COVER) cover[k] = (w.fields[k] as Float32Array).slice();
+    same(sim, sims(w), w, cover);
   });
 });

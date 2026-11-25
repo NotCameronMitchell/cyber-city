@@ -17,10 +17,16 @@ export const GROWTH_SAMPLE = 1 / 6;
  * Heavy field passes are spread over this many ticks inside step() (MEGACITY §3.3, O4). 2 (today's latency):
  * 0 traffic + pollution + noise; 1 neighbourhood + land value + crime + wealth score. 4 (O4's stagger, a quarter of
  * the field work a day): 0 traffic; 1 pollution + noise; 2 neighbourhood + land value; 3 crime + wealth score.
- * Both are implemented (Simulation.fieldStagger); the default stays 2 because the 4-day field latency moves the
- * existing balance tests (EXPANSION B4 on seed 2091, MEGACITY S4) below their thresholds (WP-1 report, Step 9).
+ * The stagger follows the city's size (Simulation.fieldStagger): a one-district city keeps today's 2 (its day costs
+ * ≤ 1 ms, and the 4-day latency moves the existing one-district balance tests, EXPANSION B4 on seed 2091 and
+ * MEGACITY S4, below their thresholds: WP-1 report), and a city of FIELD_STAGGER_FROM districts or more runs O4's 4,
+ * which §11.1's 9- and 25-district day budgets assume. Step 9 may move the threshold to 1 once the balance is re-tuned.
  */
-export const FIELD_STAGGER: 2 | 4 = 2;
+export const FIELD_STAGGER: 2 | 4 = 4;
+/** The stagger of a city with fewer than FIELD_STAGGER_FROM owned districts (today's 2-day field cycle). */
+export const FIELD_STAGGER_SMALL: 2 | 4 = 2;
+/** Owned districts from which a city runs FIELD_STAGGER. */
+export const FIELD_STAGGER_FROM = 2;
 
 // ── Traffic ──────────────────────────────────────────────────────────────────
 /** Trips emitted per resident / job by zone (index = ZoneType). */

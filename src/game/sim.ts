@@ -29,9 +29,9 @@
 //   A1 scan (row bands; the tile ages ride along), incidents, decay, ports;
 //   A2 power (cached labels, banded sweep, resumable relabel and BFS, O2);
 //   A3 day counters, coverage only when its key changed (O3), the census;
-//   B  this day's field phase (O4, fieldStagger 2 or 4; sim/tuning.ts says
-//      why the default is 2), one pass per unit, banded, with resting
-//      districts' rows skipped (O8);
+//   B  this day's field phase (O4: fieldStagger 4 from FIELD_STAGGER_FROM
+//      owned districts, 2 below; sim/tuning.ts says why), one pass per unit,
+//      banded, with resting districts' rows skipped (O8);
 //   C1 averages, approval, trade, demand, growth, the district daily hook;
 //   C2 highlights, stats, the budget (projected every 3rd day and fresh on the
 //      month end, O7), settlement, milestones, incidents, advice.
@@ -55,7 +55,7 @@ import { ChunkList, buildChunks } from './sim/owned';
 import { PortSystem, type PortView } from './sim/ports';
 import { PowerGrid } from './sim/power';
 import { CostBook, K, drain, type Unit } from './sim/slice';
-import { DEMAND_SMOOTH, FIELD_STAGGER } from './sim/tuning';
+import { DEMAND_SMOOTH, FIELD_STAGGER, FIELD_STAGGER_FROM, FIELD_STAGGER_SMALL } from './sim/tuning';
 
 export interface SimOptions {
   /** Random city events (grid hacks, gang surges, corp investments). */
@@ -106,10 +106,28 @@ export class Simulation {
    */
   districtDaily: ((world: World, monthEnd: boolean) => void) | null = null;
   /**
-   * Field passes per cycle (MEGACITY §3.3, O4): 2 (the default, today's latency) or 4 (a quarter of the field work a
-   * day, field latency 4 days). Sleep cycles count in it (cycle = floor(tick / fieldStagger)).
+   * A ruin recovered (MEGACITY §3.7): Game installs actions.ruinRestored here (ground Plain, districts.ruinsRestored,
+   * restorePay with the monthly cap shared with the player's restores). Unset, the sim applies the same rule itself.
    */
-  fieldStagger: 2 | 4 = FIELD_STAGGER;
+  get ruinRestored(): ((world: World, x: number, y: number) => number) | null {
+    return this.growth.onRuinRestored;
+  }
+  set ruinRestored(fn: ((world: World, x: number, y: number) => number) | null) {
+    this.growth.onRuinRestored = fn;
+  }
+  /**
+   * Field passes per cycle (MEGACITY §3.3, O4): by the city's size unless set (sim/tuning.ts): 2 (today's latency) while
+   * fewer than FIELD_STAGGER_FROM districts are owned, else FIELD_STAGGER 4 (a quarter of the field work a day, field
+   * latency 4 days). Setting it forces a stagger (tests, the measure harness); `null` returns to the size rule. Sleep
+   * cycles count in it (cycle = floor(tick / fieldStagger)).
+   */
+  get fieldStagger(): 2 | 4 {
+    return this.staggerSet ?? (this.world.districts.owned.length >= FIELD_STAGGER_FROM ? FIELD_STAGGER : FIELD_STAGGER_SMALL);
+  }
+  set fieldStagger(v: 2 | 4 | null) {
+    this.staggerSet = v;
+  }
+  private staggerSet: 2 | 4 | null = null;
   /** The slot under the camera centre ('forced' sleep keeps its ring awake); −1 = the start slot. Game sets it. */
   sleepFocus: SlotId = -1;
   /** Slots resting in the current field cycle (the FPS readout's "· resting N"). */
@@ -148,6 +166,7 @@ export class Simulation {
     // The frame is the world's (MEGACITY §3.1): every system sizes its arrays from world.area.
     this.grid = new SimGrid(world);
     this.power = new PowerGrid(world);
+    this.grid.powered = this.power.powered;
     this.fields = new FieldSystem(world);
     this.fields.layout = this.grid.layout;
     this.growth = new GrowthSystem(world);
@@ -613,9 +632,12 @@ export class Simulation {
       composeLayers(w);
     }
     f.active = null;
-    g.scan(w, true);
+    // The road caches rebuild when the road signature or the owned layout changed (an annex), and always on the first
+    // recompute; forcing them every time cost ≈ 6.7 ms at 25 districts (MEGACITY §11.1's ≤ 30 ms).
+    g.scan(w, !this.primed);
     this.power.compute(w, g);
-    this.coverageNow();
+    // Coverage follows its cache key (O3), and always runs on the first recompute.
+    if (!this.primed || this.coverageStale()) this.coverageNow();
     this.census.count(g, w);
     f.traffic(w, g);
     f.pollution(w, g);

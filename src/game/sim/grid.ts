@@ -94,6 +94,11 @@ export class SimGrid {
   /** Indices of every zoned tile (any level), ascending; first `zonedCount` entries are valid. */
   readonly zoned: Int32Array;
   zonedCount = 0;
+  /**
+   * The power grid's tile flags (PowerGrid.powered: 1 where Tile.powered is true after every compute), linked by the
+   * Simulation, so the hot zoned sweeps read a typed array instead of the Tile objects. Null on a bare grid.
+   */
+  powered: Uint8Array | null = null;
   roadCount = 0;
   bridgeCount = 0;
   /** Ground road tiles by kind and terrain: index kind * 2 + (water ? 1 : 0). */
@@ -186,6 +191,8 @@ export class SimGrid {
   readonly dockOf = new Map<number, number>();
 
   private roadSig = 0x7fffffff;
+  /** layout.version the road caches were built for: an annex rebuilds them (access may now reach the new land). */
+  private roadsLayout = -1;
   /** world.skyVersion the sky caches were built for (−1: never, so a deserialized world always builds them). */
   private skySeen = -1;
   private readonly queue: Int32Array;
@@ -350,7 +357,7 @@ export class SimGrid {
     const list = this.buildings;
     list.length = 0;
     for (const b of world.buildings.values()) list.push(b);
-    const roadsChanged = forceRoads || sig !== this.roadSig;
+    const roadsChanged = forceRoads || sig !== this.roadSig || this.layout.version !== this.roadsLayout;
     const pending = roadsChanged || world.slotsVersion !== this.slotsSeen || world.skyVersion !== this.skySeen;
     if (!pending) this.findDocks(world);
     return pending;
@@ -360,8 +367,9 @@ export class SimGrid {
   scanCaches(world: World, forceRoads: boolean): void {
     const sig = this.scanSig;
     let roadsChanged = false;
-    if (forceRoads || sig !== this.roadSig) {
+    if (forceRoads || sig !== this.roadSig || this.layout.version !== this.roadsLayout) {
       this.roadSig = sig;
+      this.roadsLayout = this.layout.version;
       roadsChanged = true;
       this.computeAccessOwned();
       this.buildRoadCaches();

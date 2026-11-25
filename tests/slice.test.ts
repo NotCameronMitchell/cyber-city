@@ -3,12 +3,19 @@
 
 import { describe, expect, it } from 'vitest';
 import { SLICE } from '../src/game/config';
+import { FIELD_STAGGER, FIELD_STAGGER_FROM, FIELD_STAGGER_SMALL } from '../src/game/sim/tuning';
 import { Simulation } from '../src/game/sim';
 import { Rng } from '../src/game/rng';
 import '../src/game/story/turf'; // registers the banded turf month (O6), as the game does
 import { World } from '../src/game/world';
 import { cachedMegacity, megacitySim } from './megacity-fixture';
 import { ScriptedMayor, flatWorld } from './helpers';
+
+// Step kinds of sim/slice.ts K (a const enum, so its values are spelled out here): TrafficRows, PolSrc, LvRows, CrimeRows.
+const K_TRAFFIC = 18;
+const K_POL = 21; // PolSrc (the neighbourhood blur shares PolBlur)
+const K_LV = 31;
+const K_CRIME = 32;
 
 /** A save without its wall-clock stamp. */
 function snapshot(w: World): string {
@@ -114,6 +121,49 @@ describe('a sliced day equals a whole step() (§3.3)', () => {
     expect(months).toEqual([w.tick]);
     expect(sim.midDay).toBe(false);
     void pop;
+  });
+});
+
+describe('the field stagger follows the city size (§3.3, O4)', () => {
+  it('2 on a one-district city (today\'s phases), 4 from FIELD_STAGGER_FROM districts; a set value wins until null', () => {
+    const w = new World(5, 'Stagger', undefined, 3);
+    const sim = new Simulation(w);
+    expect(w.districts.owned.length).toBe(1);
+    expect(sim.fieldStagger).toBe(FIELD_STAGGER_SMALL);
+    w.annex(5);
+    expect(w.districts.owned.length).toBeGreaterThanOrEqual(FIELD_STAGGER_FROM);
+    expect(sim.fieldStagger).toBe(FIELD_STAGGER);
+    sim.fieldStagger = 2;
+    expect(sim.fieldStagger).toBe(2);
+    sim.fieldStagger = null;
+    expect(sim.fieldStagger).toBe(4);
+    // A legacy 64 frame is one district.
+    expect(new Simulation(new World(5, 'Legacy', undefined, 1)).fieldStagger).toBe(2);
+  });
+
+  it('at stagger 4 each field pass runs once every 4 days, in O4\'s phase order', () => {
+    const w = cachedMegacity(3, 3);
+    const sim = megacitySim(w);
+    expect(sim.fieldStagger).toBe(4);
+    const seen: string[][] = [];
+    for (let d = 0; d < 8; d++) {
+      const kinds = new Set<number>();
+      for (;;) {
+        const done = sim.stepSlice(0);
+        kinds.add(sim.lastSlice.maxKind);
+        if (done) break;
+      }
+      const phase: string[] = [];
+      if (kinds.has(K_TRAFFIC)) phase.push('traffic');
+      if (kinds.has(K_POL)) phase.push('pollution');
+      if (kinds.has(K_LV)) phase.push('landValue');
+      if (kinds.has(K_CRIME)) phase.push('crime');
+      seen.push(phase);
+    }
+    const order = seen.map((p) => p.join('+'));
+    const start = order.indexOf('traffic');
+    expect(start).toBeGreaterThanOrEqual(0);
+    expect(order.slice(start, start + 4)).toEqual(['traffic', 'pollution', 'landValue', 'crime']);
   });
 });
 
