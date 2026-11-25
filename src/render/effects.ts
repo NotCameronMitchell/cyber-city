@@ -229,6 +229,8 @@ export class Effects {
     this.cf.tod = tod;
     this.cf.boostSlot = ev && (ev.id === 'nightmarket' || ev.id === 'arenanight') && lv.cityLife ? (ev.slot ?? -1) : -1;
     this.cf.boostHubs = ev?.id === 'arenanight';
+    this.cf.boostAvenue = ev?.id === 'parade' && lv.cityLife;
+    if (this.cf.boostAvenue) this.cf.boostSlot = ev!.slot ?? -1;
     this.cf.view = this.viewRect;
     t = performance.now();
     this.crowds.update(dt, world, b, lv.crowds && this.zoom >= CROWD_MIN_ZOOM, this.cf);

@@ -347,7 +347,8 @@ describe.each([
   it('the street index walks no more than the view; tiles events only flag blocks; life ≤ 1.5 ms a frame (×3)', async () => {
     const { renderPasses, resetPasses } = await import('../src/render/passes');
     const { StreetIndex } = await import('../src/render/art/traffic');
-    const { r, fx, frames, g } = await scene(cachedMegacity(region, n).serialize(), { zoom: 0.8, night: true });
+    // The 25-district column is a 5×5 city on a PC (§11.1): lower detail off, every layer on.
+    const { r, fx, frames, g } = await scene(cachedMegacity(region, n).serialize(), { zoom: 0.8, night: true, settings: { lowerDetail: false } });
     try {
       // A 'tiles' handler: flagging blocks only (time it over a burst like a speed-3 frame's).
       const idx = new StreetIndex();
@@ -381,10 +382,85 @@ describe.each([
         if (m2.p95 < m.p95) m = m2;
       }
       console.log(`[life] ${n} districts: life mean ${m.mean.toFixed(3)} ms · p95 ${m.p95.toFixed(3)} · max ${m.max.toFixed(3)}; ${JSON.stringify(fx.lifeStats())}`);
+      expect(g.lowerDetail).toBe(false);
+      expect(fx.lifeStats().crowds).toBeGreaterThan(0);
       expect(m.p95).toBeLessThan(1.5 * 3);
       expect(mockStats.errors).toEqual([]);
     } finally {
       r.destroy();
     }
   }, 120_000);
+});
+
+describe('the §11.1 life items, each within its budget (Node, canvas mock, ×3)', () => {
+  const p95 = (xs: number[]) => {
+    const a = [...xs].sort((p, q) => p - q);
+    return a[Math.ceil(0.95 * a.length) - 1];
+  };
+  it('a rainy night downtown with a night market: crowds ≤ 0.6, weather ≤ 0.5, City life ≤ 0.4, together ≤ 1.5 ms', async () => {
+    const { r, fx, frames, g } = await scene(busy(), { zoom: 1, night: true });
+    try {
+      const screen = (fx as unknown as { screen: { kind: number; spanEnd: number } }).screen;
+      const storm = () => {
+        screen.kind = 2;
+        screen.spanEnd = g.clock + 1000;
+      };
+      frames(2);
+      storm();
+      const w = g.world;
+      const life = g.cityEvents as unknown as { start(w: unknown, id: string, p: { x: number; y: number; slot?: number }): void };
+      const s = w.slotAt(w.N >> 1, w.N >> 1);
+      life.start(w, 'nightmarket', { x: w.N >> 1, y: w.N >> 1, slot: s });
+      frames(240, storm);
+      const items = { crowds: [] as number[], weather: [] as number[], cityLife: [] as number[], total: [] as number[] };
+      frames(360, () => {
+        storm();
+        const m = fx.itemMs;
+        items.crowds.push(m.crowds);
+        items.weather.push(m.weather);
+        items.cityLife.push(m.cityLife);
+        items.total.push(m.crowds + m.weather + m.boats + m.cityLife);
+      });
+      const st = fx.lifeStats();
+      expect(st.festival).toBe('nightmarket');
+      expect(st.festivalDrawn).toBeGreaterThan(0);
+      expect(st.crowds).toBeGreaterThan(20);
+      expect(st.rain).toBeGreaterThan(0.5);
+      expect(st.reflections).toBeGreaterThan(0);
+      const out = Object.fromEntries(Object.entries(items).map(([k, v]) => [k, +p95(v).toFixed(3)]));
+      console.log(`[life items] p95 ms ${JSON.stringify(out)}; ${JSON.stringify(st)}`);
+      expect(out.crowds).toBeLessThan(0.6 * 3);
+      expect(out.weather).toBeLessThan(0.5 * 3);
+      expect(out.cityLife).toBeLessThan(0.4 * 3);
+      expect(out.total).toBeLessThan(1.5 * 3);
+    } finally {
+      r.destroy();
+    }
+  }, 60_000);
+
+  it('boats on a wet city: ≤ 0.2 ms', async () => {
+    const { r, cam, fx, frames, g } = await scene(wet3, { zoom: 0.6 });
+    try {
+      const N = g.world.N;
+      let best = -1;
+      let bestN = 0;
+      for (const s of g.world.districts.owned) {
+        let n = 0;
+        for (let y = ((s / 3) | 0) * 64; y < ((s / 3) | 0) * 64 + 64; y++) for (let x = (s % 3) * 64; x < (s % 3) * 64 + 64; x++) if (g.world.tiles[y * N + x].terrain === 1) n++;
+        if (n > bestN) {
+          bestN = n;
+          best = s;
+        }
+      }
+      cam.centerOnTile((best % 3) * 64 + 32, ((best / 3) | 0) * 64 + 32);
+      frames(600);
+      const ms: number[] = [];
+      frames(360, () => ms.push(fx.itemMs.boats));
+      expect(fx.lifeStats().boats).toBeGreaterThan(0);
+      console.log(`[life items] boats ${fx.lifeStats().boats}: p95 ${p95(ms).toFixed(3)} ms`);
+      expect(p95(ms)).toBeLessThan(0.2 * 3);
+    } finally {
+      r.destroy();
+    }
+  }, 60_000);
 });

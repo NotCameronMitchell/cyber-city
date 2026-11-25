@@ -17,6 +17,7 @@
 //    path and one fill per colour, so 300 figures cost ~15 fills.
 // ─────────────────────────────────────────────────────────────────────────────
 
+import { RoadKind } from '../../game/types';
 import type { World } from '../../game/world';
 import { HALF_H, HALF_W } from '../camera';
 import { css, mix, type RGB } from '../palette';
@@ -80,9 +81,13 @@ export interface CrowdFrame {
   tod: number;
   /** The screen in world px (spots off screen are not used). */
   view: ViewRect | null;
-  /** City life: double the crowds beside Market tiles (night market) or beside stations and gathering places (arena night) in this slot (−1: none). */
+  /**
+   * City life in this slot (−1: none): double the crowds beside Market tiles (night market) or beside stations and
+   * gathering places (arena night); a parade lines its avenues (×3, standing groups).
+   */
   boostSlot: number;
   boostHubs: boolean;
+  boostAvenue?: boolean;
 }
 
 function rand(): number {
@@ -186,6 +191,7 @@ export class Crowds {
     }
     this.index.refresh(world, { x0, y0, x1, y1 });
     const side = this.index.side;
+    const tiles = world.tiles;
     let sum = 0;
     const boost = f.boostSlot;
     for (let y = y0; y <= y1; y++) {
@@ -195,7 +201,7 @@ export class Crowds {
         if (!(s & SIDE_ROAD)) continue;
         const m = s & SIDE_MARKET;
         const hub = s & (SIDE_GATHER | SIDE_HUB);
-        if (!m && !(s & SIDE_HAB) && !hub) continue;
+        if (!m && !(s & SIDE_HAB) && !hub && !(f.boostAvenue && boost >= 0)) continue;
         if (!tileOnScreen(f.view, x, y, 24, 24)) continue;
         // Busy Market streets fill up; tower blocks of homes keep a steady trickle.
         let w = m === 3 ? 2 : m === 2 ? 1.25 : m === 1 ? 0.6 : 0.3;
@@ -203,7 +209,14 @@ export class Crowds {
           w += 0.6;
           this.gather.push(i);
         }
-        if (boost >= 0 && world.slotAt(x, y) === boost && (f.boostHubs ? hub : m)) w *= 2;
+        if (boost >= 0 && world.slotAt(x, y) === boost) {
+          if (f.boostAvenue) {
+            if (tiles[i].roadKind === RoadKind.Avenue) {
+              w = w * 3 + 0.6;
+              this.gather.push(i);
+            }
+          } else if (f.boostHubs ? hub : m) w *= 2;
+        }
         sum += w;
         this.pool.push(i);
       }

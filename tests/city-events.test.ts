@@ -2,7 +2,7 @@
 // none in the first 600 s, never two at once, exactly one ticker line each; gameplay terms last ≤ 60 sim days at
 // any speed (the sim counts them down per day), then the visuals continue alone.
 import { describe, expect, it } from 'vitest';
-import { CityEvents, CITY_LIFE_DEFS, CITY_LIFE_RULES, longestAvenue, placeName, type CityEventsHost } from '../src/game/cityEvents';
+import { CityEvents, CITY_LIFE_DEFS, CITY_LIFE_RULES, LandSurvey, longestAvenue, placeName, SURVEY_TILES, type CityEventsHost } from '../src/game/cityEvents';
 import { CITY_LIFE, DAY_CYCLE_SECONDS, DISTRICTS } from '../src/game/config';
 import { slotRect } from '../src/game/districts/slots';
 import { DEFAULT_SETTINGS, Game } from '../src/game/game';
@@ -248,4 +248,77 @@ describe('the per-sim-day cap (§6.4.1): terms last ≤ 60 sim days at any speed
     // At speed 1 the 60 days take 30 s, at speed 3 under 4 s: well inside the 120 s of visuals.
     expect(ev.until).toBeGreaterThan(0);
   }, 60_000);
+});
+
+describe('the land checks walk the owned area a band a frame (no whole-city walk in one frame)', () => {
+  it('a survey pass reads whole rows within SURVEY_TILES a step and equals a whole read', () => {
+    for (const [region, n] of [
+      [3, 9],
+      [5, 25],
+    ] as const) {
+      const w = cachedMegacity(region, n);
+      const b = w.ownedBox;
+      const width = b.x1 - b.x0 + 1;
+      const rows = Math.max(1, Math.floor(SURVEY_TILES / width));
+      const sv = new LandSurvey();
+      sv.restart(w);
+      let steps = 0;
+      while (!sv.step(w)) steps++;
+      steps++;
+      expect(steps).toBe(Math.ceil((b.y1 - b.y0 + 1) / rows));
+      expect(steps).toBeGreaterThan(region === 5 ? 30 : 10);
+      // The banded pass finds what one whole read finds.
+      const whole = new LandSurvey().full(w);
+      expect(sv.markets).toEqual(whole.markets);
+      expect(sv.kites).toEqual(whole.kites);
+      expect(sv.avenue).toEqual(whole.avenue);
+      expect(whole.markets!.length).toBe(w.districts.owned.length);
+      expect(whole.markets!.every((m) => m.count >= CITY_LIFE_RULES.marketTiles)).toBe(true);
+    }
+  });
+
+  it('the avenue run carries across bands and district edges; the parade reads it', () => {
+    const w = lifeCity();
+    const r = slotRect(w, w.districts.owned[1]);
+    // A north-south avenue 20 tiles long across several bands.
+    const x = r.x0 + 4;
+    for (let y = r.y0 + 2; y < r.y0 + 22; y++) {
+      if (!w.isRoad(x, y)) w.setRoad(x, y);
+      w.setRoadKind(x, y, RoadKind.Avenue);
+    }
+    const sv = new LandSurvey();
+    sv.restart(w);
+    while (!sv.step(w, 64));
+    expect(sv.avenue!.len).toBe(64);
+    expect(new LandSurvey().full(w, { x0: x, y0: r.y0, x1: x, y1: r.y1 }).avenue).toMatchObject({ x0: x, x1: x, len: 20 });
+  });
+
+  it('while a gap waits on a 25-district city, no update walks more than one band (Node timing, ×3)', () => {
+    const w = cachedMegacity(5, 25);
+    const host = new FakeHost(w);
+    // Neither night nor day, approval for a parade but no avenue run: every check fails and the gap stays open.
+    host.clock = DAY_CYCLE_SECONDS * 0.315;
+    const life = new CityEvents(host);
+    w.stats.approval = 80;
+    const day = host.daylight;
+    expect(day).toBeGreaterThanOrEqual(CITY_LIFE_RULES.nightBelow);
+    expect(day).toBeLessThanOrEqual(CITY_LIFE_RULES.dayAbove);
+    life.update(1 / 60);
+    for (let k = 0; k < CITY_LIFE.firstAfterSec * 60 && life.nextIn > 0; k++) life.update(1 / 60);
+    const times: number[] = [];
+    const passes0 = life.survey.passes;
+    const freeze = host.clock;
+    for (let k = 0; k < 600; k++) {
+      host.clock = freeze;
+      const t0 = performance.now();
+      life.update(1 / 60);
+      times.push(performance.now() - t0);
+    }
+    expect(w.cityEvent).toBeNull();
+    // About 40 bands a pass at 25 districts: 600 frames run several passes, each a band at a time.
+    expect(life.survey.passes - passes0).toBeGreaterThanOrEqual(5);
+    times.sort((a, b) => a - b);
+    const p95 = times[Math.ceil(0.95 * times.length) - 1];
+    expect(p95).toBeLessThan(0.4 * 3);
+  });
 });

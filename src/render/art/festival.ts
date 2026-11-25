@@ -7,7 +7,8 @@
 //                stalls on the sidewalks (crowds ×2 there: art/crowds.ts)
 //   lanterns     sky lanterns (≤ 60) rising from parks and plazas
 //   stormwatch   flood barriers rising on the district's shore, Floodwatch
-//                beacons turning, the barriers' warning lights flickering
+//                beacons turning, the barriers' warning lights and the
+//                district's shop signs flickering
 //   arenanight   searchlights over the Arena (crowds from the stations)
 //   kiteday      diamond kites over the Glass Kites' turf
 //   parade       floats and confetti along the longest avenue
@@ -21,7 +22,7 @@ import { CITY_LIFE_DEFS, longestAvenue } from '../../game/cityEvents';
 import { slotRect } from '../../game/districts/slots';
 import { heightOf } from '../../game/heights';
 import { hash2 } from '../../game/rng';
-import { Terrain, type BuildingType, type CityEventId, type CityEventState } from '../../game/types';
+import { Terrain, ZoneType, type BuildingType, type CityEventId, type CityEventState } from '../../game/types';
 import type { World } from '../../game/world';
 import { HALF_H, HALF_W } from '../camera';
 import { css, glowSprite, type RGB } from '../palette';
@@ -30,11 +31,14 @@ import { SIDE_GATHER, SIDE_HAB, SIDE_MARKET, SIDE_ROAD, tileOnScreen, type Bound
 /** Caps (§6.4.1 and the 0.4 ms budget). */
 export const SKY_LANTERN_CAP = 60;
 const STRING_CAP = 70;
+/** Storm watch: shop signs considered in the district, and flickering on screen at most. */
+const SIGN_POOL = 600;
+const SIGN_CAP = 40;
 /** Night market string spans drawn at most (three lanterns each). */
 const SPAN_CAP = 96;
 const BARRIER_CAP = 160;
 const KITE_CAP = 20;
-const CONFETTI_CAP = 80;
+const CONFETTI_CAP = 120;
 const FLOATS = 4;
 
 const WARM: RGB[] = [
@@ -107,9 +111,13 @@ export class Festival {
   private ev: CityEventState | null = null;
   private bounds: Bounds | null = null;
   private view: ViewRect | null = null;
-  /** Scratch: the night market's visible street tiles and its string spans (u0, v0, u1, v1). */
-  private vis: number[] = [];
+  /** The night market's street tiles on screen and its string spans (u0, v0, u1, v1), refreshed by stepMarket. */
+  private onTiles: number[] = [];
+  /** Storm watch: the district's shop sign tiles. */
+  private signs: number[] = [];
   private spans: number[] = [];
+  private lastView = [0, 0, 0, 0];
+  private marketAge = 0;
   /** Night market street tiles behind a tall body (lanterns there would float over its roof), memoised per happening. */
   private behind = new Map<number, boolean>();
   /** Things drawn last frame (tests). */
@@ -149,6 +157,7 @@ export class Festival {
       this.prepare(world, ev, index);
     }
     const t = this.elapsed(ev);
+    if (ev.id === 'nightmarket') this.stepMarket(dt, world, view);
     if (ev.id === 'lanterns') this.stepLanterns(dt, world, b, ev);
     if (ev.id === 'parade') this.stepConfetti(dt, t);
   }
@@ -165,6 +174,9 @@ export class Festival {
   private prepare(world: World, ev: CityEventState, index: StreetIndex) {
     this.id = ev.id;
     this.behind.clear();
+    this.onTiles.length = 0;
+    this.spans.length = 0;
+    this.marketAge = 0;
     this.tiles.length = 0;
     this.dirs.length = 0;
     this.points.length = 0;
@@ -208,6 +220,13 @@ export class Festival {
             }
           }
         for (const bd of world.buildings.values()) if (bd.type === 'floodwatch' && world.slotAt(bd.x, bd.y) === slot) this.points.push(bd.x + bd.size / 2, bd.y + bd.size / 2);
+        // The district's shop signs (lived-in Market tiles) flicker in the storm.
+        this.signs.length = 0;
+        for (let y = r.y0; y <= r.y1 && this.signs.length < SIGN_POOL; y++)
+          for (let x = r.x0; x <= r.x1; x++) {
+            const t = world.tiles[y * N + x];
+            if (t.zone === ZoneType.Commercial && t.level >= 1 && !t.abandoned && world.isOwned(x, y)) this.signs.push(y * N + x);
+          }
         break;
       }
       case 'arenanight': {
@@ -241,19 +260,103 @@ export class Festival {
   }
 
   /**
-   * Is the street tile `i` hidden behind a body in front of it (south and east on screen)? Its lanterns hang 12 px up:
-   * a neighbour in front over 24 px, or the one two tiles in front over 56 px, would cover them.
+   * Is a point `lift` px over tile `i` hidden behind a body in front of it (lower on screen)? A body k tiles in front
+   * on the diagonal has its back corner 2k·HALF_H − HALF_H below the tile's centre, so it covers the point when it is
+   * taller than lift + that; the two side neighbours of each step a half tile less. Memoised per happening (lantern
+   * strings and signs hang about 12 px up, parade floats reach 24).
    */
-  private hidden(world: World, i: number): boolean {
-    let h = this.behind.get(i);
+  private hidden(world: World, i: number, lift = 12): boolean {
+    const key = i * 4 + (lift > 16 ? 1 : 0);
+    let h = this.behind.get(key);
     if (h === undefined) {
       const N = world.N;
       const x = i % N;
       const y = (i / N) | 0;
-      h = heightOf(world, x + 1, y + 1) > 24 || heightOf(world, x + 1, y) > 30 || heightOf(world, x, y + 1) > 30 || heightOf(world, x + 2, y + 2) > 56;
-      this.behind.set(i, h);
+      h = false;
+      for (let k = 1; k <= 6 && !h; k++) {
+        const d = lift + 2 * k * HALF_H;
+        h = heightOf(world, x + k, y + k) > d - HALF_H || heightOf(world, x + k, y + k - 1) > d - HALF_H / 2 || heightOf(world, x + k - 1, y + k) > d - HALF_H / 2;
+      }
+      this.behind.set(key, h);
     }
     return h;
+  }
+
+  /**
+   * The night market's street tiles on screen (≤ STRING_CAP) and their string spans, refreshed when the view moves
+   * and every 0.25 s, so a frame only draws.
+   */
+  private stepMarket(dt: number, world: World, view: ViewRect | null) {
+    const lv = this.lastView;
+    const moved = !view || view.x0 !== lv[0] || view.y0 !== lv[1] || view.x1 !== lv[2] || view.y1 !== lv[3];
+    this.marketAge -= dt;
+    if (!moved && this.marketAge > 0) return;
+    this.marketAge = 0.25;
+    if (view) {
+      lv[0] = view.x0;
+      lv[1] = view.y0;
+      lv[2] = view.x1;
+      lv[3] = view.y1;
+    }
+    const N = world.N;
+    const on = this.onTiles;
+    on.length = 0;
+    for (const i of this.tiles) {
+      if (on.length >= STRING_CAP) break;
+      if (this.visible(i % N, (i / N) | 0, 1)) on.push(i);
+    }
+    const spans = this.spans;
+    spans.length = 0;
+    for (const i of on) {
+      if (spans.length >= SPAN_CAP * 4) break;
+      if (this.hidden(world, i)) continue;
+      const x = i % N;
+      const y = (i / N) | 0;
+      const mask = world.roadMask(x, y);
+      const ew = (mask & 10) !== 0;
+      const ns = (mask & 5) !== 0;
+      // Along the street: east-west runs at mid v, north-south runs at mid u (both at a crossing).
+      if (ew || !ns) spans.push(x, y + 0.5, x + 1, y + 0.5);
+      if (ns) spans.push(x + 0.5, y, x + 0.5, y + 1);
+      // Across the street now and then.
+      if (hash2(x, y, 67) < 0.22) {
+        if (ew && !ns) spans.push(x + 0.5, y + 0.05, x + 0.5, y + 0.95);
+        else if (ns && !ew) spans.push(x + 0.05, y + 0.5, x + 0.95, y + 0.5);
+      }
+    }
+  }
+
+  /**
+   * Storm watch: the shop signs of the district flicker (≤ SIGN_CAP on screen): a short neon bar on the shop front that
+   * drops out in quick, uneven blinks, a few dead for the whole storm.
+   */
+  private drawSigns(ctx: CanvasRenderingContext2D, world: World, time: number, night: number, env: number) {
+    const N = world.N;
+    let n = 0;
+    ctx.globalCompositeOperation = 'lighter';
+    for (const i of this.signs) {
+      if (n >= SIGN_CAP) break;
+      const x = i % N;
+      const y = (i / N) | 0;
+      if (!this.visible(x + 1, y + 0.5, 0) || this.hidden(world, i)) continue;
+      n++;
+      const h = hash2(x, y, 71);
+      if (h < 0.12) continue;
+      // Uneven blinks: ten slices a second, about a third of them dark.
+      if (hash2((time * 10 + h * 50) | 0, i, 77) < 0.33) continue;
+      const u = x + 1;
+      const v = y + 0.5;
+      const px = (u - v) * HALF_W;
+      const py = (u + v) * HALF_H - 7;
+      const c = ((h * 97) | 0) % BRIGHT.length;
+      ctx.globalAlpha = env * (0.45 + 0.45 * night);
+      ctx.drawImage(this.brightGlows![c], px - 6, py - 4, 12, 8);
+      ctx.globalAlpha = env;
+      ctx.fillStyle = this.brightCss[c];
+      ctx.fillRect(px - 2, py - 0.8, 4, 1.6);
+      this.drawn++;
+    }
+    ctx.globalCompositeOperation = 'source-over';
   }
 
   /** On screen (the view rect, `m` tiles of margin), else inside the tile bounds. */
@@ -320,10 +423,10 @@ export class Festival {
     const a = this.avenue;
     if (!a) return;
     for (let f = 0; f < FLOATS && cs.length < CONFETTI_CAP; f++) {
-      if (rand() > dt * 12) continue;
+      if (rand() > dt * 20) continue;
       const [u, v] = this.floatAt(a, t, f);
       if (!this.visible(u, v)) continue;
-      cs.push({ x: (u - v) * HALF_W + (rand() - 0.5) * 10, y: (u + v) * HALF_H - 14, vx: (rand() - 0.5) * 14, vy: -6 - rand() * 10, age: 0, life: 1.8 + rand(), c: (rand() * BRIGHT.length) | 0 });
+      cs.push({ x: (u - v) * HALF_W + (rand() - 0.5) * 14, y: (u + v) * HALF_H - 18, vx: (rand() - 0.5) * 18, vy: -8 - rand() * 12, age: 0, life: 1.8 + rand(), c: (rand() * BRIGHT.length) | 0 });
     }
   }
 
@@ -336,7 +439,7 @@ export class Festival {
     return horiz ? [a.x0 + 0.5 + k, a.y0 + 0.5] : [a.x0 + 0.5, a.y0 + 0.5 + k];
   }
 
-  /** Ground part (after the ground, before the buildings): lantern strings and stalls, flood barriers, parade floats. */
+  /** Ground part (after the ground, before the buildings): night market stalls and flood barriers. */
   drawGround(ctx: CanvasRenderingContext2D, world: World, time: number, night: number, zoom: number) {
     this.drawn = 0;
     const ev = this.ev;
@@ -348,13 +451,9 @@ export class Festival {
     const N = world.N;
     if (ev.id === 'nightmarket') {
       // Stalls: an awning on the sidewalk of some Market streets (the strings of lanterns hang in the sky pass).
-      let n = 0;
-      for (const i of this.tiles) {
-        if (n >= STRING_CAP) break;
+      for (const i of this.onTiles) {
         const x = i % N;
         const y = (i / N) | 0;
-        if (!this.visible(x, y, 1)) continue;
-        n++;
         const h = hash2(x, y, 61);
         if (h >= 0.3) continue;
         const su = x + 0.15 + h;
@@ -436,43 +535,12 @@ export class Festival {
       }
       this.drawn += lights.length / 2;
       ctx.globalCompositeOperation = 'source-over';
-    } else if (ev.id === 'parade' && this.avenue) {
-      const t = this.elapsed(ev);
-      for (let f = 0; f < FLOATS; f++) {
-        const [u, v] = this.floatAt(this.avenue, t, f);
-        if (!this.visible(u, v)) continue;
-        const x = (u - v) * HALF_W;
-        const y = (u + v) * HALF_H;
-        const c = (f * 2 + 1) % BRIGHT.length;
-        ctx.globalCompositeOperation = 'source-over';
-        ctx.globalAlpha = env;
-        ctx.fillStyle = 'rgba(0,0,0,0.3)';
-        ctx.fillRect(x - 9, y - 2, 18, 4);
-        ctx.fillStyle = this.brightCss[c];
-        ctx.fillRect(x - 8, y - 9, 16, 7);
-        ctx.fillStyle = this.brightCss[(c + 2) % BRIGHT.length];
-        ctx.fillRect(x - 5, y - 15, 10, 6);
-        ctx.fillRect(x - 0.4, y - 21, 0.8, 6);
-        ctx.fillStyle = this.brightCss[(c + 4) % BRIGHT.length];
-        ctx.fillRect(x + 0.4, y - 21, 4, 2.4);
-        ctx.globalCompositeOperation = 'lighter';
-        ctx.globalAlpha = env * (0.35 + 0.5 * night);
-        ctx.drawImage(this.brightGlows[c], x - 12, y - 22, 24, 24);
-        this.drawn++;
-      }
-      ctx.globalCompositeOperation = 'source-over';
-      for (const p of this.confetti) {
-        ctx.globalAlpha = env * Math.min(1, (p.life - p.age) * 2);
-        ctx.fillStyle = this.brightCss[p.c];
-        ctx.fillRect(p.x, p.y, 1.2, 0.8);
-        this.drawn++;
-      }
     }
     ctx.globalAlpha = 1;
     ctx.globalCompositeOperation = 'source-over';
   }
 
-  /** Sky part (after the buildings): sky lanterns, beacons, searchlights, kites. */
+  /** Sky part (after the buildings): lantern strings, sky lanterns, flickering signs, beacons, searchlights, kites, parade floats. */
   drawSky(ctx: CanvasRenderingContext2D, world: World, time: number, night: number, zoom: number) {
     const ev = this.ev;
     if (!this.on || !ev) return;
@@ -480,37 +548,11 @@ export class Festival {
     this.brightGlows ??= BRIGHT.map((c) => glowSprite(c, 32));
     const env = this.envelope(ev);
     if (env <= 0.01) return;
-    const N = world.N;
     if (ev.id === 'nightmarket') {
       // Paper lanterns on strings that follow the district's streets from tile to tile (a festoon along each run,
       // sagging between the tile edges), three lanterns a tile; every few tiles a string crosses the street. Drawn in
       // the sky pass so the building just behind a street does not hide them; a street behind a tall body is skipped.
-      const vis = this.vis;
-      vis.length = 0;
-      for (const i of this.tiles) {
-        if (vis.length >= STRING_CAP) break;
-        const x = i % N;
-        const y = (i / N) | 0;
-        if (this.visible(x, y, 1) && !this.hidden(world, i)) vis.push(i);
-      }
       const spans = this.spans;
-      spans.length = 0;
-      for (const i of vis) {
-        if (spans.length >= SPAN_CAP * 4) break;
-        const x = i % N;
-        const y = (i / N) | 0;
-        const mask = world.roadMask(x, y);
-        const ew = (mask & 10) !== 0;
-        const ns = (mask & 5) !== 0;
-        // Along the street: east-west runs at mid v, north-south runs at mid u (both at a crossing).
-        if (ew || !ns) spans.push(x, y + 0.5, x + 1, y + 0.5);
-        if (ns) spans.push(x + 0.5, y, x + 0.5, y + 1);
-        // Across the street now and then.
-        if (hash2(x, y, 67) < 0.22) {
-          if (ew && !ns) spans.push(x + 0.5, y + 0.05, x + 0.5, y + 0.95);
-          else if (ns && !ew) spans.push(x + 0.05, y + 0.5, x + 0.95, y + 0.5);
-        }
-      }
       const LIFT = 12;
       const SAG = 3;
       ctx.globalCompositeOperation = 'source-over';
@@ -575,6 +617,7 @@ export class Festival {
         this.drawn++;
       }
     } else if (ev.id === 'stormwatch' || ev.id === 'arenanight') {
+      if (ev.id === 'stormwatch') this.drawSigns(ctx, world, time, night, env);
       this.beams ??= [beam([255, 190, 80]), beam([255, 80, 200]), beam([90, 220, 255]), beam([235, 240, 255])];
       const pts = this.points;
       const step = ev.id === 'arenanight' ? 3 : 2;
@@ -612,6 +655,41 @@ export class Festival {
           ctx.globalAlpha = env * 0.5 * (0.7 + 0.3 * Math.sin(time * 4));
           ctx.drawImage(this.brightGlows[1], x - 30, y - 50, 60, 40);
         }
+        this.drawn++;
+      }
+    } else if (ev.id === 'parade' && this.avenue && zoom >= 0.45) {
+      // Floats ride the avenue (drawn after the buildings so the body behind does not cut them; a float behind a tall
+      // body in front is hidden), confetti thrown from them.
+      const t = this.elapsed(ev);
+      const N = world.N;
+      for (let f = 0; f < FLOATS; f++) {
+        const [u, v] = this.floatAt(this.avenue, t, f);
+        if (!this.visible(u, v) || this.hidden(world, Math.floor(v) * N + Math.floor(u), 24)) continue;
+        const x = (u - v) * HALF_W;
+        const y = (u + v) * HALF_H;
+        const c = (f * 2 + 1) % BRIGHT.length;
+        ctx.globalCompositeOperation = 'lighter';
+        ctx.globalAlpha = env * (0.45 + 0.45 * night);
+        ctx.drawImage(this.brightGlows[c], x - 16, y - 26, 32, 30);
+        ctx.globalCompositeOperation = 'source-over';
+        ctx.globalAlpha = env;
+        ctx.fillStyle = 'rgba(0,0,0,0.35)';
+        ctx.fillRect(x - 11, y - 2, 22, 4);
+        ctx.fillStyle = this.brightCss[c];
+        ctx.fillRect(x - 10, y - 11, 20, 9);
+        ctx.fillStyle = '#fff6e0';
+        ctx.fillRect(x - 10, y - 11, 20, 1.2);
+        ctx.fillStyle = this.brightCss[(c + 2) % BRIGHT.length];
+        ctx.fillRect(x - 6, y - 18, 12, 7);
+        ctx.fillRect(x - 0.5, y - 26, 1, 8);
+        ctx.fillStyle = this.brightCss[(c + 4) % BRIGHT.length];
+        ctx.fillRect(x + 0.5, y - 26, 5, 3);
+        this.drawn++;
+      }
+      for (const p of this.confetti) {
+        ctx.globalAlpha = env * Math.min(1, (p.life - p.age) * 2);
+        ctx.fillStyle = this.brightCss[p.c];
+        ctx.fillRect(p.x, p.y, 1.6, 1.1);
         this.drawn++;
       }
     } else if (ev.id === 'kiteday' && zoom >= 0.45) {
