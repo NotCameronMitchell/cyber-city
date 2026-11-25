@@ -202,3 +202,27 @@ export const METRO_TRIP_MUL = 0.9;
 export const METRO_TRIP_RADIUS = 4;
 /** A live Grand Terminal: every Maglev and Metro Station's transit radius × this, city-wide. */
 export const TERMINAL_TRANSIT_MUL = 1.5;
+
+// ── Landmark terms (MEGACITY §6.3) the census, the ports and the budget apply ─
+/**
+ * Raw visitors a month per live (online, powered) Megacity landmark, beside EXPANSION's TOURISM.landmark: Pearl Atrium
+ * 20,000, Harbour Beacon 5,000, Arc Arena 25,000, Market Hall 1,500 each, and the Halo Lookout 15,000 only while bridged
+ * into a Sky Lobby (sim/ports.ts). Here, not in config.ts, which is numbers-only for the existing names this wave.
+ */
+export const MEGA_LANDMARK_VISITORS: Readonly<Record<string, number>> = {
+  pearlatrium: 20000,
+  beacon: 5000,
+  arena: 25000,
+  markethall: 1500,
+  halolookout: 15000,
+};
+/** Approval while a Charter Hall / Lamp Choir stands. */
+export const CHARTER_HALL_APPROVAL = 3;
+export const LAMP_CHOIR_APPROVAL = 2;
+/** Each live Market Hall: approval +0.5 (cap +2) and Market demand +0.01 (cap +0.05). */
+export const MARKET_HALL_APPROVAL = 0.5;
+export const MARKET_HALL_APPROVAL_CAP = 2;
+export const MARKET_HALL_DEMAND = 0.01;
+export const MARKET_HALL_DEMAND_CAP = 0.05;
+/** City-wide upkeep × this while a Lamp Choir stands. */
+export const LAMP_CHOIR_UPKEEP_MUL = 0.98;

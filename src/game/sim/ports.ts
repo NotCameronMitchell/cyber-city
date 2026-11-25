@@ -18,6 +18,7 @@ import type { Building } from '../types';
 import type { World } from '../world';
 import type { Census } from './census';
 import type { SimGrid } from './grid';
+import { MEGA_LANDMARK_VISITORS } from './tuning';
 
 /** Read-only port numbers for Game, inspect and art (`Simulation.ports`). Frozen after Step 0. */
 export interface PortView {
@@ -36,7 +37,7 @@ export interface PortView {
 }
 
 const fmt = (n: number) => Math.round(n).toLocaleString('en-US');
-const LANDMARK_VISITORS: Partial<Record<string, number>> = { ...TOURISM.landmark };
+const LANDMARK_VISITORS: Partial<Record<string, number>> = { ...TOURISM.landmark, ...MEGA_LANDMARK_VISITORS };
 
 /** Visitors of the districts whose kind draws them (DistrictMods.visitorsPerMarket), each district on its own. */
 export function districtVisitors(census: Census): number {
@@ -104,9 +105,14 @@ export class PortSystem implements PortView {
     let landmarks = 0;
     this.trade.clear();
     const perSeaport = Math.min(SEAPORT.tradeCap, SEAPORT.tradeRate * census.jobsInd * census.jobFill);
+    // A Halo Lookout draws its visitors only while bridged into a Sky Lobby (MEGACITY §6.3): its anchor is a lobby's.
+    const lobbies = world.vertical.lobbies ?? [];
     for (const b of g.buildings) {
       const lm = LANDMARK_VISITORS[b.type];
-      if (lm && b.offline <= 0 && b.powered) landmarks += lm;
+      if (lm && b.offline <= 0 && b.powered) {
+        if (b.type !== 'halolookout') landmarks += lm;
+        else if (lobbies.some((l) => l.anchors.includes(b.y * world.N + b.x))) landmarks += lm;
+      }
       if (b.type !== 'seaport' && b.type !== 'airport' && b.type !== 'spaceport') continue;
       if (!portLive(b)) continue;
       if (b.type === 'seaport') {

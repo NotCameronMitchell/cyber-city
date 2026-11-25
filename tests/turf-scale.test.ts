@@ -71,6 +71,26 @@ describe('O6 banded turf (§3.3)', () => {
     expect(turf.landTiles(w)).toBe(land);
   });
 
+  it('a load mid-window makes up the missed map steps one per atomic step (no catch-up spike), and the month still equals a whole rebuild', () => {
+    const K_TURF = 40; // sim/slice.ts K.Turf (a const enum)
+    const json = turfCity(321, 5, 9);
+    const a = World.deserialize(JSON.parse(json));
+    const sa = megacitySim(a);
+    // To the 6th of the 8 band days of the next month end, then a fresh load of that state (the bands start over).
+    while (a.tick % 30 !== 30 - REGION[5].turfBands + 5) sa.step();
+    const b = World.deserialize(JSON.parse(JSON.stringify(a.serialize())));
+    const sb = megacitySim(b);
+    let turfSteps = 0;
+    for (;;) {
+      const done = sb.stepSlice(0);
+      if (sb.lastSlice.maxKind === K_TURF) turfSteps++;
+      if (done) break;
+    }
+    // 6 band days' share (2 map steps a day on 8 bands) made up in one day: one atomic step per map step.
+    expect(turfSteps).toBeGreaterThanOrEqual(12);
+    expect(turf.bandStep(b)).toBe(0); // nothing left for today
+  }, 60_000);
+
   it('the banded month is skipped before turf can form (no gang seeded or due, no turf)', () => {
     const w = new World(5, 'Quiet', undefined, 3);
     w.maxPopulation = 100;

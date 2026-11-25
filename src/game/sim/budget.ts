@@ -15,7 +15,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { blankStats, buildingStats } from '../buildingStats';
-import { BUILDINGS, BUILDING_ORDER, ROAD_KINDS, SKYWAY, SPACEPORT, TOURISM, ZONES } from '../config';
+import { BUILDINGS, BUILDING_ORDER, DISTRICTS, ROAD_KINDS, SKYWAY, SPACEPORT, TOURISM, ZONES } from '../config';
 import { ZoneType, type BudgetLine, type BudgetReport, type BuildingType } from '../types';
 import type { World } from '../world';
 import type { Census } from './census';
@@ -105,8 +105,10 @@ export function* projectUnit(
   }
   upkeepByType.clear();
   const st = STATS;
+  let choir = false;
   for (const b of g.buildings) {
     const def = BUILDINGS[b.type];
+    if (b.type === 'lampchoir' && (b.buildDays ?? 0) <= 0) choir = true;
     buildingStats(b, st);
     upkeepByType.set(b.type, (upkeepByType.get(b.type) ?? 0) + st.upkeep);
     // Landmark (and Stratablock) residents / jobs pay tax like zones (at a flat land-value multiplier).
@@ -145,13 +147,15 @@ export function* projectUnit(
     if (launch > 0) incomeLines.push({ label: 'Launch contracts', amount: launch });
   }
 
-  const upkeepMul = mods.upkeepMul;
+  // A standing Lamp Choir: upkeep × 0.98 city-wide (MEGACITY §6.3).
+  const upkeepMul = mods.upkeepMul * (choir ? T.LAMP_CHOIR_UPKEEP_MUL : 1);
   const typeMul = mods.upkeepMulType;
   // Roads: every ground kind at its own upkeep (bridges at the bridge rate). A street-only
   // city reads exactly the old roads × ROAD_UPKEEP + bridges × BRIDGE_UPKEEP.
   const kc = g.kindCount;
   let roadUpkeep = 0;
   for (let k = 0; k < kc.length; k++) if (kc[k] > 0) roadUpkeep += kc[k] * UPKEEP_KW[k];
+  roadUpkeep -= bridgeDiscount(world, g);
   const expenseLines: BudgetLine[] = [{ label: 'Roads', amount: Math.round(roadUpkeep * upkeepMul) }];
   if (g.skyCount > 0) expenseLines.push({ label: 'Skyways', amount: Math.round(g.skyCount * SKYWAY.upkeep * upkeepMul) });
   let plants = 0;
@@ -183,6 +187,29 @@ export function* projectUnit(
   out.incomeLines = incomeLines;
   out.expenseLines = expenseLines;
   if (after) after();
+}
+
+/**
+ * What a district's bridgeUpkeepMul takes off the road upkeep (MEGACITY §3.7: Shoals bridges ×0.7): its bridge tiles by
+ * kind × the bridge rate × (1 − mul), for every owned district whose kind carries the mod.
+ */
+function bridgeDiscount(world: World, g: SimGrid): number {
+  let off = 0;
+  const N = world.N;
+  const R = world.region;
+  const { kind, water } = g;
+  for (const s of world.districts.owned) {
+    const mul = DISTRICTS[world.districts.kinds[s]]?.mods.bridgeUpkeepMul;
+    if (mul === undefined || mul === 1) continue;
+    const x0 = (s % R) * 64;
+    const y0 = ((s / R) | 0) * 64;
+    for (let y = y0; y < y0 + 64; y++)
+      for (let i = y * N + x0, e = i + 64; i < e; i++) {
+        const k = kind[i];
+        if (water[i] && k < ROAD_KINDS.length) off += UPKEEP_KW[k * 2 + 1] * (1 - mul);
+      }
+  }
+  return off;
 }
 
 /**

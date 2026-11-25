@@ -366,7 +366,8 @@ export class Census {
       this.prosperity() * PROSPERITY -
       this.avgNoise * NOISE_APPROVAL +
       // City life (MEGACITY §6.4.1): a happening's approval term while it has sim days left.
-      (world.cityEvent && world.cityEvent.daysLeft > 0 ? world.cityEvent.approval : 0);
+      (world.cityEvent && world.cityEvent.daysLeft > 0 ? world.cityEvent.approval : 0) +
+      landmarkTerms(world).approval;
     return Math.max(0, Math.min(100, v));
   }
 
@@ -403,7 +404,7 @@ export class Census {
     out.res = clampDemand(clampDemand(res) + tax + mood + m.demandRes);
     // City life (MEGACITY §6.4.1): a happening's Market demand term while it has sim days left.
     const life = world.cityEvent && world.cityEvent.daysLeft > 0 ? world.cityEvent.demandCom : 0;
-    out.com = clampDemand(clampDemand(com) + tax * 0.8 + mood * 0.5 + comBoost + m.demandCom + life);
+    out.com = clampDemand(clampDemand(com) + tax * 0.8 + mood * 0.5 + comBoost + m.demandCom + life + landmarkTerms(world).demandCom);
     out.ind = clampDemand(clampDemand(ind) + tax + m.demandInd);
     return out;
   }
@@ -497,3 +498,33 @@ export class Census {
     stats.edgeLinks = this.edgeLinks;
   }
 }
+
+/**
+ * The §6.3 landmark terms the census applies (MEGACITY): Charter Hall +3 and Lamp Choir +2 approval while they stand
+ * (complete), each live (online, powered) Market Hall +0.5 approval (cap +2) and +0.01 Market demand (cap +0.05).
+ * Counted from the buildings once per day, world version and coverage version (a power flip moves the last).
+ */
+export function landmarkTerms(world: World): { approval: number; demandCom: number } {
+  const key = `${world.tick}|${world.version}|${world.coverageVersion}`;
+  const c = LANDMARK_TERMS.get(world);
+  if (c && c.key === key) return c;
+  let charter = 0;
+  let choir = 0;
+  let halls = 0;
+  for (const b of world.buildings.values()) {
+    if (b.type !== 'charterhall' && b.type !== 'lampchoir' && b.type !== 'markethall') continue;
+    if ((b.buildDays ?? 0) > 0) continue;
+    if (b.type === 'charterhall') charter = 1;
+    else if (b.type === 'lampchoir') choir = 1;
+    else if (b.offline <= 0 && b.powered) halls++;
+  }
+  const out = {
+    key,
+    approval:
+      charter * T.CHARTER_HALL_APPROVAL + choir * T.LAMP_CHOIR_APPROVAL + Math.min(T.MARKET_HALL_APPROVAL_CAP, halls * T.MARKET_HALL_APPROVAL),
+    demandCom: Math.min(T.MARKET_HALL_DEMAND_CAP, halls * T.MARKET_HALL_DEMAND),
+  };
+  LANDMARK_TERMS.set(world, out);
+  return out;
+}
+const LANDMARK_TERMS = new WeakMap<World, { key: string; approval: number; demandCom: number }>();

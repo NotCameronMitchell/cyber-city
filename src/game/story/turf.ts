@@ -597,6 +597,8 @@ interface Bands {
   monthEnd: number;
   slots: number;
   terrain: number;
+  /** The tick the set last started over (the window's first day runs its share over several calls). */
+  startedAt: number;
 }
 const bandsOf = new WeakMap<World, Bands>();
 
@@ -604,9 +606,11 @@ const bandsOf = new WeakMap<World, Bands>();
  * Run this day's share of next month end's map rebuild (the sim calls it once a day, unit C2). The last
  * `REGION[R].turfBands` days before a month end share MAP_STEPS steps into the world's own map set, so
  * `update` at the month end only copies them in (it rebuilds whole when the bands are missing or an annex or a terrain
- * change came between). Nothing runs while turf cannot form yet (no gang seeded or due, no turf). Returns the steps run.
+ * change came between). Nothing runs while turf cannot form yet (no gang seeded or due, no turf). Runs at most `max`
+ * steps (the sim's hook runs one per atomic step, so a catch-up after a load, an annex or a terrain change mid-window
+ * spreads over steps instead of one long one, MEGACITY §11.1). Returns the steps run.
  */
-export function bandStep(world: World): number {
+export function bandStep(world: World, max = Infinity): number {
   const bands = REGION[world.region].turfBands;
   const day = world.tick % DAYS_PER_MONTH;
   const d = day - (DAYS_PER_MONTH - bands);
@@ -614,27 +618,32 @@ export function bandStep(world: World): number {
   if (!mapsNeeded(world)) return 0;
   let B = bandsOf.get(world);
   if (!B || B.M.elig.length !== world.area) {
-    B = { M: makeMapSet(world.area), done: 0, monthEnd: -1, slots: -1, terrain: -1 };
+    B = { M: makeMapSet(world.area), done: 0, monthEnd: -1, slots: -1, terrain: -1, startedAt: -1 };
     bandsOf.set(world, B);
   }
   const monthEnd = world.tick - day + DAYS_PER_MONTH;
-  if (d === 0 || B.monthEnd !== monthEnd || B.slots !== world.slotsVersion || B.terrain !== world.terrainVersion) {
+  // A new window (its first day, once: the hook is called again while it has steps left that day), or an annex or a
+  // terrain change inside it, starts the set over; the steps missed are made up one per call.
+  const fresh = d === 0 && B.startedAt !== world.tick;
+  if (fresh || B.monthEnd !== monthEnd || B.slots !== world.slotsVersion || B.terrain !== world.terrainVersion) {
     B.done = 0;
     B.monthEnd = monthEnd;
     B.slots = world.slotsVersion;
     B.terrain = world.terrainVersion;
+    B.startedAt = world.tick;
   }
   // Day d of the window runs steps [⌊d · S / bands⌋, ⌊(d + 1) · S / bands⌋): 2 steps a day on 8 bands, 4 on 4.
   const until = Math.min(MAP_STEPS, Math.floor(((d + 1) * MAP_STEPS) / bands));
   let n = 0;
-  while (B.done < until) {
+  while (B.done < until && n < max) {
     mapStep(world, B.M, B.done++);
     n++;
   }
   return n;
 }
 
-onMonthBands((world) => void bandStep(world));
+// One map step per call: the sim yields between calls while one ran (≈ 0.2 ms at 9 districts, ≤ 0.7 at 25).
+onMonthBands((world) => bandStep(world, 1) > 0);
 
 /**
  * The month end's maps: the banded set when it is complete for this month end and nothing structural changed (its

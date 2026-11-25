@@ -6,7 +6,8 @@ import { describe, expect, it } from 'vitest';
 import { DISTRICTS, EDGE_LINKS, TOURISM, TURF } from '../src/game/config';
 import { slotRect } from '../src/game/districts/slots';
 import { Simulation } from '../src/game/sim';
-import { Census } from '../src/game/sim/census';
+import { Census, landmarkTerms } from '../src/game/sim/census';
+import { MEGA_LANDMARK_VISITORS } from '../src/game/sim/tuning';
 import { districtVisitors } from '../src/game/sim/ports';
 import { composeLayers } from '../src/game/story/mods';
 import * as turf from '../src/game/story/turf';
@@ -172,6 +173,126 @@ describe('district rules (§3.3)', () => {
     expect(s.ports.visitors).toBe(plain.visitors);
     s.step();
     expect(w.cityEvent!.daysLeft).toBe(0);
+  });
+
+  it('§6.3 landmark visitors: Pearl Atrium, Harbour Beacon, Arc Arena and each Market Hall when live; a Halo Lookout only in a Sky Lobby', () => {
+    const base = () => {
+      const w = new World(12, 'Landmarks', undefined, 3);
+      w.funds = 1e9;
+      for (let x = 60; x < 120; x++) w.setRoad(x, 96);
+      w.addBuilding('reactor', 66, 97);
+      for (let x = 70; x < 120; x++) {
+        w.setZone(x, 97, ZoneType.Residential);
+        w.setLevel(x, 97, 2);
+      }
+      return w;
+    };
+    // Raw visitors (before the tourism mood, which the landmark itself moves): visitors / mood.
+    const rawOf = (w: World, s: Simulation) => {
+      const c = inner(s).census;
+      let mood = Math.min(TOURISM.moodMax, Math.max(TOURISM.moodMin, w.stats.approval / TOURISM.approvalRef));
+      mood *= 1 - TOURISM.crimeHit * c.avgCrime;
+      return s.ports.visitors / mood;
+    };
+    // Each landmark on the road, powered: its raw visitors against the same town without it.
+    const raw = (type: Parameters<World['addBuilding']>[0], lobby = false) => {
+      const w = base();
+      const plain = rawOf(w, sim(w));
+      const b = w.addBuilding(type, 100, 97 - 4)!;
+      expect(b).toBeTruthy();
+      for (let y = b.y + b.size; y < 96; y++) w.setRoad(b.x, y);
+      if (lobby) w.vertical.lobbies = [{ anchors: [b.y * w.N + b.x, 1, 2], visitors: 0 }];
+      const s = sim(w);
+      expect(w.buildings.get(b.id)!.powered).toBe(true);
+      return rawOf(w, s) - plain;
+    };
+    // Visitors are whole tens (POP_SCALE) after the mood (±10 / mood of rounding), and a big landmark's jobs nudge the
+    // high-tier Market count a little: within 45 or 2%.
+    for (const [type, v] of [['memorial', 2000], ['pearlatrium', 20000], ['beacon', 5000], ['arena', 25000], ['markethall', 1500]] as const) {
+      expect(TOURISM.landmark[type] ?? MEGA_LANDMARK_VISITORS[type]).toBe(v);
+      expect(Math.abs(raw(type) - v), type).toBeLessThan(Math.max(45, v * 0.02));
+    }
+    expect(Math.abs(raw('halolookout'))).toBeLessThan(45);
+    expect(Math.abs(raw('halolookout', true) - 15000)).toBeLessThan(45);
+  });
+
+  it('§6.3 terms: Charter Hall +3 and Lamp Choir +2 approval while they stand, Market Halls +0.5 approval / +0.01 demand each (caps 2 / 0.05); a Lamp Choir cuts upkeep ×0.98', () => {
+    const w = new World(12, 'Terms', undefined, 3);
+    w.funds = 1e9;
+    for (let x = 60; x < 130; x++) w.setRoad(x, 96);
+    w.addBuilding('reactor', 66, 97);
+    for (let x = 70; x < 130; x++) {
+      w.setZone(x, 97, ZoneType.Residential);
+      w.setLevel(x, 97, 2);
+    }
+    const s = sim(w);
+    const approval = () => inner(s).census.approval(w, (s as unknown as { power: never }).power);
+    // Lift the approval into (0, 100) so the clamp cannot hide the terms.
+    for (const a of [0, 30, 60, -30, -60, 90]) {
+      w.mods.approvalAdd = a;
+      const v = approval();
+      if (v > 20 && v < 70) break;
+    }
+    const demand = () => {
+      const t = { res: 0, com: 0, ind: 0 };
+      inner(s).census.demandTarget(w, 60, 0, t);
+      return t.com;
+    };
+    const a0 = approval();
+    const d0 = demand();
+    const upkeep0 = w.budget.expenses;
+    w.addBuilding('charterhall', 80, 92);
+    w.addBuilding('lampchoir', 90, 93);
+    for (let k = 0; k < 6; k++) w.addBuilding('markethall', 100 + k * 3, 94);
+    s.recomputeAll();
+    // Six halls: +3 approval capped at +2, +0.06 demand capped at +0.05.
+    expect(landmarkTerms(w)).toMatchObject({ approval: 3 + 2 + 2, demandCom: 0.05 });
+    // The census adds exactly these: the same census with the three types not standing (under construction) reads 7 less.
+    const on = approval();
+    const dOn = demand();
+    const types = new Set(['charterhall', 'lampchoir', 'markethall']);
+    for (const b of w.buildings.values()) if (types.has(b.type)) b.buildDays = 5;
+    w.markChanged(0, 0);
+    expect(landmarkTerms(w)).toMatchObject({ approval: 0, demandCom: 0 });
+    expect(on - approval()).toBeCloseTo(7, 6);
+    if (dOn > -0.9 && dOn < 0.9) expect(dOn - demand()).toBeCloseTo(0.05, 6);
+    for (const b of w.buildings.values()) if (types.has(b.type)) b.buildDays = 0;
+    void a0;
+    void d0;
+    // Upkeep: the choir's own and the halls' upkeep join, and every line is × 0.98.
+    s.recomputeAll();
+    const plants = () => w.budget.expenseLines.find((l) => l.label === 'Power plants')!.amount;
+    const withChoir = plants();
+    w.removeBuilding(w.buildingAt(90, 93)!.id);
+    s.recomputeAll();
+    const without = plants();
+    expect(without).toBeGreaterThan(withChoir);
+    expect(Math.abs(without - withChoir / 0.98)).toBeLessThanOrEqual(1);
+    expect(upkeep0).toBeGreaterThan(0);
+  });
+
+  it('Saltglass Shoals bridges cost ×0.7 upkeep (§3.7, DISTRICTS.shoals.mods.bridgeUpkeepMul); a bridge elsewhere the full rate', () => {
+    const { w, slot } = withKind('shoals');
+    const r = slotRect(w, slot);
+    // A 10-tile street bridge on Shoals water, and the same over start-slot water if it has any.
+    const bridge = (x0: number, x1: number, y: number) => {
+      for (let x = x0; x <= x1; x++) {
+        w.tiles[w.idx(x, y)].terrain = Terrain.Water;
+        w.setRoad(x, y);
+      }
+    };
+    const s = sim(w);
+    const roads = () => w.budget.expenseLines.find((l) => l.label === 'Roads')?.amount ?? 0;
+    const before = roads();
+    bridge(r.x0 + 10, r.x0 + 19, r.y0 + 30);
+    s.recomputeAll();
+    const shoals = roads() - before;
+    const s0 = slotRect(w, 4);
+    bridge(s0.x0 + 10, s0.x0 + 19, s0.y0 + 30);
+    s.recomputeAll();
+    const plain = roads() - before - shoals;
+    expect(plain).toBeGreaterThan(0);
+    expect(shoals / plain).toBeCloseTo(DISTRICTS.shoals.mods.bridgeUpkeepMul!, 1);
   });
 
   it('Kessel Flats adds 2,000 Fab jobs of demand while it has < 400 developed Fab tiles; the census has one row per owned district', () => {

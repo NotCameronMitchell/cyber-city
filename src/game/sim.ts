@@ -411,7 +411,8 @@ export class Simulation {
       const hooks = monthBandHooks();
       if (hooks.length) {
         yield K.Turf;
-        for (const h of hooks) h(w);
+        // One piece of a hook per atomic step (turf: one map step), so a catch-up never lands in one long step.
+        for (const h of hooks) while (h(w)) yield K.Turf;
       }
     }
     const capTax = () => {

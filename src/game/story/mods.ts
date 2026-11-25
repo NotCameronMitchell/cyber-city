@@ -192,17 +192,19 @@ export function clampMods(m: SimMods): void {
 
 /**
  * Story upkeep the sim runs on the last REGION[R].turfBands days of each month (MEGACITY §3.3, O6: turf's banded
- * month maps), registered by the story module that owns it, so the sim calls it without importing story logic.
+ * month maps), registered by the story module that owns it, so the sim calls it without importing story logic. A hook
+ * that returns true did one piece of work and has more due today: the sim ends the atomic step and calls it again.
  */
-const bandHooks: ((world: World) => void)[] = [];
+export type MonthBandHook = (world: World) => boolean | void;
+const bandHooks: MonthBandHook[] = [];
 
 /** Register a month-band hook (idempotent). */
-export function onMonthBands(fn: (world: World) => void): void {
+export function onMonthBands(fn: MonthBandHook): void {
   if (!bandHooks.includes(fn)) bandHooks.push(fn);
 }
 
-/** The registered month-band hooks (the sim's unit C2 calls each on a band day). */
-export function monthBandHooks(): readonly ((world: World) => void)[] {
+/** The registered month-band hooks (the sim's unit C2 calls each on a band day, again while it returns true). */
+export function monthBandHooks(): readonly MonthBandHook[] {
   return bandHooks;
 }
 
