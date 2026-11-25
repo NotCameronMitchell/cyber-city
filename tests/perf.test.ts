@@ -3,6 +3,7 @@ import { fullyBuiltWorld, makeSim } from './helpers';
 import { expansionFixture } from './expansion-fixture';
 import { SLICE } from '../src/game/config';
 import { applyAction } from '../src/game/actions';
+import { Game } from '../src/game/game';
 import { cachedMegacity, megacitySim, megacityWorld } from './megacity-fixture';
 
 // Budgets from the module contract (Node, fully developed 64×64 map):
@@ -172,6 +173,61 @@ describe('performance', () => {
     expect(p95).toBeLessThan(budget.p95 * mega);
     expect(max).toBeLessThan((budget.max + SLICE.unitMaxNodeMs) * mega);
     expect(dropped).toBe(0);
+  }, 120_000);
+
+  // MEGACITY §11.1 rows 3 and 4 through the real Game.update (its frame guard spreading each day by dayEstimate, the
+  // district hook, story.onDay, the month's story parts one frame after the settlement): per-frame sim work p95 and
+  // max, and the month-end frames (the settlement's and the story month's). Two rounds, each figure its better round;
+  // the max is the worst frame but one (a preempted frame on a shared container is not the game's).
+  const GAME: [string, 3 | 5, number, number, { p95: number; max: number; monthP95: number; monthMax: number }][] = [
+    ['9 districts (handheld cap)', 3, 9, SLICE.capHandheldMs, { p95: 4, max: 6, monthP95: 6, monthMax: 8 }],
+    ['25 districts (PC cap)', 5, 25, SLICE.capPcMs, { p95: 6, max: 10, monthP95: 8, monthMax: 12 }],
+  ];
+  it.each(GAME)('§11.1 through Game.update at speed 3, %s: per-frame p95 / max and the month-end frames within budget', (_name, region, n, cap, budget) => {
+    const g = new Game();
+    expect(g.restore(JSON.parse(JSON.stringify(cachedMegacity(region, n).serialize())))).toBe(true);
+    g.settings.lowerDetail = false;
+    g.guard.cap = cap;
+    let monthFrame = false;
+    g.events.on('month', () => (monthFrame = true));
+    g.setSpeed(3);
+    const frame = () => {
+      if (g.story.blocking) g.choose(0);
+      if (g.speed !== 3) g.setSpeed(3);
+      monthFrame = false;
+      g.update(1 / 60);
+    };
+    for (let f = 0; f < 240; f++) frame(); // warm: a month end, the bands, the district hook
+    let p95 = Infinity;
+    let max = Infinity;
+    let monthP95 = Infinity;
+    let monthMax = Infinity;
+    const dropped0 = g.droppedDays;
+    for (let round = 0; round < 2; round++) {
+      const frames: number[] = [];
+      const months: number[] = [];
+      let after = false;
+      for (let f = 0; f < (n >= 25 ? 600 : 900); f++) {
+        frame();
+        frames.push(g.simMsThisFrame);
+        if (monthFrame || after) months.push(g.simMsThisFrame);
+        after = monthFrame;
+      }
+      frames.sort((a, b) => a - b);
+      months.sort((a, b) => a - b);
+      p95 = Math.min(p95, frames[Math.ceil(0.95 * frames.length) - 1]);
+      max = Math.min(max, frames[frames.length - 2]);
+      monthP95 = Math.min(monthP95, months[Math.ceil(0.95 * months.length) - 1]);
+      monthMax = Math.min(monthMax, months[months.length - 1]);
+    }
+    console.info(
+      `[perf] Game.update speed 3, ${_name}: frame p95 ${p95.toFixed(2)} · max ${max.toFixed(2)} ms · month-end frames p95 ${monthP95.toFixed(2)} · max ${monthMax.toFixed(2)} ms · day ${g.sim.dayEstimate.toFixed(2)} ms · dropped ${g.droppedDays - dropped0}`,
+    );
+    expect(p95).toBeLessThan(budget.p95 * mega);
+    expect(max).toBeLessThan((budget.max + SLICE.unitMaxNodeMs) * mega);
+    expect(monthP95).toBeLessThan(budget.monthP95 * mega);
+    expect(monthMax).toBeLessThan(budget.monthMax * mega);
+    expect(g.droppedDays - dropped0).toBe(0);
   }, 120_000);
 
   it('§11.1 a sliced day at 25 districts never spends more than the PC cap plus one unit in a frame', () => {

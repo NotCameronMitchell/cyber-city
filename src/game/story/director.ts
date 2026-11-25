@@ -235,6 +235,9 @@ const num = (n: number) => Math.round(n).toLocaleString('en-US');
 const round100 = (v: number) => Math.round(v / 100) * 100;
 const short = (f: FactionId) => FACTION_LABELS[f].short;
 
+
+/** The day of each month the director re-derives the skybridges and the Ribbon (MEGACITY §3.3: off the month tick). */
+const VERTICAL_DAY = 2;
 export class StoryDirector implements EffectHost {
   /** Everything story-specific the renderer reads, once per frame (§9). Mutated in place. */
   readonly visual: VisualState = {
@@ -428,6 +431,9 @@ export class StoryDirector implements EffectHost {
     this.checkCountdown();
     this.checkReviews();
     this.ambient();
+    // MEGACITY §3.3 (month end, spread): the skybridges and the Ribbon re-derive on day 2 of each month, off the
+    // month tick (≈ 3 ms at 25 districts); player actions still refresh them at once.
+    if (w.tick % DAYS_PER_MONTH === VERTICAL_DAY) vertical.refresh(w);
     if (w.tick % DAYS_PER_MONTH === 0) this.onMonth();
     this.checkComplete();
     this.refreshVisual();
@@ -442,9 +448,8 @@ export class StoryDirector implements EffectHost {
     //    are kept for cooldowns). turf.update owns story.crackdowns' lifetime.
     this.expireTimed(true);
     st.credits = st.credits.filter((c) => c.n > 0);
-    // 2–3. Turf, then vertical.
-    turf.update(w);
-    vertical.refresh(w);
+    // 2–3. Turf (vertical refreshes on day 2, onDay). Its layers merge once, with the locals' below (step 6).
+    turf.update(w, false);
     // 4. Mood, standings, drift, favorMonthly; tier events and pulses.
     const before = standings(w);
     updateMoods(w);

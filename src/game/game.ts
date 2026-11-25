@@ -62,7 +62,7 @@ import { heightOf } from './heights';
 import { parcelAt } from './parcels';
 import { isFutureSave } from './districts/migrate';
 import { Emitter, type GameEventMap, type ToastAction } from './events';
-import { Ground, type BridgePayoff, type DistrictKind, type DistrictVariant, type Region, type SlotId } from './types';
+import { DAYS_PER_MONTH, Ground, type BridgePayoff, type DistrictKind, type DistrictVariant, type Region, type SlotId } from './types';
 import {
   FUTURE_SAVE_KEY,
   MIRROR_SAVE_KEY,
@@ -387,6 +387,14 @@ export class Game {
    */
   lastSaveFailed = false;
   private tickAcc = 0;
+  /** Running means of story.onDay's ms on ordinary days and on month ticks (the frame guard's budget, §3.3). */
+  private storyDayMs = 0;
+  private storyMonthMs = 0;
+  /**
+   * The month end's story day waits for the next frame (MEGACITY §3.3 month end, spread): the frame that settles the
+   * month runs its last slices only, and the next one starts with the story's month parts before any new day.
+   */
+  private storyDue = false;
   /** Speed to restore once a blocking story card closes (null = not paused by the story). */
   private storyResumeSpeed: number | null = null;
 
@@ -551,6 +559,9 @@ export class Game {
     this.bridgeUndo = null;
     this.mapSlot = null;
     this.droppedDays = 0;
+    this.storyDayMs = 0;
+    this.storyMonthMs = 0;
+    this.storyDue = false;
     // Session-only expansion state belongs to the world it was made in (EXPANSION §7.7, §5.3).
     this.pendingConfirm = null;
     this.undoSnap = null;
@@ -950,21 +961,33 @@ export class Game {
     this.syncStoryPause();
     if (this.speed > 0) {
       this.clock += dt * this.clockRate;
-      this.tickAcc += dt * this.daysPerSec;
+      const perFrame = dt * this.daysPerSec;
+      this.tickAcc += perFrame;
       const sim = this.sim;
-      const cap = this.guard.cap;
+      const budget = this.frameBudget(this.guard.cap, perFrame);
       const t0 = this.msClock();
       let days = 0;
-      while (this.tickAcc >= 1 || sim.midDay) {
+      // Last frame settled a month: its story parts run first, alone if they fill the budget.
+      if (this.storyDue) {
+        this.simRanThisFrame = true;
+        this.storyMonth();
+      }
+      while (!this.story.blocking && (this.tickAcc >= 1 || sim.midDay)) {
         const spent = this.msClock() - t0;
-        if (this.simRanThisFrame && spent >= cap) break;
+        if (this.simRanThisFrame && spent >= budget) break;
         this.simRanThisFrame = true;
         // A step starts only while it fits; at least one runs per call, so the sim never stalls.
-        const done = sim.stepSlice(Math.max(0, cap - spent));
+        const done = sim.stepSlice(Math.max(0, budget - spent));
         if (!done) break;
         this.tickAcc = Math.max(0, this.tickAcc - 1);
         days++;
+        if (this.world.tick % DAYS_PER_MONTH === 0) {
+          this.storyDue = true; // the month's story parts open the next frame
+          break;
+        }
+        const s0 = this.msClock();
         this.story.onDay();
+        this.storyDayMs = this.storyDayMs * 0.9 + (this.msClock() - s0) * 0.1;
         if (this.story.blocking) {
           this.tickAcc = 0; // a card opened: stop now and drop the backlog
           break;
@@ -983,6 +1006,10 @@ export class Game {
       this.syncSleep();
       this.updateSpaceports(dt);
       this.syncStoryPause();
+    } else if (this.storyDue) {
+      // Paused right after a month settled: its story parts still run (cards, moods), without a sim day.
+      this.storyMonth();
+      this.syncStoryPause();
     }
   }
 
@@ -992,10 +1019,35 @@ export class Game {
    * 'month' event, goals and the story's month tick) skipped for good. Runs the story's day as Game.update would.
    */
   private finishDay(): void {
+    if (this.storyDue) this.storyMonth();
     if (!this.sim?.finishDay()) return;
     this.tickAcc = Math.max(0, this.tickAcc - 1);
     this.story.onDay();
     this.events.emit('stats');
+  }
+
+  /** The month end's story day, deferred one frame by Game.update (storyDue). */
+  private storyMonth(): void {
+    this.storyDue = false;
+    const s0 = this.msClock();
+    this.story.onDay();
+    const ms = this.msClock() - s0;
+    this.storyMonthMs = this.storyMonthMs > 0 ? this.storyMonthMs * 0.7 + ms * 0.3 : ms;
+    if (this.story.blocking) this.tickAcc = 0; // a card opened: drop the backlog
+  }
+
+  /**
+   * This frame's sim budget (MEGACITY §3.3 frame guard): a day's estimated cost (Simulation.dayEstimate plus the
+   * story's daily share) × the days due this frame × 1.1, plus a quarter of a day for each day of backlog past 1.5,
+   * capped at the device class's cap; the cap itself until a day has been measured. A day then spreads over frames
+   * and the per-frame p95 stays near the mean instead of at the cap.
+   */
+  private frameBudget(cap: number, perFrame: number): number {
+    const est = this.sim.dayEstimate;
+    if (!(est > 0)) return cap;
+    const day = est + this.storyDayMs;
+    const want = day * perFrame * 1.1 + Math.max(0, this.tickAcc - 1.5) * day * 0.25;
+    return Math.min(cap, Math.max(0.5, want));
   }
 
   /** Days a second at the current speed: SPEED_TICKS_PER_SEC, capped at LOW_DETAIL.maxDaysPerSec in lower detail (§3.11). */

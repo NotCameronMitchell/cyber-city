@@ -870,9 +870,10 @@ function seedNews(world: World, gang: GangId, i: number, tagback: boolean): void
 /**
  * Monthly turf rules after the budget settles: contested decay, seeding, hold,
  * spread (skipped while frozen), tagback, scatter and crackdown expiry; then
- * refreshStats (layers, stats, seam, 'turf'). Uses and advances story.rng.
+ * refreshStats (layers, stats, seam, 'turf'). Uses and advances story.rng. `compose` false leaves the layer merge to
+ * the caller (the director's month composes once after its local part, MEGACITY §11.1's month-end frame).
  */
-export function update(world: World): void {
+export function update(world: World, compose = true): void {
   const N = world.N;
   const { elig } = scratch(world.area);
   const tk = world.turf;
@@ -959,7 +960,7 @@ export function update(world: World): void {
   }
 
   st.rng = rng.state;
-  refreshStats(world);
+  refreshStats(world, compose);
 }
 
 /** Rule 1, hold: str += round((aff − 0.35) × 40), security / ribbon / crackdown hits, protection floor. */
@@ -1079,9 +1080,9 @@ function spread(world: World, rng: Rng, cap: number): void {
 /**
  * Rebuild derived turf data without running any rules: turf.stats, story.seam,
  * world.layerParts.turf (§3.5), then composeLayers and emit 'turf'. Call after
- * load, crackdowns, pacts and any direct turf edit.
+ * load, crackdowns, pacts and any direct turf edit. `compose` false: the caller composes the layers itself.
  */
-export function refreshStats(world: World): void {
+export function refreshStats(world: World, compose = true): void {
   const tk = world.turf;
   const owner = tk.owner;
   const str = tk.str;
@@ -1122,7 +1123,7 @@ export function refreshStats(world: World): void {
   st.contested = contested;
   if (tu && tkit) computeSeam(world);
   writeLayers(world);
-  composeLayers(world);
+  if (compose) composeLayers(world);
   world.events.emit('turf');
 }
 

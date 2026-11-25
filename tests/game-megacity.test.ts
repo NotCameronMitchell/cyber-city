@@ -543,6 +543,34 @@ describe('the frame guard (§3.3, §3.11)', () => {
     expect(calls).toEqual(['recomputeEconomy']);
   }, 60_000);
 
+  it("the month's story parts open the frame after the settlement, before any new day, paused or not (§3.3, §11.1)", () => {
+    for (const pause of [false, true]) {
+      const { g } = city(3, 5);
+      let t = 0;
+      g.msClock = () => (t += 0.05);
+      g.setSpeed(3);
+      const calls: number[] = [];
+      const story = g.story as unknown as { onMonth: () => void };
+      const orig = story.onMonth.bind(g.story);
+      story.onMonth = () => {
+        calls.push(g.world.tick);
+        orig();
+      };
+      let settled = -1;
+      g.events.on('month', () => (settled = g.world.tick));
+      for (let f = 0; f < 5000 && settled < 0; f++) {
+        if (g.story.blocking) g.choose(0);
+        g.update(1 / 60);
+      }
+      expect(settled).toBeGreaterThan(0);
+      expect(calls).toEqual([]); // the settlement's frame ran no story month
+      if (pause) g.setSpeed(0);
+      g.update(1 / 60);
+      expect(calls).toEqual([settled]);
+      expect(g.world.tick - settled).toBeLessThanOrEqual(pause ? 0 : 1);
+    }
+  }, 60_000);
+
   it('a backlog over 4 days is dropped', () => {
     const { g } = city(3, 5);
     let t = 0;
