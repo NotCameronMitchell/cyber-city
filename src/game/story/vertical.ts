@@ -1254,6 +1254,18 @@ export function skybridgePayoff(world: World, a: { x: number; y: number }, b: { 
 }
 
 /**
+ * People a day walking every active skybridge (Σ BridgePayoff.walkers, ×10 units, MEGACITY §4.4): the number the
+ * whisper note "{n} people crossed the sky today" should show instead of NOTE_CROSSINGS_PER_BRIDGE × bridges, so the
+ * note matches inspect. (director.fillNote is not WP-2's file: handed over.)
+ */
+export function walkersToday(world: World): number {
+  let n = 0;
+  const active = world.vertical.activeLinks;
+  for (const l of world.links) if (active.has(l.id)) n += skybridgePayoff(world, { x: l.ax, y: l.ay }, { x: l.bx, y: l.by }).walkers;
+  return n;
+}
+
+/**
  * Skybridge v2 plan (MEGACITY §5.3, §5.4): from the anchor at `from` to the anchor at `to` (a tap, a tap; or a drag
  * whose end snaps to the nearest valid partner within 2 tiles). Fills `plan.tiles`, `span`, `bridge` (the payoff) and,
  * when the towers don't line up but a valid partner of A lines up with B, `route` (two bridges; the plan confirms).

@@ -63,3 +63,74 @@ describe('fuzz', () => {
     expect(count('seaport')).toBeLessThanOrEqual(2);
   });
 });
+
+describe('fuzz on a 3×3 region with annexes and the Megacity tools (MEGACITY §11.5, WP-2)', () => {
+  it('random actions, annexes and new building types keep the district invariants', async () => {
+    const { BUILDINGS, PORT_LIMITS } = await import('../src/game/config');
+    const { districtDaily } = await import('../src/game/districts/daily');
+    const { adjacentLocked } = await import('../src/game/districts/slots');
+    const { finishFrame } = await import('../src/game/actions');
+    const hidden = (Object.keys(BUILDINGS) as (keyof typeof BUILDINGS)[]).filter((t) => BUILDINGS[t].hidden && t !== 'frame' && t !== 'pumphall');
+    for (const t of hidden) (BUILDINGS[t] as { hidden?: boolean }).hidden = false;
+    try {
+      const w = World.generate(4242, 'Chaos Reach', undefined, 3);
+      w.funds = 5e7;
+      w.maxPopulation = 1e7;
+      w.story.unlocks.push('skybridge', 'rail', 'memorial', 'stack');
+      w.story.flags.published = true;
+      const sim = makeSim(w, true);
+      sim.districtDaily = districtDaily;
+      const rng = new Rng(9);
+      const tools: ToolId[] = [...TOOLS, 'skybridge', 'skybridge', 'rail', 'res', 'com', ...hidden.filter((t) => t !== 'gantry')] as ToolId[];
+      const p = () => ({ x: rng.int(-2, w.N + 1), y: rng.int(-2, w.N + 1) });
+      for (let tick = 0; tick < 900; tick++) {
+        if (tick % 120 === 60) {
+          const c = adjacentLocked(w);
+          if (c.length) w.annex(rng.pick(c));
+          sim.recomputeAll();
+        }
+        if (rng.chance(0.5)) {
+          const a = p();
+          const b = rng.chance(0.5) ? a : { x: a.x + rng.int(-10, 10), y: a.y + rng.int(-10, 10) };
+          applyAction(w, rng.pick(tools), a, b);
+          sim.recomputeAll();
+        }
+        if (rng.chance(0.02)) for (const f of [...w.buildings.values()].filter((b) => b.type === 'frame').slice(0, 1)) finishFrame(w, f.id);
+        sim.step();
+      }
+      expect(w.districts.owned.length).toBeGreaterThan(3);
+      for (let i = 0; i < w.area; i++) {
+        const t = w.tiles[i];
+        if (t.terrain === 1) {
+          expect(t.elev).toBe(0);
+          expect(t.ground).toBe(0);
+        }
+        if (w.ownedAt(i)) continue;
+        expect(t.road, `road on locked ${i}`).toBe(false);
+        expect(t.zone).toBe(0);
+        expect(t.buildingId).toBe(-1);
+        expect(w.rail[i]).toBe(0);
+        expect(w.sky[i]).toBe(0);
+      }
+      for (const l of w.links) {
+        expect(w.isOwned(l.ax, l.ay) && w.isOwned(l.bx, l.by)).toBe(true);
+        const gap = Math.abs(l.bx - l.ax) + Math.abs(l.by - l.ay) - 1;
+        expect(gap).toBeGreaterThanOrEqual(1);
+        expect(gap).toBeLessThanOrEqual(10);
+      }
+      const count = (t: string) => [...w.buildings.values()].filter((b) => b.type === t).length;
+      const owned = w.districts.owned.length;
+      expect(count('seaport')).toBeLessThanOrEqual(PORT_LIMITS.seaport(owned));
+      expect(count('airport')).toBeLessThanOrEqual(PORT_LIMITS.airport(owned));
+      for (const [name, f] of Object.entries(w.fields)) {
+        for (let i = 0; i < w.area; i++) {
+          const v = (f as Float32Array)[i];
+          if (!(v >= 0 && v <= 1)) throw new Error(`${name} out of range at ${i}: ${v}`);
+        }
+      }
+      for (const v of [w.stats.population, w.stats.jobsCom, w.stats.jobsInd, w.funds]) expect(Number.isFinite(v)).toBe(true);
+    } finally {
+      for (const t of hidden) (BUILDINGS[t] as { hidden?: boolean }).hidden = true;
+    }
+  }, 120000);
+});
