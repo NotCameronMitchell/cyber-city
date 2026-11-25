@@ -117,6 +117,12 @@ export interface AnnexPin {
 
 /** Pin radius: a 44 px round button (§3.9, the phone's tap target). */
 export const PIN_R = 22;
+/**
+ * The HUD's least cover (CSS px) while the UI has not set camera insets yet: the top bar with the ticker and the
+ * bottom dock. Pins and the district label keep out of it; real insets (WP-5, WP-9) win when larger.
+ */
+export const HUD_TOP = 80;
+export const HUD_BOTTOM = 130;
 
 /** The world's funds and story state are on the world; districts can be bought after an ending (§3.8). */
 function pinsWanted(world: World): boolean {
@@ -191,7 +197,9 @@ export function annexPins(world: World, cam: Camera): AnnexPin[] {
     const p = cam.worldToScreen((best.tx - best.ty) * HALF_W, (best.tx + best.ty) * HALF_H);
     // Only pins inside the uncovered view (with the button's own margin) show: an off-screen pin can't be tapped.
     const ins = cam.insets;
-    if (p.x < ins.left + PIN_R || p.x > cam.width - ins.right - PIN_R || p.y < ins.top + PIN_R || p.y > cam.height - ins.bottom - PIN_R) continue;
+    const top = Math.max(ins.top, HUD_TOP);
+    const bottom = Math.max(ins.bottom, HUD_BOTTOM);
+    if (p.x < ins.left + PIN_R || p.x > cam.width - ins.right - PIN_R || p.y < top + PIN_R || p.y > cam.height - bottom - PIN_R) continue;
     pins.push({ slot: s, x: p.x, y: p.y, r: PIN_R, label: slotNames(world, s).short, tx: best.tx, ty: best.ty, d: bd });
   }
   pins.sort((a, b) => a.d - b.d);
@@ -401,7 +409,7 @@ export class DistrictLabel {
     ctx.textBaseline = 'top';
     ctx.font = '700 17px system-ui, sans-serif';
     const x = cam.width / 2 + (cam.insets.left - cam.insets.right) / 2;
-    const y = cam.insets.top + 64;
+    const y = Math.max(cam.insets.top, HUD_TOP) + 12;
     const w = ctx.measureText ? ctx.measureText(this.text).width : this.text.length * 10;
     ctx.fillStyle = css([12, 8, 26], 0.55);
     roundRect(ctx, x - w / 2 - 14, y - 6, w + 28, 30, 10);

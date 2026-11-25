@@ -912,6 +912,25 @@ export function drawSkybridgeGhosts(ctx: CanvasRenderingContext2D, game: Game, e
   e.lod = env.zoom < LOD_ZOOM;
   e.quality = env.quality;
   ctx.save();
+  // The selected tower (A) gets its own ring at its roof (§5.4 step 2).
+  const src = game.bridgeSource;
+  if (src) {
+    const roof = roofOf(world, src.x, src.y);
+    const wx = (src.x - src.y) * HALF_W;
+    const wy = (src.x + src.y) * HALF_H + HALF_H - roof;
+    const pulse = 0.6 + 0.4 * Math.sin(env.time * 5);
+    const px = 1 / env.zoom;
+    ctx.strokeStyle = css([236, 255, 250], 0.9 * pulse);
+    ctx.lineWidth = 2.5 * px;
+    ctx.beginPath();
+    ctx.ellipse(wx, wy, 30, 15, 0, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.strokeStyle = css(OK, 0.6);
+    ctx.lineWidth = 1.2 * px;
+    ctx.beginPath();
+    ctx.ellipse(wx, wy, 38, 19, 0, 0, Math.PI * 2);
+    ctx.stroke();
+  }
   ctx.globalAlpha = 0.55 + 0.15 * Math.sin(env.time * 4);
   for (const l of lanes) {
     const z = Math.max(30, l.roof - SKYBRIDGE.tubeBelowRoof - SKYBRIDGE.tubeHeight / 2);

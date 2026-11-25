@@ -725,6 +725,7 @@ interface GroundPal {
   elevLight: string[];
   contour: string;
   retWall: string;
+  retShadow: string;
   retJoint: string;
   retLip: string;
   stair: string;
@@ -950,11 +951,12 @@ function megacityPal(n: number, g0: RGB, g1: RGB, shallow: RGB, deep: RGB, wall:
     fogHall: css(mix([22, 20, 28], [6, 6, 12], n)),
     fogHallRoof: css(mix([46, 44, 54], [16, 18, 26], n)),
     kindWash,
-    elevLight: [0, 1, 2, 3].map((e) => css(mix([255, 246, 226], [150, 130, 230], n), (0.045 * day + 0.035 * n) * e)),
-    contour: css(mix([40, 34, 30], [6, 4, 12], n), 0.55),
-    retWall: css(mix([132, 120, 104], [34, 30, 40], n)),
-    retJoint: css(mix([84, 76, 66], [16, 14, 22], n), 0.9),
-    retLip: css(mix([196, 186, 166], [70, 64, 92], n), 0.9),
+    elevLight: [0, 1, 2, 3].map((e) => css(mix([255, 240, 214], [150, 130, 230], n), (0.075 * day + 0.04 * n) * e)),
+    contour: css(mix([40, 34, 30], [6, 4, 12], n), 0.6),
+    retWall: css(mix([98, 88, 76], [30, 26, 36], n)),
+    retShadow: css([0, 0, 0], 0.18 + 0.1 * n),
+    retJoint: css(mix([60, 54, 46], [12, 10, 18], n), 0.9),
+    retLip: css(mix([214, 204, 184], [84, 76, 108], n), 0.95),
     stair: css(mix([214, 206, 188], [92, 86, 120], n), 0.85),
     elevBase: [0, 1, 2, 3].map((e) => css([0, 0, 0], 0.045 * e)),
     reedBase: css(mix([88, 104, 66], [22, 30, 24], n), 0.55),
@@ -1503,10 +1505,16 @@ export class GroundPainter {
       }
       // A visible retaining wall: the face drops from this (higher) tile's +x / +y edge onto the lower neighbour.
       if (ne < e && (d === 1 || d === 2)) {
-        const depth = Math.min(0.42, 0.16 * (e - ne));
+        const depth = Math.min(0.5, 0.22 * (e - ne));
         const face = this.b2.f(P.retWall);
-        if (d === 1) face.rect(x + 1, y, depth, 1);
-        else face.rect(x, y + 1, 1, depth);
+        const shadow = this.b2.f(P.retShadow);
+        if (d === 1) {
+          face.rect(x + 1, y, depth, 1);
+          shadow.rect(x + 1 + depth, y, 0.14, 1);
+        } else {
+          face.rect(x, y + 1, 1, depth);
+          shadow.rect(x, y + 1 + depth, 1, 0.14);
+        }
         if (this.lines) {
           const lip = this.b3.f(P.retLip);
           const joint = this.b3.f(P.retJoint);
@@ -2480,6 +2488,8 @@ export class GroundPainter {
       return;
     }
     if (t.abandoned) return;
+    // Skyline view: the roof tint shows instead of the body, so no zone-coloured spill over it (its lit windows glow).
+    if (this.skyline) return;
     // Light spilling from the building onto its pad.
     this.sprite(ZONE_RGB[t.zone], x + 0.5, y + 0.5, 0.75, 0.16 * P.n);
   }
