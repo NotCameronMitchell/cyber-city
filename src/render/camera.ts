@@ -59,6 +59,23 @@ export class Camera {
   fitRect: { x0: number; y0: number; x1: number; y1: number } | null = null;
   /** Screen px the UI covers (§3.9, §14.1): fitBox, fitMap and centerOnTile use the uncovered area. */
   insets = { top: 0, right: 0, bottom: 0, left: 0 };
+  /**
+   * Megacity view bands (§3.9, set by the Renderer each frame): the smallest zoom of the street view. Below it (and
+   * above `minZoom`) a multi-district city draws the skyline view. Input and UI may read it; only the Renderer writes it.
+   */
+  streetMinZoom = 0.25;
+  /**
+   * The City map (§3.9): a separate view of the whole region, reached only through `snapToMap()` and left through
+   * `snapFromMap()`. While it is on, the Renderer draws the atlas instead of the world, `clamp()` keeps the centre on the
+   * map, and zooms stay inside [`mapZoom`, `mapZoom × mapHeadroom`].
+   */
+  mapView = false;
+  /** The City map's fitted zoom (set by `snapToMap`). */
+  mapZoom = 0.03;
+  /** How far the City map may zoom past its fit (2 for a 5×5 region on a handheld device, else 1; §7.2). */
+  mapHeadroom = 1;
+  /** A running ease (§3.9 snaps, §5.4's 0.3 s eases): from → to over `dur` seconds, smoothstep. */
+  private anim: { t: number; dur: number; x0: number; y0: number; z0: number; x1: number; y1: number; z1: number } | null = null;
 
   /** A camera on a map of `mapSize` tiles a side, centred on the map at zoom 1. */
   constructor(mapSize: number) {
@@ -108,6 +125,7 @@ export class Camera {
 
   /** Pan by a screen-space delta (finger moved by dx, dy → map follows the finger). */
   panBy(dx: number, dy: number) {
+    this.anim = null;
     this.x -= dx / this.zoom;
     this.y -= dy / this.zoom;
     this.clamp();
@@ -115,19 +133,127 @@ export class Camera {
 
   /** Multiply zoom by `factor`, keeping the world point under screen (sx, sy) fixed. */
   zoomAt(factor: number, sx: number, sy: number) {
+    this.anim = null;
     const before = this.screenToWorld(sx, sy);
-    this.zoom = Math.max(this.minZoom, Math.min(this.maxZoom, this.zoom * factor));
+    const lo = this.mapView ? this.mapZoom : this.minZoom;
+    const hi = this.mapView ? this.mapZoom * this.mapHeadroom : this.maxZoom;
+    this.zoom = Math.max(lo, Math.min(hi, this.zoom * factor));
     const after = this.screenToWorld(sx, sy);
     this.x += before.x - after.x;
     this.y += before.y - after.y;
     this.clamp();
   }
 
+  /** Show tile (tx, ty) at the centre of the area the UI leaves uncovered (`insets`; MEGACITY §3.9). */
   centerOnTile(tx: number, ty: number) {
+    this.anim = null;
     const c = tileCenterWorld(tx, ty);
-    this.x = c.x;
-    this.y = c.y;
+    const ins = this.insets;
+    this.x = c.x - (ins.left - ins.right) / 2 / this.zoom;
+    this.y = c.y - (ins.top - ins.bottom) / 2 / this.zoom;
     this.clamp();
+  }
+
+  // ── Eases and the City map snap (MEGACITY §3.9, §5.4) ─────────────────────
+
+  /** True while an ease or a snap runs (the Renderer advances it with `update(dt)`). */
+  get animating(): boolean {
+    return this.anim !== null;
+  }
+
+  /** Ease the view to world point (x, y) at `zoom` over `sec` seconds (0 = at once). Any pan or zoom cancels it. */
+  easeTo(x: number, y: number, zoom: number, sec = 0.3) {
+    if (!(sec > 0)) {
+      this.anim = null;
+      this.x = x;
+      this.y = y;
+      this.zoom = zoom;
+      this.clamp();
+      return;
+    }
+    this.anim = { t: 0, dur: sec, x0: this.x, y0: this.y, z0: this.zoom, x1: x, y1: y, z1: zoom };
+  }
+
+  /**
+   * Ease so a tile rect fits the uncovered area above a bottom sheet (§5.4: the source tower and its reach fit above
+   * the pill), at a zoom inside [minZoom, maxZoom].
+   */
+  easeToBox(r: { x0: number; y0: number; x1: number; y1: number }, insetBottomPx = 0, sec = 0.3) {
+    const t = this.target(r, insetBottomPx, 1);
+    this.easeTo(t.x, t.y, Math.max(this.minZoom, Math.min(this.maxZoom, t.zoom)), sec);
+  }
+
+  /** Advance a running ease by `dt` seconds. Returns true while it still runs. */
+  update(dt: number): boolean {
+    const a = this.anim;
+    if (!a) return false;
+    a.t = Math.min(a.dur, a.t + Math.max(0, dt));
+    const u = a.t / a.dur;
+    const k = u * u * (3 - 2 * u);
+    // Zoom eases geometrically, so a tenfold snap does not race through the near half.
+    this.zoom = a.z0 * Math.pow(a.z1 / a.z0, k);
+    this.x = a.x0 + (a.x1 - a.x0) * k;
+    this.y = a.y0 + (a.y1 - a.y0) * k;
+    if (a.t >= a.dur) {
+      this.anim = null;
+      this.clamp();
+      return false;
+    }
+    return true;
+  }
+
+  /** The centre and zoom that frame a tile rect in the uncovered area, scaled by `fill` (1 = the rect just fits). */
+  private target(r: { x0: number; y0: number; x1: number; y1: number }, insetBottomPx: number, fill: number) {
+    const w = r.x1 - r.x0 + 1;
+    const h = r.y1 - r.y0 + 1;
+    const ins = this.insets;
+    const vw = Math.max(1, this.width - ins.left - ins.right);
+    const vh = Math.max(1, this.height - ins.top - ins.bottom - insetBottomPx);
+    const zoom = Math.min(vw / (((w + h) / 2) * TILE_W), vh / (((w + h) / 2) * TILE_H)) * fill;
+    const cx = r.x0 + w / 2;
+    const cy = r.y0 + h / 2;
+    const dx = (ins.left - ins.right) / 2;
+    const dy = (ins.top - ins.bottom - insetBottomPx) / 2;
+    return { zoom, x: (cx - cy) * HALF_W - dx / zoom, y: (cx + cy) * HALF_H - dy / zoom };
+  }
+
+  /**
+   * The City map's fitted zoom for this viewport: the whole region (the map) inside the uncovered area with a little
+   * margin, above a bottom sheet of `insetBottomPx` (§3.9: ≈ 0.03–0.05 for 3×3 on a phone).
+   */
+  mapFitZoom(insetBottomPx = 0): number {
+    const n = this.mapSize;
+    return this.target({ x0: 0, y0: 0, x1: n - 1, y1: n - 1 }, insetBottomPx, 0.94).zoom;
+  }
+
+  /**
+   * Snap to the City map (§3.9): animated over 0.3 s to the whole region fitted in the uncovered area (above a bottom
+   * sheet of `insetBottomPx`). WP-5 calls it on a continued pinch-out at `minZoom`, the map button, Data → City map and
+   * the M key; WP-9 on a new wheel gesture past `minZoom`. `headroom` is how far the map may then zoom in (2 for a 5×5
+   * region on a handheld device, §7.2).
+   */
+  snapToMap(insetBottomPx = 0, headroom = 1, sec = 0.3) {
+    const n = this.mapSize;
+    const t = this.target({ x0: 0, y0: 0, x1: n - 1, y1: n - 1 }, insetBottomPx, 0.94);
+    this.mapView = true;
+    this.mapZoom = t.zoom;
+    this.mapHeadroom = Math.max(1, headroom);
+    this.easeTo(t.x, t.y, t.zoom, sec);
+  }
+
+  /**
+   * Leave the City map (§3.9): pinching in, or tapping an owned slot, snaps back to `minZoom` centred on the world
+   * point under screen point (sx, sy) (CSS px; where the fingers are), animated over 0.3 s.
+   */
+  snapFromMap(sx: number, sy: number, sec = 0.3) {
+    const w = this.screenToWorld(sx, sy);
+    this.mapView = false;
+    const t = worldToTileF(w.x, w.y);
+    const b = this.bounds;
+    // The centre lands inside the camera bounds (owned box ± peek), as clamp() would put it.
+    const cx = b ? Math.max(b.x0, Math.min(b.x1 + 1, t.x)) : Math.max(0, Math.min(this.mapSize, t.x));
+    const cy = b ? Math.max(b.y0, Math.min(b.y1 + 1, t.y)) : Math.max(0, Math.min(this.mapSize, t.y));
+    this.easeTo((cx - cy) * HALF_W, (cx + cy) * HALF_H, this.minZoom, sec);
   }
 
   /** Megacity: set (or clear) the tile rect the view centre stays in (§3.9). */
@@ -146,7 +272,8 @@ export class Camera {
     const t = worldToTileF(this.x, this.y);
     const slack = 2;
     const n = this.mapSize;
-    const b = this.bounds;
+    // The City map frames the whole region: the centre stays on the map, not in the owned box.
+    const b = this.mapView ? null : this.bounds;
     const lo = b ? b.x0 : 0;
     const hi = b ? b.x1 + 1 : n;
     const loY = b ? b.y0 : 0;

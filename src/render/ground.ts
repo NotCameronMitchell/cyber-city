@@ -32,11 +32,13 @@
 // stubs mark border points where a road becomes a trade link (§3.10).
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { BUILDINGS, EDGE_LINKS, ZONES } from '../game/config';
+import { ANNEX, BUILDINGS, EDGE_LINKS, ZONES } from '../game/config';
+import { pumpHallSite, tarmacSites } from '../game/districts/annex';
+import { slotNeighbours, slotRect, startSlotOf } from '../game/districts/slots';
 import { shoreFacing } from '../game/ports';
 import { fbm, hash2 } from '../game/rng';
 import { skyRampGround } from '../game/skyway';
-import { RoadKind, Terrain, ZoneType, type Building, type Tile } from '../game/types';
+import { Ground, RoadKind, Terrain, ZoneType, type Building, type DistrictKind, type Tile } from '../game/types';
 import type { World } from '../game/world';
 import type { ArtEnv } from './buildings';
 import { HALF_H, HALF_W } from './camera';
@@ -283,6 +285,17 @@ export class TerrainInfo {
   readonly seed: number;
   /** Art offset (MEGACITY §3.2 artXY): tile hashes use (x − o, y − o), so the start slot looks the same on either region. */
   readonly o: number;
+  /**
+   * Locked land (MEGACITY §3.9 fog): Chebyshev distance in tiles to the nearest owned tile, capped at 255; 0 on owned
+   * land. The fog deepens past the peek margin (ANNEX.peek) so the edge of the city reads at any zoom.
+   */
+  readonly fogD: Uint8Array;
+  /**
+   * District ground decals (§3.9 district ground character), by tile: 0 none; DECO_RUNWAY / DECO_RUNWAY_END /
+   * DECO_APRON on a Tarmac district's old runway strips and apron; DECO_HALL under the Sunk's old pump hall while
+   * the Sunk is locked (a dark hall in the fog).
+   */
+  readonly deco: Uint8Array;
 
   constructor(world: World) {
     const N = world.N;
@@ -339,53 +352,212 @@ export class TerrainInfo {
       }
     }
     for (let i = 0; i < N * N; i++) if (tiles[i].terrain === Terrain.Water && this.depth[i] === 0) this.depth[i] = 6;
+    this.fogD = new Uint8Array(world.area);
+    this.deco = new Uint8Array(world.area);
+    this.fogDistance(world);
+    this.placeDeco(world);
     this.placeStubs(world);
   }
 
+  /** Two-pass chamfer (Chebyshev) distance from owned land, once per frame of owned slots (an annex rebuilds it). */
+  private fogDistance(world: World) {
+    const N = world.N;
+    const d = this.fogD;
+    for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) d[y * N + x] = world.isOwned(x, y) ? 0 : 255;
+    for (let y = 0; y < N; y++)
+      for (let x = 0; x < N; x++) {
+        const i = y * N + x;
+        let v = d[i];
+        if (!v) continue;
+        if (x > 0) v = Math.min(v, d[i - 1] + 1);
+        if (y > 0) {
+          v = Math.min(v, d[i - N] + 1);
+          if (x > 0) v = Math.min(v, d[i - N - 1] + 1);
+          if (x < N - 1) v = Math.min(v, d[i - N + 1] + 1);
+        }
+        d[i] = Math.min(255, v);
+      }
+    for (let y = N - 1; y >= 0; y--)
+      for (let x = N - 1; x >= 0; x--) {
+        const i = y * N + x;
+        let v = d[i];
+        if (!v) continue;
+        if (x < N - 1) v = Math.min(v, d[i + 1] + 1);
+        if (y < N - 1) {
+          v = Math.min(v, d[i + N] + 1);
+          if (x < N - 1) v = Math.min(v, d[i + N + 1] + 1);
+          if (x > 0) v = Math.min(v, d[i + N - 1] + 1);
+        }
+        d[i] = Math.min(255, v);
+      }
+  }
+
+  /** Tarmac runways and aprons (owned or locked: the airfield shows in the fog too), the Sunk's hall while locked. */
+  private placeDeco(world: World) {
+    const N = world.N;
+    const R = world.region;
+    if (R === 1) return;
+    for (let s = 0; s < R * R; s++) {
+      const kind = world.districts.kinds[s];
+      if (kind === 'tarmac') {
+        const ts = tarmacSites(world, s);
+        for (const r of ts.runways) {
+          const alongX = r.x1 - r.x0 > r.y1 - r.y0;
+          for (let y = r.y0; y <= r.y1; y++)
+            for (let x = r.x0; x <= r.x1; x++) {
+              const i = y * N + x;
+              if (world.tiles[i].terrain !== Terrain.Land) continue;
+              const a = alongX ? x - r.x0 : y - r.y0;
+              const L = alongX ? r.x1 - r.x0 : r.y1 - r.y0;
+              this.deco[i] = a < 3 || a > L - 3 ? DECO_RUNWAY_END : DECO_RUNWAY;
+            }
+        }
+        const ap = ts.apron;
+        if (ap)
+          for (let y = ap.y0; y <= ap.y1; y++)
+            for (let x = ap.x0; x <= ap.x1; x++) if (!this.deco[y * N + x] && world.tiles[y * N + x].terrain === Terrain.Land) this.deco[y * N + x] = DECO_APRON;
+      } else if (kind === 'sunk' && !world.slotOwned[s]) {
+        const h = pumpHallSite(world, s);
+        if (h) for (let k = 0; k < 9; k++) this.deco[(h.y + ((k / 3) | 0)) * N + h.x + (k % 3)] = DECO_HALL;
+      }
+    }
+  }
+
   /**
-   * EDGE_LINKS.stubs border points (one per side where the side has land, then extra
-   * points on the sides that do): land tiles whose inward neighbour is land too, at a
-   * hashed position along the side. Deterministic per seed; never stored in the save.
-   * The sides are the owned box's (MEGACITY §3.5 boundary; on a one-district city the start slot's edge, where
-   * the 64 map's border was, at the same hashed places). WP-3 gives each owned slot its own pair (§3.5).
+   * Pump House reclamation changed the terrain in `r` (the 'terrain' event): water depth and the shore flags around it
+   * are recomputed locally (a depth never exceeds 6, so a 6-tile margin bounds what can change).
+   */
+  patch(world: World, r: { x0: number; y0: number; x1: number; y1: number }) {
+    const N = world.N;
+    const tiles = world.tiles;
+    const m = 6;
+    const x0 = Math.max(0, r.x0 - m);
+    const y0 = Math.max(0, r.y0 - m);
+    const x1 = Math.min(N - 1, r.x1 + m);
+    const y1 = Math.min(N - 1, r.y1 + m);
+    // Sources from a window one margin wider, so every path that ends inside [x0..x1] × [y0..y1] is seen.
+    const wx0 = Math.max(0, x0 - m);
+    const wy0 = Math.max(0, y0 - m);
+    const wx1 = Math.min(N - 1, x1 + m);
+    const wy1 = Math.min(N - 1, y1 + m);
+    const W = wx1 - wx0 + 1;
+    const H = wy1 - wy0 + 1;
+    const dep = new Uint8Array(W * H);
+    const queue: number[] = [];
+    for (let y = wy0; y <= wy1; y++)
+      for (let x = wx0; x <= wx1; x++) {
+        if (tiles[y * N + x].terrain !== Terrain.Water) continue;
+        const own = world.isOwned(x, y);
+        let shore = false;
+        for (let dy = -1; dy <= 1 && !shore; dy++)
+          for (let dx = -1; dx <= 1; dx++) {
+            const t = world.tileAt(x + dx, y + dy);
+            if (t && t.terrain === Terrain.Land && world.isOwned(x + dx, y + dy) === own) {
+              shore = true;
+              break;
+            }
+          }
+        if (shore) {
+          dep[(y - wy0) * W + x - wx0] = 1;
+          queue.push((y - wy0) * W + x - wx0);
+        }
+      }
+    for (let qi = 0; qi < queue.length; qi++) {
+      const j = queue[qi];
+      const dv = dep[j];
+      if (dv >= 6) continue;
+      const lx = j % W;
+      const ly = (j / W) | 0;
+      for (let k = 0; k < 4; k++) {
+        const nx = lx + DX4[k];
+        const ny = ly + DY4[k];
+        if (nx < 0 || ny < 0 || nx >= W || ny >= H) continue;
+        if (world.isOwned(nx + wx0, ny + wy0) !== world.isOwned(lx + wx0, ly + wy0)) continue;
+        const q = ny * W + nx;
+        if (tiles[(ny + wy0) * N + nx + wx0].terrain === Terrain.Water && dep[q] === 0) {
+          dep[q] = dv + 1;
+          queue.push(q);
+        }
+      }
+    }
+    for (let y = y0; y <= y1; y++)
+      for (let x = x0; x <= x1; x++) {
+        const i = y * N + x;
+        if (tiles[i].terrain !== Terrain.Water) this.depth[i] = 0;
+        else this.depth[i] = dep[(y - wy0) * W + x - wx0] || 6;
+      }
+  }
+
+  /**
+   * Regional-road stubs (MEGACITY §3.5, art only, from the seed): each owned slot gets 2 on its outer boundary (the
+   * sides that face the map edge or a locked slot), the start slot EDGE_LINKS.stubs (4) at today's hashed places, so a
+   * one-district city shows the 64 map's four. Land tiles whose inward neighbour is land too; never stored in the save;
+   * redrawn when the boundary moves (an annex rebuilds TerrainInfo).
    */
   private placeStubs(world: World) {
     const N = world.N;
-    const b = world.ownedBox;
+    const R = world.region;
+    const start = startSlotOf(world);
     const land = (x: number, y: number) => world.isOwned(x, y) && world.tileAt(x, y)?.terrain === Terrain.Land;
-    // Along a side: the box's width for the north and south sides, its height for east and west.
-    const len = (side: number) => (side === 0 || side === 2 ? b.x1 - b.x0 + 1 : b.y1 - b.y0 + 1);
-    const at = (side: number, p: number): [number, number] =>
-      side === 0 ? [b.x0 + p, b.y0] : side === 1 ? [b.x1, b.y0 + p] : side === 2 ? [b.x0 + p, b.y1] : [b.x0, b.y0 + p];
-    let placed = 0;
-    for (let round = 0; round < 3 && placed < EDGE_LINKS.stubs; round++) {
-      for (let side = 0; side < 4 && placed < EDGE_LINKS.stubs; side++) {
-        const L = len(side);
-        const p0 = 8 + Math.floor(hash2(side, round, this.seed + 77) * (L - 16));
-        for (let d = 0; d < L; d++) {
-          const p = p0 + (d & 1 ? -((d + 1) >> 1) : d >> 1);
-          if (p < 2 || p > L - 3) continue;
-          const [x, y] = at(side, p);
-          const i = y * N + x;
-          // On the boundary: the tile beyond it is off the map or locked.
-          if (this.stub[i] || !land(x, y) || !land(x - DX4[side], y - DY4[side]) || world.isOwned(x + DX4[side], y + DY4[side])) continue;
-          // Keep stubs on one side apart.
-          let near = false;
-          for (let e = -6; e <= 6 && !near; e++) {
-            const q = p + e;
-            if (q < 0 || q >= L) continue;
-            const [ax, ay] = at(side, q);
-            if (this.stub[ay * N + ax]) near = true;
+    for (const s of world.districts.owned) {
+      const b = slotRect(world, s);
+      // A side is outer when the slot beyond it is off the map or locked.
+      const nb = slotNeighbours(R, s);
+      const sx = s % R;
+      const sy = (s / R) | 0;
+      const beyond = (side: number) => {
+        const tx = sx + DX4[side];
+        const ty = sy + DY4[side];
+        if (tx < 0 || ty < 0 || tx >= R || ty >= R) return -1;
+        return nb.find((q) => q === ty * R + tx) ?? -1;
+      };
+      const outer = [0, 1, 2, 3].map((side) => {
+        const q = beyond(side);
+        return q < 0 || !world.slotOwned[q];
+      });
+      const want = s === start ? EDGE_LINKS.stubs : 2;
+      // The start slot keeps today's hash keys (side, round); other slots salt them by slot.
+      const salt = s === start ? 0 : 8 * (s + 1);
+      const len = (side: number) => (side === 0 || side === 2 ? b.x1 - b.x0 + 1 : b.y1 - b.y0 + 1);
+      const at = (side: number, p: number): [number, number] =>
+        side === 0 ? [b.x0 + p, b.y0] : side === 1 ? [b.x1, b.y0 + p] : side === 2 ? [b.x0 + p, b.y1] : [b.x0, b.y0 + p];
+      let placed = 0;
+      for (let round = 0; round < 3 && placed < want; round++) {
+        for (let side = 0; side < 4 && placed < want; side++) {
+          if (!outer[side]) continue;
+          const L = len(side);
+          const p0 = 8 + Math.floor(hash2(side + salt, round, this.seed + 77) * (L - 16));
+          for (let d = 0; d < L; d++) {
+            const p = p0 + (d & 1 ? -((d + 1) >> 1) : d >> 1);
+            if (p < 2 || p > L - 3) continue;
+            const [x, y] = at(side, p);
+            const i = y * N + x;
+            // On the boundary: the tile beyond it is off the map or locked.
+            if (this.stub[i] || !land(x, y) || !land(x - DX4[side], y - DY4[side]) || world.isOwned(x + DX4[side], y + DY4[side])) continue;
+            // Keep stubs on one side apart.
+            let near = false;
+            for (let e = -6; e <= 6 && !near; e++) {
+              const q = p + e;
+              if (q < 0 || q >= L) continue;
+              const [ax, ay] = at(side, q);
+              if (this.stub[ay * N + ax]) near = true;
+            }
+            if (near) continue;
+            this.stub[i] = side + 1;
+            placed++;
+            break;
           }
-          if (near) continue;
-          this.stub[i] = side + 1;
-          placed++;
-          break;
         }
       }
     }
   }
 }
+
+/** TerrainInfo.deco codes (district ground decals, §3.9). */
+export const DECO_RUNWAY = 1;
+export const DECO_RUNWAY_END = 2;
+export const DECO_APRON = 3;
+export const DECO_HALL = 4;
 
 // ── Palette per night bucket ───────────────────────────────────────────────
 
@@ -538,7 +710,65 @@ interface GroundPal {
   paving: string;
   gRunway: string;
   gPortLane: string;
+  // ── Megacity (MEGACITY §3.9) ──
+  /** Fog over locked land by band (0 inside the peek margin, 1 just past it, 2 far), land by tone, water by depth. */
+  fogLand: string[][];
+  fogWater: string[][];
+  /** The Sunk's old pump hall in the fog: a dark hall on the water. */
+  fogHall: string;
+  fogHallRoof: string;
+  /** District ground character: a wash over land, lots, pads and sidewalks per kind (none for Charter Shore). */
+  kindWash: Partial<Record<DistrictKind, string>>;
+  /** Terraces: contour light per step (index = elev), the contour line, retaining-wall face, its dark joints and lip. */
+  elevLight: string[];
+  contour: string;
+  retWall: string;
+  retJoint: string;
+  retLip: string;
+  stair: string;
+  /** Building bases darken by step (index = elev). */
+  elevBase: string[];
+  /** Ground features: reeds, brownfield, rubble ground. */
+  reedBase: string;
+  reed: string;
+  reedDark: string;
+  brownBase: string;
+  brownSheen: string;
+  rubbleBase: string;
+  rubbleLight: string;
+  /** Shoals boardwalk timber, Sunk canal brick and mooring rings, Kessel rails, Skeleton cones, Bazaar lantern string. */
+  board: string;
+  boardGap: string;
+  brick: string;
+  ring: string;
+  cone: string;
+  lanternCord: string;
+  lantern: string;
+  /** Skyline view (zoom below streetMinZoom): roof tints per zone and palette, abandoned roofs, lit-window dots. */
+  roofTint: string[][];
+  roofAbandoned: string;
+  roofWin: string;
+  gRoofWin: string;
 }
+
+/** District washes by kind (§3.9 district ground character): pavement and land tints, low alpha. */
+const KIND_WASH: Partial<Record<DistrictKind, RGB>> = {
+  shoals: [236, 226, 196],
+  sunk: [58, 100, 82],
+  flats: [52, 44, 40],
+  terraces: [200, 176, 138],
+  reedmere: [86, 132, 70],
+  skeleton: [158, 158, 164],
+  tarmac: [60, 62, 74],
+  bazaar: [118, 176, 142],
+};
+/** Wall colours of the zone bodies (art/zones.ts' RES / COM / IND walls), for the skyline view's roof tints. */
+const ROOF_RGB: RGB[][] = [
+  [],
+  [[142, 116, 140], [150, 130, 128], [112, 126, 136], [128, 122, 142], [158, 150, 144]],
+  [[98, 116, 140], [150, 154, 168], [84, 92, 112], [124, 136, 150]],
+  [[128, 96, 76], [106, 108, 88], [146, 124, 76], [112, 114, 120]],
+];
 
 /** Four tiny gradient canvases (colour → transparent) used for shallow water along shores. */
 function makeShallowBands(c: RGB, alpha: number): HTMLCanvasElement[] {
@@ -691,6 +921,58 @@ function buildPal(n: number): GroundPal {
     paving: css(mix([150, 140, 126], [42, 38, 48], n)),
     gRunway: css([255, 244, 220], 0.4 * n),
     gPortLane: css(NEON.amber, 0.14 * n),
+    ...megacityPal(n, g0, g1, shallow, deep, wall),
+  };
+}
+
+/** The Megacity ground colours of one night bucket (fog, district character, terraces, roof tints; §3.9). */
+function megacityPal(n: number, g0: RGB, g1: RGB, shallow: RGB, deep: RGB, wall: RGB) {
+  const landRGB = (k: number) => shade(mix(g0, g1, k / 7), 0.87 + k * 0.037);
+  const waterRGB = (d: number) => mix(mix(shallow, deep, 0.55), deep, Math.min(1, Math.max(0, (d - 2) / 4)) * 0.6);
+  // §3.9's fog (terrain × 0.45 mixed 30% toward violet) reads as a void by day on a phone, so the day fog is a lighter
+  // violet haze over a less darkened terrain (still well below owned land); night keeps the spec's numbers, with a
+  // faint violet glow so the edge of the city reads after dark too.
+  const fogC: RGB = mix([92, 78, 138], [52, 34, 92], n);
+  const bands: [number, number][] = [
+    [0.45 + 0.25 * (1 - n), 0.3 + 0.08 * (1 - n)],
+    [0.4 + 0.2 * (1 - n), 0.42 + 0.06 * (1 - n)],
+    [0.34 + 0.16 * (1 - n), 0.55],
+  ];
+  const fogOf = (c: RGB, b: number) => css(mix(shade(c, bands[b][0]), fogC, bands[b][1]));
+  const day = 1 - n;
+  const kindWash: Partial<Record<DistrictKind, string>> = {};
+  for (const k of Object.keys(KIND_WASH) as DistrictKind[]) kindWash[k] = css(KIND_WASH[k]!, 0.13 * day + 0.06 * n);
+  return {
+    fogLand: [0, 1, 2].map((b) => Array.from({ length: 8 }, (_, k) => fogOf(landRGB(k), b))),
+    fogWater: [0, 1, 2].map((b) => Array.from({ length: 7 }, (_, d) => fogOf(waterRGB(d), b))),
+    fogHall: css(mix([22, 20, 28], [6, 6, 12], n)),
+    fogHallRoof: css(mix([46, 44, 54], [16, 18, 26], n)),
+    kindWash,
+    elevLight: [0, 1, 2, 3].map((e) => css(mix([255, 246, 226], [150, 130, 230], n), (0.045 * day + 0.035 * n) * e)),
+    contour: css(mix([40, 34, 30], [6, 4, 12], n), 0.55),
+    retWall: css(mix([132, 120, 104], [34, 30, 40], n)),
+    retJoint: css(mix([84, 76, 66], [16, 14, 22], n), 0.9),
+    retLip: css(mix([196, 186, 166], [70, 64, 92], n), 0.9),
+    stair: css(mix([214, 206, 188], [92, 86, 120], n), 0.85),
+    elevBase: [0, 1, 2, 3].map((e) => css([0, 0, 0], 0.045 * e)),
+    reedBase: css(mix([88, 104, 66], [22, 30, 24], n), 0.55),
+    reed: css(mix([134, 150, 84], [40, 58, 40], n), 0.95),
+    reedDark: css(mix([70, 86, 52], [16, 24, 18], n), 0.9),
+    brownBase: css(mix([62, 48, 40], [16, 12, 14], n), 0.55),
+    brownSheen: css(mix([96, 80, 120], [60, 30, 110], n), 0.35 + 0.15 * n),
+    rubbleBase: css(mix([92, 88, 84], [30, 28, 36], n), 0.5),
+    rubbleLight: css(mix([150, 146, 140], [56, 54, 66], n), 0.85),
+    board: css(mix([132, 104, 74], [40, 30, 28], n)),
+    boardGap: css(mix([82, 62, 44], [20, 14, 14], n), 0.9),
+    brick: css(mix([104, 70, 58], [30, 20, 22], n)),
+    ring: css(mix([60, 62, 70], [120, 140, 130], n), 0.9),
+    cone: css(mix([255, 126, 40], [200, 90, 30], n)),
+    lanternCord: css(mix([40, 34, 30], [20, 16, 18], n), 0.8),
+    lantern: css(mix([230, 90, 60], [255, 150, 80], n)),
+    roofTint: [0, 1, 2, 3].map((z) => (ROOF_RGB[z] ?? []).map((c) => css(shade(mix(c, wall, 0.25), 0.92 - 0.25 * n)))),
+    roofAbandoned: css(mix([70, 64, 60], [20, 18, 22], n)),
+    roofWin: css(mix([255, 226, 160], [255, 214, 140], n), 0.15 + 0.7 * n),
+    gRoofWin: css([255, 210, 140], 0.5 * n),
   };
 }
 
@@ -785,6 +1067,12 @@ export class GroundPainter {
   fine = true;
   /** Empty-lot dashed outlines (fade out when zoomed far out). */
   lotLines = true;
+  /**
+   * Skyline view chunks (MEGACITY §3.9, zoom below streetMinZoom with more than one district): every developed zone
+   * tile also gets a flat roof diamond in its body's wall colour, so the L1–L2 bodies the sweep skips (and L3 bodies
+   * past the sprite cap) still read as blocks.
+   */
+  skyline = false;
 
   private palCache = new Map<number, GroundPal>();
   /** Layers: base fills → surface details → structures → markings; then glow. */
@@ -799,7 +1087,8 @@ export class GroundPainter {
   /** Side of the world being painted (its N, MEGACITY §3.1); set by begin(). */
   private N = 0;
 
-  begin(ctx: CanvasRenderingContext2D, world: World, info: TerrainInfo, nightBucket: number, scale: number) {
+  begin(ctx: CanvasRenderingContext2D, world: World, info: TerrainInfo, nightBucket: number, scale: number, skyline = false) {
+    this.skyline = skyline;
     this.ctx = ctx;
     this.world = world;
     this.N = world.N;
@@ -860,6 +1149,10 @@ export class GroundPainter {
     const { N } = this;
     const i = y * N + x;
     const t = this.world.tiles[i];
+    if (!this.world.ownedAt(i)) {
+      this.fog(x, y, t, i);
+      return;
+    }
     const sky = this.world.sky[i];
     if (t.terrain === Terrain.Water) {
       this.water(x, y);
@@ -871,6 +1164,7 @@ export class GroundPainter {
     else if (t.buildingId >= 0) this.buildingPad(x, y, t);
     else if (t.zone !== ZoneType.None) this.lot(x, y, t);
     else this.land(x, y);
+    this.character(x, y, t, i);
     if (this.lines) this.quay(x, y);
     // Gang turf: a colour wash over the street, by strength (§3.7).
     const owner = this.world.turf.owner[i];
@@ -908,6 +1202,12 @@ export class GroundPainter {
     if (x === N - 1 && m === 8) return m | 2;
     if (y === 0 && m === 4) return m | 1;
     if (y === N - 1 && m === 1) return m | 4;
+    // The owned boundary is a map edge too (MEGACITY §3.5): a dead end pointing inward runs on into the fog.
+    const w = this.world;
+    if (m === 2 && !w.isOwned(x - 1, y)) return m | 8;
+    if (m === 8 && !w.isOwned(x + 1, y)) return m | 2;
+    if (m === 4 && !w.isOwned(x, y - 1)) return m | 1;
+    if (m === 1 && !w.isOwned(x, y + 1)) return m | 4;
     return m;
   }
 
@@ -1056,6 +1356,222 @@ export class GroundPainter {
     }
   }
 
+  // ── Megacity: fog, district character, terraces, roof tints (MEGACITY §3.7, §3.9) ──────
+
+  /**
+   * A locked tile (§3.9): terrain colour × 0.45 mixed 30% toward violet (deeper past the peek margin), no props and no
+   * roads; the Sunk's old pump hall shows as a dark hall on the water. Terrace steps tint the fogged land.
+   */
+  private fog(x: number, y: number, t: Tile, i: number) {
+    const P = this.pal;
+    const info = this.info;
+    const d = info.fogD[i];
+    const band = d <= ANNEX.peek ? 0 : d <= ANNEX.peek + 8 ? 1 : 2;
+    if (info.deco[i] === DECO_HALL) {
+      this.tileRect(this.b0.f(P.fogHall), x, y);
+      this.b1.f(P.fogHallRoof).rect(x + 0.12, y + 0.12, 0.76, 0.76);
+      return;
+    }
+    if (t.terrain === Terrain.Water) this.tileRect(this.b0.f(P.fogWater[band][info.depth[i]]), x, y);
+    else this.tileRect(this.b0.f(P.fogLand[band][Math.min(7, info.tone[i] + t.elev * 2)]), x, y);
+  }
+
+  /** District ground character, ground features and terrace steps over an owned land tile (§3.7, §3.9). */
+  private character(x: number, y: number, t: Tile, i: number) {
+    const P = this.pal;
+    const kind = this.world.kindAt(x, y);
+    const wash = P.kindWash[kind];
+    if (wash && !(t.road && t.roadKind === RoadKind.Highway)) this.b1.f(wash).rect(x, y, 1, 1);
+    if (t.ground !== Ground.Plain) this.groundFeature(x, y, t);
+    if (t.elev > 0 || kind === 'terraces') this.terrace(x, y, t);
+    const deco = this.info.deco[i];
+    if (deco && !t.road && t.buildingId < 0 && t.zone === ZoneType.None) this.tarmacDeco(x, y, deco);
+    if (!this.detail) return;
+    switch (kind) {
+      case 'skeleton':
+        // Traffic cones left on the empty plots.
+        if (!t.road && t.zone === ZoneType.None && t.buildingId < 0 && this.h(x, y, 150) < 0.06) {
+          const p = this.b2.f(P.cone);
+          const u = x + 0.3 + this.h(x, y, 151) * 0.4;
+          const v = y + 0.3 + this.h(x, y, 152) * 0.4;
+          for (let k = 0; k < 3; k++) circlePath(p, u + k * 0.09, v + k * 0.05, 0.035);
+        }
+        break;
+      case 'bazaar':
+        // Paper lantern strings across the alleys (they glow in the animated pass).
+        if (t.road && t.roadKind === RoadKind.Alley && this.lines) {
+          const cord = this.b3.s(P.lanternCord, this.lw(0.8));
+          const lamp = this.b3.f(P.lantern);
+          const across = (this.world.roadMask(x, y) & 5) !== 0; // the alley runs along y: strings cross along x
+          for (let k = 0; k < 2; k++) {
+            const q = 0.3 + k * 0.4;
+            if (across) {
+              cord.moveTo(x + 0.15, y + q);
+              cord.lineTo(x + 0.85, y + q);
+              for (let j = 0; j < 3; j++) circlePath(lamp, x + 0.3 + j * 0.2, y + q, 0.04);
+            } else {
+              cord.moveTo(x + q, y + 0.15);
+              cord.lineTo(x + q, y + 0.85);
+              for (let j = 0; j < 3; j++) circlePath(lamp, x + q, y + 0.3 + j * 0.2, 0.04);
+            }
+          }
+        }
+        break;
+    }
+  }
+
+  /** Reeds, brownfield and rubble ground (§3.7): a base tint and their marks. */
+  private groundFeature(x: number, y: number, t: Tile) {
+    const P = this.pal;
+    if (t.ground === Ground.Reed) {
+      this.b1.f(P.reedBase).rect(x, y, 1, 1);
+      if (!this.detail || t.road) return;
+      const p = this.b1.s(P.reed, this.lw(1.1), 'round');
+      const q = this.b1.s(P.reedDark, this.lw(1.1), 'round');
+      for (let k = 0; k < 7; k++) {
+        const u = x + 0.1 + this.h(x, y, 160 + k) * 0.8;
+        const v = y + 0.1 + this.h(x, y, 170 + k) * 0.8;
+        const path = k & 1 ? q : p;
+        path.moveTo(u, v);
+        path.lineTo(u - 0.07, v - 0.07);
+        path.moveTo(u + 0.03, v);
+        path.lineTo(u + 0.01, v - 0.09);
+      }
+    } else if (t.ground === Ground.Brownfield) {
+      this.b1.f(P.brownBase).rect(x, y, 1, 1);
+      if (!this.detail) return;
+      if (this.h(x, y, 180) < 0.35) ellipsePath(this.b1.f(P.brownSheen), x + 0.5, y + 0.5, 0.26, 0.14, this.h(x, y, 181) * Math.PI);
+      // Old rail-yard tracks on Kessel brownfield: rails along the lot's axis by a coarse hash.
+      if (this.world.kindAt(x, y) === 'flats' && !t.road && t.buildingId < 0 && t.level === 0 && hash2((x - this.info.o) >> 3, (y - this.info.o) >> 3, this.info.seed + 190) < 0.5) {
+        const alongX = hash2((x - this.info.o) >> 3, (y - this.info.o) >> 3, this.info.seed + 191) < 0.5;
+        const sl = this.b1.f(P.sleeper);
+        const st = this.b2.f(P.steel);
+        const th = this.lw(1);
+        for (let k = 0; k < 4; k++) {
+          const a = 0.06 + k * 0.25;
+          if (alongX) sl.rect(x + a, y + 0.34, 0.08, 0.32);
+          else sl.rect(x + 0.34, y + a, 0.32, 0.08);
+        }
+        if (alongX) {
+          st.rect(x, y + 0.4, 1, th);
+          st.rect(x, y + 0.6, 1, th);
+        } else {
+          st.rect(x + 0.4, y, th, 1);
+          st.rect(x + 0.6, y, th, 1);
+        }
+      }
+    } else if (t.ground === Ground.Rubble) {
+      this.b1.f(P.rubbleBase).rect(x, y, 1, 1);
+      if (!this.detail) return;
+      const dark = this.b1.f(P.landDark);
+      const light = this.b1.f(P.rubbleLight);
+      for (let k = 0; k < 8; k++) {
+        const sz = 0.035 + this.h(x, y, 200 + k) * 0.06;
+        (k & 1 ? light : dark).rect(x + 0.08 + this.h(x, y, 210 + k) * 0.8, y + 0.08 + this.h(x, y, 220 + k) * 0.8, sz, sz * 0.8);
+      }
+    }
+  }
+
+  /**
+   * Highstep Terraces (§3.7, painted first): contour light per step, a contour line where the step changes, painted
+   * retaining-wall faces on the +x / +y sides where the neighbour is lower, stairs on Streets between steps and
+   * building bases darkened by step. Nothing is raised (elevOffset is 0).
+   */
+  private terrace(x: number, y: number, t: Tile) {
+    const P = this.pal;
+    const e = t.elev;
+    if (e > 0) this.b1.f(P.elevLight[e]).rect(x, y, 1, 1);
+    if (e > 0 && (t.buildingId >= 0 || (t.zone !== ZoneType.None && t.level > 0))) this.b1.f(P.elevBase[e]).rect(x + 0.08, y + 0.08, 0.84, 0.84);
+    const w = this.world;
+    const elevAt = (dx: number, dy: number) => {
+      const n = w.tileAt(x + dx, y + dy);
+      return n && n.terrain === Terrain.Land && w.isOwned(x + dx, y + dy) ? n.elev : -1;
+    };
+    const th = this.lw(1.2);
+    for (let d = 0; d < 4; d++) {
+      const ne = elevAt(DX4[d], DY4[d]);
+      if (ne < 0 || ne === e) continue;
+      // Contour line on this tile's side of the edge.
+      if (this.lines) {
+        const c = this.b3.f(P.contour);
+        if (d === 0) c.rect(x, y, 1, th);
+        else if (d === 1) c.rect(x + 1 - th, y, th, 1);
+        else if (d === 2) c.rect(x, y + 1 - th, 1, th);
+        else c.rect(x, y, th, 1);
+      }
+      // A visible retaining wall: the face drops from this (higher) tile's +x / +y edge onto the lower neighbour.
+      if (ne < e && (d === 1 || d === 2)) {
+        const depth = Math.min(0.42, 0.16 * (e - ne));
+        const face = this.b2.f(P.retWall);
+        if (d === 1) face.rect(x + 1, y, depth, 1);
+        else face.rect(x, y + 1, 1, depth);
+        if (this.lines) {
+          const lip = this.b3.f(P.retLip);
+          const joint = this.b3.f(P.retJoint);
+          if (d === 1) {
+            lip.rect(x + 1, y, th, 1);
+            for (let k = 1; k < 4; k++) joint.rect(x + 1, y + k * 0.25, depth, th * 0.7);
+            joint.rect(x + 1 + depth * 0.5, y, th * 0.7, 1);
+          } else {
+            lip.rect(x, y + 1, 1, th);
+            for (let k = 1; k < 4; k++) joint.rect(x + k * 0.25, y + 1, th * 0.7, depth);
+            joint.rect(x, y + 1 + depth * 0.5, 1, th * 0.7);
+          }
+        }
+      }
+      // Stairs where a Street steps down to a road on another step.
+      if (t.road && this.lines && (w.roadMask(x, y) & DIR[d]) && ne !== e) {
+        const st = this.b3.f(P.stair);
+        for (let k = 0; k < 3; k++) {
+          const q = 0.06 + k * 0.1;
+          if (d === 0) st.rect(x + 0.3, y + q, 0.4, th);
+          else if (d === 1) st.rect(x + 1 - q, y + 0.3, th, 0.4);
+          else if (d === 2) st.rect(x + 0.3, y + 1 - q, 0.4, th);
+          else st.rect(x + q, y + 0.3, th, 0.4);
+        }
+      }
+    }
+  }
+
+  /** Tarmac Reach's old airfield painted on the ground (§3.7): runway with centre dashes and threshold bars, apron. */
+  private tarmacDeco(x: number, y: number, deco: number) {
+    const P = this.pal;
+    if (deco === DECO_APRON) {
+      this.b1.f(P.apron).rect(x, y, 1, 1);
+      if (this.lines && this.h(x, y, 230) < 0.25) this.b3.f(P.taxiLine).rect(x + 0.1, y + 0.48, 0.8, this.lw(1.2));
+      return;
+    }
+    this.b1.f(P.runway).rect(x, y, 1, 1);
+    if (!this.lines) return;
+    const th = this.lw(1.6);
+    const runway = (dx: number, dy: number) => this.info.deco[(y + dy) * this.N + x + dx] === DECO_RUNWAY || this.info.deco[(y + dy) * this.N + x + dx] === DECO_RUNWAY_END;
+    const alongX = runway(-1, 0) || runway(1, 0);
+    const p = this.b3.f(P.runwayLine);
+    if (deco === DECO_RUNWAY_END) {
+      // Threshold bars (the faded runway numbers read as bars at this scale).
+      for (let k = 0; k < 3; k++) {
+        if (alongX) p.rect(x + 0.2 + k * 0.25, y + 0.15, 0.1, 0.7);
+        else p.rect(x + 0.15, y + 0.2 + k * 0.25, 0.7, 0.1);
+      }
+      return;
+    }
+    if (alongX ? x % 2 === 0 : y % 2 === 0) {
+      if (alongX) p.rect(x + 0.1, y + 0.47, 0.6, th);
+      else p.rect(x + 0.47, y + 0.1, th, 0.6);
+    }
+  }
+
+  /** The skyline view's roof tint of a developed zone tile (§3.9): a flat roof diamond in its body's wall colour. */
+  private roofTint(x: number, y: number, t: Tile) {
+    const P = this.pal;
+    const list = P.roofTint[t.zone];
+    if (!list || !list.length) return;
+    const c = t.abandoned ? P.roofAbandoned : list[t.variant % list.length];
+    const i = t.level >= 3 ? 0.08 : t.level === 2 ? 0.12 : 0.18;
+    this.b2.f(c).rect(x + i, y + i, 1 - 2 * i, 1 - 2 * i);
+    if (!t.abandoned && t.level >= 2 && this.h(x, y, 140) < 0.7) this.b3.f(P.roofWin).rect(x + 0.42, y + 0.42, 0.16, 0.16);
+  }
+
   /** Concrete quay lip along edges that border water. */
   private quay(x: number, y: number) {
     const n = this.isWater(x, y - 1);
@@ -1073,6 +1589,46 @@ export class GroundPainter {
     const th = this.lw(1);
     if (n) lip.rect(x, y, 1, th);
     if (w) lip.rect(x, y, th, 1);
+    if (!this.detail) return;
+    const kind = this.world.kindAt(x, y);
+    const t = this.world.tiles[y * this.N + x];
+    if (kind === 'shoals' && !t.road && t.buildingId < 0) {
+      // Boardwalk along the water, planks and rope bollards.
+      const P = this.pal;
+      const b = this.b2.f(P.board);
+      const gap = this.b3.f(P.boardGap);
+      const bw = 0.26;
+      if (n) b.rect(x, y + d, 1, bw);
+      if (e) b.rect(x + 1 - d - bw, y, bw, 1);
+      if (s) b.rect(x, y + 1 - d - bw, 1, bw);
+      if (w) b.rect(x + d, y, bw, 1);
+      for (let k = 1; k < 5; k++) {
+        const q = k * 0.2;
+        if (n) gap.rect(x + q, y + d, th, bw);
+        if (s) gap.rect(x + q, y + 1 - d - bw, th, bw);
+        if (e) gap.rect(x + 1 - d - bw, y + q, bw, th);
+        if (w) gap.rect(x + d, y + q, bw, th);
+      }
+      if (this.h(x, y, 240) < 0.5) {
+        const bo = this.b3.f(P.bollard);
+        if (n) circlePath(bo, x + 0.5, y + d + 0.03, 0.035);
+        if (s) circlePath(bo, x + 0.5, y + 1 - d - 0.03, 0.035);
+      }
+    } else if (kind === 'sunk') {
+      // Canal walls of old brick and iron mooring rings.
+      const P = this.pal;
+      const br = this.b2.f(P.brick);
+      const bw = 0.1;
+      if (n) br.rect(x, y + d, 1, bw);
+      if (e) br.rect(x + 1 - d - bw, y, bw, 1);
+      if (s) br.rect(x, y + 1 - d - bw, 1, bw);
+      if (w) br.rect(x + d, y, bw, 1);
+      if (this.h(x, y, 241) < 0.4) {
+        const r = this.b3.s(P.ring, this.lw(1.2));
+        if (n) circlePath(r, x + 0.3 + this.h(x, y, 242) * 0.4, y + d + 0.05, 0.05);
+        if (w) circlePath(r, x + d + 0.05, y + 0.3 + this.h(x, y, 243) * 0.4, 0.05);
+      }
+    }
   }
 
   private lot(x: number, y: number, t: Tile) {
@@ -1085,7 +1641,8 @@ export class GroundPainter {
       return;
     }
     this.tileRect(this.b0.f(t.abandoned ? P.padAbandoned : P.pad), x, y);
-    if (!this.lines && !t.abandoned) this.b1.f(P.zoneFar[z]).rect(x, y, 1, 1);
+    if (this.skyline) this.roofTint(x, y, t);
+    else if (!this.lines && !t.abandoned) this.b1.f(P.zoneFar[z]).rect(x, y, 1, 1);
     if (this.lines) {
       const th = this.lw(1);
       const i = 0.04;
@@ -1827,6 +2384,11 @@ export class GroundPainter {
   glowTile(x: number, y: number) {
     const { N } = this;
     const t = this.world.tiles[y * N + x];
+    if (!this.world.ownedAt(y * N + x)) return;
+    if (this.skyline && t.zone !== ZoneType.None && t.level >= 2 && !t.abandoned && t.buildingId < 0 && this.h(x, y, 140) < 0.7) {
+      // Lit windows on the skyline view's roof tints.
+      this.gl.f(this.pal.gRoofWin).rect(x + 0.42, y + 0.42, 0.16, 0.16);
+    }
     const P = this.pal;
     const g = this.gl;
     if (t.terrain === Terrain.Water) {
@@ -2065,6 +2627,7 @@ export class GroundPainter {
     const { N } = this;
     const t = this.world.tiles[y * N + x];
     if (!t.road && t.terrain !== Terrain.Water) return;
+    if (!this.world.ownedAt(y * N + x)) return;
     if (!this.detail) return;
     const ctx = this.ctx;
     const n = this.pal.n;
@@ -2147,6 +2710,8 @@ function stripeColor(P: GroundPal, type: string, glow: boolean): string {
 
 interface Chunk {
   k: number;
+  /** Skyline view chunk (roof tints baked in, MEGACITY §3.9): a separate bucket of the same scale. */
+  sky: boolean;
   i: number;
   j: number;
   canvas: HTMLCanvasElement | null;
@@ -2183,6 +2748,10 @@ export function tileRectToWorld(r: Rect): Rect {
 
 const now = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
 
+/** The overview fallback's memory cap (§3.9: within 4 MB, unless the view itself needs more chunks). */
+const OVERVIEW_BUDGET = 4 * 1024 * 1024;
+const chunkKey = (k: number, sky: boolean, i: number, j: number) => `${k}:${sky ? 1 : 0}:${i}:${j}`;
+
 /** Owns the chunk canvases and draws the cached ground every frame. */
 export class GroundCache {
   private chunks = new Map<string, Chunk>();
@@ -2192,6 +2761,9 @@ export class GroundCache {
   private frame = 0;
   private bucket = 0;
   private prevBucket = 0;
+  /** Skyline-view chunks are drawn (and the previous frame's mode, for the fallback while the new mode paints). */
+  private sky = false;
+  private prevSky = false;
   /** The frame of the world the chunks show (MEGACITY §3.1): side, chunk-grid x origin, tile buffer. Set by bind(). */
   private N = 0;
   private OX = 0;
@@ -2208,6 +2780,16 @@ export class GroundCache {
     for (const c of this.chunks.values()) this.release(c);
     this.chunks.clear();
     this.info = null;
+  }
+
+  /**
+   * Pump House reclamation changed the terrain in `r` (the 'terrain' event, MEGACITY §3.9 R0): water depth is patched
+   * locally and the chunks around it repaint, instead of a whole-map TerrainInfo rebuild.
+   */
+  patchTerrain(world: World, r: Rect) {
+    if (this.info && this.N === world.N) this.info.patch(world, r);
+    const m = 7;
+    this.invalidate({ x0: r.x0 - m, y0: r.y0 - m, x1: r.x1 + m, y1: r.y1 + m });
   }
 
   /** Tiles changed: mark the affected world rect dirty on every rendered chunk. */
@@ -2227,24 +2809,29 @@ export class GroundCache {
     return this.info;
   }
 
-  /** Bind the chunk grid to `world`'s frame; a different side drops every chunk. */
   /**
-   * The minimal render frame (MEGACITY §3.9, Step 0b): the ground paints the owned box only (the overview too), so
-   * a one-district city looks as the 64 map did; WP-3 adds the fogged peek margin around it.
+   * Bind the chunk grid to `world`'s frame; a different side drops every chunk. MEGACITY §3.9: the ground paints the
+   * whole region, locked slots as fog (deeper past the peek margin), so there is no hole at any zoom; the overview
+   * fallback covers the visible part of the owned box ± the peek margin. An annex moves the boundary (fog, stubs,
+   * water shading), so it rebuilds TerrainInfo and every chunk.
    */
   private box = { x0: 0, y0: 0, x1: -1, y1: -1 };
+  /** The owned box ± ANNEX.peek: the overview's reach. */
+  private peekBox = { x0: 0, y0: 0, x1: -1, y1: -1 };
   private boxKey = '';
 
   private bind(world: World) {
     const b = world.ownedBox;
-    // The owned slots too: an annex inside the box still moves the boundary (stubs, water shading).
     const key = `${b.x0},${b.y0},${b.x1},${b.y1},${world.slotsVersion}`;
     if (world.N === this.N && key === this.boxKey) return;
     this.reset();
     this.N = world.N;
     this.OX = -world.N * HALF_W - 32;
     this.tileBuf = new Int32Array(world.area);
-    this.box = { x0: b.x0, y0: b.y0, x1: b.x1, y1: b.y1 };
+    const N = world.N;
+    this.box = { x0: 0, y0: 0, x1: N - 1, y1: N - 1 };
+    const p = ANNEX.peek;
+    this.peekBox = { x0: Math.max(0, b.x0 - p), y0: Math.max(0, b.y0 - p), x1: Math.min(N - 1, b.x1 + p), y1: Math.min(N - 1, b.y1 + p) };
     this.boxKey = key;
   }
 
@@ -2281,11 +2868,11 @@ export class GroundCache {
     return Math.min(12, Math.ceil(4 * Math.log2(scale * 0.94)));
   }
 
-  private getChunk(k: number, i: number, j: number): Chunk {
-    const key = `${k}:${i}:${j}`;
+  private getChunk(k: number, i: number, j: number, sky = this.sky): Chunk {
+    const key = chunkKey(k, sky, i, j);
     let c = this.chunks.get(key);
     if (!c) {
-      c = { k, i, j, canvas: null, ctx: null, empty: false, rendered: false, night: -1, dirty: null, used: 0 };
+      c = { k, sky, i, j, canvas: null, ctx: null, empty: false, rendered: false, night: -1, dirty: null, used: 0 };
       c.empty = this.collectTiles(this.chunkRect(c)) === 0;
       this.chunks.set(key, c);
     }
@@ -2368,7 +2955,7 @@ export class GroundCache {
     const count = this.collectTiles(r);
     const info = this.terrain(world);
     const P = this.painter;
-    P.begin(ctx, world, info, nightBucket, s);
+    P.begin(ctx, world, info, nightBucket, s, c.sky);
     const tx = PAD - ox * s;
     const ty = PAD - oy * s;
     // Base pass in tile space.
@@ -2416,9 +3003,14 @@ export class GroundCache {
    * Draw the cached ground for the current view. Leaves the context transform
    * in an unspecified state (caller resets it).
    */
-  draw(ctx: CanvasRenderingContext2D, world: World, view: GroundView, night: number, budgetMs: number) {
+  draw(ctx: CanvasRenderingContext2D, world: World, view: GroundView, night: number, budgetMs: number, skyline = false) {
     this.bind(world);
     this.frame++;
+    if (skyline !== this.sky) {
+      this.prevSky = this.sky;
+      this.sky = skyline;
+      this.prevBucket = this.bucket;
+    }
     const frame = this.frame;
     const nightBucket = Math.round(Math.max(0, Math.min(1, night)) * NIGHT_STEPS);
     const scale = view.zoom * view.dpr;
@@ -2446,29 +3038,53 @@ export class GroundCache {
         c.used = frame;
         vis.push(c);
       }
-    // The overview is always kept ready as a fallback.
+    // The overview fallback (MEGACITY §3.9): the visible part of the owned box ± peek (plus a margin for pans), at
+    // OVERVIEW_SCALE, built progressively as the camera moves, within OVERVIEW_BUDGET.
     const ov: Chunk[] = [];
+    const ovView: Chunk[] = [];
     if (k !== OVERVIEW) {
-      // Over the owned box only (MEGACITY §3.9), not the whole region.
-      const b = this.box;
-      const orr = this.range(OVERVIEW, {
+      const b = this.peekBox;
+      const ob: Rect = {
         x0: (b.x0 - b.y1 - 1) * HALF_W - SPILL,
         y0: (b.x0 + b.y0) * HALF_H - SPILL,
         x1: (b.x1 - b.y0 + 1) * HALF_W + SPILL,
         y1: (b.x1 + b.y1 + 2) * HALF_H + SPILL,
-      });
-      for (let j = orr.j0; j <= orr.j1; j++)
-        for (let i = orr.i0; i <= orr.i1; i++) {
-          const c = this.getChunk(OVERVIEW, i, j);
-          if (!c.empty) ov.push(c);
-        }
+      };
+      const mx = (vr.x1 - vr.x0) * 0.25;
+      const my = (vr.y1 - vr.y0) * 0.25;
+      const want: Rect = { x0: Math.max(ob.x0, vr.x0 - mx), y0: Math.max(ob.y0, vr.y0 - my), x1: Math.min(ob.x1, vr.x1 + mx), y1: Math.min(ob.y1, vr.y1 + my) };
+      if (want.x0 < want.x1 && want.y0 < want.y1) {
+        const orr = this.range(OVERVIEW, want);
+        const Wo = CHUNK_PX / OVERVIEW_SCALE;
+        for (let j = orr.j0; j <= orr.j1; j++)
+          for (let i = orr.i0; i <= orr.i1; i++) {
+            const c = this.getChunk(OVERVIEW, i, j);
+            if (c.empty) continue;
+            ov.push(c);
+            const cx0 = this.OX + i * Wo;
+            const cy0 = OY + j * Wo;
+            if (cx0 < vr.x1 && cx0 + Wo > vr.x0 && cy0 < vr.y1 && cy0 + Wo > vr.y0) ovView.push(c);
+          }
+      }
     }
 
     // ── Render work, most urgent first, within the frame budget ──
     const t0 = now();
     const spent = () => now() - t0;
-    for (const c of ov) if (!c.rendered) this.renderChunk(c, world, nightBucket, null);
-    const fallbackReady = k === OVERVIEW || ov.every((c) => c.rendered);
+    const ccx0 = view.camX;
+    const ccy0 = view.camY;
+    const Wov = CHUNK_PX / OVERVIEW_SCALE;
+    const ovDist = (c: Chunk) => Math.abs(this.OX + (c.i + 0.5) * Wov - ccx0) + Math.abs(OY + (c.j + 0.5) * Wov - ccy0);
+    // Missing overview chunks in view: one a frame at least, nearest first (the current bucket is the real picture).
+    const ovMissing = ov.filter((c) => !c.rendered);
+    if (ovMissing.length > 1) ovMissing.sort((a, b) => (ovView.includes(a) ? 0 : 1) - (ovView.includes(b) ? 0 : 1) || ovDist(a) - ovDist(b));
+    let ovDid = 0;
+    for (const c of ovMissing) {
+      if (ovDid > 0 && spent() > budgetMs * 0.4) break;
+      this.renderChunk(c, world, nightBucket, null);
+      ovDid++;
+    }
+    const fallbackReady = k === OVERVIEW || ovView.every((c) => c.rendered);
     // 1) partial redraws of visible chunks (edits must show immediately)
     //    (in the chunk's own night bucket so a stale chunk stays self-consistent)
     for (const c of vis) if (c.rendered && c.dirty) this.renderChunk(c, world, c.night, c.dirty);
@@ -2502,15 +3118,18 @@ export class GroundCache {
     }
 
     // ── Blit ──
-    const missing = vis.some((c) => !c.rendered);
+    const missing = vis.some((c) => !c.rendered || c.sky !== this.sky);
     if (missing) {
       this.blit(ctx, ov, view);
-      if (this.prevBucket !== k && this.prevBucket !== OVERVIEW) {
+      // The previous bucket (or the other view band's chunks at this scale) while the new ones paint.
+      const pk = this.prevBucket;
+      const pSky = this.prevSky;
+      if ((pk !== k || pSky !== this.sky) && pk !== OVERVIEW) {
         const prev: Chunk[] = [];
-        const pr = this.range(this.prevBucket, vr);
+        const pr = this.range(pk, vr);
         for (let j = pr.j0; j <= pr.j1; j++)
           for (let i = pr.i0; i <= pr.i1; i++) {
-            const c = this.chunks.get(`${this.prevBucket}:${i}:${j}`);
+            const c = this.chunks.get(chunkKey(pk, pSky, i, j)) ?? this.chunks.get(chunkKey(pk, !pSky, i, j));
             if (c && c.rendered) {
               c.used = frame;
               prev.push(c);
@@ -2521,7 +3140,7 @@ export class GroundCache {
     }
     this.blit(ctx, vis, view);
     for (const c of ov) c.used = frame;
-    this.evict(vis.length + ov.length);
+    this.evict(vis.length + ov.length, ov.length);
   }
 
   private blit(ctx: CanvasRenderingContext2D, list: Chunk[], view: GroundView) {
@@ -2540,24 +3159,44 @@ export class GroundCache {
     }
   }
 
-  /** LRU eviction down to the memory budget (never below what this frame needs). */
-  private evict(needed: number) {
+  /**
+   * LRU eviction down to the memory budget (never below what this frame needs): the overview's chunks within
+   * OVERVIEW_BUDGET (or what the view needs of them), the rest within MEMORY_BUDGET.
+   */
+  private evict(needed: number, ovNeeded = 0) {
     const maxChunks = Math.max(Math.floor(MEMORY_BUDGET / CHUNK_BYTES), needed + 4);
+    const maxOv = Math.max(Math.floor(OVERVIEW_BUDGET / CHUNK_BYTES), ovNeeded);
     let live = 0;
+    let liveOv = 0;
     for (const [key, c] of this.chunks) {
-      if (c.canvas) live++;
-      // Forget bookkeeping for long-unused canvas-less chunks (old zoom buckets).
-      else if (c.k !== this.bucket && c.k !== OVERVIEW && this.frame - c.used > 600) this.chunks.delete(key);
+      if (c.canvas) {
+        if (c.k === OVERVIEW) liveOv++;
+        else live++;
+      }
+      // Forget bookkeeping for long-unused canvas-less chunks (old zoom buckets, the overview's old views).
+      else if (c.k !== this.bucket && this.frame - c.used > 600) this.chunks.delete(key);
     }
-    if (live <= maxChunks) return;
-    const list = [...this.chunks.values()].filter((c) => c.canvas && c.k !== OVERVIEW && c.used !== this.frame);
-    list.sort((a, b) => a.used - b.used);
-    for (const c of list) {
-      if (live <= maxChunks) break;
-      this.release(c);
-      this.chunks.delete(`${c.k}:${c.i}:${c.j}`);
-      live--;
-    }
+    const drop = (ov: boolean, max: number, n: number) => {
+      if (n <= max) return;
+      const list = [...this.chunks.values()].filter((c) => c.canvas && (c.k === OVERVIEW) === ov && c.used !== this.frame);
+      list.sort((a, b) => a.used - b.used);
+      for (const c of list) {
+        if (n <= max) break;
+        this.release(c);
+        this.chunks.delete(chunkKey(c.k, c.sky, c.i, c.j));
+        n--;
+      }
+    };
+    drop(false, maxChunks, live);
+    drop(true, maxOv, liveOv);
+  }
+
+  /** Live chunk counts (tests, diagnostics): the current buckets and the overview. */
+  get chunkCounts(): { live: number; overview: number } {
+    let live = 0;
+    let overview = 0;
+    for (const c of this.chunks.values()) if (c.canvas) c.k === OVERVIEW ? overview++ : live++;
+    return { live, overview };
   }
 
   /** Approximate bytes held by chunk canvases (for diagnostics). */

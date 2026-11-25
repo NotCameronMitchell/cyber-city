@@ -502,6 +502,13 @@ export class SkywayLayer {
   private builtVersion = -1;
   private builtSky = -1;
   private builtWorld: World | null = null;
+  /**
+   * MEGACITY §3.9 R0: the layout rebuilds on a sky or building change, or a 'tiles' rect near a deck (invalidate),
+   * instead of on every world.version (growth emits one nearly every tick). `stamp` counts rebuilds (the story layer
+   * re-keys its skybridge crossings on it).
+   */
+  private dirty = true;
+  stamp = 0;
   // Per-frame car lights: two batched paths and the glow buffer.
   private heads: Path2D | null = null;
   private tails: Path2D | null = null;
@@ -522,10 +529,43 @@ export class SkywayLayer {
     return this.list.length > 0;
   }
 
-  /** Rebuild the derived layout when tiles or sky changed. Call once per frame before the sweep. */
+  /**
+   * Tiles changed in `r` (the renderer forwards 'tiles' events): the layout reads the tiles under and beside the decks
+   * (pillars, deferral to a neighbour's face), so a rect within 2 tiles of a deck marks it dirty; elsewhere nothing.
+   */
+  invalidate(world: World, r: { x0: number; y0: number; x1: number; y1: number }): void {
+    if (this.dirty || world !== this.builtWorld || !this.list.length) return;
+    const N = world.N;
+    const sky = world.sky;
+    const x0 = Math.max(0, r.x0 - 2);
+    const y0 = Math.max(0, r.y0 - 2);
+    const x1 = Math.min(N - 1, r.x1 + 2);
+    const y1 = Math.min(N - 1, r.y1 + 2);
+    if ((x1 - x0 + 1) * (y1 - y0 + 1) > this.list.length * 4) {
+      // A big rect (an annex, a load): test the decks against it instead.
+      const N2 = N;
+      for (const i of this.list) {
+        const x = i % N2;
+        const y = (i / N2) | 0;
+        if (x >= x0 && x <= x1 && y >= y0 && y <= y1) {
+          this.dirty = true;
+          return;
+        }
+      }
+      return;
+    }
+    for (let y = y0; y <= y1; y++)
+      for (let x = x0; x <= x1; x++)
+        if (sky[y * N + x] & 15) {
+          this.dirty = true;
+          return;
+        }
+  }
+
+  /** Rebuild the derived layout when the sky, a building or the tiles near a deck changed. Call once per frame before the sweep. */
   prepare(world: World, env: ArtEnv): void {
     this.env = env;
-    if (world !== this.builtWorld || world.version !== this.builtVersion || world.skyVersion !== this.builtSky) this.rebuild(world);
+    if (world !== this.builtWorld || this.dirty || world.coverageVersion !== this.builtVersion || world.skyVersion !== this.builtSky) this.rebuild(world);
     this.heads = null;
     this.tails = null;
     this.bodies = null;
@@ -537,8 +577,10 @@ export class SkywayLayer {
   private rebuild(world: World) {
     const N = world.N;
     this.builtWorld = world;
-    this.builtVersion = world.version;
+    this.builtVersion = world.coverageVersion;
     this.builtSky = world.skyVersion;
+    this.dirty = false;
+    this.stamp++;
     const sky = world.sky;
     const list = this.list;
     if (this.shapes.length !== world.area) {
@@ -552,7 +594,8 @@ export class SkywayLayer {
         this.deferTo[i] = -1;
       }
     list.length = 0;
-    for (let i = 0; i < N * N; i++) if (sky[i] & 15) list.push(i);
+    // Owned segments only (§3.9 R0): a locked tile holds no deck.
+    for (let sg = 0; sg < world.segCount; sg += 2) for (let i = world.segs[sg]; i < world.segs[sg + 1]; i++) if (sky[i] & 15) list.push(i);
     this.deferred.clear();
     this.portals.clear();
     if (!list.length) return;
@@ -610,6 +653,17 @@ export class SkywayLayer {
   /** Is this tile's piece drawn after a building instead of at its own sweep key? */
   isDeferred(i: number): boolean {
     return this.deferTo[i] >= 0;
+  }
+
+  /**
+   * The sweep key a deck piece on tile i actually draws at: its host building's front corner when deferred, else −1
+   * (MEGACITY §5.2 crossings: a skybridge over a deferred deck must draw after it).
+   */
+  deferKey(world: World, i: number): number {
+    const id = this.deferTo[i] ?? -1;
+    if (id < 0) return -1;
+    const b = world.buildings.get(id);
+    return b ? b.x + b.y + 2 * b.size - 2 : -1;
   }
 
   /** Should the piece on a zone tile draw before its tower (a tower taller than the deck threads in front)? */

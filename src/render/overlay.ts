@@ -9,8 +9,9 @@
 //    cost tag (drawn in screen space so it stays readable at any zoom).
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { BUILDINGS, CURRENCY, WEALTH, isBuildingTool } from '../game/config';
+import { BUILDINGS, CURRENCY, ROAD_ACCESS_RANGE, SKYBRIDGE, WEALTH, isBuildingTool } from '../game/config';
 import type { Game } from '../game/game';
+import { heightOf, roofOf } from '../game/heights';
 import { berthTiles, noiseDef, shoreFacing, shoreSites } from '../game/ports';
 import { computeAccess, fillKinds, isRoadTool, roadLinks } from '../game/roads';
 import { RoadKind, ZoneType, type ActionPlan, type BuildingType, type OverlayId, type ServiceEffect, type Tile } from '../game/types';
@@ -22,7 +23,6 @@ import { drawBuildingGhost, serviceBuildingHeight, zoneBuildingHeight, LOD_ZOOM,
 import { HALF_H, HALF_W, type Camera } from './camera';
 import { chevronPath, kindHalf, roadOutlinePath, roadShapePath, type Rect } from './ground';
 import { highlight } from './highlight';
-import { anchorHeight } from './story';
 import { NEON, css, glowSprite, heat, hexToRgb, type RGB } from './palette';
 
 const PERP = (2 * HALF_W * HALF_H) / Math.hypot(HALF_W, HALF_H);
@@ -44,6 +44,8 @@ const EFFECT_RGB: Record<ServiceEffect, RGB> = {
 const EFFECTS = Object.keys(EFFECT_RGB) as ServiceEffect[];
 
 const now = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
+/** At most one whole-owned-area pass per this many ms in a render cache (MEGACITY §3.9 R0). */
+export const FULL_PASS_MS = 250;
 
 /** Apply the tile-space transform (tile (u, v) → world px) on top of the current world transform. */
 function toTileSpace(ctx: CanvasRenderingContext2D) {
@@ -81,10 +83,11 @@ export class OverlayLayer {
     this.dirty = true;
   }
 
-  /** World replaced. */
+  /** World replaced: the image is cleared too (a locked tile of the new world is never written). */
   reset() {
     this.dirty = true;
     this.builtFor = 'none';
+    this.img?.data.fill(0);
   }
 
   /** The data image for a world of side N (one pixel per tile), resized when the side changes. */
@@ -112,7 +115,10 @@ export class OverlayLayer {
     const lut = this.lut;
     const pips = this.pips;
     if (overlay === 'wealth') this.pipsFor = world;
-    for (let i = 0; i < N * N; i++) {
+    // Owned segments only (MEGACITY §3.9 R0): locked land carries no data and stays clear.
+    void N;
+    for (let sg = 0; sg < world.segCount; sg += 2)
+    for (let i = world.segs[sg]; i < world.segs[sg + 1]; i++) {
       const t = tiles[i];
       const o = i * 4;
       let r = 0;
@@ -225,7 +231,7 @@ export class OverlayLayer {
     const N = world.N;
     if (overlay === 'none' || !this.ensure(world.N)) return;
     const t = now();
-    if (overlay !== this.builtFor || (this.dirty && t - this.lastBuild > 120)) {
+    if (overlay !== this.builtFor || (this.dirty && t - this.lastBuild > FULL_PASS_MS)) {
       this.build(world, overlay);
       this.builtFor = overlay;
       this.dirty = false;
@@ -476,9 +482,6 @@ const TURF_LILAC: RGB = [201, 162, 255];
 const previewEnv: RailEnv = { time: 0, night: 0, zoom: 1, lod: false, quality: 'high' };
 
 /** Height of a tile's roof, for skybridge previews (same rule as the drawn bridges). */
-function tileTop(world: World, x: number, y: number): number {
-  return world.inBounds(x, y) ? anchorHeight(world, x, y) : 40;
-}
 
 /** Ground-level part of the tool preview (before buildings). World transform expected. */
 export function drawPreviewGround(ctx: CanvasRenderingContext2D, game: Game, time: number, zoom: number) {
@@ -687,7 +690,7 @@ function mixRGB(a: RGB, b: RGB, t: number): RGB {
 
 // ── Tool hints (no drag needed) ────────────────────────────────────────────
 
-const shore = { world: null as World | null, version: -1, marks: new Uint8Array(0), cover: new Uint8Array(0), count: 0 };
+const shore = { world: null as World | null, version: -1, at: -1e9, marks: new Uint8Array(0), cover: new Uint8Array(0), count: 0 };
 
 /**
  * While the Seaport tool is active, every valid shore site is outlined in faint
@@ -698,13 +701,15 @@ export function drawToolHints(ctx: CanvasRenderingContext2D, game: Game, time: n
   const N = game.world.N;
   if (game.tool !== 'seaport') return;
   const world = game.world;
-  if (shore.world !== world || shore.version !== world.version) {
+  // shoreSites is a whole-map pass: at most one per FULL_PASS_MS while the tool is active (§3.9 R0).
+  if (shore.world !== world || (shore.version !== world.version && now() - shore.at > FULL_PASS_MS)) {
     if (shore.marks.length !== world.area) {
       shore.marks = new Uint8Array(world.area);
       shore.cover = new Uint8Array(world.area);
     }
     shore.world = world;
     shore.version = world.version;
+    shore.at = now();
     shore.count = shoreSites(world, shore.marks);
     const cover = shore.cover;
     cover.fill(0);
@@ -824,6 +829,175 @@ export function drawPreviewTop(ctx: CanvasRenderingContext2D, game: Game, env: A
   ctx.restore();
 }
 
+// ── Skybridges v2 on the map (MEGACITY §5.4, §5.6) ─────────────────────────
+
+/** The route ghost's colour (a two-bridge route, the blue "2"). */
+const ROUTE: RGB = [90, 170, 255];
+/** The UI's "Show routes" chip in the pill (WP-5) turns the blue "2" badges on (§5.4 step 2). */
+export const skybridgeView = { showRoutes: false };
+
+/** Tube centre of a bridge between two anchors (§5.3 rule 4: top R − 6, bottom R − 23, R the lower roof). */
+export function tubeZ(world: World, ax: number, ay: number, bx: number, by: number): number {
+  const R = Math.min(roofOf(world, ax, ay), roofOf(world, bx, by));
+  return Math.max(30, R - SKYBRIDGE.tubeBelowRoof - SKYBRIDGE.tubeHeight / 2);
+}
+
+/** A ghost tube along the gap tiles of a span (green 1 / red 2), drawn back to front. */
+function ghostSpan(ctx: CanvasRenderingContext2D, ax: number, ay: number, bx: number, by: number, z: number, kind: 1 | 2, e: RailEnv, from = 1, to = -1) {
+  const axisX = ay === by;
+  const dx = Math.sign(bx - ax);
+  const dy = Math.sign(by - ay);
+  const n = Math.abs(bx - ax) + Math.abs(by - ay);
+  const last = to < 0 ? n - 1 : to;
+  const order: number[] = [];
+  for (let k = from; k <= last; k++) order.push(k);
+  if (dx + dy < 0) order.reverse();
+  for (const k of order) {
+    const x = ax + dx * k;
+    const y = ay + dy * k;
+    drawSkybridgeTile(ctx, (x - y) * HALF_W, (x + y) * HALF_H, axisX, z, true, false, k / Math.max(1, n), e, kind);
+  }
+}
+
+type Lane = { x0: number; y0: number; x1: number; y1: number; dir: number; roof: number };
+
+/** The lanes of the selected source on the ground (§5.4): faint cyan bands, so the rule reads before any tap. */
+export function drawLaneBands(ctx: CanvasRenderingContext2D, lanes: readonly Lane[], time: number, zoom: number) {
+  ctx.save();
+  toTileSpace(ctx);
+  const a = 0.7 + 0.3 * Math.sin(time * 3);
+  const fill = new Path2D();
+  for (const l of lanes) fill.rect(l.x0, l.y0, l.x1 - l.x0 + 1, l.y1 - l.y0 + 1);
+  ctx.fillStyle = css([143, 227, 255], 0.08 * a);
+  ctx.fill(fill);
+  ctx.strokeStyle = css([143, 227, 255], 0.35 * a);
+  ctx.lineWidth = 1.2 / (zoom * PERP);
+  ctx.stroke(fill);
+  ctx.restore();
+}
+
+/**
+ * Where a lane's tube runs clear (§5.3 rule 5): from the source's facade out to the first gap tile standing above the
+ * tube bottom − clearance (R − 29 with R the source's roof), or the lane's end. Returns the clear length in tiles.
+ */
+export function laneClear(world: World, l: Lane): number {
+  const lim = l.roof - SKYBRIDGE.tubeBelowRoof - SKYBRIDGE.tubeHeight - SKYBRIDGE.clearance;
+  const along = l.dir === 1 || l.dir === 3;
+  const len = along ? l.x1 - l.x0 + 1 : l.y1 - l.y0 + 1;
+  for (let k = 0; k < len; k++) {
+    // Step outward from the source: E / S grow from the low edge, W / N from the high edge.
+    const x = along ? (l.dir === 1 ? l.x0 + k : l.x1 - k) : -1;
+    const y = along ? -1 : l.dir === 2 ? l.y0 + k : l.y1 - k;
+    let blocked = false;
+    if (along) for (let yy = l.y0; yy <= l.y1 && !blocked; yy++) blocked = heightOf(world, x, yy) > lim;
+    else for (let xx = l.x0; xx <= l.x1 && !blocked; xx++) blocked = heightOf(world, xx, y) > lim;
+    if (blocked) return k;
+  }
+  return len;
+}
+
+/**
+ * The ghost tube of every lane at bridge height (§5.4 step 2): green up to the first blocker, red beyond it, on the
+ * lane's centre line. World transform expected; drawn after the sweep (an overlay, translucent).
+ */
+export function drawSkybridgeGhosts(ctx: CanvasRenderingContext2D, game: Game, env: ArtEnv, lanes: readonly Lane[]) {
+  const world = game.world;
+  const e = previewEnv;
+  e.time = env.time;
+  e.night = env.night;
+  e.zoom = env.zoom;
+  e.lod = env.zoom < LOD_ZOOM;
+  e.quality = env.quality;
+  ctx.save();
+  ctx.globalAlpha = 0.55 + 0.15 * Math.sin(env.time * 4);
+  for (const l of lanes) {
+    const z = Math.max(30, l.roof - SKYBRIDGE.tubeBelowRoof - SKYBRIDGE.tubeHeight / 2);
+    const clear = laneClear(world, l);
+    const along = l.dir === 1 || l.dir === 3;
+    const len = along ? l.x1 - l.x0 + 1 : l.y1 - l.y0 + 1;
+    // The centre line, as a span from the facade (k = 0 is the source's edge tile) outward.
+    const cx = Math.floor((l.x0 + l.x1) / 2);
+    const cy = Math.floor((l.y0 + l.y1) / 2);
+    const ax = l.dir === 1 ? l.x0 - 1 : l.dir === 3 ? l.x1 + 1 : cx;
+    const ay = l.dir === 2 ? l.y0 - 1 : l.dir === 0 ? l.y1 + 1 : cy;
+    const bx = l.dir === 1 ? ax + len + 1 : l.dir === 3 ? ax - len - 1 : cx;
+    const by = l.dir === 2 ? ay + len + 1 : l.dir === 0 ? ay - len - 1 : cy;
+    if (clear > 0) ghostSpan(ctx, ax, ay, bx, by, z, 1, e, 1, clear);
+    if (clear < len) ghostSpan(ctx, ax, ay, bx, by, z, 2, e, clear + 1, len);
+  }
+  ctx.restore();
+}
+
+/** Partner badges cache: recomputed when the source, the world or the routes chip changed (§5.4). */
+const badges = { key: '', list: [] as ReturnType<Game['skybridgePartners']> };
+
+/**
+ * Partner badges over their towers (§5.4 step 2), screen space (DPR × CSS px transform): valid partners a green 44 px
+ * badge with the price, invalid ones a 16 px red dot, at most 8 of each nearest the source first, placed to avoid
+ * overlap; two-bridge routes as a blue "2" only after the pill's Show routes chip (`skybridgeView.showRoutes`).
+ */
+export function drawPartnerBadges(ctx: CanvasRenderingContext2D, game: Game, cam: Camera) {
+  const src = game.bridgeSource;
+  const world = game.world;
+  if (!src) return;
+  const key = `${src.x},${src.y},${world.version},${skybridgeView.showRoutes ? 1 : 0}`;
+  if (badges.key !== key) {
+    badges.key = key;
+    badges.list = game.skybridgePartners();
+  }
+  const list = badges.list
+    .filter((p) => skybridgeView.showRoutes || !p.route)
+    .map((p) => ({ p, d: Math.abs(p.x - src.x) + Math.abs(p.y - src.y) }))
+    .sort((a, b) => a.d - b.d);
+  const placed: { x: number; y: number; r: number }[] = [];
+  let green = 0;
+  let red = 0;
+  ctx.save();
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  for (const { p } of list) {
+    const ok = p.ok && !p.route;
+    const route = !!p.route && p.ok;
+    if ((ok || route) && green >= 8) continue;
+    if (!ok && !route && red >= 8) continue;
+    const s = cam.tileToScreen(p.x, p.y);
+    let y = s.y - roofOf(world, p.x, p.y) * cam.zoom - (ok || route ? 26 : 10);
+    const r = ok || route ? 22 : 8;
+    // Nudge upward until it overlaps nothing placed (a few steps at most).
+    for (let k = 0; k < 4 && placed.some((q) => Math.hypot(q.x - s.x, q.y - y) < q.r + r + 2); k++) y -= r + 4;
+    if (placed.some((q) => Math.hypot(q.x - s.x, q.y - y) < q.r + r + 2)) continue;
+    placed.push({ x: s.x, y, r });
+    if (ok || route) {
+      green++;
+      ctx.fillStyle = css(route ? [16, 40, 86] : [8, 52, 34], 0.92);
+      ctx.beginPath();
+      ctx.arc(s.x, y, r, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.lineWidth = 2.5;
+      ctx.strokeStyle = css(route ? ROUTE : OK, 0.95);
+      ctx.stroke();
+      ctx.fillStyle = css([236, 255, 244]);
+      if (route) {
+        ctx.font = '800 18px system-ui, sans-serif';
+        ctx.fillText('2', s.x, y + 1);
+      } else {
+        ctx.font = '700 11px system-ui, sans-serif';
+        ctx.fillText(p.cost.toLocaleString('en-US'), s.x, y + 1);
+      }
+    } else {
+      red++;
+      ctx.fillStyle = css(BAD, 0.92);
+      ctx.beginPath();
+      ctx.arc(s.x, y, r, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.lineWidth = 1.5;
+      ctx.strokeStyle = css([40, 8, 16], 0.9);
+      ctx.stroke();
+    }
+  }
+  ctx.restore();
+}
+
 /** Skybridge span tube / Ribbon Rail ghost along the planned tiles (§8.9). */
 function drawStoryPreview(ctx: CanvasRenderingContext2D, game: Game, plan: ActionPlan, env: ArtEnv) {
   const N = game.world.N;
@@ -838,31 +1012,23 @@ function drawStoryPreview(ctx: CanvasRenderingContext2D, game: Game, plan: Actio
   const a0 = ctx.globalAlpha;
   ctx.globalAlpha = a0 * (0.75 + 0.2 * Math.sin(env.time * 5));
   if (plan.tool === 'skybridge' && plan.span) {
-    const sp = plan.span;
+    // The planned bridge and, for a two-bridge route, its second span too (the route ghost, §5.4).
     const ok = plan.valid && plan.tiles.every((t) => t.ok);
-    const axisX = sp.ay === sp.by;
-    const z = Math.max(30, Math.min(tileTop(world, sp.ax, sp.ay), tileTop(world, sp.bx, sp.by)) - 10);
-    const dx = Math.sign(sp.bx - sp.ax);
-    const dy = Math.sign(sp.by - sp.ay);
-    const n = Math.abs(sp.bx - sp.ax) + Math.abs(sp.by - sp.ay);
-    const order: number[] = [];
-    for (let k = 1; k < n; k++) order.push(k);
-    if (dx + dy < 0) order.reverse();
-    for (const k of order) {
-      const x = sp.ax + dx * k;
-      const y = sp.ay + dy * k;
-      drawSkybridgeTile(ctx, (x - y) * HALF_W, (x + y) * HALF_H, axisX, z, true, false, k / n, e, ok ? 1 : 2);
-    }
-    // Anchor beacons.
-    const g = glowSprite(ok ? OK : BAD, 64);
-    ctx.globalCompositeOperation = 'lighter';
-    for (const [x, y] of [
-      [sp.ax, sp.ay],
-      [sp.bx, sp.by],
-    ]) {
-      const wx = (x - y) * HALF_W;
-      const wy = (x + y) * HALF_H + HALF_H;
-      ctx.drawImage(g, wx - 18, wy - z - 18, 36, 36);
+    for (const sp of plan.route ? [plan.span, plan.route.second] : [plan.span]) {
+      const z = tubeZ(world, sp.ax, sp.ay, sp.bx, sp.by);
+      ghostSpan(ctx, sp.ax, sp.ay, sp.bx, sp.by, z, ok ? 1 : 2, e);
+      // Anchor beacons.
+      const g = glowSprite(ok ? (plan.route ? ROUTE : OK) : BAD, 64);
+      ctx.globalCompositeOperation = 'lighter';
+      for (const [x, y] of [
+        [sp.ax, sp.ay],
+        [sp.bx, sp.by],
+      ]) {
+        const wx = (x - y) * HALF_W;
+        const wy = (x + y) * HALF_H + HALF_H;
+        ctx.drawImage(g, wx - 18, wy - z - 18, 36, 36);
+      }
+      ctx.globalCompositeOperation = 'source-over';
     }
   } else if (plan.tool === 'rail' && plan.railMasks) {
     const idx = plan.tiles.map((_, k) => k).sort((a, b) => plan.tiles[a].x + plan.tiles[a].y - (plan.tiles[b].x + plan.tiles[b].y));
@@ -1171,11 +1337,13 @@ const UNPOWERED_DAYS = 6;
 interface DarkState {
   world: World | null;
   tick: number;
+  /** When the last pass ran (ms): at most one per FULL_PASS_MS (§3.9 R0). */
+  at: number;
   /** Tick each developed tile was first seen unpowered, −1 = powered / not developed. */
   since: Int32Array;
   buildings: Map<number, number>;
 }
-const dark: DarkState = { world: null, tick: -1, since: new Int32Array(0), buildings: new Map() };
+const dark: DarkState = { world: null, tick: -1, at: -1e9, since: new Int32Array(0), buildings: new Map() };
 
 /** Track how long each developed tile / service building has been dark (once per sim tick). */
 function darkState(world: World): DarkState {
@@ -1188,10 +1356,16 @@ function darkState(world: World): DarkState {
     dark.buildings.clear();
   }
   if (dark.tick === world.tick) return dark;
+  // Owned segments, at most one pass per FULL_PASS_MS (§3.9 R0): a block first seen dark a few ticks late badges later.
+  const t0 = now();
+  if (dark.tick >= 0 && t0 - dark.at < FULL_PASS_MS) return dark;
+  dark.at = t0;
   dark.tick = world.tick;
+  void N;
   const since = dark.since;
   const tiles = world.tiles;
-  for (let i = 0; i < N * N; i++) {
+  for (let sg = 0; sg < world.segCount; sg += 2)
+  for (let i = world.segs[sg]; i < world.segs[sg + 1]; i++) {
     const t = tiles[i];
     const off = t.zone !== ZoneType.None && t.level > 0 && !t.abandoned && !t.powered && t.buildingId < 0;
     if (!off) since[i] = -1;
@@ -1336,8 +1510,10 @@ function getNoRoad(): HTMLCanvasElement {
 /**
  * Which tiles have road access, by the one access rule (roads.computeAccess, §3.3):
  * a Street, Avenue or Ramp within ROAD_ACCESS_RANGE, or a Back Alley within 1; a
- * Highway alone never counts. Rebuilt lazily after tile changes (two passes over
- * the map, scratch arrays reused).
+ * Highway alone never counts. Built whole once per world (computeAccess), then
+ * kept incremental (MEGACITY §3.9 R0): a 'tiles' rect recomputes only the tiles
+ * within ROAD_ACCESS_RANGE of it, from their own neighbourhood, which is exactly
+ * the BFS's answer (Chebyshev distance through any tile).
  */
 export class RoadAccessMap {
   /** Per-tile arrays, sized from the world's frame on first use and when its side changes. */
@@ -1347,29 +1523,77 @@ export class RoadAccessMap {
   private near = new Int32Array(0);
   private queue = new Int32Array(0);
   private dirty = true;
+  private world: World | null = null;
+  /** Union of the rects changed since the last get(), or null. */
+  private rect: { x0: number; y0: number; x1: number; y1: number } | null = null;
+  /** Whole builds and local patches since construction (tests: R0). */
+  full = 0;
+  patches = 0;
 
-  invalidate() {
-    this.dirty = true;
+  /** Tiles changed in `r` (incremental), or everything (no rect: a world swap or an annex). */
+  invalidate(r?: { x0: number; y0: number; x1: number; y1: number }) {
+    if (!r) {
+      this.dirty = true;
+      return;
+    }
+    const q = this.rect;
+    this.rect = q ? { x0: Math.min(q.x0, r.x0), y0: Math.min(q.y0, r.y0), x1: Math.max(q.x1, r.x1), y1: Math.max(q.y1, r.y1) } : { ...r };
   }
 
   get(world: World): Uint8Array {
     const N = world.N;
     const area = world.area;
-    if (this.data.length !== area) {
+    if (this.data.length !== area || this.world !== world) {
       this.data = new Uint8Array(area);
       this.kinds = new Uint8Array(area);
       this.dist = new Uint8Array(area);
       this.near = new Int32Array(area);
       this.queue = new Int32Array(area);
+      this.world = world;
       this.dirty = true;
     }
-    if (!this.dirty) return this.data;
-    this.dirty = false;
-    fillKinds(world, this.kinds);
-    computeAccess(this.kinds, this.dist, this.near, this.queue, world.N);
-    const dist = this.dist;
+    if (this.dirty) {
+      this.dirty = false;
+      this.rect = null;
+      this.full++;
+      fillKinds(world, this.kinds);
+      computeAccess(this.kinds, this.dist, this.near, this.queue, world.N);
+      const dist = this.dist;
+      const out = this.data;
+      for (let i = 0; i < N * N; i++) out[i] = dist[i] !== 255 ? 1 : 0;
+      return out;
+    }
+    const r = this.rect;
+    if (!r) return this.data;
+    this.rect = null;
+    this.patches++;
+    const R = ROAD_ACCESS_RANGE;
+    const tiles = world.tiles;
+    const x0 = Math.max(0, r.x0 - R);
+    const y0 = Math.max(0, r.y0 - R);
+    const x1 = Math.min(N - 1, r.x1 + R);
+    const y1 = Math.min(N - 1, r.y1 + R);
     const out = this.data;
-    for (let i = 0; i < N * N; i++) out[i] = dist[i] !== 255 ? 1 : 0;
+    for (let y = y0; y <= y1; y++)
+      for (let x = x0; x <= x1; x++) {
+        let ok = 0;
+        for (let dy = -R; dy <= R && !ok; dy++) {
+          const ny = y + dy;
+          if (ny < 0 || ny >= N) continue;
+          for (let dx = -R; dx <= R; dx++) {
+            const nx = x + dx;
+            if (nx < 0 || nx >= N) continue;
+            const t = tiles[ny * N + nx];
+            if (!t.road) continue;
+            const k = t.roadKind;
+            if (k === RoadKind.Avenue || k === RoadKind.Ramp || k === RoadKind.Street || (k === RoadKind.Alley && dx >= -1 && dx <= 1 && dy >= -1 && dy <= 1)) {
+              ok = 1;
+              break;
+            }
+          }
+        }
+        out[y * N + x] = ok;
+      }
     return out;
   }
 }

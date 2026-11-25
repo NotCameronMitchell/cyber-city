@@ -24,6 +24,9 @@ import { hash2 } from '../game/rng';
 import type { BuildingStats, VisualState } from '../game/story/types';
 import { Terrain, ZoneType, type Tile } from '../game/types';
 import type { World } from '../game/world';
+import { roofOf } from '../game/heights';
+import { SKYBRIDGE } from '../game/config';
+import type { SkywayLayer } from './art/skyway';
 import { MOTH_COLOR, sigilSprite } from './art/sigils';
 import * as marks from './art/marks';
 import { drawRailTile, drawSkybridgeTile, type RailEnv } from './art/vertical';
@@ -195,11 +198,13 @@ function kiteSprite(): HTMLCanvasElement {
 export class StoryRender {
   /** Skybridge pieces by the sweep key they draw at (after that diagonal's buildings). */
   private segs = new Map<number, Seg[]>();
-  private readonly segKey = [-1, -1, -1, -1];
+  private readonly segKey = [-1, -1, -1, -1, -1];
   private segDirty = true;
   /** Tall-anchor flags per tile of the shown world (sized from its frame on first use). */
   private tall = new Uint8Array(0);
   private tallDirty = true;
+  /** MEGACITY §3.9 R0: a 'tiles' rect refreshes the tall flags inside it only (tallDirty = the whole owned box). */
+  private tallRect: { x0: number; y0: number; x1: number; y1: number } | null = null;
   private readonly railEnv: RailEnv = { time: 0, night: 0, zoom: 1, lod: false, quality: 'high' };
   private unsubs: (() => void)[] = [];
   private readonly seen = new Set<number>();
@@ -209,9 +214,10 @@ export class StoryRender {
   constructor(private readonly game: Game) {
     const ev = game.events;
     this.unsubs.push(
-      ev.on('tiles', () => {
+      ev.on('tiles', (r) => {
         this.segDirty = true;
-        this.tallDirty = true;
+        const q = this.tallRect;
+        this.tallRect = q ? { x0: Math.min(q.x0, r.x0), y0: Math.min(q.y0, r.y0), x1: Math.max(q.x1, r.x1), y1: Math.max(q.y1, r.y1) } : { ...r };
       }),
       ev.on('vertical', () => {
         this.segDirty = true;
@@ -230,8 +236,11 @@ export class StoryRender {
     this.unsubs = [];
   }
 
-  /** Per frame, before the building sweep. */
-  prepare(world: World, env: ArtEnv): void {
+  /**
+   * Per frame, before the building sweep. `skyway` (the renderer's deck layer, prepared first) lets a skybridge over
+   * a deck that draws late (deferred to a building) draw after it (§5.2 crossings).
+   */
+  prepare(world: World, env: ArtEnv, skyway?: SkywayLayer): void {
     this.visual = this.game.story?.visual ?? null;
     const e = this.railEnv;
     e.time = env.time;
@@ -245,17 +254,19 @@ export class StoryRender {
     const vv = world.vertical.version;
     const n = world.links.length;
     const act = world.vertical.activeLinks.size;
-    if (this.segDirty || k[0] !== vv || k[1] !== n || k[2] !== idSum || k[3] !== act) {
+    const sw = skyway?.stamp ?? 0;
+    if (this.segDirty || k[0] !== vv || k[1] !== n || k[2] !== idSum || k[3] !== act || k[4] !== sw) {
       k[0] = vv;
       k[1] = n;
       k[2] = idSum;
       k[3] = act;
+      k[4] = sw;
       this.segDirty = false;
-      this.rebuildSegs(world);
+      this.rebuildSegs(world, skyway);
     }
   }
 
-  private rebuildSegs(world: World): void {
+  private rebuildSegs(world: World, skyway?: SkywayLayer): void {
     this.segs.clear();
     for (const l of world.links) {
       if (!world.inBounds(l.ax, l.ay) || !world.inBounds(l.bx, l.by)) continue;
@@ -266,7 +277,9 @@ export class StoryRender {
       const ay = flip ? l.by : l.ay;
       const bx = flip ? l.ax : l.bx;
       const by = flip ? l.ay : l.by;
-      const z = Math.max(30, Math.min(anchorHeight(world, ax, ay), anchorHeight(world, bx, by)) - 10);
+      // §5.3 rule 4: the tube hangs from the lower roof (top R − 6, bottom R − 23); z is its centre.
+      const R = Math.min(roofOf(world, ax, ay), roofOf(world, bx, by));
+      const z = Math.max(30, R - SKYBRIDGE.tubeBelowRoof - SKYBRIDGE.tubeHeight / 2);
       const active = world.vertical.activeLinks.has(l.id);
       const n = Math.abs(bx - ax) + Math.abs(by - ay);
       // The back anchor may sort after the first gap tiles (multi-tile footprint): draw the tube after it.
@@ -276,13 +289,16 @@ export class StoryRender {
       for (let k = 1; k < n; k++) {
         const x = axisX ? ax + k : ax;
         const y = axisX ? ay : ay + k;
-        const key = Math.max(x + y, after);
+        // A deck on this tile that draws late (deferred to a building) draws first: the bridge passes over it.
+        const key = Math.max(x + y, after, skyway ? skyway.deferKey(world, y * world.N + x) : -1);
         const seg: Seg = { x, y, axisX, z, active, k: k / Math.max(1, n), a0: k === 1 ? -eA : 0, a1: k === n - 1 ? 1 + eB : 1 };
         const list = this.segs.get(key);
         if (list) list.push(seg);
         else this.segs.set(key, [seg]);
       }
     }
+    // Two tubes on one key draw the lower first (§5.6 depth; crossings at different heights, §5.3 rule 7).
+    for (const list of this.segs.values()) if (list.length > 1) list.sort((a, b) => a.z - b.z || a.x + a.y - (b.x + b.y));
   }
 
   /** Skybridge pieces scheduled at sweep key `s` (call after that diagonal's buildings). */
@@ -536,8 +552,17 @@ export class StoryRender {
       this.tallDirty = true;
     }
     if (this.tallDirty) {
+      // The owned box (locked land holds no tower), once; afterwards only the rects 'tiles' events touched.
       this.tallDirty = false;
-      for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) this.tall[y * N + x] = tallAt(world, x, y) ? 1 : 0;
+      this.tallRect = null;
+      this.tall.fill(0);
+      const ob = world.ownedBox;
+      for (let y = ob.y0; y <= ob.y1; y++) for (let x = ob.x0; x <= ob.x1; x++) this.tall[y * N + x] = tallAt(world, x, y) ? 1 : 0;
+    } else if (this.tallRect) {
+      const r = this.tallRect;
+      this.tallRect = null;
+      for (let y = Math.max(0, r.y0); y <= Math.min(N - 1, r.y1); y++)
+        for (let x = Math.max(0, r.x0); x <= Math.min(N - 1, r.x1); x++) this.tall[y * N + x] = world.isOwned(x, y) && tallAt(world, x, y) ? 1 : 0;
     }
     const c: RGB = [143, 227, 255];
     const g = glowSprite(c, 64);
