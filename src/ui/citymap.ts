@@ -151,7 +151,8 @@ export function reactionSummary(reactions: readonly { f: FactionId; v: number }[
     .sort((a, b) => b.v - a.v)
     .map((r) => {
       const l = FACTION_LABELS[r.f];
-      const n = Math.abs(r.v) >= 8 ? 3 : Math.abs(r.v) >= 4 ? 2 : 1;
+      // §7.2's examples: a lobby's +6 reads ++, a rival's −2 reads −; the lease's +8 / −4 read ++ / −.
+      const n = Math.abs(r.v) >= 10 ? 3 : Math.abs(r.v) >= 5 ? 2 : 1;
       const sign = (r.v > 0 ? '+' : MINUS).repeat(n);
       return `<span class="cc-sum-fav ${r.v > 0 ? 'is-up' : 'is-down'}" style="--fc:${l.color}"><b>${esc(l.short)}</b> ${sign}</span>`;
     })

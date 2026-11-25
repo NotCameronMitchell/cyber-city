@@ -172,6 +172,12 @@ describe('City map model (§7.2)', () => {
     expect(v1.slots[pick].lease).toBeNull();
   });
 
+  it('the annex summary reads like a choice summary: +6 is ++, −2 is −, the lease +8 / −4 is ++ / −', () => {
+    const plain = (html: string) => html.replace(/<[^>]+>/g, '');
+    expect(plain(reactionSummary([{ f: 'basalt', v: 6 }, { f: 'nacre', v: -2 }]))).toBe('Basalt ++ · Nacre −');
+    expect(plain(reactionSummary([{ f: 'nacre', v: 8 }, { f: 'basalt', v: -4 }]))).toBe('Nacre ++ · Basalt −');
+  });
+
   it('copy: the help text, terrain line, speakers, census of a variant', () => {
     expect(CITYMAP_HELP).toContain('a 3×3 city can grow to 5×5 in Settings');
     expect(terrainLine({ land: 0.89, kind: 'flats' })).toBe('Land 89% · Water 11% · rail yards');
