@@ -47,7 +47,7 @@ import { PORT_PALS, drawPortLive, portRecipe, portVariant, seaportGhostFacing } 
 import { SERVICE_PALS, SERVICE_RECIPES, STYLED_SERVICES, arcologyRecipe, serviceStyleRecipe } from './art/services';
 import { NIGHT_STEPS, SpriteCache, nightBucket, nightOfBucket, scaleBucket, scaleOfBucket, type Sprite } from './art/sprites';
 import { STORY_PALS, STORY_RECIPES, memorialLowerWards } from './art/story';
-import { STYLES, serviceLookGroup, styleDress, styleIndex, topOf, variantAccent, type StyleDef } from './art/styles';
+import { STYLES, serviceLookGroup, styleDress, styleIndex, stylePal, tintFor, topOf, variantAccent, type StyleDef } from './art/styles';
 import { STACK_PAL, stackRecipe, stackVariant } from './art/vertical';
 import { FORMS, LOT_RECIPES, ZONE_PALS, ZONE_RECIPES, dressBase, dressTier, type Recipe } from './art/zones';
 import { css, glowSprite } from './palette';
@@ -361,7 +361,7 @@ function kitModel(sp: ZoneSpec): Model {
   }
   const T = truthTop(zone, level, variant, tier);
   const acc = variantAccent(kind, dvar);
-  const pal = lang ? legacyPal(lang) : ZONE_PALS[zone - 1][tier][palBit];
+  const pal = lang ? legacyPal(lang) : stylePal(ZONE_PALS[zone - 1][tier][palBit], st, acc);
   const seed = classicSeed(zone, level, hc, palBit) + body.form * 131 + body.seed * 17 + styleKey * 1009;
   const fallback = zoneModelId(zone, level, variant, tier);
   let recipe: Recipe;
@@ -370,7 +370,7 @@ function kitModel(sp: ZoneSpec): Model {
     recipe = (p) => drawLegacy(p, lang, zone, shape, W, H, T, body.seed);
   } else if (body.form < KIT_FIRST) {
     recipe = ZONE_RECIPES[zone - 1][level - 1][body.form];
-    sty = st.tint;
+    sty = tintFor(st, hc + body.seed * 3 + palBit);
   } else {
     const k: KitCtx = { W, H, T, s: body.seed, lv: level, zone, tier, st, acc };
     recipe = (p) => drawKit(p, zone, body.form, k);

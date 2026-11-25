@@ -302,22 +302,28 @@ export const ribbonTwins: Design = (p, d) => {
   haloRing(p, b[0], b[1], r * 1.6, zb - 14);
 };
 
-/** D: Halo Atrium — a wide dome with two floating rings. */
+/** D: Halo Atrium — a wide dome with two floating rings round a pearl shaft that rises out of it. */
 export const haloAtrium: Design = (p, d) => {
   const u = cx(d.b);
   const v = cy(d.b);
   const R = half(d.b) * 0.95;
-  const dh = d.h * 0.42;
-  p.cyl(u, v, R, d.z0, d.z0 + d.h * 0.12, PEARL, BLUSH);
-  p.cylBands(u, v, R, d.z0 + 2, d.z0 + d.h * 0.12, 6);
-  p.dome(u, v, R * 0.95, d.z0 + d.h * 0.12, dh, mat([214, 196, 220], [44, 30, 56]));
-  // A slim central needle carries the rings.
+  const dh = d.h * 0.3;
+  p.cyl(u, v, R, d.z0, d.z0 + d.h * 0.1, PEARL, BLUSH);
+  p.cylBands(u, v, R, d.z0 + 2, d.z0 + d.h * 0.1, 6);
+  // The shaft first (its foot hides inside the dome), then the dome over it.
+  const shaftTop = d.z0 + d.h * 0.76;
+  const rs = R * 0.36;
+  p.cyl(u, v, rs, d.z0 + d.h * 0.1, shaftTop, PEARL, BLUSH, rs * 0.9);
+  p.cylBands(u, v, rs, d.z0 + d.h * 0.3, shaftTop - 2, 7);
+  p.dome(u, v, R * 0.95, d.z0 + d.h * 0.1, dh, mat([214, 196, 220], [44, 30, 56]));
+  p.cyl(u, v, rs * 0.98, d.z0 + d.h * 0.1 + dh * 0.7, d.z0 + d.h * 0.42, PEARL, BLUSH, rs * 0.98);
+  p.dome(u, v, rs * 0.9, shaftTop, d.h * 0.05, PEARL);
   const zTop = d.z0 + d.h;
-  pole(p, u, v, d.z0 + d.h * 0.12 + dh, zTop, mat([230, 230, 240]), 1.2);
-  haloRing(p, u, v, R * 0.8, d.z0 + d.h * 0.62);
-  haloRing(p, u, v, R * 0.55, d.z0 + d.h * 0.8);
+  pole(p, u, v, shaftTop + d.h * 0.05, zTop, mat([230, 230, 240]), 1.2);
+  haloRing(p, u, v, R * 0.8, d.z0 + d.h * 0.56);
+  haloRing(p, u, v, R * 0.58, d.z0 + d.h * 0.7);
   p.lamp(u, v, zTop, ICE, 14);
-  p.glow(u, v, d.z0 + d.h * 0.3, HALO, R * 140, p.glowA() * 0.4);
+  p.glow(u, v, d.z0 + d.h * 0.25, HALO, R * 140, p.glowA() * 0.4);
 };
 
 // ════════════════════════════════════════════════════════════════════════════

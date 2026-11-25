@@ -16,7 +16,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import type { EndingId } from '../../game/story/types';
-import { NEON, type RGB } from '../palette';
+import { NEON, css, type RGB } from '../palette';
 import { antennaForest, charterBlock, crucible, FACTION_PALS, gantrySpine, haloAtrium, hexColumn, hullStack, netLoft, openBelfry, pearlDrop, ribbonTwins, ropeRoost, sailCanopy, spiral, steppedTower, craneHab, buttressHall, type Design } from './faction';
 import { mat, type ArtPal, type Mat, type Painter, type Roof, type WinSpec } from './painter';
 import { ball, crane, lampString, lanternRoof, lattice, pole, sail } from './parts';
@@ -160,6 +160,26 @@ function recordtower(past: boolean): Recipe {
       const [ox, oy] = p.pt(au + (bu - au) * 0.1, av + (bv - av) * 0.1, 60);
       const [x1, y1] = p.pt(au + (bu - au) * 0.9, av + (bv - av) * 0.9, 60);
       p.addSig({ k: 'ledger', ox, oy, ex: x1 - ox, ey: y1 - oy, h: 108, c: [150, 220, 255], frozen: past });
+      // Static lines baked in (what far zoom and low quality show; the live fx scrolls over them).
+      const g = p.g;
+      if (g) {
+        g.fillStyle = css(p.emissive([150, 220, 255], 0.3), past ? 0.35 : 0.7);
+        for (let r = 0; r < 14; r++)
+          for (let c = 0; c < 4; c++) {
+            const t0 = 0.14 + c * 0.19 + ((r * 7 + c * 3) % 5) * 0.01;
+            const t1 = t0 + 0.08 + ((r + c) % 3) * 0.03;
+            const z = 64 + r * 7.4;
+            const [xa, ya] = p.pt(au + (bu - au) * t0, av + (bv - av) * t0, z);
+            const [xb, yb] = p.pt(au + (bu - au) * t1, av + (bv - av) * t1, z);
+            g.beginPath();
+            g.moveTo(xa, ya);
+            g.lineTo(xb, yb);
+            g.lineTo(xb, yb - 1.6);
+            g.lineTo(xa, ya - 1.6);
+            g.closePath();
+            g.fill();
+          }
+      }
     }
     p.box(0.8, 0.6, 2.2, 1.6, 180, 194, mat([96, 104, 120], [20, 22, 32]), { top: mat([120, 180, 160]) });
     pole(p, 1.5, 1.1, 194, 214, STEEL, 0.8);

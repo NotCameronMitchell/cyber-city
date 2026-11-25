@@ -19,8 +19,8 @@
 
 import { DISTRICTS } from '../../game/config';
 import { DISTRICT_KINDS, type DistrictKind } from '../../game/types';
-import { hexToRgb, mix, type RGB } from '../palette';
-import { mat, type Mat, type Painter, type Roof, type WinSpec } from './painter';
+import { css, hexToRgb, mix, type RGB } from '../palette';
+import { mat, type ArtPal, type Mat, type Painter, type Roof, type WinSpec } from './painter';
 
 /** Roof habits a kit template may draw on its top (§6.1 parameters). */
 export type RoofKind = 'plant' | 'gable' | 'saw' | 'garden' | 'helipad' | 'antenna' | 'tower' | 'solar' | 'dome' | 'pyramid' | 'tarp' | 'hip' | 'arch' | 'thatch';
@@ -255,10 +255,52 @@ export function variantAccent(kind: DistrictKind, variant: number): RGB | null {
   if (a === undefined) {
     const d = DISTRICTS[kind];
     const hex = variant > 0 ? d?.variants[variant - 1]?.accent ?? d?.color : d?.color;
-    a = hex ? mix(hexToRgb(hex), [255, 255, 255], 0.08) : null;
+    // The art leans on the accent more than the City map's soft tint: saturate it so a roofscape reads at zoom 0.5.
+    if (hex) {
+      const c = hexToRgb(hex);
+      const grey = (c[0] + c[1] + c[2]) / 3;
+      a = c.map((v) => Math.max(0, Math.min(255, grey + (v - grey) * 1.9))) as RGB;
+    } else a = null;
     accents.set(key, a);
   }
   return a;
+}
+
+const tintCache = new Map<number, StyleDef['tint']>();
+/**
+ * The tint for today's forms in a style, varied per body (§6.1: a style restyles their materials): the wall role leans
+ * towards one of the style's wall materials (`i` picks it), so a district keeps its character without one flat colour.
+ */
+export function tintFor(st: StyleDef, i: number): StyleDef['tint'] {
+  if (!st.tint) return null;
+  const k = st.index * 16 + (i % st.walls.length);
+  let t = tintCache.get(k);
+  if (t === undefined) {
+    const w = st.walls[i % st.walls.length];
+    const base = st.tint.wall;
+    t = { ...st.tint, wall: [mix(w.day, base ? base[0] : w.day, 0.35), mix(w.night, base ? base[1] : w.night, 0.35), base ? base[2] * 0.92 : 0.65] };
+    tintCache.set(k, t);
+  }
+  return t;
+}
+
+/**
+ * A zone palette in a district's style (§6.1, §3.7): the district accent becomes the signature neon (trims, signs, the
+ * accent windows), its lamps tint the street uplight and its habits warm or cool the window light, so districts read
+ * apart at night too. Charter Shore keeps today's palettes (a migrated city keeps its colour mix).
+ */
+const palCache = new Map<string, ArtPal>();
+export function stylePal(pal: ArtPal, st: StyleDef, acc: RGB | null): ArtPal {
+  if (st.id === 'shore' || !acc) return pal;
+  const key = `${st.id}|${acc.join(',')}|${pal.neon.join(',')}|${pal.neon2.join(',')}|${pal.warm}|${pal.cool}`;
+  let out = palCache.get(key);
+  if (!out) {
+    const warm = Math.max(0.03, Math.min(0.9, pal.warm + st.warm * 1.6 - (st.warm < 0.06 ? 0.25 : 0)));
+    const cool = Math.max(0.03, Math.min(1 - warm, pal.cool + (st.warm < 0.06 ? 0.2 : -st.warm)));
+    out = { neon: mix(acc, pal.neon, 0.2), neon2: pal.neon2, up: mix(st.lamp, acc, 0.35), warm, cool, glass: pal.glass ?? st.glass };
+    palCache.set(key, out);
+  }
+  return out;
 }
 
 // ── Props for today's forms in a non-shore style (after the recipe, like dressTier) ──
@@ -273,10 +315,19 @@ export function topOf(p: Painter): Roof | null {
   return best;
 }
 
-/** Accent trim around a flat roof's bounding box (variant accent, thin). */
+/**
+ * The district accent on a roof (§3.7: roof trims): a wash of the accent over the top roof and a neon trim on its two
+ * front edges, so two districts of one kind read apart from above.
+ */
 export function roofTrim(p: Painter, r: Roof, c: RGB) {
   const z = r.z + 0.3;
-  p.neon([r.u0, r.v1, z, r.u1, r.v1, z, r.u1, r.v0, z], c, 0.55);
+  const g = p.g;
+  if (g && r.u1 - r.u0 > 0.1 && r.v1 - r.v0 > 0.1) {
+    p.begin_();
+    p.quad(r.u0 + 0.02, r.v0 + 0.02, z, r.u1 - 0.02, r.v0 + 0.02, z, r.u1 - 0.02, r.v1 - 0.02, z, r.u0 + 0.02, r.v1 - 0.02, z);
+    p.fill(css(mix(c, [40, 40, 50], p.n * 0.6), 0.42 - p.n * 0.2));
+  }
+  p.neon([r.u0, r.v1, z, r.u1, r.v1, z, r.u1, r.v0, z], c, 0.8);
 }
 
 const STAIN = mat([60, 72, 64], [10, 14, 14]);
@@ -291,7 +342,7 @@ const SOCK: RGB = [255, 130, 40];
 export function styleDress(p: Painter, st: StyleDef, acc: RGB | null, zone: number, level: number, W = 1, H = 1): void {
   if (st.id === 'shore') return;
   const top = topOf(p);
-  if (acc && top && (level >= 2 || zone === 2)) roofTrim(p, top, acc);
+  if (acc && top) roofTrim(p, top, acc);
   const g = p.g;
   const lod = p.lod;
   const fu = W - 0.04;

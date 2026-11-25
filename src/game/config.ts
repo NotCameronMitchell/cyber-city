@@ -626,7 +626,7 @@ export const BUILDINGS: Record<BuildingType, BuildingDef> = {
     unlockPop: 0, // a shore tile in the Sunk, the Shoals or Reedmere (WP-2)
     color: '#58c8b0',
     site: 'shore',
-    hidden: true,
+    hidden: false,
   },
   canopypark: {
     type: 'canopypark',
@@ -667,7 +667,7 @@ export const BUILDINGS: Record<BuildingType, BuildingDef> = {
     unlockPop: 120000,
     color: '#ff5f7a',
     tall: true,
-    hidden: true,
+    hidden: false,
   },
   reclaim: {
     type: 'reclaim',
@@ -709,7 +709,7 @@ export const BUILDINGS: Record<BuildingType, BuildingDef> = {
     unlockPop: 120000,
     color: '#7aa8ff',
     gate: { fallbackPop: 120000, districts: 2 },
-    hidden: true,
+    hidden: false,
   },
   markethall: {
     type: 'markethall',
@@ -768,7 +768,7 @@ export const BUILDINGS: Record<BuildingType, BuildingDef> = {
     unlockPop: 0,
     color: '#ff8a4f',
     gate: { district: 'terraces' },
-    hidden: true,
+    hidden: false,
   },
   datavault: {
     type: 'datavault',
@@ -810,7 +810,7 @@ export const BUILDINGS: Record<BuildingType, BuildingDef> = {
     color: '#cfe3ff',
     gate: { faction: 'board', tier: 'friendly', chapter: 3, fallbackPop: 300000 },
     maxCount: 1,
-    hidden: true,
+    hidden: false,
   },
   hexworks: {
     type: 'hexworks',
@@ -834,7 +834,7 @@ export const BUILDINGS: Record<BuildingType, BuildingDef> = {
     gate: { faction: 'basalt', tier: 'allied' }, // or patron Basalt and 300,000 residents (WP-2)
     tall: true,
     maxCount: 1,
-    hidden: true,
+    hidden: false,
   },
   pearlatrium: {
     type: 'pearlatrium',
@@ -857,7 +857,7 @@ export const BUILDINGS: Record<BuildingType, BuildingDef> = {
     gate: { faction: 'nacre', tier: 'allied' }, // or patron Nacre and 300,000 residents (WP-2)
     tall: true,
     maxCount: 1,
-    hidden: true,
+    hidden: false,
   },
   hullhouse: {
     type: 'hullhouse',
@@ -878,7 +878,7 @@ export const BUILDINGS: Record<BuildingType, BuildingDef> = {
     color: '#b6ff2e',
     gate: { faction: 'undertow', tier: 'allied', district: 'sunk' },
     maxCount: 1,
-    hidden: true,
+    hidden: false,
   },
   kitemast: {
     type: 'kitemast',
@@ -901,7 +901,7 @@ export const BUILDINGS: Record<BuildingType, BuildingDef> = {
     gate: { faction: 'kites', tier: 'allied' },
     tall: true,
     maxCount: 1,
-    hidden: true,
+    hidden: false,
   },
   lampchoir: {
     type: 'lampchoir',
@@ -922,7 +922,7 @@ export const BUILDINGS: Record<BuildingType, BuildingDef> = {
     color: '#fff3c4',
     gate: { faction: 'tuning', tier: 'friendly' },
     maxCount: 1,
-    hidden: true,
+    hidden: false,
   },
   beacon: {
     type: 'beacon',
@@ -945,7 +945,7 @@ export const BUILDINGS: Record<BuildingType, BuildingDef> = {
     gate: { district: 'shoals', fallbackPop: 120000 },
     site: 'shore',
     maxCount: 1,
-    hidden: true,
+    hidden: false,
   },
   arena: {
     type: 'arena',
@@ -987,7 +987,7 @@ export const BUILDINGS: Record<BuildingType, BuildingDef> = {
     gate: { lobby: 5 },
     tall: true,
     maxCount: 1,
-    hidden: true,
+    hidden: false,
   },
   terminal: {
     type: 'terminal',
@@ -1010,7 +1010,7 @@ export const BUILDINGS: Record<BuildingType, BuildingDef> = {
     gate: { districts: 3 }, // and a live ribbon with ≥ 4 stations (WP-2)
     station: true,
     maxCount: 1,
-    hidden: true,
+    hidden: false,
   },
   gantry: {
     type: 'gantry',
@@ -1033,7 +1033,7 @@ export const BUILDINGS: Record<BuildingType, BuildingDef> = {
     gate: { ending: 'ironwork' },
     tall: true,
     maxCount: 1,
-    hidden: true,
+    hidden: false,
   },
   glasssmile: {
     type: 'glasssmile',
@@ -1055,7 +1055,7 @@ export const BUILDINGS: Record<BuildingType, BuildingDef> = {
     gate: { ending: 'pearl' },
     tall: true,
     maxCount: 1,
-    hidden: true,
+    hidden: false,
   },
   breadpier: {
     type: 'breadpier',
@@ -1077,7 +1077,7 @@ export const BUILDINGS: Record<BuildingType, BuildingDef> = {
     gate: { ending: 'lowcrown' },
     site: 'shore',
     maxCount: 1,
-    hidden: true,
+    hidden: false,
   },
   recordtower: {
     type: 'recordtower',
@@ -1099,7 +1099,7 @@ export const BUILDINGS: Record<BuildingType, BuildingDef> = {
     gate: { ending: 'ledger' },
     tall: true,
     maxCount: 1,
-    hidden: true,
+    hidden: false,
   },
   stillsquare: {
     type: 'stillsquare',
@@ -1121,7 +1121,7 @@ export const BUILDINGS: Record<BuildingType, BuildingDef> = {
     color: '#fff7d6',
     gate: { ending: 'quiet' },
     maxCount: 1,
-    hidden: true,
+    hidden: false,
   },
   frame: {
     type: 'frame',
