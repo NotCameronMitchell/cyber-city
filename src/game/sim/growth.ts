@@ -294,10 +294,14 @@ export class GrowthSystem {
     g.ground[i] = Ground.Plain;
     g.blightW[i] = 0;
     if (this.onRuinRestored) {
+      g.mirrored++;
       this.onRuinRestored(world, i % N, (i / N) | 0);
+      g.mirrored--;
       return;
     }
+    g.mirrored++;
     world.setGround(i % N, (i / N) | 0, Ground.Plain);
+    g.mirrored--;
     world.districts.ruinsRestored = (world.districts.ruinsRestored ?? 0) + 1;
     if (pay <= 0) return;
     const month = Math.floor(world.tick / DAYS_PER_MONTH);
@@ -329,10 +333,14 @@ export class GrowthSystem {
   private set(world: World, g: SimGrid, i: number, level: number, abandoned: boolean, tier?: WealthTier): void {
     const N = world.N;
     this.levelTick[(((i / N) | 0) >> 6) * this.R + ((i % N) >> 6)] = world.tick;
+    // Mirrored right below: the scan need not read this row again for it.
+    g.mirrored++;
     world.setLevel(i % world.N, (i / world.N) | 0, level, abandoned, tier);
+    g.mirrored--;
     g.level[i] = level;
     g.abandoned[i] = abandoned && level > 0 ? 1 : 0;
     g.wealth[i] = world.tiles[i].wealth;
+    g.blightW[i] = g.abandoned[i] ? (g.ground[i] === Ground.Rubble ? RUINS.blightWeight : 1) : 0;
     if (level === 0) world.wealthStreak[i] = 0;
     this.unpoweredDays[i] = 0;
     this.changes++;

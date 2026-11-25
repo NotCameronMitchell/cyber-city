@@ -489,6 +489,40 @@ const centreX = (b: Building) => b.x + b.size / 2;
 const centreY = (b: Building) => b.y + b.size / 2;
 
 /**
+ * A hash of what refresh() reads that a player action can move (MEGACITY §11.1, after an action): every link's ends
+ * (tall, powered), every station's and Stratablock's state, the track layout and the rail knock-outs. Game skips the
+ * refresh after an action when it holds (a road drag that changed none of them).
+ */
+export function refreshKey(world: World): number {
+  let h = Math.imul(world.links.length + 1, 0x9e3779b1);
+  const mix = (v: number) => {
+    h = Math.imul(h ^ (v | 0), 0x85ebca6b) + 0x27d4eb2f;
+  };
+  for (const l of world.links)
+    mix(l.id * 8 + (linkSealed(world, l) ? 1 : 0) + (anchorPowered(world, l.ax, l.ay) ? 2 : 0) + (anchorPowered(world, l.bx, l.by) ? 4 : 0));
+  for (const b of world.buildings.values()) {
+    if (b.type === 'stack') mix(b.id * 64 + completeStage(b) * 8 + (b.crown ? b.crown.length : 0));
+    if (BUILDINGS[b.type]?.station) mix(b.id * 4 + (isLiveStation(b) ? 1 : 0) + (b.x + b.y * world.N) * 2);
+  }
+  const rail = world.rail;
+  let r = 0;
+  for (let k = 0; k < rail.length; k++) if (rail[k]) r = (r + Math.imul(k + 1, 2654435761) * rail[k]) | 0;
+  mix(r);
+  mix(world.story.railOut.length);
+  return h | 0;
+}
+
+/** The refreshKey each world was last refreshed with. */
+const REFRESHED = new WeakMap<World, number>();
+
+/** refresh() unless nothing it reads moved since the last one (refreshKey). Returns true when it refreshed. */
+export function refreshIfMoved(world: World, opts?: { quiet?: boolean }): boolean {
+  if (REFRESHED.get(world) === refreshKey(world)) return false;
+  refresh(world, opts);
+  return true;
+}
+
+/**
  * Tall checks, active links, live rail networks (BFS), world.vertical metrics
  * and world.layerParts.vertical; then composeLayers and emit 'vertical'.
  * Run monthly, on load, and after any rail, link, bulldoze or building change.
@@ -603,6 +637,7 @@ export function refresh(world: World, opts?: { quiet?: boolean }): void {
   writeLayers(world, world.layerParts.vertical);
   composeLayers(world);
   v.version++;
+  REFRESHED.set(world, refreshKey(world));
   world.events.emit('vertical');
 }
 

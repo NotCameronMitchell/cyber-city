@@ -511,6 +511,38 @@ describe('the frame guard (§3.3, §3.11)', () => {
     expect(months).toHaveLength(1);
   }, 60_000);
 
+  it('a player action keeps its district awake (O8) and recomputes locally (O5): Game.apply notes the action, setTax recomputes the economy only', () => {
+    const { g } = city(5, 5);
+    const w = g.world;
+    w.story.flags.published = true;
+    for (let s = 0; s < 25; s++) if (!w.slotOwned[s]) w.annex(s);
+    g.sim.recomputeAll();
+    g.sim.sleep = 'forced';
+    g.sim.sleepFocus = 12;
+    const calls: string[] = [];
+    const sim = g.sim as unknown as Record<string, (...a: unknown[]) => unknown>;
+    for (const k of ['recomputeAll', 'recomputeAround', 'recomputeEconomy']) {
+      const f = sim[k].bind(g.sim);
+      sim[k] = (...a: unknown[]) => {
+        calls.push(k);
+        return f(...a);
+      };
+    }
+    // A street in slot 0, far from the camera's ring.
+    w.funds = 1e7;
+    g.setTool('road');
+    expect(g.apply({ x: 20, y: 20 }, { x: 26, y: 20 }).valid).toBe(true);
+    expect(calls).toEqual(['recomputeAround']);
+    const act = (g.sim as unknown as { act: Uint8Array }).act;
+    for (let d = 0; d < 16; d++) {
+      g.sim.step();
+      expect(act[0]).toBe(1);
+    }
+    calls.length = 0;
+    g.setTax(10);
+    expect(calls).toEqual(['recomputeEconomy']);
+  }, 60_000);
+
   it('a backlog over 4 days is dropped', () => {
     const { g } = city(3, 5);
     let t = 0;

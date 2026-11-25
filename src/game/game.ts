@@ -243,6 +243,15 @@ const num = (n: number) => Math.round(n).toLocaleString('en-US');
 const storyTool = (tool: ToolId) =>
   tool === 'bulldoze' || tool === 'skybridge' || tool === 'rail' || tool === 'skyway' || isRoadTool(tool) || isBuildingTool(tool);
 
+/** A tile rect (inclusive), as the 'tiles' event and Simulation.recomputeAround take it. */
+type TileRectLike = { x0: number; y0: number; x1: number; y1: number };
+
+/** `r` grown to hold tile (x, y) (a new rect when r is null). */
+function growRect(r: TileRectLike | null, x: number, y: number): TileRectLike {
+  if (!r) return { x0: x, y0: y, x1: x, y1: y };
+  return { x0: Math.min(r.x0, x), y0: Math.min(r.y0, y), x1: Math.max(r.x1, x), y1: Math.max(r.y1, y) };
+}
+
 /** Tools whose last drag can be undone for SAFETY.undoSec (EXPANSION §7.7). */
 const undoableTool = (tool: ToolId) => isRoadTool(tool) || tool === 'skyway' || isZoneTool(tool);
 
@@ -518,8 +527,8 @@ export class Game {
   setTax(rate: number) {
     const cap = Math.min(MAX_TAX, this.world.mods.taxCap);
     this.world.taxRate = Math.max(MIN_TAX, Math.min(cap, Math.round(rate)));
-    // Refresh demand + budget projection now, so it moves even while paused.
-    this.sim.recomputeAll();
+    // Refresh demand + budget projection now, so it moves even while paused (census and budget only, O5).
+    this.sim.recomputeEconomy();
     this.events.emit('stats');
   }
 
@@ -691,8 +700,10 @@ export class Game {
     const c = isBuildingTool(tool) ? w.story.credits.find((e) => e.what === tool && e.n > 0) : undefined;
     const credit: UsedCredit | undefined = c ? { what: c.what, mul: c.mul } : undefined;
     const linkMark = w.nextLinkId;
-    // Refunded buildings' demolition fees are waived, not charged and credited back.
-    const plan = applyAction(w, tool, from, to, refund?.ids.length ? { ...opts, waive: new Set(refund.ids) } : opts);
+    // Refunded buildings' demolition fees are waived, not charged and credited back. The tiles it changes bound the
+    // recompute after it (O5).
+    const touched = this.touching(() => applyAction(w, tool, from, to, refund?.ids.length ? { ...opts, waive: new Set(refund.ids) } : opts));
+    const plan = touched.out;
     if (!plan.valid) {
       if (plan.slot !== undefined && plan.reason === NOT_ANNEXED) {
         // Locked land (MEGACITY §3.4): name the district; the Map action opens the City map on it.
@@ -729,14 +740,39 @@ export class Game {
       } else if (refund.credits.length) this.toast(`Refunded: next ${BUILDINGS[refund.credits[0].what].name} free`, 'good');
     }
     if (this.undoSnap) this.toast(this.undoText(tool, plan), 'info', { id: 'undo', label: 'Undo', sec: SAFETY.undoSec });
-    this.sim.recomputeAll();
+    const rect = growRect(growRect(touched.rect, from.x, from.y), to.x, to.y);
+    const fp = plan.footprint;
+    this.recomputeAround(fp ? growRect(growRect(rect, fp.x, fp.y), fp.x + fp.size - 1, fp.y + fp.size - 1) : rect);
     if (storyTool(tool)) {
-      // Power was just recomputed: re-evaluate links and stations now, not next month.
-      vertical.refresh(this.world);
+      // Power was just recomputed: re-evaluate links and stations now, not next month (only when one of them moved).
+      if (tool === 'skybridge' || tool === 'rail') vertical.refresh(this.world);
+      else vertical.refreshIfMoved(this.world);
       this.story.markDirty();
     }
     this.events.emit('stats');
     return plan;
+  }
+
+  /**
+   * The local recompute after a player action (MEGACITY §3.3, O5): fields on the touched rect ⊕ 12, power, coverage
+   * and traffic as needed, census and budget; it also keeps the action's districts awake (O8).
+   */
+  private recomputeAround(rect: TileRectLike | null): void {
+    if (rect) this.sim.recomputeAround(rect);
+    else this.sim.recomputeAll();
+  }
+
+  /** Run `fn` and collect the union of the 'tiles' rects it emitted (null when it changed no tile). */
+  private touching<T>(fn: () => T): { out: T; rect: TileRectLike | null } {
+    let rect: TileRectLike | null = null;
+    const off = this.events.on('tiles', (r) => {
+      rect = rect ? { x0: Math.min(rect.x0, r.x0), y0: Math.min(rect.y0, r.y0), x1: Math.max(rect.x1, r.x1), y1: Math.max(rect.y1, r.y1) } : { ...r };
+    });
+    try {
+      return { out: fn(), rect };
+    } finally {
+      off();
+    }
   }
 
   /** After a building is placed: the toast, its refund record and (Spaceport) the real-time floor. */
@@ -835,14 +871,19 @@ export class Game {
       this.events.emit('sfx', 'error');
       return false;
     }
-    for (const t of u.tiles) w.restoreTile(t.before.i, t.before);
+    const touched = this.touching(() => {
+      for (const t of u.tiles) w.restoreTile(t.before.i, t.before);
+    });
     w.funds += u.spent;
     this.cancelPending(); // a plan waiting for ✓ goes with its ghost
     this.events.emit('sfx', 'click');
     this.toast('Undone', 'info');
-    this.sim.recomputeAll();
+    let rect = touched.rect;
+    for (const t of u.tiles) rect = growRect(rect, t.before.i % w.N, (t.before.i / w.N) | 0);
+    this.recomputeAround(rect);
     if (storyTool(u.tool)) {
-      vertical.refresh(w);
+      if (u.tool === 'rail') vertical.refresh(w);
+      else vertical.refreshIfMoved(w);
       this.story.markDirty();
     }
     this.events.emit('stats');
@@ -1128,7 +1169,13 @@ export class Game {
   }
   /** Raise a Stratablock (crown required when starting stage 3). */
   raiseStage(id: number, crown?: CrownId, look?: 0 | 1 | 2 | 3): ActionResult {
-    return this.afterStoryAction(raiseStage(this.world, id, crown, look), 'build');
+    return this.afterStoryAction(raiseStage(this.world, id, crown, look), 'build', false, this.buildingRect(id));
+  }
+
+  /** A building's footprint as a rect (the local recompute after a building-only story action), or null. */
+  private buildingRect(id: number): TileRectLike | null {
+    const b = this.world.buildings.get(id);
+    return b ? { x0: b.x, y0: b.y, x1: b.x + b.size - 1, y1: b.y + b.size - 1 } : null;
   }
   crackdown(precinctId: number): ActionResult {
     return this.afterStoryAction(crackdown(this.world, precinctId), 'alert');
@@ -1261,7 +1308,8 @@ export class Game {
       this.events.emit('sfx', 'error');
       return { ok: false, reason: 'No skyway here', cost: 0 };
     }
-    const plan = applyAction(w, 'bulldoze', { x, y }, { x, y });
+    const touched = this.touching(() => applyAction(w, 'bulldoze', { x, y }, { x, y }));
+    const plan = touched.out;
     if (!plan.valid) {
       if (plan.reason) this.toast(plan.reason, 'error');
       this.events.emit('sfx', 'error');
@@ -1271,8 +1319,8 @@ export class Game {
     this.cancelPending();
     this.events.emit('sfx', 'bulldoze');
     if (this.selected?.sky && this.selected.x === x && this.selected.y === y) this.select(null);
-    this.sim.recomputeAll();
-    vertical.refresh(w);
+    this.recomputeAround(growRect(touched.rect, x, y));
+    vertical.refreshIfMoved(w);
     this.story.markDirty();
     this.events.emit('stats');
     return { ok: true, cost: plan.cost };
@@ -1359,13 +1407,19 @@ export class Game {
       this.events.emit('sfx', 'error');
       return false;
     }
-    for (const id of u.ids) removeLink(w, id);
+    let rect: TileRectLike | null = null;
+    for (const id of u.ids) {
+      const l = w.links.find((k) => k.id === id);
+      if (l) rect = growRect(growRect(rect, l.ax, l.ay), l.bx, l.by);
+      removeLink(w, id);
+    }
     w.funds += u.spent;
     this.cancelPending();
     this.events.emit('sfx', 'click');
     this.toast('Undone', 'info');
-    this.sim.recomputeAll();
+    // The links' layers are rewritten first (vertical), then the fields around their towers.
     vertical.refresh(w);
+    this.recomputeAround(rect);
     this.story.markDirty();
     this.events.emit('stats');
     return true;
@@ -1378,14 +1432,16 @@ export class Game {
       this.events.emit('sfx', 'error');
       return { ok: false, reason: 'No skybridge here', cost: 0 };
     }
+    const l = w.links.find((k) => k.id === linkId)!;
+    const rect = growRect(growRect(null, l.ax, l.ay), l.bx, l.by);
     removeLink(w, linkId);
     if (this.selected?.link === linkId) this.select(null);
     this.events.emit('sfx', 'bulldoze');
     this.cancelPending();
     this.undoSnap = null;
     this.bridgeUndo = null;
-    this.sim.recomputeAll();
     vertical.refresh(w);
+    this.recomputeAround(rect);
     this.story.markDirty();
     this.events.emit('stats');
     return { ok: true, cost: 0 };
@@ -1425,12 +1481,16 @@ export class Game {
   // ── Skeleton Row frames (MEGACITY §3.7) ──────────────────────────────────
   /** Finish a frame into a Stratablock with its Plinth done (the inspect action 'frame'). */
   finishFrame(id: number): ActionResult {
+    const rect = this.buildingRect(id);
     const r = finishFrame(this.world, id);
-    return this.afterStoryAction(r, 'build', true);
+    return this.afterStoryAction(r, 'build', true, rect);
   }
 
-  /** Common follow-up for story actions: feedback, and a refresh when something changed. */
-  private afterStoryAction(r: ActionResult, sfx: GameEventMap['sfx'], refreshTurf = false): ActionResult {
+  /**
+   * Common follow-up for story actions: feedback, and a refresh when something changed. A building-only action passes
+   * its `rect` (a local recompute, O5); deals, pacts and endings move city-wide mods, so they recompute everything.
+   */
+  private afterStoryAction(r: ActionResult, sfx: GameEventMap['sfx'], refreshTurf = false, rect: TileRectLike | null = null): ActionResult {
     if (!r.ok) {
       if (r.reason) this.toast(r.reason, 'error');
       this.events.emit('sfx', 'error');
@@ -1442,7 +1502,7 @@ export class Game {
     this.events.emit('sfx', sfx);
     if (refreshTurf) turf.refreshStats(this.world);
     this.story.markDirty();
-    this.sim.recomputeAll();
+    this.recomputeAround(rect);
     this.events.emit('stats');
     return r;
   }

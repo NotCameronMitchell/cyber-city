@@ -135,6 +135,21 @@ export class SimGrid {
   private scanRoads = 0;
   private scanBridges = 0;
   private scanZc = 0;
+  /**
+   * Per row, what the last scan of it added to the totals (road fingerprint, roads, bridges, road kinds), and whether a
+   * 'tiles' event touched it since (MEGACITY §11.1: scanChanged re-mirrors only those rows after a player action).
+   */
+  private readonly rowSig: Int32Array;
+  private readonly rowRoads: Int32Array;
+  private readonly rowBridges: Int32Array;
+  private readonly rowKinds: Int32Array;
+  private readonly rowDirty: Uint8Array;
+  /**
+   * > 0 while the sim writes a tile it mirrors itself (growth's level and ground changes) or one the scan never reads
+   * (power's flag flips): those 'tiles' events leave the rows clean, so a day's growth does not make the next partial
+   * scan a whole one. Bracket such a write with mirrored++ / mirrored--.
+   */
+  mirrored = 0;
 
   // ── Road caches (rebuilt when the road signature changes) ─────────────────
   /** Linked 4-neighbours of each ground road tile (N1 E2 S4 W8, roadLinks), 0 elsewhere. */
@@ -256,10 +271,18 @@ export class SimGrid {
     this.hwReach.fill(-1);
     this.skyComp.fill(-1);
     this.skyReach.fill(-1);
+    this.rowSig = new Int32Array(this.N);
+    this.rowRoads = new Int32Array(this.N);
+    this.rowBridges = new Int32Array(this.N);
+    this.rowKinds = new Int32Array(this.N * 10);
+    this.rowDirty = new Uint8Array(this.N).fill(1);
     this.layout = new OwnedLayout(world);
     this.layout.sync(world);
     this.syncTerrain(world);
     world.events?.on('terrain', (r) => this.noteTerrain(r));
+    world.events?.on('tiles', (r) => {
+      if (this.mirrored === 0) this.rowDirty.fill(1, Math.max(0, r.y0), Math.min(this.N, r.y1 + 1));
+    });
   }
 
   /**
@@ -271,6 +294,58 @@ export class SimGrid {
     this.scanBegin(world);
     this.scanRows(world, this.layout.y0, this.layout.y1, false);
     this.scanEnd(world, forceRoads);
+  }
+
+  /**
+   * A scan after a player action (MEGACITY §3.3 O5, §11.1): re-mirror only the rows a 'tiles' event touched since their
+   * last scan, then the totals from the per-row shares, the zoned list from the mirror, and scanEnd. The sim's own
+   * writes between scans keep the mirror (growth) or touch their tiles, so this equals a whole scan. Falls back to the
+   * whole scan when the owned frame changed.
+   */
+  scanChanged(world: World): void {
+    if (this.layout.sync(world)) {
+      this.slotsSeen = -1;
+      this.scan(world);
+      return;
+    }
+    this.conductorSeen = world.conductorVersion;
+    this.syncTerrain(world);
+    const L = this.layout;
+    const dirty = this.rowDirty;
+    for (let y = L.y0; y <= L.y1; y++) {
+      if (!dirty[y]) continue;
+      let y1 = y;
+      while (y1 + 1 <= L.y1 && dirty[y1 + 1]) y1++;
+      this.scanSig = 0;
+      this.scanRoads = 0;
+      this.scanBridges = 0;
+      this.scanZc = 0;
+      this.kindCount.fill(0);
+      // Rewrites the rows' mirror and shares; the zoned entries it writes are rebuilt below.
+      this.scanRows(world, y, y1, false);
+      y = y1;
+    }
+    let sig = 0;
+    let roads = 0;
+    let bridges = 0;
+    const kc = this.kindCount;
+    kc.fill(0);
+    for (let y = L.y0; y <= L.y1; y++) {
+      sig = (sig + this.rowSig[y]) | 0;
+      roads += this.rowRoads[y];
+      bridges += this.rowBridges[y];
+      for (let k = 0; k < 10; k++) kc[k] += this.rowKinds[y * 10 + k];
+    }
+    const { ck, rowAt } = L.all;
+    const zone = this.zone;
+    const zoned = this.zoned;
+    let zc = 0;
+    for (let c = rowAt[L.y0]; c < rowAt[L.y1 + 1]; c += 3) for (let i = ck[c], e = ck[c + 1]; i < e; i++) if (zone[i] !== NONE) zoned[zc++] = i;
+    this.scanSig = sig;
+    this.scanRoads = roads;
+    this.scanBridges = bridges;
+    this.scanZc = zc;
+    this.scanEnd(world, false);
   }
 
   /** Start a scan: the owned frame and terrain value follow annexes and terrain changes; the accumulators reset. */
@@ -301,7 +376,30 @@ export class SimGrid {
     let roads = this.scanRoads;
     let bridges = this.scanBridges;
     let zc = this.scanZc;
-    for (let c = rowAt[y0]; c < rowAt[y1 + 1]; c += 3)
+    const { rowSig, rowRoads, rowBridges, rowKinds, rowDirty, N } = this;
+    // Per-row shares of the totals (a later partial scan sums them): each row's fingerprint and counts.
+    rowDirty.fill(0, y0, y1 + 1);
+    let row = -1;
+    let rs = 0;
+    let rr = 0;
+    let rb = 0;
+    const flushRow = () => {
+      if (row < 0) return;
+      rowSig[row] = (sig - rs) | 0;
+      rowRoads[row] = roads - rr;
+      rowBridges[row] = bridges - rb;
+      for (let k = 0; k < 10; k++) rowKinds[row * 10 + k] = kindCount[k] - rowKinds[row * 10 + k];
+    };
+    for (let c = rowAt[y0]; c < rowAt[y1 + 1]; c += 3) {
+      const cy = (ck[c] / N) | 0;
+      if (cy !== row) {
+        flushRow();
+        row = cy;
+        rs = sig;
+        rr = roads;
+        rb = bridges;
+        for (let k = 0; k < 10; k++) rowKinds[row * 10 + k] = kindCount[k];
+      }
       for (let i = ck[c], e = ck[c + 1]; i < e; i++) {
         const t = tiles[i];
         const z = t.zone;
@@ -333,6 +431,16 @@ export class SimGrid {
           if (ages && (z !== NONE || id >= 0) && t.age < 9999) t.age++;
         }
         if (z !== NONE) zoned[zc++] = i;
+      }
+    }
+    flushRow();
+    // Rows of the range with no owned chunk add nothing.
+    for (let y = y0; y <= y1; y++)
+      if (rowAt[y] === rowAt[y + 1]) {
+        rowSig[y] = 0;
+        rowRoads[y] = 0;
+        rowBridges[y] = 0;
+        rowKinds.fill(0, y * 10, y * 10 + 10);
       }
     this.scanSig = sig;
     this.scanRoads = roads;
@@ -408,24 +516,62 @@ export class SimGrid {
             near[i] = i;
             queue[tail++] = i;
           }
+    // The 8 neighbours in the fixed order (rows above, beside, below; left to right), unrolled: the BFS visits every
+    // owned tile within RANGE of a road (≈ 3.7 → 2 ms at 25 districts with the bounds tests hoisted).
+    const area = N * N;
     while (head < tail) {
       const i = queue[head++];
       const d = dist[i];
       if (d >= RANGE) continue;
       const x = i % N;
-      const y = (i / N) | 0;
       const src = near[i];
-      for (let dy = -1; dy <= 1; dy++) {
-        const ny = y + dy;
-        if (ny < 0 || ny >= N) continue;
-        for (let dx = -1; dx <= 1; dx++) {
-          const nx = x + dx;
-          if (nx < 0 || nx >= N || (dx === 0 && dy === 0)) continue;
-          const j = ny * N + nx;
-          if (dist[j] !== NO_ROAD || !mask[j]) continue;
-          dist[j] = d + 1;
-          near[j] = src;
-          queue[tail++] = j;
+      const nd = d + 1;
+      const l = x > 0;
+      const r = x < N - 1;
+      if (i >= N) {
+        const u = i - N;
+        if (l && dist[u - 1] === NO_ROAD && mask[u - 1]) {
+          dist[u - 1] = nd;
+          near[u - 1] = src;
+          queue[tail++] = u - 1;
+        }
+        if (dist[u] === NO_ROAD && mask[u]) {
+          dist[u] = nd;
+          near[u] = src;
+          queue[tail++] = u;
+        }
+        if (r && dist[u + 1] === NO_ROAD && mask[u + 1]) {
+          dist[u + 1] = nd;
+          near[u + 1] = src;
+          queue[tail++] = u + 1;
+        }
+      }
+      if (l && dist[i - 1] === NO_ROAD && mask[i - 1]) {
+        dist[i - 1] = nd;
+        near[i - 1] = src;
+        queue[tail++] = i - 1;
+      }
+      if (r && dist[i + 1] === NO_ROAD && mask[i + 1]) {
+        dist[i + 1] = nd;
+        near[i + 1] = src;
+        queue[tail++] = i + 1;
+      }
+      if (i < area - N) {
+        const b = i + N;
+        if (l && dist[b - 1] === NO_ROAD && mask[b - 1]) {
+          dist[b - 1] = nd;
+          near[b - 1] = src;
+          queue[tail++] = b - 1;
+        }
+        if (dist[b] === NO_ROAD && mask[b]) {
+          dist[b] = nd;
+          near[b] = src;
+          queue[tail++] = b;
+        }
+        if (r && dist[b + 1] === NO_ROAD && mask[b + 1]) {
+          dist[b + 1] = nd;
+          near[b + 1] = src;
+          queue[tail++] = b + 1;
         }
       }
     }

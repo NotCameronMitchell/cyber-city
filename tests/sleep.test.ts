@@ -117,6 +117,30 @@ describe('O8 sleeping districts (§3.3)', () => {
     }
   }, 60_000);
 
+  it('a recomputeAround whose traffic spills past its window wakes every slot for the next whole field cycle (O5)', () => {
+    const w = cachedMegacity(5, 25);
+    const sim = megacitySim(w);
+    freezeGrowth(sim);
+    sim.sleep = 'forced';
+    sim.sleepFocus = 12;
+    runCycles(sim, 2);
+    expect(sim.resting).toBeGreaterThan(0);
+    // Traffic moves far outside the action's window: a road row of slot 0 cut, the recompute's rect in slot 24.
+    for (let x = 0; x < 64; x++) for (let y = 8; y < 9; y++) w.clearTile(x, y);
+    sim.recomputeAround({ x0: 300, y0: 300, x1: 301, y1: 301 });
+    expect((sim as unknown as { fullFieldsDue: boolean }).fullFieldsDue).toBe(true);
+    // To the next cycle's start, then that whole cycle runs every slot; the one after rests again.
+    while ((w.tick + 1) % sim.fieldStagger !== 0) sim.step();
+    const woke: number[] = [];
+    for (let d = 0; d < sim.fieldStagger; d++) {
+      sim.step();
+      woke.push(sim.resting);
+    }
+    expect(woke).toEqual(woke.map(() => 0));
+    runCycles(sim, 1);
+    expect(sim.resting).toBeGreaterThan(0);
+  }, 60_000);
+
   it("growth is never throttled: residents after 2 sim years in 'forced' are within 5% of 'off' (25 districts)", () => {
     const json = JSON.stringify(cachedMegacity(5, 25).serialize());
     const a = World.deserialize(JSON.parse(json));
@@ -133,4 +157,27 @@ describe('O8 sleeping districts (§3.3)', () => {
     const rb = b.stats.population;
     expect(Math.abs(rb - ra) / ra).toBeLessThanOrEqual(0.05);
   }, 120_000);
+
+  it("a growing city: residents after 2 sim years in 'forced' are within 5% of 'off' (25 districts, every lot from level 0)", () => {
+    const base = cachedMegacity(5, 25);
+    for (let i = 0; i < base.area; i++) {
+      const t = base.tiles[i];
+      if (t.zone && t.level > 0) base.setLevel(i % base.N, (i / base.N) | 0, 0);
+    }
+    const json = JSON.stringify(base.serialize());
+    const a = World.deserialize(JSON.parse(json));
+    const b = World.deserialize(JSON.parse(json));
+    const sa = megacitySim(a);
+    const sb = megacitySim(b);
+    sb.sleep = 'forced';
+    sb.sleepFocus = 0;
+    for (let d = 0; d < 720; d++) {
+      sa.step();
+      sb.step();
+    }
+    const ra = a.stats.population;
+    const rb = b.stats.population;
+    console.info(`[sleep] growing city, 2 years: off ${ra}, forced ${rb} (${(((rb - ra) / ra) * 100).toFixed(1)}%)`);
+    expect(Math.abs(rb - ra) / ra).toBeLessThanOrEqual(0.05);
+  }, 180_000);
 });

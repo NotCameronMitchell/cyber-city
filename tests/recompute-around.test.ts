@@ -84,6 +84,37 @@ describe('recomputeAround (§3.3, O5)', () => {
   });
 });
 
+describe('the partial scan after an action (§11.1: only rows a tile event touched)', () => {
+  it('after random actions and sim days, scanChanged mirrors exactly what a whole scan does (arrays, counts, the zoned list, road caches)', () => {
+    const w = cachedMegacity(3, 4);
+    const sim = sims(w);
+    const rng = new Rng(7);
+    const tools: ToolId[] = ['road', 'bulldoze', 'res', 'ind', 'avenue' as ToolId, 'alley' as ToolId, 'precinct'];
+    const keys = ['zone', 'level', 'abandoned', 'road', 'kind', 'wealth', 'water', 'bld', 'ground', 'blightW', 'roadDist', 'nearestRoad', 'linkMask', 'alleyNear', 'roadLv'] as const;
+    for (let k = 0; k < 30; k++) {
+      const box = w.ownedBox;
+      const x = box.x0 + Math.floor(rng.next() * (box.x1 - box.x0 - 6));
+      const y = box.y0 + Math.floor(rng.next() * (box.y1 - box.y0 - 6));
+      applyAction(w, tools[k % tools.length], { x, y }, { x: x + Math.floor(rng.next() * 5), y });
+      if (k % 3 === 0) sim.step();
+      const g = (sim as unknown as { grid: import('../src/game/sim/grid').SimGrid }).grid;
+      g.scanChanged(w);
+      const ref = new Simulation(w);
+      const r = (ref as unknown as { grid: import('../src/game/sim/grid').SimGrid }).grid;
+      r.scan(w, true);
+      for (const key of keys) {
+        const a = g[key] as ArrayLike<number>;
+        const b = r[key] as ArrayLike<number>;
+        let bad = -1;
+        for (let i = 0; i < a.length && bad < 0; i++) if (a[i] !== b[i]) bad = i;
+        expect(bad, `${key} after action ${k}`).toBe(-1);
+      }
+      expect([g.zonedCount, g.roadCount, g.bridgeCount, Array.from(g.kindCount)]).toEqual([r.zonedCount, r.roadCount, r.bridgeCount, Array.from(r.kindCount)]);
+      expect(Array.from(g.zoned.subarray(0, g.zonedCount))).toEqual(Array.from(r.zoned.subarray(0, r.zonedCount)));
+    }
+  }, 60_000);
+});
+
 describe('recomputeAll keeps its caches only while their keys hold (§11.1: ≤ 30 ms at 25 districts)', () => {
   /** The SimGrid's road caches and the coverage fields a whole recompute writes. */
   const ROAD_ARRAYS = ['roadDist', 'nearestRoad', 'linkMask', 'alleyNear', 'hwComp', 'hwReach'] as const;

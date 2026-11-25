@@ -136,9 +136,9 @@ export class BudgetPanel {
   };
 
   private readonly onSlideEnd = () => {
-    // Settle exact figures for the new rate (no time passes, no money moves).
+    // Settle exact figures for the new rate (no time passes, no money moves): census and budget only (MEGACITY O5).
     try {
-      this.ctx.game.sim.recomputeAll();
+      this.ctx.game.sim.recomputeEconomy();
     } catch (err) {
       console.warn('[ui] budget recompute failed', err);
     }

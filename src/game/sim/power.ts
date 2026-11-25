@@ -116,6 +116,16 @@ export class PowerGrid {
   private fx1 = -1;
   private fy1 = -1;
 
+  /**
+   * The full rewrite after a relabel writes a Tile only where its flag changes (MEGACITY §11.1: reading 100,000 Tiles
+   * cost ≈ 4 ms at 25 districts). That needs every Tile's `powered` to equal `powered` off buildings, which holds
+   * except on a fresh grid (`syncAll`: the first rewrite reads every Tile) and where World.removeBuilding cleared the
+   * flag: the footprints of the last compute's buildings are always rewritten.
+   */
+  private syncAll = true;
+  private bldTiles = new Int32Array(1024);
+  private bldTileCount = 0;
+
   constructor(world: Pick<World, 'N' | 'area'>) {
     const area = world.area;
     this.N = world.N;
@@ -252,6 +262,8 @@ export class PowerGrid {
     const tiles = world.tiles;
     const powered = this.powered;
     let changedPower = false;
+    let bt = this.bldTiles;
+    let bn = 0;
     for (const b of g.buildings) {
       buildingStats(b, st);
       const plant = st.powerSupply > 0;
@@ -268,9 +280,15 @@ export class PowerGrid {
       if (b.powered !== was) changedPower = true;
       const on = plant ? b.offline === 0 : b.powered;
       const v = on ? 1 : 0;
+      if (bt.length < bn + b.size * b.size) {
+        const grown = new Int32Array(Math.max(bt.length * 2, bn + b.size * b.size));
+        grown.set(bt.subarray(0, bn));
+        bt = this.bldTiles = grown;
+      }
       for (let dy = 0; dy < b.size; dy++)
         for (let dx = 0; dx < b.size; dx++) {
           const i = (b.y + dy) * N + b.x + dx;
+          bt[bn++] = i;
           powered[i] = v;
           const t = tiles[i];
           if (t.powered !== on) {
@@ -279,6 +297,7 @@ export class PowerGrid {
           }
         }
     }
+    this.bldTileCount = bn;
     if (changedPower) world.coverageVersion++;
 
     // 7. Counts: developed tiles without power, and those connected to no plant at all.
@@ -297,7 +316,10 @@ export class PowerGrid {
     this.unpoweredTiles = unpowered;
     this.disconnected = disconnected;
     if (this.fx1 >= 0) {
+      // A flag the scan never reads: the grid's rows stay clean (SimGrid.mirrored).
+      g.mirrored++;
       world.markChanged(this.fx0, this.fy0, this.fx1, this.fy1);
+      g.mirrored--;
       this.flipped = true;
     }
   }
@@ -481,13 +503,25 @@ export class PowerGrid {
     const budget = banded ? BAND * N * 2 : Infinity;
     let work = 0;
     yield K.Flags;
-    if (this.fullRewrite) {
+    const full = this.fullRewrite;
+    const all = this.syncAll;
+    if (full) {
+      // A footprint that is no longer a building may read unlit on its Tile whatever `powered` says: rewrite it (2 never
+      // matches a flag).
+      // (Brownout members are always rewritten from the BFS's own values.)
+      const bt = this.bldTiles;
+      for (let k = 0; k < this.bldTileCount; k++) {
+        const i = bt[k];
+        if (bld[i] >= 0 || (comp[i] >= 0 && state[comp[i]] === BROWN)) continue;
+        powered[i] = 2;
+      }
       // Non-conductors are unlit (a bulldozed tile goes dark).
       const { ck, rowAt } = g.layout.all;
       const end = rowAt[N];
-      for (let c = 0; c < end; c += 3)
+      for (let c = 0; c < end; c += 3) {
         for (let i = ck[c], e = ck[c + 1]; i < e; i++) {
           if (comp[i] >= 0) continue;
+          if (!all && powered[i] === 0) continue; // the Tile already reads unlit
           powered[i] = 0;
           const t = tiles[i];
           if (t.powered) {
@@ -495,12 +529,13 @@ export class PowerGrid {
             this.flip(i);
           }
         }
+      }
     }
     const bu = this.brownUnpowered;
     for (let c = 0; c < count; c++) {
       const s = state[c];
       if (s === BROWN) bu[c] = 0;
-      if (!this.fullRewrite && s !== BROWN && s === lastState[c]) continue;
+      if (!full && s !== BROWN && s === lastState[c]) continue;
       const lit = s === LIT ? 1 : 0;
       for (let k = start[c]; k < start[c + 1]; k++) {
         const i = members[k];
@@ -510,6 +545,8 @@ export class PowerGrid {
           p = powered[i];
           if (!p && zone[i] && level[i] > 0 && !abandoned[i]) bu[c]++;
         } else {
+          // After a relabel (labels renumbered): a Tile whose flag already reads `lit` is left alone.
+          if (full && !all && powered[i] === lit) continue;
           p = lit;
           powered[i] = lit;
         }
@@ -525,6 +562,7 @@ export class PowerGrid {
         }
       }
     }
+    if (full) this.syncAll = false;
     this.fullRewrite = false;
   }
 

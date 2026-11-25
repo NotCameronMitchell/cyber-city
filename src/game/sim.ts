@@ -155,8 +155,10 @@ export class Simulation {
   private dayCount = 0;
   /** world.slotsVersion the layers were last composed for (recomputeAll re-composes after an annex). */
   private composedSlots = -1;
-  /** A full field pass is due (recomputeAround saw traffic change outside its window): runs on the next days. */
+  /** A full field pass is due (recomputeAround saw traffic change outside its window): the next field cycle wakes all. */
   private fullFieldsDue = false;
+  /** This field cycle runs every slot (set at its phase 0 from fullFieldsDue). */
+  private wakeCycle = false;
 
   // ── Coverage cache key (O3) ──
   private covVersion = -1;
@@ -347,8 +349,12 @@ export class Simulation {
     // ── B: this day's field phase ──
     const stagger = this.fieldStagger;
     const phase = w.tick % stagger;
+    // O5's spill rule: traffic moved outside an action's window, so the next whole field cycle runs every slot.
+    if (phase === 0) {
+      this.wakeCycle = this.fullFieldsDue;
+      this.fullFieldsDue = false;
+    }
     this.updateSleep(Math.floor(w.tick / stagger));
-    if (this.fullFieldsDue && phase === 0) this.fullFieldsDue = false;
     const jp = this.census.joblessPressure;
     const pop = this.census.population;
     if (stagger === 2) {
@@ -535,7 +541,7 @@ export class Simulation {
     const w = this.world;
     const f = this.fields;
     this.resting = 0;
-    if (this.sleep === 'off') {
+    if (this.sleep === 'off' || this.wakeCycle) {
       f.active = null;
       return;
     }
@@ -555,10 +561,16 @@ export class Simulation {
       act[s] = 0;
       if (!own[s]) continue;
       const recent = now - this.lastAction[s] < idleMs;
+      const changed = w.tick - quiet[s] < SLEEP.quietDays;
       let rest: boolean;
       if (forced) rest = !recent && Math.max(Math.abs((s % R) - fx), Math.abs(((s / R) | 0) - fy)) > LOW_DETAIL.awakeRing;
-      else rest = !recent && w.tick - quiet[s] >= SLEEP.quietDays;
-      if (rest && (cycle + s) % k !== 0) {
+      else rest = !recent && !changed;
+      // (levelTick 0: no level change seen since the sim started.)
+      const growing = changed && quiet[s] > 0;
+      // A growing slot resting in lower detail catches up at the 'auto' cadence: at 8, its growth read fields up to 32
+      // days old and a growing 5×5 city drifted 8% from an awake one in 2 sim years (§3.3's bound is 5%).
+      const ks = forced && growing ? GROWING_CADENCE : k;
+      if (rest && (cycle + s) % ks !== 0) {
         resting++;
         continue;
       }
@@ -593,7 +605,8 @@ export class Simulation {
     const N = w.N;
     this.gen++;
     this.noteAction(rect);
-    g.scan(w);
+    // Only the rows a tile event touched since their last scan (§11.1: a whole scan is ≈ 2 ms at 25 districts).
+    g.scanChanged(w);
     this.power.compute(w, g);
     if (this.coverageStale()) this.coverageNow();
     this.census.count(g, w);
@@ -761,6 +774,9 @@ function strHash(t: string): number {
   for (let i = 0; i < t.length; i++) h = Math.imul(h ^ t.charCodeAt(i), 16777619);
   return h;
 }
+
+/** The 'forced' cadence of a slot with a level change in the last SLEEP.quietDays (O8; tuned on the growing 5×5 city). */
+const GROWING_CADENCE = 2;
 
 /** The Tarmac lease's demand add (MEGACITY §3.7): +2,000 Market (Nacre) or Fab (Basalt) jobs. */
 const LEASE_JOBS = 2_000;
