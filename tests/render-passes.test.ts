@@ -43,9 +43,9 @@ function timeMethods(acc: { ms: number }, targets: [object, string][]): () => vo
 }
 
 describe.each([
-  [3, 9, 0.3, 1],
-  [5, 25, 0.5, 1.5],
-] as [Region, number, number, number][])('R1: render passes and cache upkeep in a speed-3 growth run, %i×%i region (%i districts)', (region, n, meanBudget, p95Budget) => {
+  { region: 3 as Region, n: 9, meanBudget: 0.3, p95Budget: 1 },
+  { region: 5 as Region, n: 25, meanBudget: 0.5, p95Budget: 1.5 },
+])('R1: render passes and cache upkeep in a speed-3 growth run, $region×$region region ($n districts)', ({ region, n, meanBudget, p95Budget }) => {
   it('no whole-region pass; owned-area passes at most once per 250 ms each; upkeep within §11.1 (×3 slack in CI)', async () => {
     const { Renderer, ParcelCache } = await import('../src/render/renderer');
     const { Camera } = await import('../src/render/camera');

@@ -15,8 +15,11 @@
 //    keeps drawing until its re-render (time-budgeted per frame) lands.
 //  * 'tiles' events mark a dirty world rect on affected chunks; those redraw
 //    only the clipped dirty area, so sim growth stays cheap.
-//  * A pinned whole-map "overview" bucket is the fallback for chunks that are
-//    not ready yet (fast zooms), so the ground never pops to empty.
+//  * An "overview" bucket (the visible part of the owned box ± peek, built
+//    progressively) is the fallback for chunks that are not ready yet; under
+//    both, a one-pixel-per-tile underlay of the whole region fills what a fast
+//    pan outruns, so the ground never pops to empty and no frame renders more
+//    than the per-frame chunk cap (MEGACITY §3.9).
 //  * The LRU cache is capped at ~24 MB (more only if the screen itself needs it).
 //
 // A small per-frame pass (`drawAnimated`) adds water shimmer and breathing
@@ -1708,7 +1711,9 @@ export class GroundPainter {
     this.tileRect(this.b0.f(t.abandoned ? P.padAbandoned : P.pad), x, y);
     if (this.skyline) this.roofTint(x, y, t);
     else if (!this.lines && !t.abandoned) this.b1.f(P.zoneFar[z]).rect(x, y, 1, 1);
-    if (this.lines) {
+    // Skyline chunks (§3.9): the roof tint is the body, with no street-view zone rim round it, so 0.27 → 0.28 (the
+    // overview bucket, which has no lines, to the first skyline bucket) does not change the look.
+    if (this.lines && !this.skyline) {
       const th = this.lw(1);
       const i = 0.04;
       const p = this.b3.f(t.abandoned ? P.rubble : P.zoneRim[z]);
@@ -2864,8 +2869,10 @@ function churnMs(k: number): number {
   return CHURN_MS / Math.min(1, scaleOf(k));
 }
 
-/** Least time between two night-bucket refreshes of a visible chunk (ms). */
+/** Least time between two night-bucket refreshes of a visible chunk while the camera moves and the bucket drifts by one (ms). */
 const NIGHT_REFRESH_MS = 120;
+/** Least time between two patches of the underlay's dirty tiles (ms): it only shows for a few frames of a fast pan. */
+const UL_PATCH_MS = 1000;
 /** Dirty rects repainted per frame at most (their rasterisation is deferred to the blit, outside any timer). */
 const RECT_CAP = 16;
 /** Dirty rects kept per chunk; past it, a new rect merges into the one it grows least. */
@@ -2909,6 +2916,38 @@ function addDirty(c: Chunk, x0: number, y0: number, x1: number, y1: number) {
  */
 const chunkKey = (k: number, sky: boolean, i: number, j: number) => (((k + 128) * 2 + (sky ? 1 : 0)) * 4096 + i + 2048) * 4096 + j + 2048;
 
+/**
+ * Day colours of the underlay (§3.9 overview bucket, the pan fallback's floor): one flat colour per tile kind, close
+ * to the cached ground's base fill (night is a veil drawn over it, so a night change never repaints it).
+ */
+const UL = (() => {
+  const g0 = MATERIAL.ground.day;
+  const g1 = MATERIAL.groundAlt.day;
+  const conc = MATERIAL.concrete.day;
+  const lot = MATERIAL.lot.day;
+  const wall = MATERIAL.wall.day;
+  const water = MATERIAL.water.day;
+  const shallow = mix([32, 84, 100], water, 0.2);
+  const deep = mix(shade(water, 0.7), [16, 40, 60], 0.3);
+  const land = Array.from({ length: 8 }, (_, k) => shade(mix(g0, g1, k / 7), 0.87 + k * 0.037));
+  const wat = Array.from({ length: 7 }, (_, d) => mix(mix(shallow, deep, 0.55), deep, Math.min(1, Math.max(0, (d - 2) / 4)) * 0.6));
+  const fogC: RGB = [92, 78, 138];
+  const fog = (c: RGB, b: number) => mix(shade(c, [0.7, 0.6, 0.5][b]), fogC, [0.38, 0.48, 0.55][b]);
+  return {
+    land,
+    water: wat,
+    fogLand: [0, 1, 2].map((b) => land.map((c) => fog(c, b))),
+    fogWater: [0, 1, 2].map((b) => wat.map((c) => fog(c, b))),
+    road: mix(MATERIAL.asphalt.day, shade(conc, 0.8), 0.35),
+    pad: shade(mix(conc, lot, 0.55), 0.82),
+    lot: [0, 1, 2, 3].map((z) => mix(lot, ZONE_RGB[z] ?? [128, 128, 128], z ? 0.16 : 0)),
+    roof: [0, 1, 2, 3].map((z) => (ROOF_RGB[z] ?? []).map((c) => shade(mix(c, wall, 0.25), 0.92))),
+    abandoned: [70, 64, 60] as RGB,
+    /** The night veil: source-over at alpha = night turns a day colour into (nearly) the night palette's. */
+    veil: [16, 15, 28] as RGB,
+  };
+})();
+
 /** Owns the chunk canvases and draws the cached ground every frame. */
 export class GroundCache {
   private chunks = new Map<number, Chunk>();
@@ -2931,6 +2970,23 @@ export class GroundCache {
   private overviewNightAt = -1e9;
   /** When a night-stale chunk last re-rendered (ms). */
   private nightRefreshAt = -1e9;
+  /** The last frame's view, to tell a still camera from a moving one. */
+  private lastCamX = NaN;
+  private lastCamY = NaN;
+  /**
+   * The underlay (§3.9: chunks paint within the per-frame chunk budget, so a fast pan can outrun both the current
+   * bucket and the overview): one pixel per tile over the whole region in its day colour, drawn (with a night veil)
+   * only under the chunks that are not ready yet, so a missing chunk never shows a hole and never forces a render
+   * past the cap. N × N × 4 bytes (≤ 410 KB at 320); built once per world or annex, patched from the dirty tiles at
+   * most every UL_PATCH_MS.
+   */
+  private ul: HTMLCanvasElement | null = null;
+  private ulCtx: CanvasRenderingContext2D | null = null;
+  private ulImg: ImageData | null = null;
+  private ulDirty: Rect | null = null;
+  private ulAt = -1e9;
+  /** Full chunk renders of the last draw (current bucket and overview; tests and diagnostics: ≤ the per-frame cap). */
+  lastFullRenders = 0;
   /** Rough cost of the last full chunk render (ms), for diagnostics / budgeting. */
   lastChunkMs = 0;
 
@@ -2940,6 +2996,11 @@ export class GroundCache {
     this.chunks.clear();
     this.buckets.clear();
     this.info = null;
+    if (this.ul) this.ul.width = this.ul.height = 0;
+    this.ul = null;
+    this.ulCtx = null;
+    this.ulImg = null;
+    this.ulDirty = null;
   }
 
   /**
@@ -2960,6 +3021,16 @@ export class GroundCache {
    */
   invalidate(tiles: Rect, skylineOnly = false) {
     if (!this.N) return;
+    if (this.ulImg) {
+      const d = this.ulDirty;
+      if (!d) this.ulDirty = { x0: tiles.x0, y0: tiles.y0, x1: tiles.x1, y1: tiles.y1 };
+      else {
+        if (tiles.x0 < d.x0) d.x0 = tiles.x0;
+        if (tiles.y0 < d.y0) d.y0 = tiles.y0;
+        if (tiles.x1 > d.x1) d.x1 = tiles.x1;
+        if (tiles.y1 > d.y1) d.y1 = tiles.y1;
+      }
+    }
     // The world rect the tiles' ground art covers (tileRectToWorld, inlined: no allocation unless a chunk takes it).
     const x0 = (tiles.x0 - tiles.y1 - 1) * HALF_W - SPILL;
     const x1 = (tiles.x1 + 1 - tiles.y0) * HALF_W + SPILL;
@@ -3277,22 +3348,30 @@ export class GroundCache {
     }
 
     // ── Render work, most urgent first, within the frame budget ──
+    // §3.9: chunks paint within the per-frame chunk budget: at most `cap` full renders a frame (current bucket and
+    // overview together); where neither is ready the underlay shows, so a fast pan never renders a burst of chunks.
     const t0 = now();
     const spent = () => now() - t0;
-    const ccx0 = view.camX;
-    const ccy0 = view.camY;
+    const moving = view.camX !== this.lastCamX || view.camY !== this.lastCamY || t - this.zoomMovedAt < 180;
+    this.lastCamX = view.camX;
+    this.lastCamY = view.camY;
+    const cap = budgetMs < 4 ? 1 : 2;
+    let did = 0;
+    const ccx = view.camX;
+    const ccy = view.camY;
     const Wov = CHUNK_PX / OVERVIEW_SCALE;
-    const ovDist = (c: Chunk) => Math.abs(this.OX + (c.i + 0.5) * Wov - ccx0) + Math.abs(OY + (c.j + 0.5) * Wov - ccy0);
-    // Missing overview chunks in view: one a frame at least, nearest first (the current bucket is the real picture).
-    const ovMissing = ov.filter((c) => !c.rendered);
-    if (ovMissing.length > 1) ovMissing.sort((a, b) => (ovView.includes(a) ? 0 : 1) - (ovView.includes(b) ? 0 : 1) || ovDist(a) - ovDist(b));
-    let ovDid = 0;
-    for (const c of ovMissing) {
-      if (ovDid > 0 && spent() > budgetMs * 0.4) break;
-      this.renderChunk(c, world, nightBucket, null);
-      ovDid++;
+    const ovDist = (c: Chunk) => Math.abs(this.OX + (c.i + 0.5) * Wov - ccx) + Math.abs(OY + (c.j + 0.5) * Wov - ccy);
+    const W = CHUNK_PX / scaleOf(k);
+    const dist = (c: Chunk) => Math.abs(this.OX + (c.i + 0.5) * W - ccx) + Math.abs(OY + (c.j + 0.5) * W - ccy);
+    const visMissing = vis.some((c) => !c.rendered);
+    // 0) While the camera moves past what is painted, the overview chunk under the hole first: it covers ≈ 6× the
+    //    area of a street chunk for the same raster, so it closes the hole fastest.
+    const ovHoles = visMissing && moving ? ovView.filter((c) => !c.rendered) : [];
+    if (ovHoles.length) {
+      if (ovHoles.length > 1) ovHoles.sort((a, b) => ovDist(a) - ovDist(b));
+      this.renderChunk(ovHoles[0], world, nightBucket, null);
+      did++;
     }
-    const fallbackReady = k === OVERVIEW || ovView.every((c) => c.rendered);
     // 1) partial redraws of visible chunks, the longest-waiting first, within a share of the budget and at most
     //    RECT_CAP rects a frame (their rasterisation lands in the blit, outside the timer): a 25-district city at
     //    speed 3 dirties every visible chunk all the time.
@@ -3304,43 +3383,48 @@ export class GroundCache {
       if (rects > 0 && (rects >= RECT_CAP || spent() > budgetMs * 0.5)) break;
       rects += this.repaintDirty(c, world, tNow);
     }
-    let did = 0;
-    // Most of a chunk's cost is rasterisation, which the browser defers to the
-    // blit, so besides the time budget the number of full renders per frame is
-    // capped. Chunks nearest the screen centre sharpen first.
-    const cap = budgetMs < 4 ? 1 : 2;
-    const ccx = view.camX;
-    const ccy = view.camY;
-    const W = CHUNK_PX / scaleOf(k);
-    const dist = (c: Chunk) => Math.abs(this.OX + (c.i + 0.5) * W - ccx) + Math.abs(OY + (c.j + 0.5) * W - ccy);
+    // 2) missing chunks nearest the screen centre, then 3) night-stale chunks (the stale copy keeps drawing
+    //    meanwhile). Most of a chunk's cost is rasterisation, which the browser defers to the blit, so besides the
+    //    time budget the number of full renders a frame is capped. A night jump of 2+ buckets (a load, the day/night
+    //    switch) or a still camera refreshes at the cap; one-bucket drift while the camera moves (speed 3) refreshes
+    //    one chunk at a time, at most every NIGHT_REFRESH_MS.
     const pending = vis.filter((c) => !c.rendered || c.night !== nightBucket);
     if (pending.length > 1) pending.sort((a, b) => (a.rendered ? 1 : 0) - (b.rendered ? 1 : 0) || dist(a) - dist(b));
-    // 2) missing chunks, then 3) night-stale chunks (the stale copy keeps drawing meanwhile; at speed 3 the night
-    //    bucket moves every few seconds, so stale chunks refresh one at a time, at most every NIGHT_REFRESH_MS)
     for (const c of pending) {
-      const mustRender = !c.rendered && !fallbackReady;
-      if (!mustRender && did > 0 && (did >= cap || spent() > budgetMs)) break;
-      if (c.rendered) {
-        if (did > 0 || tNow - this.nightRefreshAt < NIGHT_REFRESH_MS) break;
+      if (did >= cap || (did > 0 && spent() > budgetMs)) break;
+      if (c.rendered && moving && Math.abs(c.night - nightBucket) < 2) {
+        if (tNow - this.nightRefreshAt < NIGHT_REFRESH_MS) continue;
         this.nightRefreshAt = tNow;
       }
       this.renderChunk(c, world, nightBucket, null);
       did++;
     }
-    // 4) keep the fallback overview reasonably fresh: edits whenever there is
-    //    time; night changes only on otherwise idle frames, at most every 1.5 s.
+    // 4) the overview ahead of the pan (its margin), one chunk on a frame that rendered nothing else; its edits
+    //    whenever there is time; night changes only on otherwise idle frames, at most every 1.5 s.
+    if (did === 0 && spent() < budgetMs * 0.4) {
+      const ovMissing = ov.filter((c) => !c.rendered);
+      if (ovMissing.length) {
+        if (ovMissing.length > 1) ovMissing.sort((a, b) => (ovView.includes(a) ? 0 : 1) - (ovView.includes(b) ? 0 : 1) || ovDist(a) - ovDist(b));
+        this.renderChunk(ovMissing[0], world, nightBucket, null);
+        did++;
+      }
+    }
     for (const c of ov) {
       if (c.rendered && c.dirty && rects < RECT_CAP && spent() < budgetMs * 0.5) rects += this.repaintDirty(c, world, tNow);
-      if (c.night !== nightBucket && did === 0 && spent() < 1 && now() - this.overviewNightAt > 1500) {
+      if (c.rendered && c.night !== nightBucket && did === 0 && spent() < 1 && now() - this.overviewNightAt > 1500) {
         this.renderChunk(c, world, nightBucket, null);
         this.overviewNightAt = now();
         did++;
       }
     }
+    this.lastFullRenders = did;
 
     // ── Blit ──
     const missing = vis.some((c) => !c.rendered || c.sky !== this.sky);
     if (missing) {
+      // The underlay under the chunks that are not ready (the overview and the previous bucket cover it where they can).
+      const holes = vis.filter((c) => !c.rendered && (k === OVERVIEW || !this.overviewCovers(c)));
+      if (holes.length) this.drawUnderlay(ctx, world, holes, view, nightBucket / NIGHT_STEPS);
       this.blit(ctx, ov, view);
       // The previous bucket (or the other view band's chunks at this scale) while the new ones paint.
       const pk = this.prevBucket;
@@ -3362,6 +3446,112 @@ export class GroundCache {
     this.blit(ctx, vis, view);
     for (const c of ov) c.used = frame;
     this.evict(vis.length + ov.length, ov.length, k === OVERVIEW);
+  }
+
+  /** Is a chunk of the current bucket fully under painted overview chunks? */
+  private overviewCovers(c: Chunk): boolean {
+    const r = this.chunkRect(c);
+    const o = this.range(OVERVIEW, r);
+    for (let j = o.j0; j <= o.j1; j++)
+      for (let i = o.i0; i <= o.i1; i++) {
+        const v = this.chunks.get(chunkKey(OVERVIEW, this.sky, i, j));
+        if (!v || !v.rendered) return false;
+      }
+    return true;
+  }
+
+  /** Underlay colour of tile i (day palette, §3.9 overview fallback). */
+  private ulColour(world: World, info: TerrainInfo, i: number): RGB {
+    const t = world.tiles[i];
+    if (!world.ownedAt(i)) {
+      const d = info.fogD[i];
+      const band = d <= ANNEX.peek ? 0 : d <= ANNEX.peek + 8 ? 1 : 2;
+      return t.terrain === Terrain.Water ? UL.fogWater[band][info.depth[i]] : UL.fogLand[band][Math.min(7, info.tone[i] + t.elev * 2)];
+    }
+    if (t.road) return UL.road;
+    if (t.terrain === Terrain.Water) return UL.water[info.depth[i]];
+    if (t.buildingId >= 0) return UL.pad;
+    if (t.zone !== ZoneType.None) {
+      if (t.level === 0) return UL.lot[t.zone];
+      if (t.abandoned) return UL.abandoned;
+      const list = UL.roof[t.zone];
+      return list.length ? list[t.variant % list.length] : UL.pad;
+    }
+    return UL.land[Math.min(7, info.tone[i] + t.elev * 2)];
+  }
+
+  /** Paint the underlay's tile rect (inclusive) into its image. */
+  private ulPaint(world: World, x0: number, y0: number, x1: number, y1: number) {
+    const img = this.ulImg;
+    if (!img) return;
+    const N = world.N;
+    const info = this.terrain(world);
+    const d = img.data;
+    for (let y = Math.max(0, y0); y <= Math.min(N - 1, y1); y++)
+      for (let x = Math.max(0, x0); x <= Math.min(N - 1, x1); x++) {
+        const i = y * N + x;
+        const c = this.ulColour(world, info, i);
+        const o = i * 4;
+        d[o] = c[0];
+        d[o + 1] = c[1];
+        d[o + 2] = c[2];
+        d[o + 3] = 255;
+      }
+  }
+
+  /**
+   * Draw the underlay under the `holes` (visible chunks not painted yet), clipped to them, with the night veil. Built
+   * on first use after a world swap or an annex (one region pass); edits patch it at most every UL_PATCH_MS.
+   */
+  private drawUnderlay(ctx: CanvasRenderingContext2D, world: World, holes: Chunk[], view: GroundView, night: number) {
+    const N = world.N;
+    if (!this.ul) {
+      const cv = document.createElement('canvas');
+      cv.width = N;
+      cv.height = N;
+      const g = cv.getContext('2d');
+      if (!g || typeof g.createImageData !== 'function') return;
+      this.ul = cv;
+      this.ulCtx = g;
+      this.ulImg = g.createImageData(N, N);
+      countPass('region:underlay');
+      this.ulPaint(world, 0, 0, N - 1, N - 1);
+      g.putImageData(this.ulImg, 0, 0);
+      this.ulDirty = null;
+      this.ulAt = now();
+    } else if (this.ulDirty && now() - this.ulAt >= UL_PATCH_MS) {
+      const r = this.ulDirty;
+      this.ulDirty = null;
+      this.ulAt = now();
+      countPass('owned:underlay');
+      this.ulPaint(world, r.x0, r.y0, r.x1, r.y1);
+      const x0 = Math.max(0, r.x0);
+      const y0 = Math.max(0, r.y0);
+      this.ulCtx!.putImageData(this.ulImg!, 0, 0, x0, y0, Math.min(N - 1, r.x1) - x0 + 1, Math.min(N - 1, r.y1) - y0 + 1);
+    }
+    const s = scaleOf(holes[0].k);
+    const f = (view.zoom * view.dpr) / s;
+    const tx = ((this.OX - view.camX) * view.zoom + view.width / 2) * view.dpr;
+    const ty = ((OY - view.camY) * view.zoom + view.height / 2) * view.dpr;
+    ctx.save();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.beginPath();
+    for (const c of holes) ctx.rect(Math.floor(tx + c.i * CHUNK_PX * f), Math.floor(ty + c.j * CHUNK_PX * f), Math.ceil(CHUNK_PX * f) + 1, Math.ceil(CHUNK_PX * f) + 1);
+    ctx.clip();
+    // Tile (gx, gy) → world ((gx − gy)·HALF_W, (gx + gy)·HALF_H) → device px.
+    const z = view.zoom * view.dpr;
+    const ex = (view.width / 2 - view.camX * view.zoom) * view.dpr;
+    const ey = (view.height / 2 - view.camY * view.zoom) * view.dpr;
+    ctx.setTransform(HALF_W * z, HALF_H * z, -HALF_W * z, HALF_H * z, ex, ey);
+    ctx.imageSmoothingEnabled = true;
+    ctx.drawImage(this.ul!, 0, 0);
+    if (night > 0.02) {
+      ctx.globalAlpha = Math.min(1, night);
+      ctx.fillStyle = css(UL.veil);
+      ctx.fillRect(0, 0, N, N);
+      ctx.globalAlpha = 1;
+    }
+    ctx.restore();
   }
 
   private blit(ctx: CanvasRenderingContext2D, list: Chunk[], view: GroundView) {

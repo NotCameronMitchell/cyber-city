@@ -489,4 +489,69 @@ describe('the Renderer with districts on the canvas mock (§3.9)', () => {
     const counts = gc.chunkCounts;
     expect(counts.overview * 516 * 516 * 4).toBeLessThanOrEqual(Math.max(4 * MB, 6 * 516 * 516 * 4));
   });
+
+  it('a fast pan renders at most the per-frame chunk cap (current bucket and overview together); the underlay fills the holes', async () => {
+    const { GroundCache } = await import('../src/render/ground');
+    const { renderPasses, resetPasses } = await import('../src/render/passes');
+    const proto = Object.getPrototypeOf(document.createElement('canvas').getContext('2d')) as { createImageData?: unknown };
+    const had = proto.createImageData;
+    proto.createImageData ??= (cw: number, ch: number) => ({ data: new Uint8ClampedArray(cw * ch * 4), width: cw, height: ch });
+    try {
+      const w = megacityWorld(5, 25, 21);
+      const ctx = document.createElement('canvas').getContext('2d') as CanvasRenderingContext2D;
+      // The PC proxy (1920×1080 at its streetMinZoom 0.58) and a phone (390×844 at 0.4), a fast pan of 4–5 tiles a frame.
+      for (const [width, height, zoom, budget, cap] of [
+        [1920, 1080, 0.58, 5, 2],
+        [390, 844, 0.4, 3, 1],
+      ]) {
+        const gc = new GroundCache();
+        resetPasses();
+        let most = 0;
+        let total = 0;
+        for (let k = 0; k < 60; k++) {
+          const tx = 30 + ((k * 4) % 260);
+          const ty = 40 + ((k * 3) % 240);
+          gc.draw(ctx, w, { camX: (tx - ty) * HALF_W, camY: (tx + ty) * HALF_H, zoom, dpr: 1, width, height }, 0, budget, false);
+          most = Math.max(most, gc.lastFullRenders);
+          total += gc.lastFullRenders;
+        }
+        expect([width, most]).toEqual([width, cap]);
+        expect(total).toBeGreaterThan(20);
+        // One region pass to build the underlay; nothing more while panning.
+        expect(renderPasses['region:underlay']).toBe(1);
+      }
+      expect(mockStats.errors).toEqual([]);
+    } finally {
+      if (!had) delete proto.createImageData;
+    }
+  });
+
+  it('a night jump of 2+ buckets, or any change under a still camera, refreshes at the chunk cap, not one chunk per 120 ms', async () => {
+    const { GroundCache } = await import('../src/render/ground');
+    const w = megacityWorld(3, 9, 21);
+    const ctx = document.createElement('canvas').getContext('2d') as CanvasRenderingContext2D;
+    const gc = new GroundCache();
+    const view = { camX: 0, camY: 96 * 2 * HALF_H, zoom: 0.5, dpr: 1, width: 1440, height: 900 };
+    // Settle by day: every visible chunk painted.
+    for (let k = 0; k < 60; k++) gc.draw(ctx, w, view, 0, 5, false);
+    type C = { k: number; rendered: boolean; night: number; used: number };
+    const chunks = () => [...(gc as unknown as { chunks: Map<number, C> }).chunks.values()].filter((c) => c.k !== -100 && c.rendered && c.used === (gc as unknown as { frame: number }).frame);
+    const visible = chunks().length;
+    expect(visible).toBeGreaterThan(6);
+    // The day/night switch: daylight 1 → 0 (12 buckets) under a still camera; frames run back to back (no 120 ms gap).
+    let frames = 0;
+    for (; frames < 60; frames++) {
+      gc.draw(ctx, w, view, 1, 5, false);
+      if (chunks().every((c) => c.night === 12)) break;
+    }
+    expect(frames + 1).toBeLessThanOrEqual(Math.ceil(visible / 2) + 1);
+    // A jump of 2+ buckets while the camera moves: also at the cap.
+    let n = 0;
+    for (; n < 60; n++) {
+      view.camX += n % 2 ? 1 : -1;
+      gc.draw(ctx, w, view, 0.5, 5, false);
+      if (chunks().every((c) => c.night === 6)) break;
+    }
+    expect(n + 1).toBeLessThanOrEqual(Math.ceil(visible / 2) + 2);
+  });
 });
