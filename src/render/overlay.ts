@@ -953,15 +953,33 @@ export function drawSkybridgeGhosts(ctx: CanvasRenderingContext2D, game: Game, e
 /** Partner badges cache: recomputed when the source, the world or the routes chip changed (§5.4). */
 const badges = { key: '', list: [] as ReturnType<Game['skybridgePartners']> };
 
+/** One placed partner badge (CSS px): a green price badge, a blue route "2" or a red dot, over its tower. */
+export interface PartnerBadge {
+  kind: 'ok' | 'route' | 'bad';
+  /** The partner tower's tile (a tap on the badge picks it). */
+  tx: number;
+  ty: number;
+  x: number;
+  y: number;
+  r: number;
+  /** The price on a green badge, "2" on a route, the reason on a red dot (shown in the pill on tap). */
+  label: string;
+  cost: number;
+}
+
+/** Most badges of each colour on screen at once (§5.4: decluttered, nearest the source first). */
+export const BADGE_MAX = 8;
+
 /**
- * Partner badges over their towers (§5.4 step 2), screen space (DPR × CSS px transform): valid partners a green 44 px
- * badge with the price, invalid ones a 16 px red dot, at most 8 of each nearest the source first, placed to avoid
- * overlap; two-bridge routes as a blue "2" only after the pill's Show routes chip (`skybridgeView.showRoutes`).
+ * The partner badges to show now (§5.4 step 2), pure geometry from the game and the camera (input hit-tests the same
+ * list): valid partners a green 44 px badge with the price, invalid ones a 16 px red dot, at most BADGE_MAX of each,
+ * nearest the source first, nudged up to avoid overlap (a badge that still overlaps is dropped); two-bridge routes as
+ * a blue "2" only after the pill's Show routes chip (`skybridgeView.showRoutes`).
  */
-export function drawPartnerBadges(ctx: CanvasRenderingContext2D, game: Game, cam: Camera) {
+export function partnerBadges(game: Game, cam: Camera): PartnerBadge[] {
   const src = game.bridgeSource;
   const world = game.world;
-  if (!src) return;
+  if (!src) return [];
   const key = `${src.x},${src.y},${world.version},${skybridgeView.showRoutes ? 1 : 0}`;
   if (badges.key !== key) {
     badges.key = key;
@@ -971,46 +989,60 @@ export function drawPartnerBadges(ctx: CanvasRenderingContext2D, game: Game, cam
     .filter((p) => skybridgeView.showRoutes || !p.route)
     .map((p) => ({ p, d: Math.abs(p.x - src.x) + Math.abs(p.y - src.y) }))
     .sort((a, b) => a.d - b.d);
-  const placed: { x: number; y: number; r: number }[] = [];
+  const out: PartnerBadge[] = [];
   let green = 0;
   let red = 0;
-  ctx.save();
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
   for (const { p } of list) {
     const ok = p.ok && !p.route;
     const route = !!p.route && p.ok;
-    if ((ok || route) && green >= 8) continue;
-    if (!ok && !route && red >= 8) continue;
+    if ((ok || route) && green >= BADGE_MAX) continue;
+    if (!ok && !route && red >= BADGE_MAX) continue;
     const s = cam.tileToScreen(p.x, p.y);
     let y = s.y - roofOf(world, p.x, p.y) * cam.zoom - (ok || route ? 26 : 10);
     const r = ok || route ? 22 : 8;
     // Nudge upward until it overlaps nothing placed (a few steps at most).
-    for (let k = 0; k < 4 && placed.some((q) => Math.hypot(q.x - s.x, q.y - y) < q.r + r + 2); k++) y -= r + 4;
-    if (placed.some((q) => Math.hypot(q.x - s.x, q.y - y) < q.r + r + 2)) continue;
-    placed.push({ x: s.x, y, r });
-    if (ok || route) {
-      green++;
+    for (let k = 0; k < 4 && out.some((q) => Math.hypot(q.x - s.x, q.y - y) < q.r + r + 2); k++) y -= r + 4;
+    if (out.some((q) => Math.hypot(q.x - s.x, q.y - y) < q.r + r + 2)) continue;
+    if (ok || route) green++;
+    else red++;
+    out.push({
+      kind: route ? 'route' : ok ? 'ok' : 'bad',
+      tx: p.x,
+      ty: p.y,
+      x: s.x,
+      y,
+      r,
+      label: route ? '2' : ok ? p.cost.toLocaleString('en-US') : (p.reason ?? ''),
+      cost: p.cost,
+    });
+  }
+  return out;
+}
+
+/** Partner badges over their towers (screen space: DPR × CSS px transform), as `partnerBadges` lays them out. */
+export function drawPartnerBadges(ctx: CanvasRenderingContext2D, game: Game, cam: Camera) {
+  const list = partnerBadges(game, cam);
+  if (!list.length) return;
+  ctx.save();
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  for (const b of list) {
+    if (b.kind !== 'bad') {
+      const route = b.kind === 'route';
       ctx.fillStyle = css(route ? [16, 40, 86] : [8, 52, 34], 0.92);
       ctx.beginPath();
-      ctx.arc(s.x, y, r, 0, Math.PI * 2);
+      ctx.arc(b.x, b.y, b.r, 0, Math.PI * 2);
       ctx.fill();
       ctx.lineWidth = 2.5;
       ctx.strokeStyle = css(route ? ROUTE : OK, 0.95);
       ctx.stroke();
       ctx.fillStyle = css([236, 255, 244]);
-      if (route) {
-        ctx.font = '800 18px system-ui, sans-serif';
-        ctx.fillText('2', s.x, y + 1);
-      } else {
-        ctx.font = '700 11px system-ui, sans-serif';
-        ctx.fillText(p.cost.toLocaleString('en-US'), s.x, y + 1);
-      }
+      ctx.font = route ? '800 18px system-ui, sans-serif' : '700 11px system-ui, sans-serif';
+      ctx.fillText(b.label, b.x, b.y + 1);
     } else {
-      red++;
       ctx.fillStyle = css(BAD, 0.92);
       ctx.beginPath();
-      ctx.arc(s.x, y, r, 0, Math.PI * 2);
+      ctx.arc(b.x, b.y, b.r, 0, Math.PI * 2);
       ctx.fill();
       ctx.lineWidth = 1.5;
       ctx.strokeStyle = css([40, 8, 16], 0.9);

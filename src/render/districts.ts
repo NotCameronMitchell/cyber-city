@@ -149,6 +149,13 @@ export function slotNames(world: World, s: SlotId): { name: string; short: strin
   return { name, short: vd?.short ?? def?.short ?? name };
 }
 
+/** A slot's City map accent (§3.7): its variant's accent on a 5×5 repeat, else the kind's colour. */
+export function slotAccent(world: World, s: SlotId): string {
+  const def = DISTRICTS[world.districts.kinds[s]];
+  const v = world.variantOf(s);
+  return (v > 0 ? def?.variants[v - 1]?.accent : undefined) ?? def?.color ?? '#8f7bff';
+}
+
 /**
  * The shared-border midpoints of a candidate slot (tile-corner coordinates), one per owned neighbour: the pin sits on
  * the one nearest the view centre.

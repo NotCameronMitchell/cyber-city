@@ -123,6 +123,64 @@ describe('ground cache paints every road kind cleanly (§3.11)', () => {
   });
 });
 
+describe('district ground character on a 5×5 region (MEGACITY §3.7, §3.9)', () => {
+  it('every kind and variant paints owned and in the fog, street and skyline, day and night, with its decals', async () => {
+    const { Ground } = await import('../src/game/types');
+    const { slotRect } = await import('../src/game/districts/slots');
+    const w = M.World.generate(2091, 'Region', undefined, 5);
+    w.funds = 1e9;
+    // Own the inner ring (ring 1: every kind's first district); ring 2 stays fog.
+    for (let s = 0; s < 25; s++) {
+      const sx = s % 5;
+      const sy = (s / 5) | 0;
+      if (sx >= 1 && sx <= 3 && sy >= 1 && sy <= 3 && !w.slotOwned[s]) w.annex(s);
+    }
+    const info = new M.ground.TerrainInfo(w);
+    const kinds = new Set<string>();
+    let reeds = 0;
+    let runwayNums = 0;
+    for (let s = 0; s < 25; s++) {
+      const kind = w.districts.kinds[s];
+      kinds.add(`${kind}:${w.variantOf(s)}`);
+      const r = slotRect(w, s);
+      for (let y = r.y0; y <= r.y1; y++)
+        for (let x = r.x0; x <= r.x1; x++) {
+          const i = y * w.N + x;
+          if (w.slotOwned[s] && w.tiles[i].ground === Ground.Reed) reeds++;
+          const d = info.deco[i];
+          if (d === M.ground.DECO_RUNWAY_NUM_LO || d === M.ground.DECO_RUNWAY_NUM_HI) runwayNums++;
+        }
+    }
+    expect(kinds.size).toBeGreaterThan(9);
+    if (w.districts.kinds.includes('tarmac')) {
+      expect(runwayNums).toBeGreaterThan(0);
+      expect(info.socks.length).toBeGreaterThan(0);
+    }
+    if (w.districts.owned.some((s) => w.districts.kinds[s] === 'reedmere')) expect(reeds).toBeGreaterThan(0);
+    // Paint the middle of every slot at far, mid and near zoom, street and skyline, day and night.
+    const cache = new M.ground.GroundCache();
+    const ctx = mockContext();
+    for (let s = 0; s < 25; s++) {
+      const r = slotRect(w, s);
+      const cx = r.x0 + 32;
+      const cy = r.y0 + 32;
+      for (const [zoom, skyline] of [
+        [0.3, true],
+        [0.5, false],
+        [1.2, false],
+      ] as [number, boolean][])
+        for (const night of [0, 1]) {
+          resetMockStats();
+          const v = { camX: (cx - cy) * 32, camY: (cx + cy) * 16, zoom, dpr: 1, width: 390, height: 844 };
+          cache.draw(ctx, w, v, night, 1e6, skyline);
+          const b = { x0: r.x0, y0: r.y0, x1: r.x1, y1: r.y1 };
+          cache.drawAnimated(ctx, w, b, { time: 5, night, zoom, quality: 'high', artOffset: 64, world: w }, { x0: -1e6, y0: -1e6, x1: 1e6, y1: 1e6 });
+          expect(mockStats.errors, `slot ${s} ${w.districts.kinds[s]} zoom ${zoom} night ${night}`).toEqual([]);
+        }
+    }
+  });
+});
+
 describe('skyway layer (§3.7)', () => {
   it('draws every deck, the deferred pieces, portals, car lights and the one glow pass without errors', () => {
     const w = new M.World(77, undefined, undefined, 1);

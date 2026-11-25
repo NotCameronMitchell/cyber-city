@@ -25,7 +25,7 @@ import type { Game } from '../game/game';
 import { PARCEL_HEAD, PARCEL_MEMBER, PARCEL_SHAPE, fillParcelMap } from '../game/parcels';
 import { ZoneType, type Building, type Parcel, type Settings, type SlotId } from '../game/types';
 import type { World } from '../game/world';
-import { drawServiceBuilding, drawZone, resetFrame, serviceBuildingHeight, setSpriteLimits, zoneBuildingHeight, type ArtEnv } from './buildings';
+import { buildingCacheStats, drawServiceBuilding, drawZone, resetFrame, serviceBuildingHeight, setSpriteLimits, zoneBuildingHeight, type ArtEnv } from './buildings';
 import { HALF_H, HALF_W, type Camera } from './camera';
 import { Atlas } from './atlas';
 import {
@@ -283,7 +283,16 @@ export class Renderer {
   /** The pins drawn this frame (CSS px; input reads the same geometry through districts.annexPins). */
   pins: AnnexPin[] = [];
   /** Diagnostics (tests, the browser checks): the band drawn, sprites the skyline sweep drew and dropped. */
-  readonly view = { band: 'street' as 'street' | 'skyline' | 'map', streetMinZoom: 0.25, skylineDrawn: 0, skylineDropped: 0, limits: null as SpriteLimits | null };
+  readonly view = {
+    band: 'street' as 'street' | 'skyline' | 'map',
+    streetMinZoom: 0.25,
+    skylineDrawn: 0,
+    skylineDropped: 0,
+    limits: null as SpriteLimits | null,
+    /** The building sweep's time this frame (ms, painting included) and the sprite cache after it (V1 desktop rows). */
+    sweepMs: 0,
+    sprites: { bytes: 0, built: 0, fallbacks: 0 },
+  };
 
   constructor(
     public readonly canvas: HTMLCanvasElement,
@@ -724,7 +733,13 @@ export class Renderer {
     this.parcels.sync(world, tilesObj);
     const band: SkylineBand = { on: skyline, maxD2: Infinity };
     if (skyline) this.skylineBudget(world, tilesObj, view, band, skylineCap(this.cls, quality, lowerDetail));
+    const ts = performance.now();
     this.drawObjects(target, world, tilesObj, view, env, band, lanes);
+    this.view.sweepMs = performance.now() - ts;
+    const cs = buildingCacheStats();
+    this.view.sprites.bytes = cs.bytes;
+    this.view.sprites.built = cs.builtThisFrame;
+    this.view.sprites.fallbacks = cs.fallbacks;
     if (target !== ctx) {
       ctx.setTransform(1, 0, 0, 1, 0, 0);
       ctx.globalAlpha = OVERLAY_FADE;

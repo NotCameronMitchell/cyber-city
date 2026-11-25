@@ -25,7 +25,7 @@ import { heightOf } from '../game/heights';
 import { Terrain, ZoneType, type DistrictKind, type SlotId } from '../game/types';
 import type { World } from '../game/world';
 import { HALF_H, HALF_W, type Camera } from './camera';
-import { candidateSlots, slotNames } from './districts';
+import { candidateSlots, slotAccent, slotNames } from './districts';
 import { css, hexToRgb, mix, shade, type RGB } from './palette';
 
 /** Height headroom above a slot's diamond (world px): the tallest prisms. */
@@ -262,16 +262,30 @@ export class Atlas {
         ctx.fill();
       }
     }
-    // Slot grid and states.
+    // Slot grid and states, each district washed in its accent (a 5×5 repeat by its variant's, §3.7).
     const px = 1 / z;
     for (let k = 0; k < R * R; k++) {
       const r = slotRect(world, k);
       const owned = world.slotOwned[k] === 1;
       const cand = cands.has(k);
+      const accent = hexToRgb(slotAccent(world, k));
       slotDiamond(ctx, r.x0, r.y0);
       if (!owned) {
-        ctx.fillStyle = css([40, 26, 70], 0.28);
+        ctx.fillStyle = css(mix([40, 26, 70], accent, 0.22), 0.3);
         ctx.fill();
+      } else if (R > 1) {
+        ctx.fillStyle = css(accent, 0.07 + 0.05 * night);
+        ctx.fill();
+      }
+      // An inner accent rim, so two districts of one kind read apart by their colour.
+      if (R > 1) {
+        ctx.save();
+        ctx.clip();
+        ctx.lineWidth = 5 * px;
+        ctx.strokeStyle = css(accent, owned ? 0.35 : 0.5);
+        ctx.stroke();
+        ctx.restore();
+        slotDiamond(ctx, r.x0, r.y0);
       }
       ctx.lineWidth = (owned ? 1.4 : cand ? 2 : 1) * px;
       ctx.strokeStyle = owned ? css([236, 228, 255], 0.55) : cand ? css([255, 216, 77], 0.6 + 0.3 * Math.sin(time * 2.6)) : css([143, 123, 255], 0.45);
@@ -289,7 +303,7 @@ export class Atlas {
       const kind = world.districts.kinds[k];
       const { name, short } = slotNames(world, k);
       const label = 64 * HALF_W * 2 * z > 150 ? name : short;
-      if (!owned) drawKindIcon(ctx, kind, c.x, c.y - big * 1.3, big * 1.1, cands.has(k));
+      if (!owned) drawKindIcon(ctx, kind, c.x, c.y - big * 1.3, big * 1.1, cands.has(k), slotAccent(world, k));
       ctx.font = `${owned ? 700 : 600} ${big}px system-ui, sans-serif`;
       const tw = ctx.measureText ? ctx.measureText(label).width : label.length * big * 0.55;
       ctx.fillStyle = css([10, 6, 22], 0.6);
@@ -421,8 +435,8 @@ function atlasPal(nb: number): AtlasPal {
 }
 
 /** A small icon per district kind for locked slots (screen space, CSS px). */
-export function drawKindIcon(ctx: CanvasRenderingContext2D, kind: DistrictKind, x: number, y: number, s: number, candidate: boolean): void {
-  const col = hexToRgb(DISTRICTS[kind]?.color ?? '#8f7bff');
+export function drawKindIcon(ctx: CanvasRenderingContext2D, kind: DistrictKind, x: number, y: number, s: number, candidate: boolean, accent?: string): void {
+  const col = hexToRgb(accent ?? DISTRICTS[kind]?.color ?? '#8f7bff');
   ctx.save();
   ctx.translate(x, y);
   ctx.globalAlpha = candidate ? 1 : 0.75;

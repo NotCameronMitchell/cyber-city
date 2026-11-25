@@ -86,6 +86,64 @@ describe('RoadAccessMap (§3.3, §10.2 #6)', () => {
   });
 });
 
+describe('RoadAccessMap on a region, kept incremental (MEGACITY §3.9 R0)', () => {
+  it('after random road edits across a 3×3 region: exact inside the asked box, then everywhere; growth costs no patch', () => {
+    const w = new World(77, undefined, undefined, 3);
+    w.funds = 1e9;
+    for (let s = 0; s < 9; s++) if (!w.slotOwned[s]) w.annex(s);
+    const M = w.N;
+    const m = new RoadAccessMap();
+    const off = w.events.on('tiles', (r) => m.invalidate(r, w));
+    const rng = new Rng(5);
+    const dist = new Uint8Array(w.area);
+    const near = new Int32Array(w.area);
+    const queue = new Int32Array(w.area);
+    const truth = () => {
+      computeAccess(fillKinds(w, new Uint8Array(w.area)), dist, near, queue, M);
+      return dist;
+    };
+    expect(m.get(w).length).toBe(w.area);
+    const full0 = m.full;
+    for (let round = 0; round < 6; round++) {
+      for (let k = 0; k < 40; k++) {
+        const x = rng.int(0, M - 1);
+        const y = rng.int(0, M - 1);
+        const t = w.tiles[y * M + x];
+        if (t.terrain !== Terrain.Land || t.buildingId >= 0) continue;
+        if (t.road && rng.chance(0.4)) w.clearTile(x, y);
+        else w.setRoad(x, y, rng.pick(KINDS));
+      }
+      // A box (the sweep's): exact inside it, the rest of the flags wait.
+      const box = { x0: rng.int(0, M - 40), y0: rng.int(0, M - 40), x1: 0, y1: 0 };
+      box.x1 = box.x0 + 39;
+      box.y1 = box.y0 + 39;
+      const d = truth();
+      const a = m.get(w, box);
+      for (let y = box.y0; y <= box.y1; y++) for (let x = box.x0; x <= box.x1; x++) expect([x, y, a[y * M + x]]).toEqual([x, y, d[y * M + x] !== 255 ? 1 : 0]);
+      expect(m.pending).toBeGreaterThan(0);
+      const all = m.get(w);
+      expect(m.pending).toBe(0);
+      for (let i = 0; i < w.area; i++) if (all[i] !== (d[i] !== 255 ? 1 : 0)) expect(i).toBe(-1);
+    }
+    expect(m.full).toBe(full0);
+    expect(m.patches).toBeGreaterThan(0);
+    // Growth (a zone level change, no road) only flags blocks: checking them patches nothing.
+    const patches = m.patches;
+    for (let k = 0; k < 50; k++) {
+      const x = rng.int(0, M - 1);
+      const y = rng.int(0, M - 1);
+      const t = w.tiles[y * M + x];
+      if (t.terrain === Terrain.Land && !t.road && t.buildingId < 0) {
+        w.setZone(x, y, 1);
+        w.setLevel(x, y, 2);
+      }
+    }
+    m.get(w);
+    expect(m.patches).toBe(patches);
+    off();
+  });
+});
+
 describe('road kind widths (§3.11)', () => {
   it('orders the kinds by width so each reads apart: highway > avenue > street = ramp > alley', () => {
     expect(KIND_HALF).toEqual([0.3, 0.4, 0.46, 0.16, 0.3]);
