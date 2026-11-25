@@ -156,6 +156,81 @@ describe('the City map: snap both ways, insets, atlas scale and budget (§3.9)',
     expect(cam.zoom).toBeCloseTo(cam.mapZoom * 2, 6);
   });
 
+  it('the City map refits on a resize or rotation and on new insets: every corner stays on screen, pinch-out cannot stick', () => {
+    const w = new World(1, 'Turned', undefined, 3);
+    const cam = camOn(w, 844, 390);
+    const corners = () =>
+      [
+        [0, 0],
+        [w.N, 0],
+        [0, w.N],
+        [w.N, w.N],
+      ].map(([tx, ty]) => cam.worldToScreen((tx - ty) * HALF_W, (tx + ty) * HALF_H));
+    const onScreen = () => {
+      for (const p of corners()) {
+        expect(p.x).toBeGreaterThanOrEqual(-1);
+        expect(p.x).toBeLessThanOrEqual(cam.width + 1);
+        expect(p.y).toBeGreaterThanOrEqual(-1);
+        expect(p.y).toBeLessThanOrEqual(cam.height + 1);
+      }
+    };
+    // Opened in landscape, then the phone turns to portrait (review: zoom stayed at the landscape fit, 2× too close).
+    cam.snapToMap(0, 1, 0);
+    const land = cam.mapZoom;
+    onScreen();
+    cam.setViewport(390, 844);
+    expect(cam.mapZoom).toBeCloseTo(cam.mapFitZoom(), 9);
+    expect(cam.mapZoom).toBeLessThan(land * 0.75);
+    expect(cam.zoom).toBeCloseTo(cam.mapZoom, 9);
+    onScreen();
+    // Pinch-out and pinch-in stay inside the new [fit, fit × headroom].
+    cam.zoomAt(0.5, 195, 422);
+    expect(cam.zoom).toBeCloseTo(cam.mapZoom, 9);
+    cam.zoomAt(3, 195, 422);
+    expect(cam.zoom).toBeCloseTo(cam.mapZoom, 9);
+    // Back to landscape: the landscape fit again.
+    cam.setViewport(844, 390);
+    expect(cam.mapZoom).toBeCloseTo(land, 9);
+    onScreen();
+    // A snap still easing when the viewport turns lands on the new fit.
+    cam.snapFromMap(422, 195, 0);
+    cam.snapToMap(0, 1, 0.3);
+    cam.update(0.1);
+    cam.setViewport(390, 844);
+    for (let k = 0; k < 30; k++) cam.update(1 / 60);
+    expect(cam.zoom).toBeCloseTo(cam.mapFitZoom(), 9);
+    onScreen();
+    // A 5×5 map zoomed to 1.5× its fit keeps 1.5× of the new fit after a turn.
+    const w5 = new World(1, 'Five', undefined, 5);
+    const c5 = camOn(w5, 390, 844);
+    c5.snapToMap(0, 2, 0);
+    c5.zoomAt(1.5, 195, 422);
+    c5.setViewport(844, 390);
+    expect(c5.zoom / c5.mapZoom).toBeCloseTo(1.5, 6);
+    expect(c5.mapZoom).toBeCloseTo(c5.mapFitZoom(), 9);
+    // The desktop side panel opening over the map refits it into the uncovered area.
+    const pc = camOn(w, 1440, 900);
+    pc.snapToMap(0, 1, 0);
+    const before = pc.zoom;
+    pc.setInsets({ right: 400 });
+    expect(pc.zoom).toBeLessThan(before);
+    for (const p of [
+      [0, 0],
+      [w.N, 0],
+      [0, w.N],
+      [w.N, w.N],
+    ].map(([tx, ty]) => pc.worldToScreen((tx - ty) * HALF_W, (tx + ty) * HALF_H))) {
+      expect(p.x).toBeLessThanOrEqual(1440 - 400 + 1);
+      expect(p.x).toBeGreaterThanOrEqual(-1);
+    }
+    // Off the map, a resize changes nothing but the viewport (today's rule).
+    const st = camOn(w, 390, 844);
+    st.zoom = 0.7;
+    st.centerOnTile(96, 96);
+    st.setViewport(844, 390);
+    expect(st.zoom).toBe(0.7);
+  });
+
   it('setInsets: fitBox and centerOnTile use the uncovered area (the desktop side panel)', () => {
     const w = twoDistricts(3);
     const cam = camOn(w, 1440, 900);
@@ -446,6 +521,35 @@ describe('the Renderer with districts on the canvas mock (§3.9)', () => {
       expect(r1.view.band).toBe('street');
     } finally {
       r1.destroy();
+    }
+  });
+
+  it('a rotation with the City map open refits it and re-opens the atlas at the new scale (no magnified impostors)', async () => {
+    const { Renderer } = await import('../src/render/renderer');
+    const g = new Game();
+    g.restore(megacityWorld(3, 3, 11).serialize());
+    const canvas = document.createElement('canvas');
+    canvas.width = 390;
+    canvas.height = 844;
+    const cam = new Camera(g.world.N);
+    const r = new Renderer(canvas, g, cam);
+    const atlas = (r as unknown as { atlas: { scale: number } }).atlas;
+    try {
+      cam.setViewport(390, 844);
+      cam.snapToMap(0, 1, 0);
+      frame(r, 4);
+      expect(r.view.band).toBe('map');
+      const portrait = atlas.scale;
+      const portraitZoom = cam.mapZoom;
+      // Turn to landscape: the fit doubles, so the atlas painted for portrait would be magnified 2× without a re-open.
+      cam.setViewport(844, 390);
+      frame(r, 4);
+      expect(cam.mapZoom).toBeGreaterThan(portraitZoom * 1.5);
+      expect(atlas.scale).toBeGreaterThan(portrait * 1.5);
+      expect(r.view.band).toBe('map');
+      expect(mockStats.errors).toEqual([]);
+    } finally {
+      r.destroy();
     }
   });
 

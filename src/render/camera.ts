@@ -74,6 +74,8 @@ export class Camera {
   mapZoom = 0.03;
   /** How far the City map may zoom past its fit (2 for a 5×5 region on a handheld device, else 1; §7.2). */
   mapHeadroom = 1;
+  /** The bottom sheet `snapToMap` fitted the map above (CSS px), kept so a resize or rotation refits the same way. */
+  private mapInsetBottom = 0;
   /** A running ease (§3.9 snaps, §5.4's 0.3 s eases): from → to over `dur` seconds, smoothstep. */
   private anim: { t: number; dur: number; x0: number; y0: number; z0: number; x1: number; y1: number; z1: number } | null = null;
 
@@ -91,8 +93,12 @@ export class Camera {
   }
 
   setViewport(width: number, height: number) {
-    this.width = Math.max(1, width);
-    this.height = Math.max(1, height);
+    const w = Math.max(1, width);
+    const h = Math.max(1, height);
+    const changed = w !== this.width || h !== this.height;
+    this.width = w;
+    this.height = h;
+    if (changed) this.refitMap();
     this.clamp();
   }
 
@@ -238,7 +244,39 @@ export class Camera {
     this.mapView = true;
     this.mapZoom = t.zoom;
     this.mapHeadroom = Math.max(1, headroom);
+    this.mapInsetBottom = insetBottomPx;
     this.easeTo(t.x, t.y, t.zoom, sec);
+  }
+
+  /**
+   * The viewport or the insets changed while the City map is open (a resize, a rotation, the side panel): fit the
+   * region again (§3.9, §7.2), so a map opened in landscape still shows every district after a turn to portrait. A view
+   * at the fit (or a snap still easing to it) moves to the new fit; a view zoomed in keeps its centre and its zoom
+   * relative to the fit, inside the new [mapZoom, mapZoom × mapHeadroom].
+   */
+  private refitMap() {
+    if (!this.mapView) return;
+    const n = this.mapSize;
+    const t = this.target({ x0: 0, y0: 0, x1: n - 1, y1: n - 1 }, this.mapInsetBottom, 0.94);
+    const old = this.mapZoom;
+    if (!(t.zoom > 0) || !(old > 0)) return;
+    this.mapZoom = t.zoom;
+    const a = this.anim;
+    if (a && Math.abs(a.z1 - old) <= 1e-9 * old) {
+      // The snap is still easing to the old fit: retarget it.
+      a.x1 = t.x;
+      a.y1 = t.y;
+      a.z1 = t.zoom;
+      return;
+    }
+    if (this.zoom <= old * 1.001) {
+      this.anim = null;
+      this.x = t.x;
+      this.y = t.y;
+      this.zoom = t.zoom;
+      return;
+    }
+    this.zoom = Math.max(t.zoom, Math.min(t.zoom * this.mapHeadroom, (this.zoom * t.zoom) / old));
   }
 
   /**
@@ -264,7 +302,13 @@ export class Camera {
 
   /** Megacity: the screen px the UI covers (§3.9; the desktop side panel sets `right`, §14.1). */
   setInsets(i: Partial<{ top: number; right: number; bottom: number; left: number }>) {
-    this.insets = { ...this.insets, ...i };
+    const was = this.insets;
+    this.insets = { ...was, ...i };
+    const now = this.insets;
+    if (this.mapView && (now.top !== was.top || now.right !== was.right || now.bottom !== was.bottom || now.left !== was.left)) {
+      this.refitMap();
+      this.clamp();
+    }
   }
 
   /** Keep the view centre inside the map diamond, or `bounds` when set (with a little slack). */

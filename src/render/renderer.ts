@@ -289,6 +289,8 @@ export class Renderer {
   private runsKey = -1;
   private lift: { slot: SlotId; t0: number } | null = null;
   private mapOpen = false;
+  /** The atlas scale the City map was last opened at. */
+  private mapScale = 0;
   private lastTime = 0;
   private readonly memberParcel: Parcel = { hx: 0, hy: 0, x: 0, y: 0, w: 1, h: 1, level: 0, tier: 0 };
   /** Sweep scratch: which tiles of the current diagonal were drawn in its heads-first pass. */
@@ -712,9 +714,13 @@ export class Renderer {
 
     // The City map (§3.9): the atlas instead of the world, while it is open and during the snaps below minZoom.
     if (cam.mapView || cam.zoom < cam.minZoom - 1e-6) {
-      if (!this.mapOpen) {
+      const scale = atlasScale(cam.mapView ? cam.mapZoom : cam.mapFitZoom(), dpr, world.region, this.cls, lowerDetail);
+      // Opened, or refitted while open (a resize or rotation moves cam.mapZoom): the atlas at the new scale, painted
+      // progressively; the old pictures keep drawing at their own scale meanwhile.
+      if (!this.mapOpen || (cam.mapView && Math.abs(scale - this.mapScale) > 1e-6)) {
         this.mapOpen = true;
-        this.atlas.open(world, atlasScale(cam.mapView ? cam.mapZoom : cam.mapFitZoom(), dpr, world.region, this.cls, lowerDetail));
+        this.mapScale = scale;
+        this.atlas.open(world, scale);
       }
       this.view.band = 'map';
       this.pins = [];
