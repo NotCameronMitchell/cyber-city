@@ -25,8 +25,7 @@ import type { Game } from '../game/game';
 import { PARCEL_HEAD, PARCEL_MEMBER, PARCEL_SHAPE, fillParcelMap } from '../game/parcels';
 import { ZoneType, type Building, type Parcel, type Settings, type SlotId } from '../game/types';
 import type { World } from '../game/world';
-import * as buildings from './buildings';
-import { drawServiceBuilding, drawZone, resetFrame, serviceBuildingHeight, zoneBuildingHeight, type ArtEnv } from './buildings';
+import { drawServiceBuilding, drawZone, resetFrame, serviceBuildingHeight, setSpriteLimits, zoneBuildingHeight, type ArtEnv } from './buildings';
 import { HALF_H, HALF_W, type Camera } from './camera';
 import { Atlas } from './atlas';
 import {
@@ -72,11 +71,6 @@ const OBJECT_MARGIN = 10;
 /** Fog lift after an annex (§1.4: 1.5 s). */
 const FOG_LIFT_SEC = ANNEX.fogLiftSec;
 
-/**
- * WP-4's sprite-cache setter (render/buildings.ts `setSpriteLimits`, §3.9 PC budgets), read through the module
- * namespace so this file builds before it lands; until then the cache keeps its own defaults.
- */
-const setSpriteLimits = (buildings as unknown as { setSpriteLimits?: (l: SpriteLimits | null) => void }).setSpriteLimits;
 
 /**
  * The render-side parcel cache (§6.1, WP-3): parcels.ts' map bits, refilled for the aligned blocks a 'tiles' event
@@ -494,7 +488,7 @@ export class Renderer {
     // The building sprite cache sized to the canvas and the frame's sim work (§3.9 PC budgets; WP-4's setter).
     const limits = spriteLimits(this.cls, quality, this.canvas.width * this.canvas.height, game.simMsThisFrame, lowerDetail);
     this.view.limits = limits;
-    setSpriteLimits?.(limits);
+    setSpriteLimits(limits);
 
     // The City map (§3.9): the atlas instead of the world, while it is open and during the snaps below minZoom.
     if (cam.mapView || cam.zoom < cam.minZoom - 1e-6) {
@@ -514,8 +508,8 @@ export class Renderer {
     const zoom = cam.zoom;
     const skyline = multi && zoom < smz - 1e-6;
     this.view.band = skyline ? 'skyline' : 'street';
-    // WP-4 reads the world for district styles, accents, faction standing and the ending (ArtEnv.world, task #128).
-    const env = { time, night, zoom, quality, artOffset: artOffset(world), world } as ArtEnv;
+    // WP-4 reads the world for district styles, accents, faction standing and the ending (ArtEnv.world).
+    const env: ArtEnv = { time, night, zoom, quality, artOffset: artOffset(world), world };
 
     this.effects.update(dt);
     this.skyway.prepare(world, env);
@@ -835,7 +829,8 @@ export class Renderer {
             let skip = band.on && t.level > 0 && level < 3;
             if (!skip && band.on && t.level > 0 && band.maxD2 !== Infinity) skip = (wx0 - cx) ** 2 + (wy - cy) ** 2 > band.maxD2;
             if (!skip) {
-              const zh = zoneBuildingHeight(t) * (isHead ? (p!.w * p!.h > 2 ? 1.6 : 1.3) : 1);
+              // A parcel head's body is the whole parcel's (taller on bigger lots, §6.1).
+              const zh = zoneBuildingHeight(t, isHead ? p : null);
               if (!(wy + 2 * HALF_H < view.y0 || wy + HALF_H - zh - 24 > view.y1)) {
                 // Cars queued on decks behind this tower are drawn before it, so it hides them.
                 if (anySky) skyway.flushIfUnder(ctx, wx0 - HALF_W - wide, wy + HALF_H - zh - 8, wx0 + HALF_W + wide, wy + 2 * HALF_H);

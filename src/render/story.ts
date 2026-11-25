@@ -29,7 +29,8 @@ import { SKYBRIDGE } from '../game/config';
 import type { SkywayLayer } from './art/skyway';
 import { MOTH_COLOR, sigilSprite } from './art/sigils';
 import * as marks from './art/marks';
-import { drawRailTile, drawSkybridgeTile, type RailEnv } from './art/vertical';
+import { drawRailTile, drawSkybridgeTile, skinOf, type RailEnv } from './art/vertical';
+import { skybridgePayoff } from '../game/story/vertical';
 import { serviceBuildingHeight, zoneBuildingHeight, LOD_ZOOM, type ArtEnv } from './buildings';
 import { HALF_H, HALF_W } from './camera';
 import type { Rect } from './ground';
@@ -54,6 +55,9 @@ interface Seg {
   /** Span along the axis within this tile (end tiles reach into the anchors' insets). */
   a0: number;
   a1: number;
+  /** The span's skin (§5.6, skinOf) and its walkers per gap tile (one per 150 walkers a day, at most 4; 0 when dark). */
+  skin: number;
+  walkers: number;
 }
 
 const statsTmp = {} as BuildingStats;
@@ -279,9 +283,13 @@ export class StoryRender {
       const bx = flip ? l.ax : l.bx;
       const by = flip ? l.ay : l.by;
       // §5.3 rule 4: the tube hangs from the lower roof (top R − 6, bottom R − 23); z is its centre.
-      const R = Math.min(roofOf(world, ax, ay), roofOf(world, bx, by));
+      const ra = roofOf(world, ax, ay);
+      const rb = roofOf(world, bx, by);
+      const R = Math.min(ra, rb);
       const z = Math.max(30, R - SKYBRIDGE.tubeBelowRoof - SKYBRIDGE.tubeHeight / 2);
       const active = world.vertical.activeLinks.has(l.id);
+      const skin = skinOf(world, { ax, ay, bx, by }, ra <= rb ? 0 : 1);
+      const walkers = active ? Math.min(4, Math.floor(skybridgePayoff(world, { x: ax, y: ay }, { x: bx, y: by }).walkers / 150)) : 0;
       const n = Math.abs(bx - ax) + Math.abs(by - ay);
       // The back anchor may sort after the first gap tiles (multi-tile footprint): draw the tube after it.
       const after = frontKey(world, ax, ay);
@@ -292,7 +300,7 @@ export class StoryRender {
         const y = axisX ? ay : ay + k;
         // A deck on this tile that draws late (deferred to a building) draws first: the bridge passes over it.
         const key = Math.max(x + y, after, skyway ? skyway.deferKey(world, y * world.N + x) : -1);
-        const seg: Seg = { x, y, axisX, z, active, k: k / Math.max(1, n), a0: k === 1 ? -eA : 0, a1: k === n - 1 ? 1 + eB : 1 };
+        const seg: Seg = { x, y, axisX, z, active, k: k / Math.max(1, n), a0: k === 1 ? -eA : 0, a1: k === n - 1 ? 1 + eB : 1, skin, walkers };
         const list = this.segs.get(key);
         if (list) list.push(seg);
         else this.segs.set(key, [seg]);
@@ -308,7 +316,7 @@ export class StoryRender {
     const list = this.segs.get(s);
     if (!list) return;
     const mural = !!this.visual?.mural;
-    for (const g of list) drawSkybridgeTile(ctx, (g.x - g.y) * HALF_W, (g.x + g.y) * HALF_H, g.axisX, g.z, g.active, mural, g.k, this.railEnv, 0, g.a0, g.a1);
+    for (const g of list) drawSkybridgeTile(ctx, (g.x - g.y) * HALF_W, (g.x + g.y) * HALF_H, g.axisX, g.z, g.active, mural, g.k, this.railEnv, 0, g.a0, g.a1, g.skin, g.walkers);
   }
 
   /** Should the rail on this tile draw before the tile's own building (tall building hides it)? */
