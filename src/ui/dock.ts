@@ -381,7 +381,8 @@ export class Dock {
         meta.push(`${def.size}×${def.size}`);
         if (def.powerSupply) meta.push(`${def.powerSupply} MW`);
         else if (def.radius) meta.push(`r${def.radius}`);
-        if (def.residents) meta.push(`${abbr(def.residents)} homes`);
+        // Residents, the number the census and the HUD count (§4.6: homes are residents / 2.4, inspect shows both).
+        if (def.residents) meta.push(`${abbr(def.residents)} residents`);
         else if (def.jobs >= 1000) meta.push(`${abbr(def.jobs)} jobs`); // ×10 units (MEGACITY §4.4): v3's 100
       }
       const el = h(
@@ -596,6 +597,11 @@ export class Dock {
       }
       setClass(refs.btn, 'has-new', fresh);
     }
+    // A land grant waits (§7.3): below 375 px the HUD has no map button, so Data (whose first card is the City map)
+    // carries the gold dot instead (CSS shows it only there).
+    const grants = w.region >= 3 ? Math.max(0, w.districts.grants | 0) : 0;
+    const data = this.catRefs.get('data');
+    if (data) setClass(data.btn, 'has-grant', grants > 0);
     setClass(this.bar, 'is-full', deals);
   }
 

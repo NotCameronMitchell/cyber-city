@@ -40,7 +40,7 @@ import { CityReport } from './report';
 import { StoryUI } from './story/storyUI';
 import './story/story.css';
 import { Ticker } from './ticker';
-import { Tips, newsTip } from './tips';
+import { Tips, newsTip, type TipId } from './tips';
 import { traySections, type CategoryId } from './tools';
 
 /** HUD figures refresh interval (s). */
@@ -181,7 +181,7 @@ export class UI {
     this.banner.held = () => this.story.busy || this.modals.depth > 0;
     this.toasts.held = () => this.story.holdsToasts;
     // One item at a time (EXPANSION §7.6): never over a tray, drag, confirm, story surface, message banner or dialog.
-    this.tips = new Tips(this.dock.tipSlot, () => this.tipBlocked());
+    this.tips = new Tips(this.dock.tipSlot, (id) => this.tipBlocked(id));
 
     this.dock.stack.prepend(this.coach.el);
     this.dock.sheetSlot.append(this.inspect.el);
@@ -242,13 +242,19 @@ export class UI {
       this.statsDirty = true;
       this.panelsDirty = true;
       this.story.refreshRail();
-      if (e.grants > 0 && this.game.world.region >= 3) this.tips.show('grant');
+      // A grant that arrives with the City map open needs no "open the City map" tip.
+      if (e.grants > 0 && this.game.world.region >= 3) {
+        if (this.cityMap.isOpen) this.tips.resolve('grant');
+        else this.tips.show('grant');
+      }
+      this.dock.syncCategories();
     });
     on('annex', (e) => {
       this.statsDirty = true;
       this.panelsDirty = true;
       this.story.refreshRail();
       this.cityMap.refresh();
+      this.dock.syncCategories();
       this.tips.show('annexed');
       if (e.kind === 'skeleton') this.tips.show('frame');
     });
@@ -418,8 +424,15 @@ export class UI {
   private onCityMap(open: boolean): void {
     setClass(this.root, 'is-citymap', open);
     this.tips.moveTo(open ? this.cityMap.tipSlot : this.dock.tipSlot);
-    if (open) this.tips.onCityMap();
-    else this.syncInsets();
+    if (open) {
+      // The grant tip said "open the City map": done. The map's own tip takes its place at once.
+      this.tips.resolve('grant');
+      this.tips.onCityMap();
+    } else {
+      // The map's tip belongs to the map: seen if it showed, else it waits for the next open.
+      this.tips.drop('citymap');
+      this.syncInsets();
+    }
     this.statsDirty = true;
     this.panelsDirty = true;
   }
@@ -479,10 +492,15 @@ export class UI {
     this.stranded = stranded;
   }
 
-  /** Is anything up that a first-use tip must not cover or compete with? */
-  private tipBlocked(): boolean {
+  /**
+   * Is anything up that a first-use tip (`id`, the one that would show) must not cover or compete with? The City map
+   * shows only its own tip; the Corp Spire's sponsor tip explains its ✓ step, so that confirm does not hold it back.
+   */
+  private tipBlocked(id: TipId | null): boolean {
     const g = this.game;
-    if (this.dock.trayOpen || this.dock.hintShowing || pointerActivity.building || g.pendingConfirm) return true;
+    if (this.cityMap.isOpen && id !== 'citymap') return true;
+    const sponsorStep = id === 'sponsor' && g.pendingConfirm?.tool === 'spire';
+    if (this.dock.trayOpen || this.dock.hintShowing || pointerActivity.building || (g.pendingConfirm && !sponsorStep)) return true;
     // The inspect sheet has the player's attention (and shares the dock column on phones).
     if (this.inspect.isOpen) return true;
     if (this.story.busy || this.modals.depth > 0) return true;

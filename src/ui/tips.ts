@@ -94,7 +94,8 @@ export class Tips {
 
   constructor(
     slot: HTMLElement,
-    private readonly blocked: () => boolean,
+    /** Whether a tip may not show now; `id` is the tip that would show (the Spire's sponsor tip belongs to its ✓). */
+    private readonly blocked: (id: TipId | null) => boolean,
   ) {
     this.ico = h('span', { class: 'cc-tip-ico' });
     this.text = h('span', { class: 'cc-tip-text' });
@@ -153,6 +154,32 @@ export class Tips {
     this.enqueue('citymap');
   }
 
+  /**
+   * The player already did what a tip asks (the City map opened while the grant tip was up): remember it as seen
+   * without showing it (again), and let the next tip in at once.
+   */
+  resolve(id: TipId): void {
+    const k = this.queue.indexOf(id);
+    if (k >= 0) this.queue.splice(k, 1);
+    if (this.current === id) {
+      this.dismiss();
+      this.gap = 0;
+    } else if (!this.seen.has(id)) {
+      this.seen.add(id);
+      storageSet(TIPS_KEY, JSON.stringify([...this.seen]));
+    }
+  }
+
+  /**
+   * A tip's place went away (the City map closed): one already on screen counts as seen; a queued one is dropped
+   * unseen, so it shows the next time its place opens.
+   */
+  drop(id: TipId): void {
+    const k = this.queue.indexOf(id);
+    if (k >= 0) this.queue.splice(k, 1);
+    if (this.current === id) this.dismiss();
+  }
+
   /** Show tips in another slot (the City map's while it is open, the dock's otherwise). */
   moveTo(slot: HTMLElement): void {
     if (this.el.parentElement !== slot) slot.append(this.el);
@@ -166,7 +193,7 @@ export class Tips {
   /** Per frame (cheap): show the next tip when nothing covers its slot; pause the clock while something does. */
   update(dt: number): void {
     if (!this.current && !this.queue.length) return;
-    const blocked = this.blocked();
+    const blocked = this.blocked(this.current ?? this.queue[0] ?? null);
     if (blocked) {
       if (!this.el.hidden) this.el.hidden = true;
       return;

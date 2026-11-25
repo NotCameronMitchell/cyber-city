@@ -184,6 +184,21 @@ export function censusLine(s: DistrictSlotView): string {
   return parts.join(' · ');
 }
 
+/**
+ * The census's second line (§4.6): the job balance ("1 job per 1.7 residents", or "1.4 jobs per resident" where work
+ * outnumbers homes) and the average land value. Empty until the district has people or jobs.
+ */
+export function balanceLine(c: DistrictSlotView['census']): string {
+  if (!c || (c.residents <= 0 && c.jobs <= 0)) return '';
+  const parts: string[] = [];
+  if (c.residents > 0 && c.jobs > 0) {
+    const r = c.residents / c.jobs;
+    parts.push(r >= 1 ? `1 job per ${r.toFixed(1)} residents` : `${(1 / r).toFixed(1)} jobs per resident`);
+  } else parts.push(c.jobs > 0 ? 'Jobs, no homes yet' : 'Homes, no jobs yet');
+  parts.push(`Land value ${Math.round(Math.max(0, Math.min(1, c.avgLandValue)) * 100)}%`);
+  return parts.join(' · ');
+}
+
 // ── The panel ───────────────────────────────────────────────────────────────
 
 export class CityMap {
@@ -496,6 +511,8 @@ export class CityMap {
     if (s.state === 'owned') {
       const c = censusLine(s);
       if (c) html += `<p class="cc-cm-line">${esc(c)}</p>`;
+      const b = balanceLine(s.census);
+      if (b) html += `<p class="cc-cm-line is-dim">${esc(b)}</p>`;
     } else if (s.state !== 'notOpen') html += `<p class="cc-cm-line">${esc(terrainLine(s))}</p>`;
     if (s.perks.length) html += `<ul class="cc-cm-list is-perks">${s.perks.slice(0, 3).map((p) => `<li>+ ${esc(p)}</li>`).join('')}</ul>`;
     if (s.hazards.length) html += `<ul class="cc-cm-list is-hazards">${s.hazards.slice(0, 2).map((p) => `<li>! ${esc(p)}</li>`).join('')}</ul>`;

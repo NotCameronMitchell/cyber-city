@@ -14,6 +14,10 @@ import { h, prefersReducedMotion, replayClass, setClass, setHidden, setHtml, set
 import { credits } from './format';
 import { icon } from './icons';
 import { InspectStory } from './story/inspectStory';
+import { HALF_H, HALF_W } from '../render/camera';
+
+/** A crowned Stratablock's drawn top above its base (world px; the crown thumbnails fit the same ≈ 420 px). */
+const CROWN_TOP = 440;
 
 /** Rows whose percentage is better when high (others: lower is better). */
 export const HIGH_IS_GOOD = new Set(['Land value', 'Education', 'Wealth']);
@@ -60,6 +64,7 @@ export class InspectSheet {
   /** Remaining camera nudge in screen px. */
   private nudgeX = 0;
   private nudgeY = 0;
+  private frameTimer = 0;
 
   constructor(private readonly ctx: UIContext) {
     this.kind = h('span', { class: 'cc-insp-kind' });
@@ -94,8 +99,14 @@ export class InspectSheet {
     // Crown picker: grow the sheet, drop the stat rows, start at the picker head.
     this.story.onMode = (m) => {
       setClass(this.el, 'is-picking', m === 'crowns');
-      if (m === 'crowns') this.scroll.scrollTop = 0;
+      if (m === 'crowns') {
+        this.scroll.scrollTop = 0;
+        // The ghost on the map shows the chosen look (§6.2): bring the Stratablock above the taller picker sheet.
+        this.queueFrame();
+      }
     };
+    // The picker sheet grows as it fills (the crown grid, then the look row): frame again once its size settles.
+    if (typeof ResizeObserver === 'function') new ResizeObserver(() => this.queueFrame()).observe(this.el);
   }
 
   get isOpen(): boolean {
@@ -297,6 +308,46 @@ export class InspectSheet {
   }
 
   // ── Keep the selected tile visible ───────────────────────────────────────
+
+  /** Frame the Stratablock for the crown picker once the sheet stops changing size (a short debounce). */
+  private queueFrame(): void {
+    if (!this.el.classList.contains('is-picking')) return;
+    window.clearTimeout(this.frameTimer);
+    this.frameTimer = window.setTimeout(() => this.frameForPicker(), 160);
+  }
+
+  /**
+   * The crown picker grows the sheet over the city: ease so the selected Stratablock, crown height included, stands in
+   * the area the HUD and the sheet leave (above a bottom sheet, left of a side card), never zooming in.
+   */
+  private frameForPicker(): void {
+    const sel = this.sel;
+    if (!sel || !this.el.classList.contains('is-picking')) return;
+    const { game, camera: cam } = this.ctx;
+    const t = game.world.tileAt(sel.x, sel.y);
+    const b = t && t.buildingId >= 0 ? game.world.buildings.get(t.buildingId) : null;
+    if (!b) return;
+    const r = this.el.getBoundingClientRect();
+    if (r.width === 0) return;
+    const side = r.width < cam.width * 0.55;
+    const top = cam.insets.top + 8;
+    const bottom = side ? cam.height - cam.insets.bottom - 8 : r.top - 8;
+    const left = cam.insets.left;
+    const right = side ? r.left : cam.width - cam.insets.right;
+    const freeH = bottom - top;
+    if (freeH < 60 || right - left < 60) return;
+    const base = b.size * HALF_H;
+    const z = Math.max(cam.minZoom, Math.min(cam.zoom, freeH / (CROWN_TOP + base)));
+    const cx = b.x + b.size / 2;
+    const cy = b.y + b.size / 2;
+    const wx = (cx - cy) * HALF_W;
+    const midY = (cx + cy) * HALF_H + (base - CROWN_TOP) / 2;
+    const sx = (left + right) / 2;
+    const sy = (top + bottom) / 2;
+    // The selection nudge pans every frame (and would cancel the ease): this framing replaces it.
+    this.nudgeX = this.nudgeY = 0;
+    cam.easeTo(wx - (sx - cam.width / 2) / z, midY - (sy - cam.height / 2) / z, z, prefersReducedMotion() ? 0 : 0.3);
+  }
 
   private planNudge(): void {
     const sel = this.sel;

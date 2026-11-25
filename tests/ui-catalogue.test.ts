@@ -388,6 +388,49 @@ describe('first-use tips (§7.6, Appendix A)', () => {
       expect(tips.pending).toEqual([]);
     });
 
+    it('the City map takes over the grant tip: resolved on open (never shown again), the map tip at once; dropped unseen on close', () => {
+      const slot = fakeDocument().createElement('div');
+      let blockedFor: TipId | null = null;
+      const tips = new Tips(slot as unknown as HTMLElement, (id) => id === blockedFor);
+      tips.show('grant');
+      tips.update(0.25);
+      expect(tips.showing).toBe('grant');
+      // The player opens the map: the grant tip is done, the map's own tip shows with no gap.
+      tips.resolve('grant');
+      tips.onCityMap();
+      tips.update(0.25);
+      expect(tips.showing).toBe('citymap');
+      tips.show('grant');
+      expect(tips.pending).toEqual(['citymap']);
+      // Closing the map after it showed: seen.
+      tips.drop('citymap');
+      expect(tips.showing).toBeNull();
+      tips.onCityMap();
+      expect(tips.pending).toEqual([]);
+      // A tip blocked for its own id waits (the City map holds every other tip back) and is not dropped.
+      blockedFor = 'annexed';
+      tips.show('annexed');
+      tips.update(5);
+      tips.update(0.25);
+      expect(tips.showing).toBeNull();
+      blockedFor = null;
+      // The quiet gap after the map tip runs only while nothing blocks, then the tip shows.
+      for (let t = 0; t < TIP_GAP + 0.25; t += 0.25) tips.update(0.25);
+      expect(tips.showing).toBe('annexed');
+    });
+
+    it('a queued map tip that never showed is dropped unseen and comes back on the next open', () => {
+      const slot = fakeDocument().createElement('div');
+      const tips = new Tips(slot as unknown as HTMLElement, () => true);
+      tips.onCityMap();
+      tips.update(0.25);
+      expect(tips.showing).toBeNull();
+      tips.drop('citymap');
+      expect(tips.pending).toEqual([]);
+      tips.onCityMap();
+      expect(tips.pending).toEqual(['citymap']);
+    });
+
     it('every TipId resolves to copy', () => {
       const ids: TipId[] = ['avenue', 'highway', 'alley', 'skyway', 'seaport', 'airport', 'spaceport', 'academy', 'wealth', 'ramps', 'noise'];
       for (const id of ids) expect(TIPS[id].text.length).toBeGreaterThan(20);

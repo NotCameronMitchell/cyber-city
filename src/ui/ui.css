@@ -5072,3 +5072,20 @@ body {
 .cc-sum-misc.is-grant {
   color: var(--cc-gold);
 }
+
+/* A land grant waits and the HUD has no map button (below 375 px, §7.3): Data, whose first card is the City map,
+   carries a gold dot instead of the "new" dot. */
+@media (max-width: 374px) {
+  .cc-tb.has-grant .cc-tb-dot {
+    display: block;
+    position: absolute;
+    top: 6px;
+    left: calc(50% + 8px);
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: var(--cc-gold, #ffd84d);
+    box-shadow: 0 0 0 2px rgba(7, 6, 13, 0.9), 0 0 8px rgba(255, 216, 77, 0.85);
+    pointer-events: none;
+  }
+}

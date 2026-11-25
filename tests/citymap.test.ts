@@ -16,6 +16,7 @@ import {
   CITYMAP_HELP,
   CONFIRM_GUARD_MS,
   chipRow,
+  balanceLine,
   censusLine,
   defaultSlot,
   footerModel,
@@ -190,6 +191,15 @@ describe('City map model (§7.2)', () => {
     expect(censusLine({ ...variant, census: { residents: 412000, jobs: 98000, developed: 1, avgLandValue: 0.4, ruins: 0 } })).toBe(
       `${variant.name} · ${DISTRICTS[variant.kind].short} · 412k residents · 98k jobs`,
     );
+  });
+
+  it('the census balance line (§4.6): jobs per resident either way round, the land value, nothing for an empty district', () => {
+    const c = (residents: number, jobs: number, lv = 0.42) => ({ residents, jobs, developed: 1, avgLandValue: lv, ruins: 0 });
+    expect(balanceLine(c(170000, 100000))).toBe('1 job per 1.7 residents · Land value 42%');
+    expect(balanceLine(c(187000, 273000, 0.18))).toBe('1.5 jobs per resident · Land value 18%');
+    expect(balanceLine(c(0, 5000, 0.1))).toBe('Jobs, no homes yet · Land value 10%');
+    expect(balanceLine(c(0, 0))).toBe('');
+    expect(balanceLine(undefined)).toBe('');
   });
 });
 
