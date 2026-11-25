@@ -43,7 +43,7 @@ describe('district rules (§3.3)', () => {
     const p0 = w.fields.pollution[i];
     w.layerParts.district.parkAdd[i] = 0.5;
     w.layerParts.district.pollutionAdd[i + 10] = 0.15;
-    composeLayers(w);
+    composeLayers(w, true); // written in place, without a reset
     s.recomputeAll();
     expect(w.fields.park[i]).toBeCloseTo(0.5, 6);
     expect(w.fields.pollution[i + 10]).toBeGreaterThan(p0);

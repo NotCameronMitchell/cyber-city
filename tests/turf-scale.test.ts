@@ -82,3 +82,61 @@ describe('O6 banded turf (§3.3)', () => {
     expect(steps).toBe(0);
   });
 });
+
+describe('the seam on a big city (§3.3: the month end within budget)', () => {
+  /** Layouts with more pairs than computeSeam compares one by one (its distance transform path). */
+  let big = 0;
+  /** Today's rule, every pair: the midpoint of the first pair (Undertow order, then Kites) at the smallest distance. */
+  function seamByPairs(w: World): number | null {
+    const N = w.N;
+    const u: number[] = [];
+    const k: number[] = [];
+    for (let s = 0; s < w.segCount; s += 2)
+      for (let i = w.segs[s]; i < w.segs[s + 1]; i++) {
+        if (w.turf.owner[i] === 1) u.push(i);
+        else if (w.turf.owner[i] === 2) k.push(i);
+      }
+    if (!u.length || !k.length) return null;
+    if (u.length * k.length > 1 << 16) big++;
+    let best = Infinity;
+    let a = -1;
+    let b = -1;
+    for (const i of u) {
+      for (const j of k) {
+        const d = ((j % N) - (i % N)) ** 2 + (((j / N) | 0) - ((i / N) | 0)) ** 2;
+        if (d < best) {
+          best = d;
+          a = i;
+          b = j;
+        }
+      }
+    }
+    return Math.round((((a / N) | 0) + ((b / N) | 0)) / 2) * N + Math.round(((a % N) + (b % N)) / 2);
+  }
+
+  it.each([3, 5] as Region[])('%i×%i: random gang layouts (blobs far apart, touching, scattered) give the same seam as every pair', (region) => {
+    const w = new World(17, 'Seam', undefined, region);
+    for (let s = 0; s < region * region; s++) if (!w.slotOwned[s]) w.annex(s);
+    const rng = new Rng(region * 101);
+    const N = w.N;
+    for (let trial = 0; trial < 12; trial++) {
+      w.turf.owner.fill(0);
+      const blobs = 1 + Math.floor(rng.next() * 4);
+      for (const o of [1, 2]) {
+        for (let b = 0; b < blobs; b++) {
+          const cx = Math.floor(rng.next() * N);
+          const cy = Math.floor(rng.next() * N);
+          const r = 3 + Math.floor(rng.next() * 18);
+          const sparse = trial % 3 === 2;
+          for (let y = Math.max(0, cy - r); y <= Math.min(N - 1, cy + r); y++)
+            for (let x = Math.max(0, cx - r); x <= Math.min(N - 1, cx + r); x++)
+              if ((!sparse || rng.next() < 0.2) && !w.turf.owner[y * N + x]) w.turf.owner[y * N + x] = o;
+        }
+      }
+      const want = seamByPairs(w);
+      w.story.seam = null;
+      expect([trial, turf.computeSeam(w)]).toEqual([trial, want]);
+    }
+    expect(big).toBeGreaterThanOrEqual(6);
+  });
+});

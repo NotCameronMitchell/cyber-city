@@ -72,11 +72,11 @@ describe('O3 coverage cache (§3.3)', () => {
       ['securityMul', () => (w.mods.securityMul = 1.4)],
       ['transitAdd layer', () => {
         w.layerParts.local.transitAdd.fill(0.3, 80 * w.N + 64, 80 * w.N + 120);
-        composeLayers(w);
+        composeLayers(w, true); // written in place, without a reset
       }],
       ['parkAdd district layer', () => {
         w.layerParts.district.parkAdd.fill(0.5, 90 * w.N + 64, 90 * w.N + 100);
-        composeLayers(w);
+        composeLayers(w, true);
       }],
       ['an annex', () => {
         w.annex(1);

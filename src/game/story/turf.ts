@@ -1201,6 +1201,24 @@ export function computeSeam(world: World): number | null {
     for (let i = a; i < e; i++) if (owner[i] === K) list[nu + nk++] = i;
   });
   if (!nk) return world.story.seam;
+  // The seam is the midpoint of the first pair (Undertow order, then Kites order) at the smallest squared distance.
+  // Small cities compare every pair; big ones (MEGACITY: two gangs of 8,000 tiles are 64 M pairs) find the smallest
+  // distance with an exact squared distance transform of the Kites tiles, then that pair: the same answer.
+  const pair = nu * nk <= SEAM_PAIRS ? seamPairs(list, nu, nk, N) : seamTransform(world, list, nu, nk);
+  const a = pair[0];
+  const b = pair[1];
+  const mx = Math.round(((a % N) + (b % N)) / 2);
+  const my = Math.round((((a / N) | 0) + ((b / N) | 0)) / 2);
+  world.story.seam = my * N + mx;
+  return world.story.seam;
+}
+
+/** Pair counts up to which computeSeam compares every pair (≈ 0.1 ms in Node). */
+const SEAM_PAIRS = 1 << 16;
+const SEAM_OUT: [number, number] = [-1, -1];
+
+/** Every pair, in order: the first pair at the smallest squared distance (two tiles are at least 1 apart). */
+function seamPairs(list: Int32Array, nu: number, nk: number, N: number): [number, number] {
   let best = Infinity;
   let a = -1;
   let b = -1;
@@ -1222,10 +1240,107 @@ export function computeSeam(world: World): number | null {
     }
     if (best <= 1) break;
   }
-  const mx = Math.round(((a % N) + (b % N)) / 2);
-  const my = Math.round((((a / N) | 0) + ((b / N) | 0)) / 2);
-  world.story.seam = my * N + mx;
-  return world.story.seam;
+  SEAM_OUT[0] = a;
+  SEAM_OUT[1] = b;
+  return SEAM_OUT;
+}
+
+/** Squared distance transform scratch (one per frame size). */
+const seamScratch = scratchFor((area) => {
+  const n = Math.round(Math.sqrt(area));
+  return { g: new Float64Array(area), f: new Float64Array(n), v: new Int32Array(n), z: new Float64Array(n + 1), d: new Float64Array(n) };
+});
+const FAR = 1e9;
+
+/**
+ * The same pair as seamPairs: the exact squared Euclidean distance from every tile of the owned box to the nearest
+ * Kites tile (Felzenszwalb and Huttenlocher's lower envelope, columns then rows; integer inputs keep it exact), the
+ * first Undertow tile at the smallest of those, then the first Kites tile at that distance from it.
+ */
+function seamTransform(world: World, list: Int32Array, nu: number, nk: number): [number, number] {
+  const N = world.N;
+  const box = world.ownedBox;
+  const owner = world.turf.owner;
+  const S = seamScratch(world.area);
+  const { g, f, v, z, d } = S;
+  // Columns: the distance to the nearest Kites tile above or below, squared.
+  for (let x = box.x0; x <= box.x1; x++) {
+    let last = -FAR;
+    for (let y = box.y0; y <= box.y1; y++) {
+      const i = y * N + x;
+      if (owner[i] === K) last = y;
+      g[i] = y - last;
+    }
+    last = FAR;
+    for (let y = box.y1; y >= box.y0; y--) {
+      const i = y * N + x;
+      if (owner[i] === K) last = y;
+      const u = Math.min(g[i], last - y);
+      g[i] = u >= FAR / 2 ? FAR : u * u;
+    }
+  }
+  // Rows: the lower envelope of the column parabolas, written back into g.
+  const w = box.x1 - box.x0 + 1;
+  for (let y = box.y0; y <= box.y1; y++) {
+    const row = y * N + box.x0;
+    let k = -1;
+    for (let q = 0; q < w; q++) {
+      const fq = g[row + q];
+      f[q] = fq;
+      if (fq >= FAR) continue;
+      if (k < 0) {
+        k = 0;
+        v[0] = q;
+        z[0] = -Infinity;
+        z[1] = Infinity;
+        continue;
+      }
+      let s = (fq + q * q - (f[v[k]] + v[k] * v[k])) / (2 * (q - v[k]));
+      while (s <= z[k]) {
+        k--;
+        s = (fq + q * q - (f[v[k]] + v[k] * v[k])) / (2 * (q - v[k]));
+      }
+      k++;
+      v[k] = q;
+      z[k] = s;
+      z[k + 1] = Infinity;
+    }
+    if (k < 0) {
+      for (let q = 0; q < w; q++) g[row + q] = FAR;
+      continue;
+    }
+    let j = 0;
+    for (let q = 0; q < w; q++) {
+      while (z[j + 1] < q) j++;
+      const p = v[j];
+      d[q] = (q - p) * (q - p) + f[p];
+    }
+    for (let q = 0; q < w; q++) g[row + q] = d[q];
+  }
+  let best = Infinity;
+  let a = -1;
+  for (let p = 0; p < nu; p++) {
+    const t = g[list[p]];
+    if (t < best) {
+      best = t;
+      a = list[p];
+      if (t <= 1) break;
+    }
+  }
+  const ax = a % N;
+  const ay = (a / N) | 0;
+  for (let q = nu; q < nu + nk; q++) {
+    const j = list[q];
+    const dx = (j % N) - ax;
+    const dy = ((j / N) | 0) - ay;
+    if (dx * dx + dy * dy === best) {
+      SEAM_OUT[0] = a;
+      SEAM_OUT[1] = j;
+      return SEAM_OUT;
+    }
+  }
+  // Unreachable with exact arithmetic; keep the plain answer if it ever happens.
+  return seamPairs(list, nu, nk, N);
 }
 
 /** Street take (§3.5): 4 CR × s per developed turf tile per month, for one gang. */

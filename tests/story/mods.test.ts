@@ -9,6 +9,7 @@ import {
   combine,
   composeLayers,
   makeLayerParts,
+  layersVersion,
   makeLayers,
   resetLayers,
   resetMods,
@@ -256,7 +257,7 @@ describe('layers', () => {
     district.pollutionAdd[15] = 0.15;
     turf.pollutionAdd[15] = 0.07;
     district.parkAdd[16] = 4;
-    composeLayers(world);
+    composeLayers(world, true); // parts written in place (no reset): force the merge
     const L = world.layers;
     expect(L.crimeAdd[10]).toBeCloseTo(0.15, 6);
     expect(L.lvAdd[11]).toBeCloseTo(0.01, 6);
@@ -273,7 +274,7 @@ describe('layers', () => {
     world.layers.pollutionAdd[15] = 0;
     local.parkAdd[14] = 0;
     turf.pollutionAdd[15] = 0;
-    composeLayers(world);
+    composeLayers(world, true);
     expect(JSON.stringify(Object.values(world.layers).map((a) => Array.from(a as Float32Array)))).toBe(before);
   });
 
@@ -301,10 +302,46 @@ describe('layers', () => {
     expect(world.layers.tripMul[2]).toBe(0);
   });
 
+  it('composeLayers merges only when a part was reset, the owned segments moved, or it is forced (MEGACITY §3.3)', () => {
+    const world = { layers: makeLayers(AREA), layerParts: makeLayerParts(AREA) };
+    const { turf, local } = world.layerParts;
+    resetLayers(turf);
+    turf.crimeAdd[3] = 0.2;
+    composeLayers(world);
+    expect(world.layers.crimeAdd[3]).toBeCloseTo(0.2, 6);
+    const v = layersVersion(world.layers);
+    // Nothing reset since: a repeated call is free and keeps the version (the coverage cache holds).
+    composeLayers(world);
+    expect(layersVersion(world.layers)).toBe(v);
+    // An in-place write without a reset is seen only when forced.
+    local.crimeAdd[3] = 0.1;
+    composeLayers(world);
+    expect(world.layers.crimeAdd[3]).toBeCloseTo(0.2, 6);
+    composeLayers(world, true);
+    expect(world.layers.crimeAdd[3]).toBeCloseTo(0.3, 6);
+    expect(layersVersion(world.layers)).toBe(v + 1);
+    // An owner's rewrite (reset, then write) is always merged.
+    resetLayers(local);
+    local.crimeAdd[4] = 0.05;
+    composeLayers(world);
+    expect(world.layers.crimeAdd[3]).toBeCloseTo(0.2, 6);
+    expect(world.layers.crimeAdd[4]).toBeCloseTo(0.05, 6);
+    // New owned segments (an annex) merge again.
+    const segs = new Int32Array([0, AREA >> 1]);
+    const w2 = { ...world, segs, segCount: 2 };
+    resetLayers(turf);
+    turf.crimeAdd[AREA - 1] = 0.4;
+    composeLayers(w2);
+    expect(world.layers.crimeAdd[AREA - 1]).toBe(0); // locked tile: not merged
+    segs[1] = AREA;
+    composeLayers(w2);
+    expect(world.layers.crimeAdd[AREA - 1]).toBeCloseTo(0.4, 6);
+  });
+
   it('composeLayers is fast enough for per-month use', () => {
     const world = { layers: makeLayers(AREA), layerParts: makeLayerParts(AREA) };
     const t0 = performance.now();
-    for (let i = 0; i < 50; i++) composeLayers(world);
+    for (let i = 0; i < 50; i++) composeLayers(world, true);
     expect((performance.now() - t0) / 50).toBeLessThan(2);
   });
 });

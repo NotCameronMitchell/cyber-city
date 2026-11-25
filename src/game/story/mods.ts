@@ -230,8 +230,24 @@ export function makeLayers(area: number): SimLayers {
   };
 }
 
+/** Reset counter per layer set: every owner resets its part before rewriting it, so composeLayers can tell what moved. */
+const resetEpochs = new WeakMap<SimLayers, number>();
+let resetClock = 0;
+
+/** What a world's layers were last merged from: each part's reset epoch and the owned segments. */
+interface Composed {
+  turf: number;
+  vertical: number;
+  local: number;
+  district: number;
+  segs: Int32Array | null;
+  segCount: number;
+}
+const composed = new WeakMap<SimLayers, Composed>();
+
 /** Reset a layer set to identities in place (owners call this before rewriting their part). */
 export function resetLayers(l: SimLayers): void {
+  resetEpochs.set(l, ++resetClock);
   l.crimeAdd.fill(0);
   l.lvAdd.fill(0);
   l.transitAdd.fill(0);
@@ -257,14 +273,41 @@ export function makeLayerParts(area: number): LayerParts {
  * O1) only owned tiles are merged: a locked tile is off the map for the sim, and
  * an annex re-composes. One loop per output layer (streams better than one fused
  * loop: ≈ 3.3 against 4.2 ms for 102,400 tiles in Node).
+ *
+ * The merge runs only when something it reads moved since the last one: a part was
+ * reset (every owner calls resetLayers before rewriting its part), the owned
+ * segments changed, or `force` (a caller that wrote a part in place without a
+ * reset). A repeated call costs nothing (the month end called it three times,
+ * ≈ 2.3 ms each at 25 districts) and leaves layersVersion, so the coverage cache
+ * (O3) holds.
  */
-export function composeLayers(world: Pick<World, 'layers' | 'layerParts'> & Partial<Pick<World, 'segs' | 'segCount'>>): void {
+export function composeLayers(
+  world: Pick<World, 'layers' | 'layerParts'> & Partial<Pick<World, 'segs' | 'segCount'>>,
+  force = false,
+): void {
   const out = world.layers;
-  layerVersions.set(out, layersVersion(out) + 1);
   const { turf: a, vertical: b, local: c, district: d } = world.layerParts;
-  const n = out.crimeAdd.length;
   const segs = world.segs;
   const sc = world.segCount ?? 0;
+  const ea = resetEpochs.get(a) ?? 0;
+  const eb = resetEpochs.get(b) ?? 0;
+  const ec = resetEpochs.get(c) ?? 0;
+  const ed = resetEpochs.get(d) ?? 0;
+  const last = composed.get(out);
+  if (!force && last && last.turf === ea && last.vertical === eb && last.local === ec && last.district === ed && sameSegs(last, segs, sc))
+    return;
+  if (last) {
+    last.turf = ea;
+    last.vertical = eb;
+    last.local = ec;
+    last.district = ed;
+    last.segCount = sc;
+    last.segs = segs ? (last.segs && last.segs.length >= sc ? last.segs : new Int32Array(segs.length)) : null;
+    if (segs && last.segs) last.segs.set(segs.subarray(0, sc));
+  } else
+    composed.set(out, { turf: ea, vertical: eb, local: ec, district: ed, segCount: sc, segs: segs ? segs.slice() : null });
+  layerVersions.set(out, layersVersion(out) + 1);
+  const n = out.crimeAdd.length;
   const one = !segs || sc <= 0;
   for (let k = 0; k < (one ? 2 : sc); k += 2) {
     const lo = one ? 0 : segs![k];
@@ -278,6 +321,15 @@ export function composeLayers(world: Pick<World, 'layers' | 'layerParts'> & Part
     max4(out.parkAdd, a.parkAdd, b.parkAdd, c.parkAdd, d.parkAdd, lo, hi);
     add4(out.pollutionAdd, a.pollutionAdd, b.pollutionAdd, c.pollutionAdd, d.pollutionAdd, lo, hi);
   }
+}
+
+/** Were the layers last merged over these owned segments? */
+function sameSegs(last: Composed, segs: Int32Array | undefined, sc: number): boolean {
+  if (!segs) return last.segs === null;
+  if (!last.segs || last.segCount !== sc) return false;
+  const p = last.segs;
+  for (let k = 0; k < sc; k++) if (p[k] !== segs[k]) return false;
+  return true;
 }
 
 /** o = clamp(a + b + c + d, −1, 1) on [lo, hi). */
