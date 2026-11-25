@@ -338,7 +338,7 @@ export class Renderer {
     const ctx = canvas.getContext('2d', { alpha: false });
     if (!ctx) throw new Error('Canvas 2D not available');
     this.ctx = ctx;
-    this.effects = new Effects(game);
+    this.effects = new Effects(game, this.view);
     this.story = new StoryRender(game);
     this.touch = typeof matchMedia === 'function' && matchMedia('(hover: none), (pointer: coarse)').matches;
     this.cls = deviceClass();

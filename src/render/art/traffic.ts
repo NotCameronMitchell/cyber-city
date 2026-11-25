@@ -1,6 +1,5 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// Street traffic: little hover-cars driving on the road network, plus
-// pedestrian specks on busy commercial sidewalks.
+// Street traffic: little hover-cars driving on the road network.
 //
 //  * Vehicles live on road tiles. Each holds its tile, entry heading and the
 //    exit it picked; within a tile it follows a cubic Bézier from the entry lane
@@ -11,24 +10,33 @@
 //  * Only the visible area is simulated: the target count is derived from the
 //    traffic field and population of the visible road tiles, new vehicles spawn
 //    there (fading in) and vehicles that leave the view are recycled.
-//  * The road list is rebuilt lazily after a 'tiles' event.
 //  * Road kinds (docs/EXPANSION.md §3.11): spawn weight per visible tile ×
 //    (Highway 1.6, Avenue 1.3, Street / Ramp 1, Back Alley 0.3); speed ×
 //    ROAD_KINDS[k].speed; lanes Street ±0.15, Avenue ±0.12 / ±0.27, Highway
 //    ±0.16 / ±0.36 (inner or outer lane by agent hash, kept on that kind);
-//    trucks are 35% of highway spawns; alleys carry only bikes (and walkers).
-//    15% of spawns enter from visible border roads heading inward, and a car
-//    whose only way on leads off the map fades out there instead of U-turning.
-//  * The public API (reset, invalidate, update, draw) is frozen: Effects drives it.
+//    alleys carry only bikes. 15% of spawns enter from visible border roads
+//    heading inward, and a car whose only way on leads off the map fades out
+//    there instead of U-turning (WP-3's boundary rule).
+//  * Vehicle kinds (MEGACITY §6.4): buses on avenues (12% of avenue spawns, a
+//    long lit body), delivery vans everywhere, cargo trucks beside Fab Yards and
+//    Seaports (and 35% on highways), taxis near the Airport, stations and $$+
+//    Market tiles, police cruisers near precincts (blue and red at night).
+//  * R0 (MEGACITY §3.9): nothing walks the whole map. A 'tiles' event only
+//    flags the 8×8 blocks of StreetIndex it touches; the visible rect is walked
+//    every 0.5 s (and at most every 250 ms after a change in view), refreshing
+//    its flagged blocks first, counted as 'view:traffic'. No street cars in the
+//    skyline view or under the City map (§3.9).
+//  * Pedestrians moved to art/crowds.ts (§6.4 crowds), which reads the same
+//    StreetIndex.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { ROAD_KINDS } from '../../game/config';
-import { RoadKind, ZoneType } from '../../game/types';
+import { RoadKind, ZoneType, type BuildingType } from '../../game/types';
 import type { World } from '../../game/world';
 import { HALF_H, HALF_W } from '../camera';
 import { css, glowSprite, mix, type RGB } from '../palette';
+import { countPass } from '../passes';
 
-const WALK = 0.41;
 /** Lateral lane offsets per RoadKind: [inner, outer] (a street has one lane each way). */
 const LANES: readonly (readonly [number, number])[] = [
   [0.15, 0.15],
@@ -47,6 +55,8 @@ const EDGE_SHARE = 0.15;
 /** Direction vectors: 0 = N (y-1), 1 = E (x+1), 2 = S (y+1), 3 = W (x-1). Bit = 1 << d (World.roadMask). */
 const DX = [0, 1, 0, -1];
 const DY = [-1, 0, 1, 0];
+/** Exported for art/crowds.ts (same compass). */
+export { DX as STREET_DX, DY as STREET_DY };
 
 /**
  * The direction (0 N, 1 E, 2 S, 3 W) from an owned tile to a neighbour off the owned land (the map edge or a locked
@@ -69,13 +79,156 @@ export interface Bounds {
   y1: number;
 }
 
+
+/** The part of the world on screen this frame (world px; Effects reads it off the ground pass's transform). */
+export interface ViewRect {
+  x0: number;
+  y0: number;
+  x1: number;
+  y1: number;
+}
+
+/**
+ * Is the centre of tile (x, y) on screen, within `mx` / `my` world px? The tile bounds the renderer hands over are an
+ * axis-aligned box in tile space, about twice the screen's area: life layers pick their spots from what is on screen.
+ */
+export function tileOnScreen(r: ViewRect | null, x: number, y: number, mx = 40, my = 40): boolean {
+  if (!r) return true;
+  const px = (x - y) * HALF_W;
+  const py = (x + y + 1) * HALF_H;
+  return px >= r.x0 - mx && px <= r.x1 + mx && py >= r.y0 - my && py <= r.y1 + my;
+}
+
+// ── The street index (R0): what each road tile has beside it, refreshed per 8×8 block ──
+
+/** StreetIndex.side bits of a road tile. */
+export const SIDE_MARKET = 3; // bits 0-1: the highest level of a developed, lived-in Market tile beside it
+export const SIDE_HAB = 4; // a developed Hab Block beside it
+export const SIDE_FAB = 8; // a developed Fab Yard or a Seaport beside it (cargo trucks)
+export const SIDE_RICH = 16; // a $$+ Market tile beside it (taxis)
+export const SIDE_HUB = 32; // a station, Metro, Airport or terminal beside it (taxis, crowds)
+export const SIDE_GATHER = 64; // a plaza, Market Hall, Arena or park beside it (groups gather)
+export const SIDE_ROAD = 128; // the tile is a ground road
+
+const HUBS = new Set<BuildingType>(['maglev', 'metro', 'airport', 'terminal', 'spaceport']);
+const GATHER = new Set<BuildingType>(['plaza', 'markethall', 'arena', 'canopypark', 'commons', 'tidemarket', 'pearlatrium', 'stillsquare']);
+
+/**
+ * Per road tile, what stands beside it (§6.4 crowds, vehicles, reflections). A 'tiles' event flags the 8×8 blocks its
+ * rect touches; `refresh(box)` recomputes the flagged blocks inside a box (the view), so nothing walks the whole map.
+ */
+export class StreetIndex {
+  side = new Uint8Array(0);
+  private world: World | null = null;
+  private stale = new Uint8Array(0);
+  private bw = 0;
+  /** Blocks recomputed since construction (tests: R0). */
+  refreshed = 0;
+
+  /** Size to the world (a swap or first use): every block flagged. */
+  private bind(world: World) {
+    this.world = world;
+    this.side = new Uint8Array(world.area);
+    this.bw = (world.N + 7) >> 3;
+    this.stale = new Uint8Array(this.bw * this.bw).fill(1);
+  }
+
+  /** Tiles changed in `r` (flag its blocks), or everything (no rect: a world swap, an annex). */
+  invalidate(world: World, r?: Bounds) {
+    if (world !== this.world || this.side.length !== world.area) {
+      this.bind(world);
+      return;
+    }
+    if (!r) {
+      this.stale.fill(1);
+      return;
+    }
+    const N = world.N;
+    const bx0 = Math.max(0, r.x0) >> 3;
+    const by0 = Math.max(0, r.y0) >> 3;
+    const bx1 = Math.min(N - 1, r.x1) >> 3;
+    const by1 = Math.min(N - 1, r.y1) >> 3;
+    const bw = this.bw;
+    for (let by = by0; by <= by1; by++) for (let bx = bx0; bx <= bx1; bx++) this.stale[by * bw + bx] = 1;
+  }
+
+  /** Recompute the flagged blocks that overlap `b` (tile bounds, inclusive). */
+  refresh(world: World, b: Bounds) {
+    if (world !== this.world || this.side.length !== world.area) this.bind(world);
+    const N = world.N;
+    const bw = this.bw;
+    const bx0 = Math.max(0, b.x0) >> 3;
+    const by0 = Math.max(0, b.y0) >> 3;
+    const bx1 = Math.min(N - 1, Math.max(0, b.x1)) >> 3;
+    const by1 = Math.min(N - 1, Math.max(0, b.y1)) >> 3;
+    for (let by = by0; by <= by1; by++)
+      for (let bx = bx0; bx <= bx1; bx++) {
+        const k = by * bw + bx;
+        if (!this.stale[k]) continue;
+        this.stale[k] = 0;
+        this.refreshed++;
+        this.block(world, bx << 3, by << 3);
+      }
+  }
+
+  private block(world: World, x0: number, y0: number) {
+    const N = world.N;
+    const tiles = world.tiles;
+    const side = this.side;
+    const x1 = Math.min(N, x0 + 8);
+    const y1 = Math.min(N, y0 + 8);
+    for (let y = y0; y < y1; y++)
+      for (let x = x0; x < x1; x++) {
+        const i = y * N + x;
+        const t = tiles[i];
+        if (!t.road || !world.ownedAt(i)) {
+          side[i] = 0;
+          continue;
+        }
+        let v = SIDE_ROAD;
+        for (let d = 0; d < 4; d++) {
+          const nx = x + DX[d];
+          const ny = y + DY[d];
+          if (nx < 0 || ny < 0 || nx >= N || ny >= N) continue;
+          const n = tiles[ny * N + nx];
+          if (n.road) continue;
+          if (n.buildingId >= 0) {
+            const bd = world.buildings.get(n.buildingId);
+            if (bd) {
+              if (HUBS.has(bd.type)) v |= SIDE_HUB;
+              else if (GATHER.has(bd.type)) v |= SIDE_GATHER;
+              else if (bd.type === 'seaport') v |= SIDE_FAB;
+            }
+            continue;
+          }
+          if (n.level < 1 || n.abandoned) continue;
+          if (n.zone === ZoneType.Commercial) {
+            if (n.level > (v & SIDE_MARKET)) v = (v & ~SIDE_MARKET) | n.level;
+            if (n.wealth >= 1) v |= SIDE_RICH;
+          } else if (n.zone === ZoneType.Residential) v |= SIDE_HAB;
+          else if (n.zone === ZoneType.Industrial) v |= SIDE_FAB;
+        }
+        side[i] = v;
+      }
+  }
+}
+
+// ── Vehicles ──
+
 const enum Kind {
   Car = 0,
   Taxi = 1,
   Truck = 2,
   Bike = 3,
-  Walker = 4,
+  Bus = 4,
+  Van = 5,
+  Police = 6,
 }
+
+/** Footprint half-length, half-width (tiles) and height (px) per Kind. */
+const DIM_L = [0.1, 0.1, 0.15, 0.065, 0.21, 0.12, 0.1];
+const DIM_W = [0.05, 0.05, 0.06, 0.025, 0.06, 0.052, 0.05];
+const DIM_H = [3, 3, 5, 2.2, 4.6, 4, 3];
 
 interface Agent {
   x: number;
@@ -116,47 +269,56 @@ const BODY_DAY: RGB[] = [
 ];
 const TAXI: RGB = [255, 206, 60];
 const TRUCK: RGB = [150, 140, 120];
-const UMBRELLA: RGB[] = [
-  [255, 60, 180],
-  [60, 220, 255],
-  [255, 210, 60],
-  [140, 90, 255],
-  [230, 230, 240],
+/** Bus liveries (teal, magenta, amber) and van colours (white, orange, steel). */
+const BUS: RGB[] = [
+  [30, 150, 160],
+  [170, 40, 120],
+  [200, 140, 40],
 ];
+const VAN: RGB[] = [
+  [228, 228, 232],
+  [220, 120, 40],
+  [120, 130, 150],
+];
+const POLICE: RGB = [34, 40, 70];
 
 function rand(): number {
   return Math.random();
 }
 
+/** Where the city's precincts are (police cruisers spawn within POLICE_R of one). */
+const POLICE_R = 7;
+
 export class StreetTraffic {
   private cars: Agent[] = [];
-  private walkers: Agent[] = [];
-  private roads: number[] = [];
-  /** Side of the world the agents walk (its N, MEGACITY §3.1); set by rebuild(). */
+  /** Side of the world the agents drive (its N, MEGACITY §3.1). */
   private N = 0;
-  /** Road kind per tile (valid where a road is), sized from the world's frame. */
-  private kinds = new Uint8Array(0);
-  /** Road tiles next to dense commercial lots (pedestrian spawn points). */
-  private walkRoads: number[] = [];
-  private dirty = true;
   private visRoads: number[] = [];
-  private visWalk: number[] = [];
   /** Visible border road tiles (regional traffic enters here). */
   private visEdge: number[] = [];
+  /** Precinct centres in view (tile coords, pairs). */
+  private precincts: number[] = [];
   private targetCars = 0;
-  private targetWalkers = 0;
   private recount = 0;
+  /** A 'tiles' event arrived since the last agent check / recount (R0: checked at most every 250 ms). */
+  private changed = false;
+  private sinceCheck = 0;
   private bounds: Bounds | null = null;
   private quality: 'low' | 'high' = 'high';
+  /** Off in the skyline view and under the City map (§3.9). */
+  private active = true;
   private nightB = -1;
   private bodyCss: string[] = [];
   private taxiCss = '';
   private truckCss = '';
+  private busCss: string[] = [];
+  private vanCss: string[] = [];
+  private policeCss = '';
   private roofCss: string[] = [];
   private shadowCss = 'rgba(0,0,0,0.35)';
-  private umbrellaCss = UMBRELLA.map((c) => css(c));
   private headGlow: HTMLCanvasElement | null = null;
   private tailGlow: HTMLCanvasElement | null = null;
+  private blueGlow: HTMLCanvasElement | null = null;
   /** Scratch exit weights (chooseExit). */
   private w = [0, 0, 0, 0];
   /** Scratch outputs of pos() / heading() (avoids per-agent allocations). */
@@ -166,104 +328,119 @@ export class StreetTraffic {
   private cv = new Float64Array(4);
   private hu = 1;
   private hv = 0;
+  /** Visible-rect walks since construction (tests: R0). */
+  counts = 0;
+
+  constructor(private readonly index: StreetIndex = new StreetIndex()) {}
+
+  /** Live vehicles (tests, diagnostics). */
+  get size(): number {
+    return this.cars.length;
+  }
+
+  /** Vehicles of each kind (tests: the §6.4 kinds). */
+  kindCounts(): number[] {
+    const out = [0, 0, 0, 0, 0, 0, 0];
+    for (const a of this.cars) out[a.kind]++;
+    return out;
+  }
 
   reset() {
     this.cars.length = 0;
-    this.walkers.length = 0;
-    this.dirty = true;
     this.recount = 0;
+    this.changed = false;
   }
 
-  invalidate() {
-    this.dirty = true;
+  /** Tiles changed (a 'tiles' event's rect; none: everything). The index flags the blocks; agents are checked later. */
+  invalidate(world?: World, r?: Bounds) {
+    if (world) this.index.invalidate(world, r);
+    this.changed = true;
   }
 
-  private rebuild(world: World) {
-    this.dirty = false;
-    if (this.N !== world.N) {
-      // A world of another side: nothing carries over.
-      this.N = world.N;
-      this.kinds = new Uint8Array(world.area);
-      this.cars.length = 0;
-      this.walkers.length = 0;
-    }
-    const N = this.N;
-    this.roads.length = 0;
-    this.walkRoads.length = 0;
-    const tiles = world.tiles;
-    for (let i = 0; i < tiles.length; i++) {
-      if (!tiles[i].road) continue;
-      this.roads.push(i);
-      this.kinds[i] = tiles[i].roadKind;
-      const x = i % N;
-      const y = (i / N) | 0;
-      for (let d = 0; d < 4; d++) {
-        const t = world.tileAt(x + DX[d], y + DY[d]);
-        if (t && t.zone === ZoneType.Commercial && t.level >= 2 && !t.abandoned) {
-          this.walkRoads.push(i);
-          break;
-        }
-      }
-    }
-    // Drop agents standing on tiles that are no longer roads.
-    const keep = (a: Agent) => world.isRoad(a.x, a.y);
-    this.cars = this.cars.filter(keep);
-    this.walkers = this.walkers.filter(keep);
-    this.recount = 0;
-  }
-
-  /** Recompute the visible road subset and target populations. */
+  /** Recompute the visible road subset and target populations (a walk of the visible rect, R0). */
   private count(world: World, b: Bounds) {
-    const { N } = this;
+    const N = this.N;
     const m = 2;
     this.visRoads.length = 0;
-    this.visWalk.length = 0;
     this.visEdge.length = 0;
-    const traffic = world.fields.traffic;
-    const kinds = this.kinds;
-    let sum = 0;
-    for (const i of this.roads) {
-      const x = i % N;
-      const y = (i / N) | 0;
-      if (x < b.x0 - m || x > b.x1 + m || y < b.y0 - m || y > b.y1 + m) continue;
-      this.visRoads.push(i);
-      sum += (0.05 + traffic[i] * 0.85) * SPAWN_W[kinds[i]];
-      // A boundary road (MEGACITY §3.5): owned land beside the map edge or a locked slot.
-      if (world.tiles[i].terrain === 0 && outward(world, x, y) >= 0) this.visEdge.push(i);
+    const x0 = Math.max(0, b.x0 - m);
+    const y0 = Math.max(0, b.y0 - m);
+    const x1 = Math.min(N - 1, b.x1 + m);
+    const y1 = Math.min(N - 1, b.y1 + m);
+    if (x1 < x0 || y1 < y0) {
+      this.targetCars = 0;
+      return;
     }
-    for (const i of this.walkRoads) {
-      const x = i % N;
-      const y = (i / N) | 0;
-      if (x < b.x0 || x > b.x1 || y < b.y0 || y > b.y1) continue;
-      this.visWalk.push(i);
+    this.counts++;
+    countPass('view:traffic');
+    this.index.refresh(world, { x0, y0, x1, y1 });
+    const side = this.index.side;
+    const traffic = world.fields.traffic;
+    const tiles = world.tiles;
+    let sum = 0;
+    for (let y = y0; y <= y1; y++) {
+      let i = y * N + x0;
+      for (let x = x0; x <= x1; x++, i++) {
+        if (!(side[i] & SIDE_ROAD)) continue;
+        this.visRoads.push(i);
+        sum += (0.05 + traffic[i] * 0.85) * SPAWN_W[tiles[i].roadKind];
+        // A boundary road (MEGACITY §3.5): owned land beside the map edge or a locked slot.
+        if (tiles[i].terrain === 0 && outward(world, x, y) >= 0) this.visEdge.push(i);
+      }
+    }
+    // Precincts near the view (police cruisers).
+    this.precincts.length = 0;
+    for (const bd of world.buildings.values()) {
+      if (bd.type !== 'precinct') continue;
+      const cx = bd.x + (bd.size >> 1);
+      const cy = bd.y + (bd.size >> 1);
+      if (cx < x0 - POLICE_R || cx > x1 + POLICE_R || cy < y0 - POLICE_R || cy > y1 + POLICE_R) continue;
+      this.precincts.push(cx, cy);
     }
     const pop = world.stats.population;
     const popK = Math.pow(Math.min(1, pop / 12000), 0.7); // ×10 units (MEGACITY §4.4)
     const cap = this.quality === 'low' ? 90 : 260;
     this.targetCars = Math.min(cap, Math.round(sum * popK));
-    this.targetWalkers = this.quality === 'low' ? 0 : Math.min(140, Math.round(this.visWalk.length * 1.6 * popK));
   }
 
-  update(dt: number, world: World, quality: 'low' | 'high') {
+  /**
+   * One frame. `band`: the renderer's view band (§3.9): street cars only in the street view; the skyline view and the
+   * City map drop them.
+   */
+  update(dt: number, world: World, quality: 'low' | 'high', band: 'street' | 'skyline' | 'map' = 'street') {
     this.quality = quality;
-    if (this.dirty || this.N !== world.N) this.rebuild(world);
+    if (this.N !== world.N) {
+      // A world of another side: nothing carries over.
+      this.N = world.N;
+      this.cars.length = 0;
+      this.recount = 0;
+    }
+    this.active = band === 'street';
+    if (!this.active) {
+      this.cars.length = 0;
+      this.recount = 0;
+      return;
+    }
     const b = this.bounds;
     if (!b) return;
+    this.sinceCheck += dt;
     this.recount -= dt;
+    // A change: agents on tiles that are no longer roads drop, and the view recounts (at most every 250 ms).
+    if (this.changed && this.sinceCheck >= 0.25) {
+      this.changed = false;
+      this.sinceCheck = 0;
+      this.cars = this.cars.filter((a) => world.isRoad(a.x, a.y));
+      if (this.recount > 0.25) this.recount = 0;
+    }
     if (this.recount <= 0) {
       this.recount = 0.5;
       this.count(world, b);
     }
-    this.step(this.cars, dt, world, b, false);
-    this.step(this.walkers, dt, world, b, true);
-    // Spawn towards the targets (a few per frame so they trickle in).
+    this.step(this.cars, dt, world, b);
+    // Spawn towards the target (a few per frame so they trickle in).
     let spawn = Math.min(6, this.targetCars - this.cars.length);
-    while (spawn-- > 0 && this.visRoads.length) this.spawn(world, this.visRoads, false);
-    spawn = Math.min(4, this.targetWalkers - this.walkers.length);
-    while (spawn-- > 0 && this.visWalk.length) this.spawn(world, this.visWalk, true);
-    // Thin out when over target.
+    while (spawn-- > 0 && this.visRoads.length) this.spawn(world, this.visRoads);
     this.thin(this.cars, this.targetCars);
-    this.thin(this.walkers, this.targetWalkers);
   }
 
   private thin(list: Agent[], target: number) {
@@ -280,10 +457,11 @@ export class StreetTraffic {
     }
   }
 
-  private step(list: Agent[], dt: number, world: World, b: Bounds, walk: boolean) {
+  private step(list: Agent[], dt: number, world: World, b: Bounds) {
     const { N } = this;
     const m = 3;
     const traffic = world.fields.traffic;
+    const tiles = world.tiles;
     for (let i = list.length - 1; i >= 0; i--) {
       const a = list[i];
       a.age += dt;
@@ -296,7 +474,7 @@ export class StreetTraffic {
         }
       }
       const ti = a.y * N + a.x;
-      const jam = walk ? 1 : (1 - 0.45 * traffic[ti]) * SPEED[this.kinds[ti]];
+      const jam = (1 - 0.45 * traffic[ti]) * SPEED[tiles[ti].roadKind];
       a.t += (a.speed * jam * dt) / a.len;
       while (a.t >= 1) {
         a.t -= 1;
@@ -311,15 +489,15 @@ export class StreetTraffic {
         a.x = nx;
         a.y = ny;
         a.din = a.dout;
-        a.dout = this.chooseExit(world, nx, ny, a.din, walk, a.kind === Kind.Bike);
+        a.dout = this.chooseExit(world, nx, ny, a.din, a.kind === Kind.Bike);
         // Heading off the map (a regional road's end): fade out over this tile.
-        if (!walk && !world.inBounds(nx + DX[a.dout], ny + DY[a.dout]) && a.dying <= 0) a.dying = Math.max(0.3, Math.min(0.6, a.len / Math.max(0.05, a.speed)));
-        this.path(a, walk);
+        if (!world.inBounds(nx + DX[a.dout], ny + DY[a.dout]) && a.dying <= 0) a.dying = Math.max(0.3, Math.min(0.6, a.len / Math.max(0.05, a.speed)));
+        this.path(a, world);
       }
     }
   }
 
-  private chooseExit(world: World, x: number, y: number, din: number, walk: boolean, bike = false): number {
+  private chooseExit(world: World, x: number, y: number, din: number, bike = false): number {
     const { N } = this;
     const mask = world.roadMask(x, y);
     const back = (din + 2) & 3;
@@ -327,20 +505,20 @@ export class StreetTraffic {
     const w = this.w;
     w[0] = w[1] = w[2] = w[3] = 0;
     const traffic = world.fields.traffic;
-    const kinds = this.kinds;
+    const tiles = world.tiles;
     for (let d = 0; d < 4; d++) {
       if (!(mask & (1 << d)) || d === back) continue;
       const ni = (y + DY[d]) * N + (x + DX[d]);
-      // Back alleys carry only bikes and walkers.
-      if (!walk && !bike && kinds[ni] === RoadKind.Alley) continue;
+      // Back alleys carry only bikes.
+      if (!bike && tiles[ni].roadKind === RoadKind.Alley) continue;
       let k = d === din ? 2.2 : 1;
-      if (!walk) k *= 0.35 + traffic[ni];
+      k *= 0.35 + traffic[ni];
       w[d] = k;
       total += k;
     }
     if (total <= 0) {
       // Dead end. A road running off the owned land (the map edge or a locked slot): drive on and fade out.
-      if (!walk && !world.isOwned(x + DX[din], y + DY[din])) return din;
+      if (!world.isOwned(x + DX[din], y + DY[din])) return din;
       return back; // U-turn
     }
     let r = rand() * total;
@@ -351,17 +529,17 @@ export class StreetTraffic {
     return din;
   }
 
-  /** Lane offset of an agent on tile i (its kind's inner or outer lane). */
-  private laneOff(a: Agent, i: number): number {
-    const l = LANES[this.kinds[i]] ?? LANES[0];
-    return l[a.lane];
+  /** Lane offset of an agent on tile i (its kind's inner or outer lane; buses keep the outer lane). */
+  private laneOff(a: Agent, i: number, world: World): number {
+    const l = LANES[world.tiles[i].roadKind] ?? LANES[0];
+    return l[a.kind === Kind.Bus ? 1 : a.lane];
   }
 
   /** Set the in-tile Bézier path for the agent's (din → dout). */
-  private path(a: Agent, walk: boolean) {
+  private path(a: Agent, world: World) {
     const { N } = this;
-    const exit = walk ? WALK : this.laneOff(a, a.y * N + a.x);
-    const off = walk ? WALK : (a.loff || exit);
+    const exit = this.laneOff(a, a.y * N + a.x, world);
+    const off = a.loff || exit;
     a.loff = exit;
     const cu = a.x + 0.5;
     const cv = a.y + 0.5;
@@ -392,50 +570,70 @@ export class StreetTraffic {
   }
 
   /** A pool tile weighted by its kind's spawn weight (rejection sampling, a few tries). */
-  private pick(pool: number[]): number {
-    const kinds = this.kinds;
+  private pick(pool: number[], world: World): number {
+    const tiles = world.tiles;
     let i = pool[(rand() * pool.length) | 0];
-    for (let k = 0; k < 4 && rand() * SPAWN_W_MAX > SPAWN_W[kinds[i]]; k++) i = pool[(rand() * pool.length) | 0];
+    for (let k = 0; k < 4 && rand() * SPAWN_W_MAX > SPAWN_W[tiles[i].roadKind]; k++) i = pool[(rand() * pool.length) | 0];
     return i;
   }
 
-  private spawn(world: World, pool: number[], walk: boolean) {
+  /** Is the tile within POLICE_R of a precinct in view? */
+  private nearPrecinct(x: number, y: number): boolean {
+    const p = this.precincts;
+    for (let k = 0; k < p.length; k += 2) if (Math.abs(p[k] - x) <= POLICE_R && Math.abs(p[k + 1] - y) <= POLICE_R) return true;
+    return false;
+  }
+
+  /** The vehicle kind for a spawn on tile i (§6.4: buses, vans, trucks, taxis, police). */
+  private kindFor(world: World, i: number, x: number, y: number): Kind {
+    const k = world.tiles[i].roadKind;
+    if (k === RoadKind.Alley) return Kind.Bike;
+    const side = this.index.side[i];
+    const r = rand();
+    if (k === RoadKind.Highway) return r < 0.35 ? Kind.Truck : r < 0.45 ? Kind.Taxi : r < 0.53 ? Kind.Van : Kind.Car;
+    // Avenues: 12% buses, then the street mix.
+    if (k === RoadKind.Avenue && r < 0.12) return Kind.Bus;
+    const q = rand();
+    if (this.precincts.length && q < 0.16 && this.nearPrecinct(x, y)) return Kind.Police;
+    const taxi = side & (SIDE_RICH | SIDE_HUB) ? 0.24 : 0.05;
+    const truck = side & SIDE_FAB ? 0.3 : 0.04;
+    const s = rand();
+    if (s < taxi) return Kind.Taxi;
+    if (s < taxi + truck) return Kind.Truck;
+    if (s < taxi + truck + 0.11) return Kind.Van;
+    if (s < taxi + truck + 0.21) return Kind.Bike;
+    return Kind.Car;
+  }
+
+  private spawn(world: World, pool: number[]) {
     const { N } = this;
     const traffic = world.fields.traffic;
-    const kinds = this.kinds;
+    const tiles = world.tiles;
     let i: number;
     let fromEdge = -1;
-    if (!walk && this.visEdge.length && rand() < EDGE_SHARE) {
+    if (this.visEdge.length && rand() < EDGE_SHARE) {
       // Regional traffic: enter from a visible border road, heading inward.
       i = this.visEdge[(rand() * this.visEdge.length) | 0];
       // Heading inward, away from the boundary (west edge → east, east → west, north → south, south → north).
       fromEdge = (outward(world, i % N, (i / N) | 0) + 2) & 3;
     } else {
       // Pick the busier of two (kind-weighted) random candidates.
-      i = this.pick(pool);
-      const j = this.pick(pool);
-      if (!walk && traffic[j] * SPAWN_W[kinds[j]] > traffic[i] * SPAWN_W[kinds[i]]) i = j;
+      i = this.pick(pool, world);
+      const j = this.pick(pool, world);
+      if (traffic[j] * SPAWN_W[tiles[j].roadKind] > traffic[i] * SPAWN_W[tiles[i].roadKind]) i = j;
     }
     const x = i % N;
     const y = (i / N) | 0;
+    if (!tiles[i].road) return;
     const mask = world.roadMask(x, y);
     if (!mask) return;
-    const r = rand();
-    const k = kinds[i];
-    // Alleys: bikes only. Highways: 35% trucks. Elsewhere the usual mix.
-    const kind = walk
-      ? Kind.Walker
-      : k === RoadKind.Alley
-        ? Kind.Bike
-        : k === RoadKind.Highway
-          ? r < 0.35 ? Kind.Truck : r < 0.45 ? Kind.Taxi : Kind.Car
-          : r < 0.12 ? Kind.Taxi : r < 0.24 ? Kind.Truck : r < 0.36 ? Kind.Bike : Kind.Car;
+    const kind = this.kindFor(world, i, x, y);
     const dirs: number[] = [];
-    const motor = !walk && kind !== Kind.Bike;
+    const motor = kind !== Kind.Bike;
     for (let d = 0; d < 4; d++) {
       if (!(mask & (1 << d))) continue;
       // Motor traffic never heads into an alley.
-      if (motor && kinds[(y + DY[d]) * N + x + DX[d]] === RoadKind.Alley) continue;
+      if (motor && tiles[(y + DY[d]) * N + x + DX[d]].roadKind === RoadKind.Alley) continue;
       dirs.push(d);
     }
     if (!dirs.length) return;
@@ -443,7 +641,7 @@ export class StreetTraffic {
     let dout: number;
     if (fromEdge >= 0) {
       din = fromEdge;
-      dout = this.chooseExit(world, x, y, din, false, kind === Kind.Bike);
+      dout = this.chooseExit(world, x, y, din, kind === Kind.Bike);
     } else {
       dout = dirs[(rand() * dirs.length) | 0];
       // Enter from another connected side (or from the exit side at a dead end → U-turn).
@@ -451,6 +649,18 @@ export class StreetTraffic {
       const side = others.length ? others[(rand() * others.length) | 0] : dout;
       din = (side + 2) & 3;
     }
+    const speed =
+      kind === Kind.Truck
+        ? 0.45 + rand() * 0.15
+        : kind === Kind.Bus
+          ? 0.42 + rand() * 0.1
+          : kind === Kind.Van
+            ? 0.55 + rand() * 0.2
+            : kind === Kind.Bike
+              ? 0.8 + rand() * 0.3
+              : kind === Kind.Police
+                ? 0.75 + rand() * 0.25
+                : 0.6 + rand() * 0.3;
     const a: Agent = {
       x,
       y,
@@ -458,7 +668,7 @@ export class StreetTraffic {
       dout,
       t: fromEdge >= 0 ? 0 : rand(),
       len: 1,
-      speed: walk ? 0.1 + rand() * 0.08 : kind === Kind.Truck ? 0.45 + rand() * 0.15 : kind === Kind.Bike ? 0.8 + rand() * 0.3 : 0.6 + rand() * 0.3,
+      speed,
       kind,
       col: (rand() * 1000) | 0,
       age: fromEdge >= 0 ? -0.15 : 0,
@@ -474,8 +684,8 @@ export class StreetTraffic {
       p1u: 0,
       p1v: 0,
     };
-    this.path(a, walk);
-    (walk ? this.walkers : this.cars).push(a);
+    this.path(a, world);
+    this.cars.push(a);
   }
 
   private colours(n: number) {
@@ -488,17 +698,22 @@ export class StreetTraffic {
     this.roofCss = BODY_DAY.map((c) => css(mix(mix(c, [255, 255, 255], 0.25), mix(dark, c, 0.35), k)));
     this.taxiCss = css(mix(TAXI, mix(dark, TAXI, 0.5), k));
     this.truckCss = css(mix(TRUCK, mix(dark, TRUCK, 0.3), k));
+    this.busCss = BUS.map((c) => css(mix(c, mix(dark, c, 0.4), k)));
+    this.vanCss = VAN.map((c) => css(mix(c, mix(dark, c, 0.3), k)));
+    this.policeCss = css(mix(POLICE, mix(dark, POLICE, 0.6), k));
     this.shadowCss = `rgba(0,0,0,${(0.3 - 0.15 * k).toFixed(2)})`;
   }
 
-  /** World-space draw. `rain` 0..1 (umbrellas). */
+  /** World-space draw. `rain` 0..1 (kept for the frozen call shape; umbrellas moved to art/crowds.ts). */
   draw(ctx: CanvasRenderingContext2D, b: Bounds, zoom: number, night: number, quality: 'low' | 'high', rain: number) {
+    void rain;
     this.bounds = b;
-    if (!this.cars.length && !this.walkers.length) return;
+    if (!this.active || !this.cars.length) return;
     this.colours(night);
     if (!this.headGlow) {
       this.headGlow = glowSprite([255, 240, 200], 64);
       this.tailGlow = glowSprite([255, 40, 70], 64);
+      this.blueGlow = glowSprite([60, 120, 255], 64);
     }
     const far = zoom < 0.45;
     const lights = night > 0.25;
@@ -513,38 +728,15 @@ export class StreetTraffic {
       ctx.globalAlpha = alpha;
       this.drawBody(ctx, a, far);
     }
-    // Pedestrians (close zoom only).
-    if (zoom >= 0.8 && this.walkers.length) {
-      const ws = this.walkers;
-      for (let i = 0; i < ws.length; i++) {
-        const a = ws[i];
-        const alpha = Math.min(1, a.age * 2) * (a.dying > 0 ? a.dying / 0.6 : 1);
-        if (alpha <= 0.02) continue;
-        ctx.globalAlpha = alpha;
-        this.pos(a);
-        const x = (this.pu - this.pv) * HALF_W;
-        const y = (this.pu + this.pv) * HALF_H;
-        ctx.fillStyle = night > 0.5 ? '#3a3448' : '#26242e';
-        ctx.fillRect(x - 0.45, y - 2.6, 0.9, 2.6);
-        if (rain > 0.2) {
-          ctx.fillStyle = this.umbrellaCss[a.col % this.umbrellaCss.length];
-          ctx.beginPath();
-          ctx.ellipse(x, y - 2.9, 1.5, 0.7, 0, 0, Math.PI * 2);
-          ctx.fill();
-        } else {
-          ctx.fillStyle = this.umbrellaCss[a.col % this.umbrellaCss.length];
-          ctx.fillRect(x - 0.4, y - 3.2, 0.8, 0.7);
-        }
-      }
-    }
     // Pass 2: lights.
     if (lights || quality === 'high') {
       ctx.globalCompositeOperation = 'lighter';
+      const t = performance.now() / 1000;
       for (let i = 0; i < cars.length; i++) {
         const a = cars[i];
         const alpha = Math.min(1, a.age * 2) * (a.dying > 0 ? a.dying / 0.6 : 1);
         if (alpha <= 0.02) continue;
-        this.drawLights(ctx, a, far, night, alpha, quality);
+        this.drawLights(ctx, a, far, night, alpha, quality, t);
       }
     }
     ctx.globalAlpha = 1;
@@ -574,24 +766,42 @@ export class StreetTraffic {
     this.hv = hv / l;
   }
 
+  private bodyColour(a: Agent): string {
+    switch (a.kind) {
+      case Kind.Taxi:
+        return this.taxiCss;
+      case Kind.Truck:
+        return this.truckCss;
+      case Kind.Bus:
+        return this.busCss[a.col % this.busCss.length];
+      case Kind.Van:
+        return this.vanCss[a.col % this.vanCss.length];
+      case Kind.Police:
+        return this.policeCss;
+      default:
+        return this.bodyCss[a.col % this.bodyCss.length];
+    }
+  }
+
   private drawBody(ctx: CanvasRenderingContext2D, a: Agent, far: boolean) {
     this.pos(a);
     const u = this.pu;
     const v = this.pv;
     const x = (u - v) * HALF_W;
     const y = (u + v) * HALF_H;
-    const col = a.kind === Kind.Taxi ? this.taxiCss : a.kind === Kind.Truck ? this.truckCss : this.bodyCss[a.col % this.bodyCss.length];
+    const col = this.bodyColour(a);
     if (far) {
       ctx.fillStyle = col;
-      ctx.fillRect(x - 1.2, y - 1.6, 2.4, 1.6);
+      if (a.kind === Kind.Bus) ctx.fillRect(x - 2, y - 2, 4, 2);
+      else ctx.fillRect(x - 1.2, y - 1.6, 2.4, 1.6);
       return;
     }
     this.heading(a);
     const hu = this.hu;
     const hv = this.hv;
-    const L = a.kind === Kind.Truck ? 0.15 : a.kind === Kind.Bike ? 0.065 : 0.1;
-    const W = a.kind === Kind.Truck ? 0.06 : a.kind === Kind.Bike ? 0.025 : 0.05;
-    const H = a.kind === Kind.Truck ? 5 : a.kind === Kind.Bike ? 2.2 : 3;
+    const L = DIM_L[a.kind];
+    const W = DIM_W[a.kind];
+    const H = DIM_H[a.kind];
     const lift = 1.6; // hover height
     // Footprint corners in tile space: front-left, front-right, back-right, back-left.
     const fu = hu * L;
@@ -641,13 +851,21 @@ export class StreetTraffic {
       else ctx.lineTo(px, py);
     }
     ctx.fill();
-    // Cabin / roof highlight.
-    const r = a.kind === Kind.Truck ? 0.45 : 0.6;
-    ctx.fillStyle = a.kind === Kind.Truck ? this.bodyCss[1] : this.roofCss[a.col % this.roofCss.length];
+    // Cabin / roof highlight (trucks and vans: a cab at the front; buses: the whole roof, a light stripe).
+    const cab = a.kind === Kind.Truck || a.kind === Kind.Van;
+    const r = a.kind === Kind.Truck ? 0.45 : a.kind === Kind.Van ? 0.5 : a.kind === Kind.Bus ? 0.85 : 0.6;
+    ctx.fillStyle =
+      a.kind === Kind.Truck
+        ? this.bodyCss[1]
+        : a.kind === Kind.Police
+          ? this.bodyCss[4]
+          : a.kind === Kind.Bus || a.kind === Kind.Van
+            ? this.roofCss[4]
+            : this.roofCss[a.col % this.roofCss.length];
     ctx.beginPath();
     for (let k = 0; k < 4; k++) {
-      const ku = u + (cu[k] - u) * r - (a.kind === Kind.Truck ? fu * 0.45 : 0);
-      const kv = v + (cv[k] - v) * r - (a.kind === Kind.Truck ? fv * 0.45 : 0);
+      const ku = u + (cu[k] - u) * r + (cab ? fu * 0.45 * (a.kind === Kind.Truck ? -1 : 1) : 0);
+      const kv = v + (cv[k] - v) * r + (cab ? fv * 0.45 * (a.kind === Kind.Truck ? -1 : 1) : 0);
       const px = (ku - kv) * HALF_W;
       const py = (ku + kv) * HALF_H - lift - H;
       if (k === 0) ctx.moveTo(px, py);
@@ -656,14 +874,14 @@ export class StreetTraffic {
     ctx.fill();
   }
 
-  private drawLights(ctx: CanvasRenderingContext2D, a: Agent, far: boolean, night: number, alpha: number, quality: 'low' | 'high') {
+  private drawLights(ctx: CanvasRenderingContext2D, a: Agent, far: boolean, night: number, alpha: number, quality: 'low' | 'high', time: number) {
     this.pos(a);
     this.heading(a);
     const u = this.pu;
     const v = this.pv;
     const hu = this.hu;
     const hv = this.hv;
-    const L = a.kind === Kind.Truck ? 0.15 : a.kind === Kind.Bike ? 0.065 : 0.1;
+    const L = DIM_L[a.kind];
     const x = (u - v) * HALF_W;
     const y = (u + v) * HALF_H - 2.4;
     const fx = (hu - hv) * HALF_W * L;
@@ -694,6 +912,27 @@ export class StreetTraffic {
       if (quality === 'high') {
         ctx.globalAlpha = alpha * n * 0.5;
         ctx.drawImage(this.tailGlow!, x - fx - 3, y - fy - 3, 6, 6);
+      }
+      // A bus's lit windows: a warm strip along its side.
+      if (a.kind === Kind.Bus) {
+        ctx.globalAlpha = alpha * n * 0.8;
+        ctx.strokeStyle = '#ffe6a8';
+        ctx.lineWidth = 0.9;
+        ctx.beginPath();
+        ctx.moveTo(x + fx * 0.8, y + fy * 0.8 - 1.2);
+        ctx.lineTo(x - fx * 0.8, y - fy * 0.8 - 1.2);
+        ctx.stroke();
+      }
+    }
+    // Police: a roof bar, blue and red in turn (brighter at night).
+    if (a.kind === Kind.Police) {
+      const on = ((time * 3 + a.col * 0.37) | 0) & 1;
+      ctx.globalAlpha = alpha * (0.35 + 0.65 * n);
+      ctx.fillStyle = on ? '#3c78ff' : '#ff3048';
+      ctx.fillRect(x - 0.8, y - 3, 1.6, 0.9);
+      if (n > 0.25) {
+        ctx.globalAlpha = alpha * n * 0.7;
+        ctx.drawImage(on ? this.blueGlow! : this.tailGlow!, x - 4.5, y - 7, 9, 9);
       }
     }
     // Neon underglow on taxis and bikes (day and night).
