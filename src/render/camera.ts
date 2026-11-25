@@ -313,7 +313,10 @@ export class Camera {
 
   /** Keep the view centre inside the map diamond, or `bounds` when set (with a little slack). */
   clamp() {
-    const t = worldToTileF(this.x, this.y);
+    // On the City map the centre that stays on the map is the uncovered area's (header, sheet: insets), not the canvas's.
+    const ox = this.mapView ? (this.insets.left - this.insets.right) / 2 / this.zoom : 0;
+    const oy = this.mapView ? (this.insets.top - this.insets.bottom - this.mapInsetBottom) / 2 / this.zoom : 0;
+    const t = worldToTileF(this.x + ox, this.y + oy);
     const slack = 2;
     const n = this.mapSize;
     // The City map frames the whole region: the centre stays on the map, not in the owned box.
@@ -325,8 +328,8 @@ export class Camera {
     const cx = Math.max(lo - slack, Math.min(hi + slack, t.x));
     const cy = Math.max(loY - slack, Math.min(hiY + slack, t.y));
     if (cx !== t.x || cy !== t.y) {
-      this.x = (cx - cy) * HALF_W;
-      this.y = (cx + cy) * HALF_H;
+      this.x = (cx - cy) * HALF_W - ox;
+      this.y = (cx + cy) * HALF_H - oy;
     }
   }
 

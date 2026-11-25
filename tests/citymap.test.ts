@@ -274,4 +274,26 @@ describe('5×5 City map (§7.2)', () => {
     expect(MAP_PINCH_OUT).toBeLessThan(0.9);
     expect(MAP_PINCH_IN).toBeGreaterThan(1.1);
   });
+
+  it('the region sits in the middle of the area the header and the sheet leave, on every phone size and region', () => {
+    for (const region of [3, 5] as const)
+      for (const [W, H] of [
+        [390, 844],
+        [360, 640],
+      ]) {
+        const n = region * 64;
+        const cam = new Camera(n);
+        cam.setViewport(W, H);
+        cam.setInsets({ top: 48 });
+        // The resting sheet covers half the screen, plus the 58 px edge line of a whole region.
+        const bottom = Math.round(H / 2) + 58;
+        cam.snapToMap(bottom, 1, 0);
+        const top = cam.worldToScreen(0, 0).y;
+        const low = cam.worldToScreen(0, n * 2 * HALF_H).y;
+        const mid = (48 + (H - bottom)) / 2;
+        expect(Math.abs((top + low) / 2 - mid)).toBeLessThan(2);
+        expect(top).toBeGreaterThanOrEqual(48);
+        expect(low).toBeLessThanOrEqual(H - bottom);
+      }
+  });
 });

@@ -391,10 +391,12 @@ export class CityMap {
     const hr = this.head.getBoundingClientRect();
     const sr = this.sheet.getBoundingClientRect();
     const top = Math.max(0, Math.round(hr.bottom));
-    if (this.side) return { top, right: Math.max(0, Math.round(cam.width - sr.left)), bottom: 0 };
+    // "The city reaches the edge of the region." sits under the atlas (§7.2): keep the atlas framed above it.
+    const edge = this.edgeEl.hidden ? 0 : Math.round(this.edgeEl.getBoundingClientRect().height) + 14;
+    if (this.side) return { top, right: Math.max(0, Math.round(cam.width - sr.left)), bottom: edge };
     // The resting height, not a dragged-up sheet: the atlas stays framed above the resting sheet.
     const rest = this.expanded ? Math.round(cam.height * SHEET_REST) : Math.round(cam.height - sr.top);
-    return { top, right: 0, bottom: Math.max(0, rest) };
+    return { top, right: 0, bottom: Math.max(0, rest) + edge };
   }
 
   /** Snap (or refit) the camera to the City map above the sheet. */

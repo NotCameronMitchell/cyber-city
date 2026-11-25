@@ -167,6 +167,12 @@ export class InspectSheet {
                 ? 'Zone'
                 : 'Terrain';
     setText(this.kind, kind);
+    // A locked district's preview (§7.5) is long (tagline, perks, hazards, lobbyists): its one action, Open City map,
+    // goes above the notes so it is in view without scrolling on a small phone.
+    const district = kind === 'District';
+    if (district ? this.story.el.nextSibling !== this.notesEl : this.notesEl.nextSibling !== this.story.el) {
+      this.scroll.insertBefore(this.story.el, district ? this.notesEl : this.notesEl.nextSibling);
+    }
 
     // Rows: reuse elements, add/remove only when the count changes.
     while (this.rows.length < info.rows.length) {
