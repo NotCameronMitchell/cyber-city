@@ -459,7 +459,18 @@ export class MilestoneBanner {
       setText(this.unlocks, unlocked.length ? `Now available: ${unlocked.join(', ')}` : '');
       setHidden(this.unlocks, unlocked.length === 0);
     } else {
-      setText(this.kicker, m.id === 'launch' ? 'Launch night' : 'A city first');
+      // Megacity moments ride the 'region' id (MomentId is frozen): the kicker names what happened.
+      const kick =
+        m.id === 'launch'
+          ? 'Launch night'
+          : m.title.startsWith('DISTRICT ANNEXED')
+            ? 'New district'
+            : m.title.startsWith('SKY LOBBY')
+              ? 'Sky Lobby'
+              : m.title === 'THE REGION IS WHOLE'
+                ? 'Every district'
+                : 'A city first';
+      setText(this.kicker, kick);
       this.sub.textContent = '';
       this.sub.append(h('span', { text: m.sub }));
       setHidden(this.unlocks, true);

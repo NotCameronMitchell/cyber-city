@@ -230,6 +230,11 @@ export class Dock {
     return this.openCat !== null;
   }
 
+  /** The toolbar (bottom bar, or the side rail on a landscape phone): the UI root measures the camera insets from it. */
+  get barEl(): HTMLElement {
+    return this.bar;
+  }
+
   /** The one-time gesture hint is on screen (it goes before any first-use tip, §7.6). */
   get hintShowing(): boolean {
     return !this.hint.hidden;
@@ -306,6 +311,20 @@ export class Dock {
     this.trayRow.textContent = '';
     this.cards = [];
     if (id === 'data') {
+      // MEGACITY §7.1: the first card is the City map (a region city only).
+      if (this.ctx.game.world.region >= 3) {
+        const grants = Math.max(0, this.ctx.game.world.districts.grants | 0);
+        const el = h(
+          'button',
+          { class: 'cc-card is-overlay is-citymap', type: 'button', role: 'option', 'data-act': 'citymap', 'aria-label': grants ? `City map, ${grants} land grants waiting` : 'City map' },
+          h('span', { class: 'cc-card-ico', html: icon('map') }),
+          h('span', { class: 'cc-card-name', text: 'City map' }),
+          h('span', { class: 'cc-card-desc', text: grants ? `${grants === 1 ? 'A land grant waits' : `${grants} land grants wait`}: annex a district.` : 'Every district, owned and next door.' }),
+        );
+        setStyle(el, '--accent', '#ffd84d');
+        this.trayRow.append(el);
+        this.cards.push({ el, cost: el, lock: el, lockText: el, lockFill: el });
+      }
       for (const o of OVERLAYS) {
         if (o.id === 'turf' && !this.turfUnlocked()) continue;
         const el = h(
@@ -373,8 +392,15 @@ export class Dock {
 
   private readonly onTrayClick = (e: MouseEvent) => {
     const { game } = this.ctx;
-    if (closestData(e.target, 'act', this.tray)?.dataset.act === 'tray-close') {
+    const act = closestData(e.target, 'act', this.tray)?.dataset.act;
+    if (act === 'tray-close') {
       this.closeTray();
+      return;
+    }
+    if (act === 'citymap') {
+      buzz(6);
+      this.closeTray();
+      this.ctx.actions.openCityMap();
       return;
     }
     const ov = closestData(e.target, 'overlay', this.tray);
@@ -413,6 +439,7 @@ export class Dock {
     const { game } = this.ctx;
     const w = game.world;
     for (const c of this.cards) {
+      if (!c.tool && !c.overlay) continue; // the Data tray's City map card
       if (c.overlay) {
         const on = game.overlay === c.overlay;
         setClass(c.el, 'is-on', on);

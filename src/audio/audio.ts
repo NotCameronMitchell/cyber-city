@@ -10,6 +10,10 @@
 //     new 'sfx' kinds) and share the SFX bus, volume and voice cap.
 //   • Launch rumble (EXPANSION §9): on 'liftoff', a 3 s low-passed noise swell
 //     under a slow rising sine. Launches are ≥ 180 s apart, so it never drones.
+//   • Megacity (MEGACITY §10): an annex plays the milestone sound as the fog
+//     lifts; the optional City life chime is a soft three-note bell when a
+//     night market or a lantern night starts (City life on), listening to
+//     'cityEvent' directly. Its own gap (≥ 420 s apart by construction).
 //   • Optional ambient score (settings.music): a slow generative synthwave pad
 //     — detuned saws + sub triangle through a breathing low-pass, chord changes
 //     every ~8 s, a soft sine bass and a sparse delayed arpeggio.
@@ -24,8 +28,10 @@ import type { Game } from '../game/game';
 
 type SfxKind = GameEventMap['sfx'];
 /** Event-driven cues with their own gap (not sfx kinds; STORY-CONTRACT keys a Record on those). */
-type StoryCue = 'incoming' | 'card' | 'chapter' | 'log' | 'ending' | 'launch';
-const STORY_GAP: Record<StoryCue, number> = { incoming: 1.5, card: 0.6, chapter: 2, log: 1.5, ending: 3, launch: 20 };
+type StoryCue = 'incoming' | 'card' | 'chapter' | 'log' | 'ending' | 'launch' | 'chime';
+const STORY_GAP: Record<StoryCue, number> = { incoming: 1.5, card: 0.6, chapter: 2, log: 1.5, ending: 3, launch: 20, chime: 60 };
+/** City life happenings that ring the chime (§10): the two that light up the streets. */
+const CHIME_EVENTS: ReadonlySet<string> = new Set(['nightmarket', 'lanterns']);
 
 const MASTER_GAIN = 0.42;
 const SFX_GAIN = 0.9;
@@ -71,6 +77,11 @@ export class AudioEngine {
     game.events.on('log', () => this.cue('log'));
     game.events.on('ending', () => this.cue('ending'));
     game.events.on('liftoff', () => this.cue('launch'));
+    // Megacity (§10): the annex's fog lift, and the optional City life chime (only while City life is on).
+    game.events.on('annex', () => this.play('milestone'));
+    game.events.on('cityEvent', (e) => {
+      if (e.phase === 'start' && CHIME_EVENTS.has(e.id) && this.game.settings.cityLife !== false) this.cue('chime');
+    });
     game.events.on('settings', () => this.syncSettings());
     const unlock = () => this.unlock();
     for (const type of ['pointerdown', 'touchend', 'mousedown', 'keydown']) {
@@ -246,6 +257,11 @@ export class AudioEngine {
         return;
       case 'launch':
         this.launch(t);
+        return;
+      case 'chime':
+        // A soft lantern bell: three rising sine notes with a long tail, quieter than a card's chime.
+        [79, 83, 86].forEach((m, i) => this.tone('sine', mtof(m), t + i * 0.18, 1.4, 0.026, { attack: 0.01 }));
+        this.tone('triangle', mtof(67), t, 1.6, 0.012, { attack: 0.08 });
         return;
     }
   }

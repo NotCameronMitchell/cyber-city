@@ -29,6 +29,8 @@ export interface UIActions {
   /** Open the main menu, or straight on its Settings page (e.g. from the story pace line). */
   openMenu(view?: 'main' | 'settings'): void;
   confirm(opts: ConfirmOptions): void;
+  /** Open the City map (MEGACITY §7.2), optionally on a slot (a pin, the 'map' toast). */
+  openCityMap(slot?: number | null): void;
   /** Open a toolbar tray by category id (used by the onboarding coach). */
   openTray(category: string): void;
   closeTray(): void;

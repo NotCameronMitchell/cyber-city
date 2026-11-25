@@ -20,7 +20,9 @@ import type { ToastAction } from '../game/events';
 import type { Game } from '../game/game';
 import { pointerActivity } from '../input/gestures';
 import type { Camera } from '../render/camera';
+import { mapBus } from '../input/mapbus';
 import { BudgetPanel } from './budget';
+import { CityMap } from './citymap';
 import { Coach } from './coach';
 import { ConfirmDialog } from './confirm';
 import { Modals, type UIActions, type UIContext } from './context';
@@ -36,7 +38,7 @@ import { CityReport } from './report';
 import { StoryUI } from './story/storyUI';
 import './story/story.css';
 import { Ticker } from './ticker';
-import { Tips } from './tips';
+import { Tips, newsTip } from './tips';
 import type { CategoryId } from './tools';
 
 /** HUD figures refresh interval (s). */
@@ -50,8 +52,10 @@ const WATCH_Y = 0.66;
 const WATCH_ZOOM = 0.85;
 
 
-/** Toast actions this UI handles (Undo, Watch). WP-9 adds 'export' with its Export city handler, the City map adds 'map'. */
-const TOAST_HANDLED: ReadonlySet<ToastAction['id']> = new Set<ToastAction['id']>(['undo', 'watch']);
+/** Toast actions this UI handles (Undo, Watch, Map: the City map on the locked slot). WP-9 adds 'export' with its Export city handler. */
+const TOAST_HANDLED: ReadonlySet<ToastAction['id']> = new Set<ToastAction['id']>(['undo', 'watch', 'map']);
+/** How often the camera insets are re-measured from the HUD and dock (s), besides resizes and world swaps. */
+const INSET_INTERVAL = 1;
 
 export class UI {
   /** Public for the start screen (src/ui/start): shared dialogs, menu views and the story hold. */
@@ -77,6 +81,9 @@ export class UI {
   readonly menu: Menu;
   private readonly confirm: ConfirmDialog;
   readonly story: StoryUI;
+  /** The City map and annex sheet (MEGACITY §7.2). */
+  readonly cityMap: CityMap;
+  private insetAcc = INSET_INTERVAL;
 
   private hudAcc = 0;
   private panelAcc = 0;
@@ -103,6 +110,7 @@ export class UI {
       openNews: () => this.news.open(),
       openReport: () => this.report.open(),
       openMenu: (view) => this.menu.open(view ?? 'main'),
+      openCityMap: (slot) => this.openCityMap(slot ?? null),
       confirm: (opts) => this.confirm.open(opts),
       openTray: (cat) => this.dock.openTray(cat as CategoryId),
       closeTray: () => this.dock.closeTray(),
@@ -137,8 +145,9 @@ export class UI {
       run: (id) => {
         if (id === 'undo') game.undo();
         else if (id === 'watch') this.watchLaunch();
+        else if (id === 'map') this.openCityMap(game.mapSlot);
       },
-      alive: (id) => (id === 'undo' ? game.undoLeft() > 0 : game.launchLead !== null),
+      alive: (id) => (id === 'undo' ? game.undoLeft() > 0 : id === 'map' ? game.world.region >= 3 : game.launchLead !== null),
       left: (id) => (id === 'undo' ? game.undoLeft() : (game.launchLead?.left ?? 0)),
     };
     this.pill = new ActionPill({
@@ -156,6 +165,7 @@ export class UI {
     this.menu = new Menu(this.ctx);
     this.confirm = new ConfirmDialog(this.ctx);
     this.story = new StoryUI(this.ctx);
+    this.cityMap = new CityMap(this.ctx);
     this.banner.held = () => this.story.busy || this.modals.depth > 0;
     this.toasts.held = () => this.story.holdsToasts;
     // One item at a time (EXPANSION §7.6): never over a tray, drag, confirm, story surface, message banner or dialog.
@@ -168,6 +178,14 @@ export class UI {
     for (const dlg of [this.budget.el, this.report.el, this.news.el, this.menu.el, this.confirm.el]) this.modals.layer.append(dlg);
     this.dock.railSlot.append(this.story.rail.el);
     root.insertBefore(this.story.el, this.modals.layer);
+    root.insertBefore(this.cityMap.el, this.story.el);
+    this.cityMap.onToggle = (open) => this.onCityMap(open);
+    mapBus.hooks = {
+      isOpen: () => this.cityMap.isOpen,
+      open: (slot) => this.openCityMap(slot ?? null),
+      tap: (sx, sy) => this.cityMap.tap(sx, sy),
+      leave: (sx, sy) => this.cityMap.close({ sx, sy }),
+    };
     this.story.onChange = () => this.syncCoach();
     this.story.onView = () => this.dock.syncCategories();
 
@@ -207,6 +225,21 @@ export class UI {
       this.syncCoach();
     });
     on('overlay', () => this.dock.syncOverlay());
+    // Land grants and annexes (MEGACITY §7.2, §7.3): the map button, the ✦ token and an open City map follow them.
+    on('grant', (e) => {
+      this.statsDirty = true;
+      this.panelsDirty = true;
+      this.story.refreshRail();
+      if (e.grants > 0 && this.game.world.region >= 3) this.tips.show('grant');
+    });
+    on('annex', (e) => {
+      this.statsDirty = true;
+      this.panelsDirty = true;
+      this.story.refreshRail();
+      this.cityMap.refresh();
+      this.tips.show('annexed');
+      if (e.kind === 'skeleton') this.tips.show('frame');
+    });
     on('speed', () => this.hud.syncSpeed());
     on('select', (sel) => {
       this.inspect.onSelect(sel);
@@ -215,12 +248,18 @@ export class UI {
     on('news', (item) => {
       this.ticker.push(item);
       this.news.refresh();
+      const tip = newsTip(item.text);
+      if (tip) this.tips.show(tip);
     });
     // An action without a handler yet ('export' until WP-9's Export city, 'map' until the City map) shows as plain
     // text: its button would be dropped on the next frame (alive() is false for it) and take the message with it.
     on('toast', (t) => this.toasts.push(t.text, t.kind, t.action && TOAST_HANDLED.has(t.action.id) ? t.action : undefined));
     on('milestone', (m) => this.banner.show(m));
-    on('moment', (m) => this.banner.showMoment(m));
+    on('moment', (m) => {
+      this.banner.showMoment(m);
+      // The first Sky Lobby's banner rides the 'region' moment (MomentId has no 'lobby', frozen types.ts).
+      if (m.title.startsWith('SKY LOBBY')) this.tips.show('skylobby');
+    });
     on('hint', (e) => this.tips.onHint(e.id));
     on('settings', () => {
       this.applySettings();
@@ -244,6 +283,12 @@ export class UI {
   /** game.world was replaced (new city / load): drop every per-world view state. */
   private onWorld(): void {
     this.glide = null;
+    // A world swap while the City map was open: leave it (the new city frames itself).
+    const wasMap = this.cityMap.isOpen;
+    this.cityMap.reset();
+    if (wasMap) this.onCityMap(false);
+    if (this.ctx.camera.mapView) this.ctx.camera.snapFromMap(this.ctx.camera.width / 2, this.ctx.camera.height / 2, 0);
+    this.insetAcc = INSET_INTERVAL;
     this.tips.reset();
     this.inspect.onSelect(null);
     this.dock.closeTray();
@@ -289,6 +334,15 @@ export class UI {
         if (this.closeTopPanel()) e.preventDefault();
         return;
       }
+      // Enter = ✓ on the City map's annex confirm (§7.2), unless a dialog or a text field has the key.
+      if (e.key === 'Enter' && this.modals.depth === 0 && this.cityMap.isOpen && !e.repeat) {
+        const t = e.target as HTMLElement | null;
+        if (!(t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA')) && this.cityMap.enter()) {
+          e.preventDefault();
+          e.stopPropagation();
+        }
+        return;
+      }
       if (this.modals.depth === 0 || e.key === 'Tab' || e.defaultPrevented) return;
       const target = e.target as HTMLElement | null;
       if (!target || !this.modals.layer.contains(target)) return;
@@ -309,6 +363,10 @@ export class UI {
   private closeTopPanel(): boolean {
     if (this.modals.closeTop()) return true;
     if (this.story.closeTop()) return true;
+    if (this.cityMap.isOpen) {
+      this.cityMap.close();
+      return true;
+    }
     if (this.inspect.isOpen) {
       this.game.select(null);
       return true;
@@ -318,6 +376,56 @@ export class UI {
       return true;
     }
     return false;
+  }
+
+  // ── City map (MEGACITY §7.2) ───────────────────────────────────────────────
+
+  /** Open the City map (on a slot): closes the tray, the inspect sheet and any dialog first. */
+  private openCityMap(slot: number | null): void {
+    if (this.game.world.region < 3) return;
+    this.modals.closeAll();
+    this.dock.closeTray();
+    this.game.select(null);
+    this.glide = null;
+    this.cityMap.open(slot);
+  }
+
+  /** The map opened or closed: hide the city HUD behind it, move the tip slot, re-set the camera insets. */
+  private onCityMap(open: boolean): void {
+    setClass(this.root, 'is-citymap', open);
+    this.tips.moveTo(open ? this.cityMap.tipSlot : this.dock.tipSlot);
+    if (open) this.tips.onCityMap();
+    else this.syncInsets();
+    this.statsDirty = true;
+    this.panelsDirty = true;
+  }
+
+  /**
+   * The screen px the city HUD covers (§3.9): the top bar and ticker, the toolbar and story rail at the bottom, or the
+   * side rail on a landscape phone. The camera frames boxes, pins and the district label inside the rest. The City map
+   * sets its own while it is open.
+   */
+  syncInsets(): void {
+    if (this.cityMap.isOpen) return;
+    const cam = this.ctx.camera;
+    const W = cam.width;
+    const H = cam.height;
+    let top = 0;
+    let bottom = 0;
+    let left = 0;
+    for (const el of [this.hud.el, this.ticker.el]) {
+      const r = el.getBoundingClientRect();
+      if (r.height > 0 && r.top < H / 2) top = Math.max(top, r.bottom);
+    }
+    const bar = this.dock.barEl.getBoundingClientRect();
+    if (bar.width > 0 && bar.height > 0) {
+      if (bar.width >= W / 2 && bar.top > H / 2) {
+        bottom = H - bar.top;
+        const rail = this.story.rail.el.getBoundingClientRect();
+        if (rail.height > 0 && rail.top > H / 2) bottom = Math.max(bottom, H - rail.top);
+      } else if (bar.height >= H / 2 && bar.left < W / 2) left = bar.right;
+    }
+    cam.setInsets({ top: Math.round(top), bottom: Math.round(bottom), left: Math.round(left) });
   }
 
   private applySettings(): void {
@@ -408,6 +516,14 @@ export class UI {
     this.toasts.flush();
     this.tips.update(dt);
     this.updateGlide(dt);
+    this.cityMap.update();
+    if (!this.ctx.camera.animating) mapBus.flyIn = null;
+    this.insetAcc += dt;
+    if (this.insetAcc >= INSET_INTERVAL) {
+      this.insetAcc = 0;
+      this.syncInsets();
+      this.cityMap.layout();
+    }
 
     this.hudAcc += dt;
     if (this.hudAcc >= HUD_INTERVAL) {
@@ -431,6 +547,7 @@ export class UI {
       this.checkGrid();
       this.budget.refresh();
       this.report.refresh();
+      this.cityMap.refresh();
       if (this.menu.isOpen) this.menu.refresh();
     }
   }

@@ -38,6 +38,9 @@ export class StoryRail {
   private readonly goalText: HTMLElement;
   private readonly goalDots: HTMLElement;
   private readonly goalNext: HTMLElement;
+  /** The ✦ land-grant token (MEGACITY §7.3): beside the goal chip while a grant waits; a tap opens the City map. */
+  private readonly grant: HTMLButtonElement;
+  private readonly grantN: HTMLElement;
   private readonly fac: HTMLButtonElement;
   private readonly facSig: HTMLElement;
   private readonly comms: HTMLButtonElement;
@@ -60,6 +63,12 @@ export class StoryRail {
       { class: 'cc-rail-goal', type: 'button', 'aria-label': 'Chapter goals' },
       h('span', { class: 'cc-goal-chip cc-chipglass' }, this.goalNum, h('span', { class: 'cc-goal-sep', text: '▸' }), this.goalText, this.goalDots, this.goalNext),
     );
+    this.grantN = h('b');
+    this.grant = h(
+      'button',
+      { class: 'cc-rail-btn cc-rail-grant', type: 'button', 'aria-label': 'Land grant waiting: open the City map', hidden: true },
+      h('span', { class: 'cc-rail-face cc-chipglass' }, h('span', { class: 'cc-rail-star', text: '✦' }), this.grantN),
+    );
     this.facSig = h('span', { class: 'cc-rail-sig' });
     this.fac = h('button', { class: 'cc-rail-btn cc-rail-fac', type: 'button', 'aria-label': 'Factions', hidden: true }, h('span', { class: 'cc-rail-face cc-chipglass' }, this.facSig));
     this.badge = h('span', { class: 'cc-rail-badge', hidden: true });
@@ -81,8 +90,9 @@ export class StoryRail {
       svg as unknown as HTMLElement,
       this.badge,
     );
-    this.el = h('div', { class: 'cc-storyrail', hidden: true, role: 'toolbar', 'aria-label': 'Story' }, this.goal, this.fac, this.comms);
+    this.el = h('div', { class: 'cc-storyrail', hidden: true, role: 'toolbar', 'aria-label': 'Story' }, this.goal, this.grant, this.fac, this.comms);
     this.goal.addEventListener('click', () => actions.goals());
+    this.grant.addEventListener('click', () => ctx.actions.openCityMap());
     this.fac.addEventListener('click', () => actions.factions());
     this.comms.addEventListener('click', () => actions.comms());
   }
@@ -137,6 +147,12 @@ export class StoryRail {
     }
     this.msgId = story?.id ?? '';
     setClass(this.goal, 'has-msg', msgs > 0);
+    // The ✦ token (§7.3): while a land grant waits; the amber "message waiting" state keeps priority over it.
+    const w = this.ctx.game.world;
+    const grants = w.region >= 3 ? Math.max(0, w.districts.grants | 0) : 0;
+    setHidden(this.grant, grants <= 0 || msgs > 0);
+    setText(this.grantN, String(grants));
+    setAttr(this.grant, 'aria-label', `${grants} land ${grants === 1 ? 'grant' : 'grants'} waiting: open the City map`);
     setClass(this.goal, 'is-done', v.goals.length > 0 && v.goals.every((g) => g.done || g.waived));
     setClass(this.goal, 'is-settling', ch.closesInSec !== undefined);
     let label = v.goals.length ? `Chapter ${ch.numeral} goals: ${v.goals.filter((g) => g.done || g.waived).length} of ${v.goals.length} done` : 'Chapter';

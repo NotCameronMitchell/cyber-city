@@ -6,7 +6,7 @@
 
 import { abbr, groupInt, signed } from './format';
 import type { UIContext } from './context';
-import { closestData, h, replayClass, setAttr, setClass, setHtml, setStyle, setText } from './dom';
+import { closestData, h, replayClass, setAttr, setClass, setHidden, setHtml, setStyle, setText } from './dom';
 import { icon } from './icons';
 
 const SPEED_ICONS = ['pause', 'play', 'fast', 'faster'] as const;
@@ -30,6 +30,9 @@ export class Hud {
   private readonly bars: RciBar[] = [];
   private readonly speedBtns: HTMLButtonElement[] = [];
   private readonly cycleBtn: HTMLButtonElement;
+  /** The City map button (MEGACITY §7.2, §7.3): a gold dot with the count while a land grant waits; not below 375 px. */
+  private readonly mapBtn: HTMLButtonElement;
+  private readonly mapDot: HTMLElement;
   /** Speed to resume at when un-pausing from the compact cycle button. */
   private resume = 1;
   private lastFunds = NaN;
@@ -86,6 +89,14 @@ export class Hud {
     speed.append(this.cycleBtn);
 
     const menu = h('button', { class: 'cc-hud-menu', type: 'button', 'data-act': 'menu', 'aria-label': 'Menu', title: 'Menu', html: icon('menu') });
+    this.mapDot = h('span', { class: 'cc-hud-mapdot', hidden: true });
+    this.mapBtn = h(
+      'button',
+      { class: 'cc-hud-map', type: 'button', 'data-act': 'map', 'aria-label': 'City map', title: 'City map', hidden: true },
+      h('span', { class: 'cc-hud-mapico', html: icon('map') }),
+      h('span', { class: 'cc-hud-maplabel is-wideonly', text: 'City map' }),
+      this.mapDot,
+    );
 
     this.el = h(
       'header',
@@ -96,6 +107,7 @@ export class Hud {
       this.rci,
       h('span', { class: 'cc-hud-spacer' }),
       speed,
+      this.mapBtn,
       menu,
     );
 
@@ -121,6 +133,7 @@ export class Hud {
     } else if (act === 'budget') this.ctx.actions.openBudget();
     else if (act === 'report') this.ctx.actions.openReport();
     else if (act === 'menu') this.ctx.actions.openMenu();
+    else if (act === 'map') this.ctx.actions.openCityMap();
   };
 
   /** Reflect game.speed in the buttons (called on 'speed'). */
@@ -158,6 +171,14 @@ export class Hud {
     setClass(this.fundsNet, 'is-down', net < 0);
     if (Number.isFinite(this.lastFunds) && funds !== this.lastFunds) this.flashDelta(funds - this.lastFunds);
     this.lastFunds = funds;
+
+    // The City map button: a region city only; the gold dot counts the land grants waiting.
+    const grants = w.region >= 3 ? Math.max(0, w.districts.grants | 0) : 0;
+    setHidden(this.mapBtn, w.region < 3);
+    setHidden(this.mapDot, grants <= 0);
+    setText(this.mapDot, String(grants));
+    setClass(this.mapBtn, 'has-grant', grants > 0);
+    setAttr(this.mapBtn, 'aria-label', grants > 0 ? `City map, ${grants} land ${grants === 1 ? 'grant' : 'grants'} waiting` : 'City map');
 
     const pop = s.population;
     setText(this.popVal, compact || pop >= 100_000 ? abbr(pop) : groupInt(pop));

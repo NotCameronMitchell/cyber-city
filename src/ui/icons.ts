@@ -17,6 +17,12 @@ const PATHS = {
   services: '<path d="M12 3l7.5 3v5.6c0 4.6-3.2 8.1-7.5 9.4-4.3-1.3-7.5-4.8-7.5-9.4V6z"/><path d="M12 8.5v7M8.5 12h7"/>',
   landmarks: '<path d="M12 1.8L14.2 6v15h-4.4V6z"/><path d="M7.5 21v-9.5l2.3-1.5M16.5 21v-9.5l-2.3-1.5"/><path d="M4 21h16"/><path class="d" d="M12 9v2.2M12 13.5v2.2"/>',
   data: '<path d="M12 3l9 5-9 5-9-5z"/><path d="M3 12.5l9 5 9-5"/><path class="d" d="M3 17l9 5 9-5"/>',
+  /** City map (MEGACITY §7.2): a folded map with a district diamond. */
+  map: '<path d="M3 6.2l5.8-2.4 6.4 2.4 5.8-2.4v14l-5.8 2.4-6.4-2.4L3 20.2z"/><path class="d" d="M8.8 3.8v14M15.2 6.2v14"/>',
+  /** A plus (Annex). */
+  plus: '<path d="M12 5v14M5 12h14"/>',
+  /** A land grant (✦): a four-point star. */
+  grant: '<path d="M12 2.8l2.2 6.9 6.9 2.3-6.9 2.3L12 21.2l-2.2-6.9L2.9 12l6.9-2.3z"/>',
   /** Power & Ports (the Power tray once the first port unlocks): a bolt over a crane and hull. */
   infra:
     '<path d="M9.6 2.5L5.2 9h3.2L7.6 13l4.5-6.2H8.9z"/><path d="M16.5 15.5V4.5M16.5 5.5h-3.5M13.4 5.5v3.4M16.5 9l3-3.5"/><path d="M2.5 15.5h19l-2.6 4.5H5.1z"/><path class="d" d="M9 15.5v-2h3.5v2"/>',

@@ -91,8 +91,10 @@ import {
   type PickFootprint,
   type PickHit,
 } from './gestures';
+import { annexPins, pinAt } from '../render/districts';
 import { HAPTIC_CONFIRM_MS, HAPTIC_TICK_MS, haptic } from './haptics';
 import { KeyboardInput, isTypingTarget } from './keyboard';
+import { MAP_PINCH_IN, MAP_PINCH_OUT, mapBus } from './mapbus';
 
 type PointerKind = 'mouse' | 'touch' | 'pen';
 
@@ -165,6 +167,9 @@ export class InputController {
   private pinchMinRatio = 1;
   private pinchMaxRatio = 1;
   private pinchTapEligible = false;
+  /** City map snap (MEGACITY §3.9): spread ratio accumulated while pinching out at minZoom / in at the map's largest zoom. */
+  private pinchOut = 1;
+  private pinchIn = 1;
 
   // ── Build drag
   private readonly buildStart: Vec = { x: 0, y: 0 };
@@ -190,6 +195,10 @@ export class InputController {
   private zoomTarget = 0;
   private zoomAx = 0;
   private zoomAy = 0;
+
+  // ── City map: an annex pin under the press (a tap opens the City map on its slot), the map session.
+  private pinSlot = -1;
+  private mapSession = false;
 
   // ── Double-tap memory
   private lastTapT = -Infinity;
@@ -396,6 +405,9 @@ export class InputController {
 
     blurTextFocus();
     this.refreshRect();
+    // A tap during the annex fly-in skips to its end (§7.2).
+    if (mapBus.flyIn && this.camera.animating) this.camera.easeToBox(mapBus.flyIn, 0, 0);
+    mapBus.flyIn = null;
     const x = e.clientX - this.rect.left;
     const y = e.clientY - this.rect.top;
     const now = performance.now();
@@ -517,7 +529,8 @@ export class InputController {
     }
     // Mouse wheel / trackpad scroll: accumulate into a smoothed target.
     const base = this.zoomTarget > 0 ? this.zoomTarget : cam.zoom;
-    this.zoomTarget = clamp(base * Math.exp(-clamp(d, -240, 240) * WHEEL_ZOOM_RATE), cam.minZoom, cam.maxZoom);
+    const z = zoomRange(cam);
+    this.zoomTarget = clamp(base * Math.exp(-clamp(d, -240, 240) * WHEEL_ZOOM_RATE), z.lo, z.hi);
     this.zoomAx = sx;
     this.zoomAy = sy;
   };
@@ -581,9 +594,29 @@ export class InputController {
     // The gesture owns the preview from here; hover resumes after release.
     this.hoverShown = false;
 
+    this.pinSlot = -1;
+    this.mapSession = false;
     if (ptr.kind === 'mouse' && ptr.button !== 0) {
       this.mode = 'pan';
       this.tapAllowed = false;
+      return;
+    }
+
+    // The City map (§7.2): one finger pans (while zoomed), a tap selects a slot, a double-tap zooms 1× ↔ 2× (5×5).
+    if (this.camera.mapView) {
+      this.mapSession = true;
+      const slop = ptr.kind === 'mouse' ? DOUBLE_TAP_SLOP_MOUSE : DOUBLE_TAP_SLOP_TOUCH;
+      const isSecondTap = now - this.lastTapT <= DOUBLE_TAP_MS && Math.hypot(ptr.x - this.lastTapX, ptr.y - this.lastTapY) <= slop;
+      this.lastTapT = -Infinity;
+      this.mode = isSecondTap && this.tapAllowed && this.camera.mapHeadroom > 1 ? 'tapzoom' : 'pan';
+      return;
+    }
+
+    // An annex pin under the finger (§3.9): a tap opens the City map on its slot, whatever the tool.
+    const pin = pinAt(annexPins(this.game.world, this.camera), ptr.x, ptr.y);
+    if (pin) {
+      this.pinSlot = pin.slot;
+      this.mode = 'pan';
       return;
     }
 
@@ -653,6 +686,8 @@ export class InputController {
       this.pinchMinRatio = 1;
       this.pinchMaxRatio = 1;
       this.pinchMaxCount = 0;
+      this.pinchOut = 1;
+      this.pinchIn = 1;
     }
     this.pinchMaxCount = Math.max(this.pinchMaxCount, this.pointers.length);
   }
@@ -670,6 +705,7 @@ export class InputController {
     if (c.count < 2) return;
     this.panGesture(c.x - this.pinchCx, c.y - this.pinchCy, now);
     const f = pinchFactor(this.pinchSpread, c.spread);
+    if (f !== 1 && this.mapSnap(f, c.x, c.y)) return;
     if (f !== 1) this.camera.zoomAt(f, c.x, c.y);
     this.pinchCx = c.x;
     this.pinchCy = c.y;
@@ -681,6 +717,41 @@ export class InputController {
       if (r < this.pinchMinRatio) this.pinchMinRatio = r;
       if (r > this.pinchMaxRatio) this.pinchMaxRatio = r;
     }
+  }
+
+  /**
+   * The City map snap by pinch (§3.9): a continued pinch-out at minZoom in a multi-district city opens the City map;
+   * a continued pinch-in on the City map at its largest zoom leaves it towards the fingers. Returns true when it
+   * snapped (the rest of the gesture is ignored).
+   */
+  private mapSnap(f: number, cx: number, cy: number): boolean {
+    const cam = this.camera;
+    const hooks = mapBus.hooks;
+    if (!hooks) return false;
+    if (cam.mapView) {
+      const top = cam.mapZoom * cam.mapHeadroom;
+      if (f > 1 && cam.zoom >= top * 0.995) {
+        this.pinchIn *= f;
+        if (this.pinchIn >= MAP_PINCH_IN) {
+          hooks.leave(cx, cy);
+          this.mode = 'void';
+          haptic(HAPTIC_CONFIRM_MS);
+          return true;
+        }
+      } else if (f < 1) this.pinchIn = 1;
+      return false;
+    }
+    const w = this.game.world;
+    if (f < 1 && cam.zoom <= cam.minZoom * 1.002 && w.region >= 3 && w.districts.owned.length >= 2) {
+      this.pinchOut *= f;
+      if (this.pinchOut <= MAP_PINCH_OUT) {
+        hooks.open();
+        this.mode = 'void';
+        haptic(HAPTIC_CONFIRM_MS);
+        return true;
+      }
+    } else if (f > 1) this.pinchOut = 1;
+    return false;
   }
 
   private releasePointer(id: number, cancelled: boolean): void {
@@ -729,7 +800,15 @@ export class InputController {
     switch (this.mode) {
       case 'pan':
         if (cancelled) break;
-        if (this.tapAllowed && isTap && this.game.tool === 'inspect') this.handleTap(ptr.x, ptr.y, now);
+        if (this.mapSession) {
+          if (this.tapAllowed && isTap) {
+            mapBus.hooks?.tap(ptr.x, ptr.y);
+            this.lastTapT = now;
+            this.lastTapX = ptr.x;
+            this.lastTapY = ptr.y;
+          } else this.startFling(now);
+        } else if (this.pinSlot >= 0 && isTap) mapBus.hooks?.open(this.pinSlot);
+        else if (this.tapAllowed && isTap && this.game.tool === 'inspect') this.handleTap(ptr.x, ptr.y, now);
         else this.startFling(now);
         break;
       case 'build':
@@ -743,8 +822,15 @@ export class InputController {
         break;
       case 'tapzoom':
         if (!cancelled && isTap) {
+          const cam = this.camera;
+          if (this.mapSession) {
+            // The 5×5 City map (§7.2): a double-tap toggles 1× ↔ 2× around the finger.
+            const fit = cam.mapZoom;
+            this.animateZoom(cam.zoom < fit * 1.4 ? (fit * cam.mapHeadroom) / cam.zoom : fit / cam.zoom, ptr.downX, ptr.downY, false);
+            break;
+          }
           // At max zoom a double-tap backs out instead of doing nothing.
-          const atMax = this.camera.zoom >= this.camera.maxZoom * 0.98;
+          const atMax = cam.zoom >= cam.maxZoom * 0.98;
           this.animateZoom(atMax ? 1 / DOUBLE_TAP_ZOOM : DOUBLE_TAP_ZOOM, ptr.downX, ptr.downY, false);
         }
         break;
@@ -836,7 +922,8 @@ export class InputController {
   private animateZoom(factor: number, ax: number, ay: number, accumulate: boolean): void {
     const cam = this.camera;
     const base = accumulate && this.zoomTarget > 0 ? this.zoomTarget : cam.zoom;
-    this.zoomTarget = clamp(base * factor, cam.minZoom, cam.maxZoom);
+    const z = zoomRange(cam);
+    this.zoomTarget = clamp(base * factor, z.lo, z.hi);
     this.zoomAx = ax;
     this.zoomAy = ay;
   }
@@ -1028,7 +1115,7 @@ export class InputController {
     // The ghost of a plan waiting for ✓ stays put under a moving cursor.
     if (this.game.pendingConfirm) return;
     const tool = this.game.tool;
-    if (tool === 'inspect') {
+    if (tool === 'inspect' || this.camera.mapView) {
       this.clearHover();
       return;
     }
@@ -1073,6 +1160,11 @@ export class InputController {
     target.addEventListener(type, fn, opts);
     this.offs.push(() => target.removeEventListener(type, fn, opts));
   }
+}
+
+/** The zoom range input may ease to: the City map's [fit, fit × headroom] while it is open, else [minZoom, maxZoom]. */
+export function zoomRange(cam: Pick<Camera, 'mapView' | 'mapZoom' | 'mapHeadroom' | 'minZoom' | 'maxZoom'>): { lo: number; hi: number } {
+  return cam.mapView ? { lo: cam.mapZoom, hi: cam.mapZoom * cam.mapHeadroom } : { lo: cam.minZoom, hi: cam.maxZoom };
 }
 
 function preventDefault(e: Event): void {

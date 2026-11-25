@@ -441,6 +441,12 @@ export class StoryUI {
     if (this.cueAge >= RECUE_SEC) this.showBanner(msg.id);
   }
 
+  /** Re-sync the rail now (a land grant arrived or was spent: the ✦ token, MEGACITY §7.3). */
+  refreshRail(): void {
+    const v = this.ctx.game.story.view();
+    this.rail.sync(v, this.unread(v));
+  }
+
   private sync(v: StoryView): void {
     // Card. One modal at a time: a card that opens while the chapter title is up waits
     // for it (the title's close re-syncs), so a first tap never lands on the wrong surface.
