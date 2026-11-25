@@ -1562,6 +1562,7 @@ export class Game {
     this.story.onAnnex(kind, leased, repeat, rivals);
     this.sim.recomputeAll();
     vertical.refresh(w, { quiet: true });
+    this.seedOnAnnex(slot, kind);
     turf.refreshStats(w);
     const name = districtTitle(w, slot);
     w.addNews(`${w.cityName} grows: ${name} joins the city.`, 'good');
@@ -1573,6 +1574,36 @@ export class Game {
     this.regionWhole();
     this.events.emit('stats');
     this.save();
+  }
+
+  /**
+   * The gangs move in on annex (§3.7): the Undertow seeds in the Sunk and the Kites by a Skeleton Row frame, each only
+   * once it has seeded in the city (before that it seeds at its normal time). One 3×3 patch at its best free tile
+   * there; for the Kites the best tile on or next to a frame (turf stands on a frame once turf.ts keeps it, WP-1).
+   */
+  private seedOnAnnex(slot: SlotId, kind: DistrictKind): number {
+    const w = this.world;
+    const gang: GangId | null = kind === 'sunk' ? 'undertow' : kind === 'skeleton' ? 'kites' : null;
+    if (!gang || !w.turf.seeded[gang]) return 0;
+    const r = slotRect(w, slot);
+    const frames: Building[] = [];
+    if (gang === 'kites') for (const b of w.buildings.values()) if (b.type === 'frame' && w.slotAt(b.x, b.y) === slot) frames.push(b);
+    const nearFrame = (x: number, y: number) => frames.some((b) => x >= b.x - 1 && x <= b.x + b.size && y >= b.y - 1 && y <= b.y + b.size);
+    const aff = turf.affinity(w, gang);
+    let best = -1;
+    let bestA = -Infinity;
+    for (let y = r.y0; y <= r.y1; y++)
+      for (let x = r.x0; x <= r.x1; x++) {
+        if (!turf.isEligible(w, x, y) || turf.ownerAt(w, x, y)) continue;
+        if (gang === 'kites' && !nearFrame(x, y)) continue;
+        const a = aff[y * w.N + x];
+        if (a > bestA) {
+          bestA = a;
+          best = y * w.N + x;
+        }
+      }
+    if (best < 0) return 0;
+    return turf.seedGang(w, gang, best % w.N, (best / w.N) | 0);
   }
 
   /** The annex that makes every slot owned queues the "region is whole" banner once (again at 25 after growing, §3.8). */
@@ -2368,7 +2399,8 @@ export class Game {
     if (!a) return null;
     for (const l of w.vertical.lobbies) {
       if (!l.anchors.includes(a.i)) continue;
-      return `Part of Sky Lobby ${vertical.lobbyName(w, l.anchors[0])}: ${l.anchors.length} towers`;
+      // §5.5's note, as the tube's inspect words it: "Part of Sky Lobby Glass Steps: +3,000 visitors a month".
+      return `Part of Sky Lobby ${vertical.lobbyName(w, l.anchors[0])}: +${num(l.visitors)} visitors a month`;
     }
     return null;
   }

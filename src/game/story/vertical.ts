@@ -1349,6 +1349,22 @@ function pushSpanTiles(plan: ActionPlan, c: SpanCheck, ok: boolean): void {
   plan.tiles.push({ x: c.bx, y: c.by, ok });
 }
 
+/** The refusal when a rail or skyway span changes terrace step (MEGACITY §3.7 Terraces). */
+export const STEP_REASON = "Can't cross a terrace step";
+
+/**
+ * The index in `pts` of the first tile whose terrace step differs from the tile before it along the path, both land
+ * (MEGACITY §3.7: "a skyway or rail span may not change step"; only Highstep Terraces have steps), else −1.
+ */
+export function stepChangeAt(world: World, pts: readonly Pt[]): number {
+  for (let k = 1; k < pts.length; k++) {
+    const a = world.tileAt(pts[k - 1].x, pts[k - 1].y);
+    const b = world.tileAt(pts[k].x, pts[k].y);
+    if (a && b && a.terrain === Terrain.Land && b.terrain === Terrain.Land && a.elev !== b.elev) return k;
+  }
+  return -1;
+}
+
 /**
  * Ribbon Rail plan (§4.4) along an L-path (from actions.roadPath), up to
  * RIBBON.maxDrag tiles. Land, water, roads and zone tiles are allowed; building
@@ -1405,6 +1421,12 @@ export function planRail(world: World, path: readonly Pt[], plan: ActionPlan): n
   }
   if (blocked) {
     plan.reason = 'Blocked by buildings';
+    return 0;
+  }
+  const step = stepChangeAt(world, pts);
+  if (step >= 0) {
+    plan.tiles[step].ok = false;
+    plan.reason = STEP_REASON;
     return 0;
   }
   let changes = 0;

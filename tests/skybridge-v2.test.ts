@@ -359,3 +359,84 @@ describe('K2: placement on a dense downtown (§11.3)', () => {
     }
   });
 });
+
+describe('Sky Lobby announcements and names (§5.5)', () => {
+  const A = ['Glass', 'Prism', 'Neon', 'High', 'Copper', 'Pearl', 'Hex', 'Cloud', 'Signal', 'Tide', 'Amber', 'Halo'];
+  const B = ['Steps', 'Gallery', 'Walk', 'Arcade', 'Rise', 'Loop', 'Concourse', 'Crossing', 'Terrace', 'Promenade'];
+
+  it.each(REGIONS)('%i×%i: the first lobby shows the moment banner once; later lobbies post one news line', (R) => {
+    const w = skyWorld(R, 31);
+    const moments: { title?: string; sub?: string }[] = [];
+    w.events.on('moment', (m) => moments.push(m as { title?: string; sub?: string }));
+    const row = (y: number) => {
+      const xs = [sx(4, R), sx(8, R), sx(12, R)];
+      for (const x of xs) tower(w, x, y);
+      for (let i = 1; i < xs.length; i++) expect(applyAction(w, 'skybridge', { x: xs[i - 1], y }, { x: xs[i], y }).valid).toBe(true);
+      vertical.refresh(w);
+    };
+    row(sy(10, R));
+    expect(moments).toHaveLength(1);
+    const name = vertical.lobbyName(w, w.vertical.lobbies[0].anchors[0]);
+    expect(moments[0].title).toBe(`SKY LOBBY · ${name.toUpperCase()}`);
+    expect(moments[0].sub).toBe('3 towers linked: visitors and land value');
+    expect(w.story.flags.firstSkyLobby).toBe(true);
+    const news0 = w.news.length;
+    row(sy(30, R));
+    expect(moments).toHaveLength(1);
+    expect(w.vertical.lobbies).toHaveLength(2);
+    const lines = w.news.slice(news0).filter((n) => /Sky Lobby now/.test(n.text));
+    expect(lines).toHaveLength(1);
+    expect(lines[0].text).toMatch(/^Three towers in .+ are one Sky Lobby now: .+\.$/);
+    // Refreshing again announces nothing new.
+    vertical.refresh(w);
+    expect(moments).toHaveLength(1);
+    expect(w.news.slice(news0).filter((n) => /Sky Lobby now/.test(n.text))).toHaveLength(1);
+  });
+
+  it('names are "{A} {B}" from the two lists, by a hash of the lowest anchor', () => {
+    const w = skyWorld(3, 9);
+    const seen = new Set<string>();
+    for (let i = 0; i < 400; i++) {
+      const n = vertical.lobbyName(w, i * 97);
+      const [a, b] = n.split(' ');
+      expect(A).toContain(a);
+      expect(B).toContain(b);
+      expect(vertical.lobbyName(w, i * 97)).toBe(n);
+      seen.add(n);
+    }
+    expect(seen.size).toBeGreaterThan(40);
+  });
+});
+
+describe('the Kite Mast takes 6 bridges, the Halo Lookout 4 (§5.3 rule 6, §6.3)', () => {
+  it.each(REGIONS)('%i×%i: six bridges on the mast, the seventh refused; the Halo Lookout is a 4-bridge tall anchor', (R) => {
+    const w = skyWorld(R, 12);
+    const m = w.addBuilding('kitemast', sx(30, R), sy(30, R))!;
+    m.powered = true;
+    vertical.refresh(w);
+    const A = vertical.anchorAt(w, m.x, m.y)!;
+    expect(A.limit).toBe(SKYBRIDGE.maxPerMast);
+    expect(SKYBRIDGE.maxPerMast).toBe(6);
+    const ends = [
+      // Never two towers side by side (they could merge into one parcel anchor).
+      { x: m.x + 5, y: m.y },
+      { x: m.x + 7, y: m.y + 1 },
+      { x: m.x - 4, y: m.y },
+      { x: m.x - 6, y: m.y + 1 },
+      { x: m.x, y: m.y - 4 },
+      { x: m.x + 1, y: m.y - 6 },
+      { x: m.x, y: m.y + 5 },
+    ];
+    for (const e of ends) tower(w, e.x, e.y);
+    for (let k = 0; k < 6; k++) {
+      const p = applyAction(w, 'skybridge', { x: m.x, y: m.y }, ends[k]);
+      expect(p.valid, `bridge ${k}: ${p.reason}`).toBe(true);
+    }
+    expect(planAction(w, 'skybridge', { x: m.x, y: m.y }, ends[6]).reason).toBe('This building has 6 bridges');
+    const h = w.addBuilding('halolookout', sx(10, R), sy(50, R))!;
+    h.powered = true;
+    const H = vertical.anchorAt(w, h.x, h.y)!;
+    expect(H.building?.type).toBe('halolookout');
+    expect(H.limit).toBe(SKYBRIDGE.maxPerBuilding);
+  });
+});

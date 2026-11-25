@@ -39,6 +39,7 @@ import {
   resolveRef,
   rivalOf,
   shownState,
+  spiresBy,
   standing,
   tier,
   tierOf,
@@ -635,6 +636,56 @@ describe('standing and tiers (§2.1)', () => {
         expect(powerWeight(w, f) - before[j]).toBe(j === k ? 150 : 0),
       );
     }
+  });
+
+  it('Megacity power terms (MEGACITY §6.2, §8.4, §9.2): landmarks, sponsored Spires, Salvage crowns, ending landmarks', () => {
+    const F = ['board', 'basalt', 'nacre', 'undertow', 'kites'] as const;
+    const base = F.map((f) => powerWeight(w, f));
+    const delta = () => F.map((f, j) => powerWeight(w, f) - base[j]);
+    // One landmark each: Board +100 Charter Hall, Basalt +120 Hexworks, Nacre +120 Pearl Atrium, Undertow +100
+    // Hullhouse, Kites +100 Kite Mast.
+    w.addBuilding('charterhall', 2, 2);
+    w.addBuilding('hexworks', 8, 2);
+    w.addBuilding('pearlatrium', 14, 2);
+    w.addBuilding('hullhouse', 20, 2);
+    w.addBuilding('kitemast', 26, 2);
+    expect(delta()).toEqual([100, 120, 120, 100, 100]);
+    // Spires: unsponsored (every v1–v3 Spire) and Nacre-sponsored count for Nacre, Basalt-sponsored for Basalt,
+    // an Independent Spire for nobody.
+    const old = w.addBuilding('spire', 2, 10)!;
+    expect(old.sponsor).toBeUndefined();
+    expect(spiresBy(w, 'nacre')).toBe(1);
+    w.addBuilding('spire', 8, 10)!.sponsor = 'nacre';
+    w.addBuilding('spire', 14, 10)!.sponsor = 'basalt';
+    w.addBuilding('spire', 20, 10)!.sponsor = 'none';
+    expect(spiresBy(w, 'nacre')).toBe(2);
+    expect(spiresBy(w, 'basalt')).toBe(1);
+    expect(delta()).toEqual([100, 240, 360, 100, 100]);
+    // Salvage crowns: +80 Undertow each (vertical's crown counter).
+    w.vertical.metrics.crowns.salvage = 2;
+    expect(delta()[3]).toBe(260);
+    w.vertical.metrics.crowns.salvage = 0;
+    // Ending landmarks weigh only while their ending is current: Foreman's Gantry +150 Basalt, Glass Smile +150 Nacre.
+    w.addBuilding('gantry', 2, 20);
+    w.addBuilding('glasssmile', 10, 20);
+    expect(delta()).toEqual([100, 240, 360, 100, 100]);
+    w.story.ending = 'ironwork';
+    expect(delta()).toEqual([100, 390, 360, 100, 100]);
+    w.story.ending = 'pearl';
+    expect(delta()).toEqual([100, 240, 510, 100, 100]);
+  });
+
+  it('a city without the new types keeps its Balance of Power (old Spires read as Nacre)', () => {
+    w.stats.approval = 60;
+    w.stats.jobsInd = 4000;
+    w.stats.jobsCom = 6000;
+    w.addBuilding('spire', 4, 4);
+    w.addBuilding('reactor', 12, 4);
+    const before = (['board', 'basalt', 'nacre', 'undertow', 'kites'] as const).map((f) => powerShare(w, f));
+    // The same city with its Spire explicitly Nacre-sponsored (a v4 placement with the default sponsor).
+    for (const b of w.buildings.values()) if (b.type === 'spire') b.sponsor = 'nacre';
+    const after = (['board', 'basalt', 'nacre', 'undertow', 'kites'] as const).map((f) => powerShare(w, f));
+    expect(after).toEqual(before);
   });
 
   it('friendlyCount counts visible, unretired factions at 20+', () => {

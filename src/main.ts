@@ -15,6 +15,7 @@
 
 import { AudioEngine } from './audio/audio';
 import { SAVE_KEY } from './game/config';
+import { AUTOSAVE_WAIT_MS, AutosaveClock } from './game/autosave';
 import { Game } from './game/game';
 import { readStoredSave } from './game/saveStore';
 import { storageGet } from './game/storage';
@@ -28,10 +29,6 @@ import { UI } from './ui/ui';
 
 /** Longest frame step fed to the game (s): a long stall must not teleport the sim. */
 const MAX_DT = 0.1;
-/** Autosave at most every N months of sim time and game.autosaveMinSec unpaused seconds (MEGACITY §3.3). */
-const AUTOSAVE_MONTHS = 3;
-/** A due autosave waits for a frame without a sim slice at most this long (ms), then runs anyway. */
-const AUTOSAVE_WAIT_MS = 500;
 
 /** Run `fn` when the browser is idle (requestIdleCallback with a timeout), or on the next task without it. */
 function whenIdle(fn: () => void, timeoutMs: number): void {
@@ -119,17 +116,11 @@ function start(data?: unknown): void {
   renderer.resize();
 
   // ── Autosave (MEGACITY §3.3: off the month tick, in an idle frame) ───────
-  let monthsSinceSave = 0;
-  let playSinceSave = 0;
-  /** An autosave is due (the month handler only marks it); performance.now() when it became due, else 0. */
-  let dueSince = 0;
-  let idleQueued = false;
+  const autosave = new AutosaveClock();
   const save = (why: string): boolean => {
     // Nothing changes behind the title, and a first launch that never left it has no city to keep.
     if (title.holding && why !== 'menu') return false;
-    monthsSinceSave = 0;
-    playSinceSave = 0;
-    dueSince = 0;
+    autosave.saved();
     try {
       return game.save();
     } catch (err) {
@@ -137,19 +128,9 @@ function start(data?: unknown): void {
       return false;
     }
   };
-  const markDue = () => {
-    if (!dueSince && monthsSinceSave >= AUTOSAVE_MONTHS && playSinceSave >= game.autosaveMinSec) dueSince = performance.now();
-  };
-  game.events.on('month', () => {
-    monthsSinceSave++;
-    markDue();
-  });
+  game.events.on('month', () => autosave.month(performance.now(), game.autosaveMinSec));
   // A fresh world starts its own count (newCity already saves itself).
-  game.events.on('world', () => {
-    monthsSinceSave = 0;
-    playSinceSave = 0;
-    dueSince = 0;
-  });
+  game.events.on('world', () => autosave.saved());
   saveNow = save;
   window.addEventListener('pagehide', () => save('pagehide'));
 
@@ -195,16 +176,10 @@ function start(data?: unknown): void {
       // Keep the loop alive; report the first few so a bad frame is visible.
       if (errors++ < 5) console.error('[frame]', err);
     }
-    if (game.speed > 0) {
-      playSinceSave += dt;
-      markDue();
-    }
     // The due save runs in an idle callback after a frame that ran no sim slice, or after AUTOSAVE_WAIT_MS anyway.
-    if (dueSince && !idleQueued && (!game.simRanThisFrame || now - dueSince >= AUTOSAVE_WAIT_MS)) {
-      idleQueued = true;
+    if (!title.holding && autosave.frame(now, dt, game.speed > 0, game.simRanThisFrame, game.autosaveMinSec)) {
       whenIdle(() => {
-        idleQueued = false;
-        if (dueSince) save('autosave');
+        if (autosave.idle()) save('autosave');
       }, AUTOSAVE_WAIT_MS);
     }
   };

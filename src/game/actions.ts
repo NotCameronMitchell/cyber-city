@@ -1,3 +1,4 @@
+import { updateDistrictLayers } from './districts/effects';
 import { artOffset } from './districts/slots';
 import { buildingStats } from './buildingStats';
 import {
@@ -803,6 +804,16 @@ export function planAction(world: World, tool: ToolId, from: Point, to: Point, o
       plan.reason = NOT_ANNEXED;
       plan.tiles.forEach((p) => (p.ok = false));
       changes = 0;
+    } else if (changes > 0) {
+      // A skyway span may not change terrace step (MEGACITY §3.7 Terraces).
+      const path = roadPath(from, to).filter((p) => world.inBounds(p.x, p.y));
+      const k = vertical.stepChangeAt(world, path);
+      if (k >= 0) {
+        const bad = plan.tiles.find((p) => p.x === path[k].x && p.y === path[k].y);
+        if (bad) bad.ok = false;
+        plan.reason = vertical.STEP_REASON;
+        changes = 0;
+      }
     }
   } else if (isZoneTool(tool)) {
     const zone = ZONES[tool].zone;
@@ -1254,6 +1265,8 @@ export function finishFrame(world: World, id: number): ActionResult {
   world.funds -= st.cost;
   world.pushSignal({ t: 'built', type: 'stack', id: b.id });
   world.pushSignal({ t: 'action', tool: 'raise', x, y });
+  // The frame's crime ring goes with it (§3.3 daily: "frame crime refresh on finish").
+  updateDistrictLayers(world, true);
   vertical.refresh(world);
   turf.refreshStats(world);
   return { ok: true, cost: st.cost };

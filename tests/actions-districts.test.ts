@@ -188,6 +188,32 @@ describe.each(REGIONS)('%i×%i: new building rules (§6.3)', (R) => {
     });
   });
 
+  it('a skyway or Ribbon Rail span may not change terrace step (§3.7 Terraces)', () => {
+    const te = withKind(R, 'terraces');
+    const w = te.w;
+    w.story.unlocks.push('rail');
+    // Step 1 from column x0 + 20 on; a street to ramp the skyway onto.
+    for (let y = te.y0; y <= te.y1; y++) for (let x = te.x0 + 20; x <= te.x1; x++) w.tiles[w.idx(x, y)].elev = 1;
+    const y = te.y0 + 10;
+    w.setRoad(te.x0 + 10, y, RoadKind.Street);
+    w.setRoad(te.x0 + 25, y, RoadKind.Street);
+    // On one step both build.
+    expect(planAction(w, 'skyway', { x: te.x0 + 10, y }, { x: te.x0 + 16, y }).valid).toBe(true);
+    expect(planAction(w, 'rail', { x: te.x0 + 2, y: y + 4 }, { x: te.x0 + 12, y: y + 4 }).valid).toBe(true);
+    // Across the step line both are refused, with the tile where the step changes marked.
+    const sk = planAction(w, 'skyway', { x: te.x0 + 10, y }, { x: te.x0 + 25, y });
+    expect(sk.valid).toBe(false);
+    expect(sk.reason).toBe("Can't cross a terrace step");
+    expect(sk.tiles.find((p) => p.x === te.x0 + 20 && p.y === y)?.ok).toBe(false);
+    const rl = planAction(w, 'rail', { x: te.x0 + 12, y: y + 4 }, { x: te.x0 + 28, y: y + 4 });
+    expect(rl.valid).toBe(false);
+    expect(rl.reason).toBe("Can't cross a terrace step");
+    expect(rl.reason!.length).toBeLessThanOrEqual(32);
+    // Elsewhere (no steps) nothing changes: a long skyway in the start slot still builds.
+    w.setRoad(sx(10, R), sy(40, R), RoadKind.Street);
+    expect(planAction(w, 'skyway', { x: sx(10, R), y: sy(40, R) }, { x: sx(30, R), y: sy(40, R) }).valid).toBe(true);
+  });
+
   it('Pump Houses: a shore tile in the Sunk, the Shoals or Reedmere, not within r6 of the old pump hall, 16 a district', () => {
     shown(['pumphouse'], () => {
       const bare = new World(9, 'Bare', undefined, R);

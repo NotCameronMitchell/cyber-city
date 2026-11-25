@@ -5,6 +5,7 @@
 // House reclamation, and a new district that grows (D5).
 
 import { describe, expect, it } from 'vitest';
+import { finishFrame, frameStatus } from '../src/game/actions';
 import { DISTRICTS } from '../src/game/config';
 import { districtDaily, kingTides, pumpHouses, pumpRings } from '../src/game/districts/daily';
 import { brownfieldSites, framesOf, isRuin, pumpHallSite, tarmacSites } from '../src/game/districts/annex';
@@ -179,6 +180,55 @@ describe.each(REGIONS)('%i×%i: the district layer part (§3.3; D2, D3)', (R) =>
     f.w.setLevel(i % f.w.N, (i / f.w.N) | 0, 1);
     writeDistrictPart(f.w);
     expect(f.w.layerParts.district.pollutionAdd[i]).toBeCloseTo(0.07, 6);
+  });
+
+  it('Skeleton Row: crime +4% within 3 of an unfinished frame; finishing the frame takes it away at once', () => {
+    const { w, s } = annexed(R, 'skeleton');
+    updateDistrictLayers(w, true);
+    const frames = [...w.buildings.values()].filter((b) => b.type === 'frame' && w.slotAt(b.x, b.y) === s);
+    expect(frames.length).toBe(5);
+    const f = frames[0];
+    const fc = DISTRICTS.skeleton.mods.frameCrime!;
+    const near = { x: f.x - fc.r, y: f.y + 1 };
+    const crimeAt = (x: number, y: number) => w.layerParts.district.crimeAdd[w.idx(x, y)];
+    const landNear = w.tiles[w.idx(near.x, near.y)].terrain === Terrain.Land;
+    expect(landNear).toBe(true);
+    expect(crimeAt(near.x, near.y)).toBeCloseTo(fc.v, 6);
+    // Far from every frame: no frame crime.
+    const r = slotRect(w, s);
+    let far = -1;
+    for (let y = r.y0; y <= r.y1 && far < 0; y++)
+      for (let x = r.x0; x <= r.x1 && far < 0; x++) {
+        if (w.tiles[w.idx(x, y)].terrain !== Terrain.Land) continue;
+        if (frames.every((b) => x < b.x - fc.r - 1 || x > b.x + b.size + fc.r || y < b.y - fc.r - 1 || y > b.y + b.size + fc.r)) far = w.idx(x, y);
+      }
+    expect(far).toBeGreaterThanOrEqual(0);
+    expect(w.layerParts.district.crimeAdd[far]).toBe(0);
+    // Finish it: its ring goes the same day.
+    w.funds = 1e7;
+    w.story.unlocks.push('stack');
+    const inner = { x: f.x - 1, y: f.y + 1 };
+    const before = crimeAt(inner.x, inner.y);
+    expect(finishFrame(w, f.id).ok).toBe(true);
+    const others = frames.slice(1);
+    const stillNear = others.some((b) => inner.x >= b.x - fc.r && inner.x < b.x + b.size + fc.r && inner.y >= b.y - fc.r && inner.y < b.y + b.size + fc.r);
+    expect(w.tiles[w.idx(inner.x, inner.y)].terrain).toBe(Terrain.Land);
+    expect(stillNear).toBe(false); // frames stand ≥ 10 tiles apart
+    expect(before).toBeCloseTo(fc.v, 6);
+    expect(crimeAt(inner.x, inner.y)).toBe(0);
+  });
+
+  it('finishing a frame needs the Stratablock unlocked (or its fallback)', () => {
+    const { w, s } = annexed(R, 'skeleton');
+    const f = [...w.buildings.values()].find((b) => b.type === 'frame' && w.slotAt(b.x, b.y) === s)!;
+    w.funds = 1e7;
+    w.maxPopulation = 0;
+    w.story.unlocks = w.story.unlocks.filter((u) => u !== 'stack');
+    expect(frameStatus(w, f.id).reason).toMatch(/^Locked/);
+    expect(finishFrame(w, f.id).ok).toBe(false);
+    expect(w.buildings.get(f.id)?.type).toBe('frame');
+    w.story.unlocks.push('stack');
+    expect(frameStatus(w, f.id).reason).toBeNull();
   });
 
   it("the Sunk's crime +6% fades with a 1,080-day half-life, stepped by year", () => {

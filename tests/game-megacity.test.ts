@@ -7,10 +7,15 @@
 import { describe, expect, it } from 'vitest';
 import { ANNEX, DISTRICTS, LOW_DETAIL, REGION, SAFETY, SKYBRIDGE, SLEEP, SLICE, STORY_PACE, districtPrice } from '../src/game/config';
 import type { GameEventMap } from '../src/game/events';
+import { AUTOSAVE_MONTHS, AUTOSAVE_WAIT_MS, AutosaveClock } from '../src/game/autosave';
 import { FrameGuard, STRAIN_MIN_FRAMES, frameCapMs, p95Of } from '../src/game/frameGuard';
 import { Game } from '../src/game/game';
+import { heightOf } from '../src/game/heights';
+import { parcelAt } from '../src/game/parcels';
+import * as vertical from '../src/game/story/vertical';
 import { adjacentLocked, slotRect } from '../src/game/districts/slots';
-import { RoadKind, ZoneType, type DistrictKind, type Region, type SlotId } from '../src/game/types';
+import * as turf from '../src/game/story/turf';
+import { REGIONS, RoadKind, ZoneType, type DistrictKind, type Region, type SlotId } from '../src/game/types';
 import { World } from '../src/game/world';
 import { startWorld, sx, sy } from './helpers';
 
@@ -535,5 +540,233 @@ describe('the frame guard (§3.3, §3.11)', () => {
     h.setSpeed(3);
     expect(h.daysPerSec).toBe(16);
     expect(h.autosaveMinSec).toBe(REGION[3].autosaveMinSec);
+  });
+});
+
+describe('autosave off the month tick (§3.3, §3.11)', () => {
+  it('due only after 3 sim months and autosaveMinSec unpaused seconds; queued only in a frame without a sim slice, or after 500 ms', () => {
+    const c = new AutosaveClock();
+    expect(c.everyMonths).toBe(AUTOSAVE_MONTHS);
+    expect(c.waitMs).toBe(AUTOSAVE_WAIT_MS);
+    c.month(0, 60);
+    c.month(0, 60);
+    c.month(0, 60);
+    expect(c.due).toBe(false); // 3 months but no play time yet
+    expect(c.frame(1000, 59, true, false, 60)).toBe(false);
+    expect(c.frame(1016, 2, false, false, 60)).toBe(false); // paused seconds do not count
+    expect(c.frame(1032, 1, true, true, 60)).toBe(false); // due now, but this frame ran a slice
+    expect(c.due).toBe(true);
+    expect(c.frame(1048, 1 / 60, true, true, 60)).toBe(false);
+    expect(c.frame(1064, 1 / 60, true, false, 60)).toBe(true); // the first frame with no slice queues it
+    expect(c.frame(1080, 1 / 60, true, false, 60)).toBe(false); // once
+    expect(c.idle()).toBe(true);
+    c.saved();
+    expect(c.due).toBe(false);
+    // At top speed every frame runs a slice: after 500 ms it is queued anyway (the idle callback runs between frames).
+    for (let m = 0; m < 3; m++) c.month(2000, 60);
+    c.frame(2000, 61, true, true, 60);
+    expect(c.frame(2400, 1 / 60, true, true, 60)).toBe(false);
+    expect(c.frame(2500, 1 / 60, true, true, 60)).toBe(true);
+    // A save for another reason (menu, page hide) before the idle callback fires: it finds nothing due.
+    c.saved();
+    expect(c.idle()).toBe(false);
+  });
+
+  it.each([false, true])('a speed-3 run on a 5×5 city (lower detail %s): every save runs between frames, at most every max(3 months, autosaveMinSec)', (low) => {
+    const { g } = city(5, 5);
+    g.updateSettings({ lowerDetail: low });
+    const minSec = g.autosaveMinSec;
+    expect(minSec).toBe(low ? LOW_DETAIL.autosaveMinSec : REGION[5].autosaveMinSec);
+    const c = new AutosaveClock();
+    let now = 0;
+    let played = 0;
+    const saves: { at: number; month: number }[] = [];
+    let months = 0;
+    g.events.on('month', () => {
+      months++;
+      c.month(now, g.autosaveMinSec);
+    });
+    let idle: (() => void) | null = null;
+    let lastMonth = 0;
+    let lastPlay = 0;
+    g.setSpeed(3);
+    for (let f = 0; f < 60 * 300 && saves.length < 2; f++) {
+      now += 1000 / 60;
+      // A story card would pause the city: pass on it, this test is about the save clock.
+      if (g.story.blocking) {
+        g.later();
+        if (g.story.blocking) g.choose(0);
+      }
+      if (g.speed === 0) g.setSpeed(3);
+      // The idle callback queued after the previous frame runs here, before the next frame's sim slice.
+      if (idle) {
+        const run = idle;
+        idle = null;
+        run();
+      }
+      g.update(1 / 60);
+      const running = g.speed > 0;
+      if (running) played += 1 / 60;
+      if (c.frame(now, 1 / 60, running, g.simRanThisFrame, g.autosaveMinSec)) {
+        idle = () => {
+          if (!c.idle()) return;
+          // Never inside a frame: the save runs between g.update calls (main.ts: requestIdleCallback).
+          expect(months - lastMonth).toBeGreaterThanOrEqual(AUTOSAVE_MONTHS);
+          expect(played - lastPlay).toBeGreaterThanOrEqual(minSec);
+          saves.push({ at: played, month: months });
+          lastMonth = months;
+          lastPlay = played;
+          c.saved();
+        };
+      }
+    }
+    expect(saves.length).toBe(2);
+    expect(saves[1].at - saves[0].at).toBeGreaterThanOrEqual(minSec);
+  });
+});
+
+describe('the gangs move in on annex (§3.7)', () => {
+  it.each(REGIONS)('%i×%i: the Undertow seeds in the Sunk once it has seeded, never before', (R) => {
+    for (const seeded of [false, true]) {
+      const { g } = city(R, 2091);
+      const w = g.world;
+      w.story.flags.published = true;
+      const sunk = w.districts.kinds.indexOf('sunk');
+      // Own an edge neighbour of the Sunk first (the Sunk is a ring-1 corner).
+      const r = slotRect(w, sunk);
+      for (let guard = 0; guard < 6 && !adjacentLocked(w).includes(sunk); guard++) {
+        const next = adjacentLocked(w).find((s) => Math.abs(slotRect(w, s).x0 - r.x0) + Math.abs(slotRect(w, s).y0 - r.y0) === 64)!;
+        w.districts.grants = 1;
+        expect(g.annex(next, 'nacre').ok).toBe(true);
+      }
+      w.turf.seeded.undertow = seeded;
+      w.districts.grants = 1;
+      expect(g.annex(sunk).ok).toBe(true);
+      let held = 0;
+      for (let y = r.y0; y <= r.y1; y++) for (let x = r.x0; x <= r.x1; x++) if (turf.ownerAt(w, x, y) === 'undertow') held++;
+      if (seeded) expect(held).toBeGreaterThanOrEqual(3);
+      else expect(held).toBe(0);
+    }
+  });
+
+  it('the Kites seed by a Skeleton Row frame once they have seeded', () => {
+    const seed = seedWithEdge('skeleton');
+    const { g } = city(3, seed);
+    const w = g.world;
+    w.turf.seeded.kites = true;
+    const s = candidateOf(g, 'skeleton')!;
+    w.districts.grants = 1;
+    expect(g.annex(s).ok).toBe(true);
+    const frames = [...w.buildings.values()].filter((b) => b.type === 'frame' && w.slotAt(b.x, b.y) === s);
+    expect(frames.length).toBeGreaterThan(0);
+    const r = slotRect(w, s);
+    let held = 0;
+    let near = 0;
+    for (let y = r.y0; y <= r.y1; y++)
+      for (let x = r.x0; x <= r.x1; x++) {
+        if (turf.ownerAt(w, x, y) !== 'kites') continue;
+        held++;
+        if (frames.some((b) => x >= b.x - 2 && x <= b.x + b.size + 1 && y >= b.y - 2 && y <= b.y + b.size + 1)) near++;
+      }
+    expect(held).toBeGreaterThan(0);
+    expect(near).toBe(held);
+  });
+});
+
+describe('milestones by region and regional links on a border (§4.5, §3.5)', () => {
+  it.each(REGIONS)('%i×%i: Electric Tide and Glass Horizon only on a 5×5 region; reached rows follow the city', (R) => {
+    const { g } = city(R, 7);
+    const ms = g.milestones();
+    expect(ms.some((m) => m.pop === 6_000_000)).toBe(R === 5);
+    expect(ms.some((m) => m.pop === 8_000_000)).toBe(R === 5);
+    expect(ms.some((m) => m.pop === 4_000_000 && m.title === 'Endless City')).toBe(true);
+    expect(ms.every((m) => !m.reached)).toBe(true);
+    g.world.milestones.push(1000);
+    expect(g.milestones().find((m) => m.pop === 1000)!.reached).toBe(true);
+  });
+
+  it('a street ending on the boundary is a regional link of the slot beyond; annexing that slot makes it a city street', () => {
+    const w = startWorld(3, 77);
+    w.funds = 1e7;
+    const east = w.slotAt(sx(64), sy(30));
+    const y = sy(30);
+    for (let x = sx(40); x <= sx(63); x++) w.setRoad(x, y, RoadKind.Street);
+    const { g } = gameOn(w);
+    expect(g.linksOnBorder(east)).toBe(1);
+    const view = g.districtView().slots[east];
+    expect(view.linksInternal).toBe(1);
+    g.world.districts.grants = 1;
+    const lease = g.world.districts.kinds[east] === 'tarmac' ? 'basalt' : undefined;
+    expect(g.annex(east, lease).ok).toBe(true);
+    expect(g.linksOnBorder(east)).toBe(0);
+  });
+});
+
+describe('inspect additions (§4.6, §5.5, §7.5)', () => {
+  /** A powered level-3 Hab tile (a tall zone anchor). */
+  function hab(w: World, x: number, y: number): void {
+    w.setZone(x, y, ZoneType.Residential);
+    w.setLevel(x, y, 3);
+    w.tiles[w.idx(x, y)].powered = true;
+  }
+
+  it('a zone tower: "{form} · {n} floors", Homes for Hab, Skybridges 0/2; a 2×2 parcel adds its sum; a lobby tower its lobby note', () => {
+    const w = startWorld(3, 77);
+    w.funds = 1e7;
+    w.maxPopulation = 1e7;
+    w.story.unlocks.push('skybridge');
+    const a = { x: sx(10), y: sy(10) };
+    hab(w, a.x, a.y);
+    // Three towers in a row for a Sky Lobby, on a street with a reactor (bridges light only on powered towers).
+    const y = sy(50);
+    const xs = [sx(10), sx(14), sx(18)];
+    for (const x of xs) hab(w, x, y);
+    for (let x = xs[0] - 2; x <= xs[2] + 2; x++) w.setRoad(x, y + 1, RoadKind.Street);
+    w.addBuilding('reactor', xs[0], y + 2);
+    const { g } = gameOn(w);
+    const info = g.getTileInfo(a.x, a.y)!;
+    const floors = Math.max(1, Math.round(heightOf(g.world, a.x, a.y) / 6.5));
+    expect(info.subtitle).toBe(`Point tower · ${floors} floors`);
+    expect(floors).toBeGreaterThan(10);
+    const res = Number(info.rows.find((r) => r[0] === 'Residents')![1].replace(/,/g, ''));
+    expect(info.rows.find((r) => r[0] === 'Homes')![1]).toBe(Math.round(res / 2.4).toLocaleString('en-US'));
+    expect(info.rows.find((r) => r[0] === 'Skybridges')![1]).toBe(`0/${SKYBRIDGE.maxPerAnchor}`);
+    expect(info.rows.some((r) => r[0] === 'District')).toBe(false); // a one-district city has no District row
+    // A merged 2×2 parcel: the note sums its members.
+    const gw = g.world;
+    let parcel: { x: number; y: number } | null = null;
+    for (let k = 0; k < 40 && !parcel; k++) {
+      const x = sx(30 + 2 * (k % 8));
+      const y = sy(30 + 2 * ((k / 8) | 0));
+      for (const [dx, dy] of [[0, 0], [1, 0], [0, 1], [1, 1]]) hab(gw, x + dx, y + dy);
+      const p = parcelAt(gw, x, y);
+      if (p && p.w === 2 && p.h === 2) parcel = { x: p.x, y: p.y };
+      else for (const [dx, dy] of [[0, 0], [1, 0], [0, 1], [1, 1]]) gw.clearTile(x + dx, y + dy);
+    }
+    expect(parcel).not.toBeNull();
+    const pi = g.getTileInfo(parcel!.x, parcel!.y)!;
+    expect(pi.notes?.some((n) => /^Part of a 2×2 tower: [\d,]+ residents$/.test(n.text))).toBe(true);
+    expect(pi.rows.find((r) => r[0] === 'Skybridges')![1]).toBe(`0/${SKYBRIDGE.maxPerParcel}`);
+    // Three towers bridged in a row: a Sky Lobby; each tower's note names it and its visitors.
+    for (let i = 1; i < 3; i++) {
+      g.setTool('skybridge');
+      expect(g.skybridgeSource(xs[i - 1], y)).not.toBeNull();
+      expect(g.applySkybridge(xs[i], y).valid).toBe(true);
+      g.skybridgeSource(xs[i], y); // deselect the far tower (it became the source)
+    }
+    const lobby = gw.vertical.lobbies[0];
+    expect(lobby.anchors).toHaveLength(3);
+    const ti = g.getTileInfo(xs[1], y)!;
+    expect(ti.rows.find((r) => r[0] === 'Skybridges')![1]).toBe('2/2');
+    expect(ti.notes?.some((n) => n.text === `Part of Sky Lobby ${vertical.lobbyName(gw, lobby.anchors[0])}: +${lobby.visitors.toLocaleString('en-US')} visitors a month`)).toBe(true);
+    // The tube: §5.5's rows and the same lobby note.
+    const link = gw.links[0];
+    const li = g.linkInfo(link.id)!;
+    expect(li.title).toBe('Skybridge');
+    expect(li.subtitle).toBe('A walkway for people. Skyways carry cars.');
+    expect(li.rows.map((r) => r[0])).toEqual(['Walkers', 'Cars', 'Land', 'Lobby', 'Upkeep']);
+    expect(li.rows.find((r) => r[0] === 'Cars')![1]).toBe('−25%');
+    expect(li.rows.find((r) => r[0] === 'Upkeep')![1]).toBe(`${SKYBRIDGE.upkeepBase + SKYBRIDGE.upkeepPerTile * 3}/mo`);
+    expect(g.inspectActions(xs[0], y, false, link.id).map((a) => a.id)).toContain('bridgeRemove');
   });
 });
