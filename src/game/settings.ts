@@ -6,8 +6,10 @@
 //             (true → 'full', false → 'off'). `rain` is still written
 //             (weather !== 'off') so an older build reads the same choice.
 //   crowds    missing → on at high quality, off at low.
-//   cityLife  missing → on. Turning it off hides the happenings' visuals and
-//             ticker lines only; their small gameplay terms still apply (§3.11).
+//   cityLife  missing → on. Off: no City life happenings start (no ticker
+//             line, visuals or terms); one in progress ends. Lower detail
+//             (§3.11) is different: it hides only the visuals, the small
+//             gameplay terms and the ticker lines still apply.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import type { Settings } from './types';

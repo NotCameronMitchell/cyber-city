@@ -418,7 +418,7 @@ export interface Settings {
   weather?: 'full' | 'light' | 'off';
   /** Crowds on the streets (§6.4). Missing reads as on at high quality, off at low (`crowdsOn`). */
   crowds?: boolean;
-  /** City life happenings' visuals and ticker lines (§6.4.1). Missing reads as on (`cityLifeOn`). */
+  /** City life happenings (§6.4.1): Off starts none. Missing reads as on (`cityLifeOn`). */
   cityLife?: boolean;
 }
 
