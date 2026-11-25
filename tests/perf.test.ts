@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { fullyBuiltWorld, makeSim } from './helpers';
 import { expansionFixture } from './expansion-fixture';
-import { toV3 } from './legacy-save';
-import { World } from '../src/game/world';
+import { SLICE } from '../src/game/config';
+import { megacitySim, megacityWorld } from './megacity-fixture';
 
 // Budgets from the module contract (Node, fully developed 64×64 map):
 // step() < 2 ms on average, recomputeAll() < 10 ms; with the expansion fixture
@@ -60,18 +60,62 @@ describe('performance', () => {
     expect(settleMs).toBeLessThan(5 * slack);
   });
 
-  // MEGACITY Step 0b (§12 perf note): a one-district 3×3 city still pays the empty area of its locked slots (§2.3) until
-  // WP-1's owned-segment loops (O1) skip them. Temporary budgets: step < 5 ms, recomputeAll < 15 ms. WP-1 restores §11.1
-  // (≤ 1.0 ms a step for one district) and replaces this case.
-  it('a fully built start slot on a 3×3 region (temporary Step 0b budgets until WP-1)', () => {
-    const legacy = fullyBuiltWorld();
-    const w = World.deserialize(toV3(JSON.parse(JSON.stringify(legacy.serialize()))));
-    expect([w.region, w.N]).toEqual([3, 192]);
-    const sim = makeSim(w, true);
-    const { stepMs, recomputeMs } = measure(sim);
-    console.info(`[perf] 3×3, one district: step ${stepMs.toFixed(3)} ms · recomputeAll ${recomputeMs.toFixed(3)} ms`);
-    expect(w.stats.population).toBeGreaterThan(200_000);
-    expect(stepMs).toBeLessThan(5 * slack);
-    expect(recomputeMs).toBeLessThan(15 * slack);
-  });
+  // MEGACITY §11.1 (WP-1): the sim at 1, 9 and 25 districts (the megacity fixture: §2.1's fill per owned slot). Whole-day
+  // step() and recomputeAll() are best-of-batches (the container is shared, §2.1); recomputeAround is the median of 20
+  // small actions' rects. Locally the megacity rows get 1.5× (the suite runs files in parallel), CI 3×.
+  const mega = (globalThis as any).process?.env?.CI ? 3 : 1.5;
+  const ROWS: [string, 3 | 5, number, { step: number; all: number; around: number }][] = [
+    ['1 district (3×3)', 3, 1, { step: 1.0, all: 2, around: 1.5 }],
+    ['9 districts (3×3)', 3, 9, { step: 4.5, all: 12, around: 5 }],
+    ['25 districts (5×5)', 5, 25, { step: 12, all: 30, around: 8 }],
+  ];
+  it.each(ROWS)('§11.1 %s: step(), recomputeAll() and recomputeAround() within budget', (_name, region, n, budget) => {
+    const w = megacityWorld(region, n);
+    const sim = megacitySim(w);
+    for (let i = 0; i < 40; i++) sim.step();
+    const batch = n >= 25 ? 15 : 40;
+    let stepMs = Infinity;
+    for (let b = 0; b < 4; b++) {
+      const t0 = performance.now();
+      for (let i = 0; i < batch; i++) sim.step();
+      stepMs = Math.min(stepMs, (performance.now() - t0) / batch);
+    }
+    let allMs = Infinity;
+    for (let b = 0; b < 4; b++) {
+      const t0 = performance.now();
+      sim.recomputeAll();
+      allMs = Math.min(allMs, performance.now() - t0);
+    }
+    const around: number[] = [];
+    const o = 64 * ((region - 1) >> 1);
+    for (let k = 0; k < 20; k++) {
+      const x = o + ((k * 13) % 56);
+      const y = o + ((k * 29) % 56);
+      const t0 = performance.now();
+      sim.recomputeAround({ x0: x, y0: y, x1: x + 3, y1: y + 3 });
+      around.push(performance.now() - t0);
+    }
+    around.sort((a, b) => a - b);
+    const aroundMs = around[around.length >> 1];
+    console.info(`[perf] ${_name}: step ${stepMs.toFixed(2)} ms · recomputeAll ${allMs.toFixed(2)} ms · recomputeAround ${aroundMs.toFixed(2)} ms`);
+    expect(stepMs).toBeLessThan(budget.step * mega);
+    expect(allMs).toBeLessThan(budget.all * mega);
+    expect(aroundMs).toBeLessThan(budget.around * mega);
+  }, 120_000);
+
+  it('§11.1 a sliced day at 25 districts never spends more than the PC cap plus one unit in a frame', () => {
+    const w = megacityWorld(5, 25);
+    const sim = megacitySim(w);
+    for (let i = 0; i < 20; i++) sim.step();
+    let worst = 0;
+    for (let d = 0; d < 40; d++)
+      for (;;) {
+        const t0 = performance.now();
+        const done = sim.stepSlice(SLICE.capPcMs);
+        worst = Math.max(worst, performance.now() - t0);
+        if (done) break;
+      }
+    console.info(`[perf] 25 districts, sliced at the PC cap: worst frame ${worst.toFixed(2)} ms`);
+    expect(worst).toBeLessThan((SLICE.capPcMs + SLICE.unitMaxNodeMs) * mega);
+  }, 120_000);
 });
