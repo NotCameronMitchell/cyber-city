@@ -506,10 +506,7 @@ export function refresh(world: World, opts?: { quiet?: boolean }): void {
   // Stacks and crowns.
   m.stacksStage2 = 0;
   m.stacksStage3 = 0;
-  m.crowns.foundry = 0;
-  m.crowns.glare = 0;
-  m.crowns.nest = 0;
-  m.crowns.commons = 0;
+  for (const k of Object.keys(m.crowns) as CrownId[]) m.crowns[k] = 0;
   for (const b of world.buildings.values()) {
     if (b.type !== 'stack') continue;
     const s = completeStage(b);

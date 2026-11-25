@@ -18,7 +18,7 @@ import { decodeStory, encodeStory } from '../src/game/story/encode';
 import * as turf from '../src/game/story/turf';
 import * as vertical from '../src/game/story/vertical';
 import * as types from '../src/game/types';
-import { LEGACY_REGION, LEGACY_SIZE, MAX_MAP_SIZE, SLOT, Terrain, ZoneType, type FrameRegion } from '../src/game/types';
+import { Ground, LEGACY_REGION, LEGACY_SIZE, MAX_MAP_SIZE, SLOT, Terrain, ZoneType, type FrameRegion } from '../src/game/types';
 import { World } from '../src/game/world';
 import { Game } from '../src/game/game';
 import { buildShowcase } from '../src/ui/start/showcase';
@@ -66,6 +66,16 @@ function block(w: World, x: number, y: number): void {
 /** Own every slot of a world (structural annexes; Step 0b places no annex content). */
 function ownAll(w: World): World {
   for (let s = 0; s < w.region * w.region; s++) w.annex(s);
+  // These tests are about the frame, not about what annexing places (MEGACITY §3.7, WP-2's annex tests): the annex
+  // content (ruins, frames, alleys, the apron families, ground) is cleared so the city reads as plain land.
+  const start = (w.region * w.region - 1) >> 1;
+  for (const b of [...w.buildings.values()]) if (w.slotAt(b.x, b.y) !== start) w.removeBuilding(b.id);
+  for (let y = 0; y < w.N; y++)
+    for (let x = 0; x < w.N; x++) {
+      if (w.slotAt(x, y) === start) continue;
+      w.clearTile(x, y);
+      w.setGround(x, y, Ground.Plain);
+    }
   return w;
 }
 

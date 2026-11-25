@@ -76,10 +76,13 @@ function anyOwnedWith(world: World, test: (kind: DistrictKind) => boolean): bool
   return world.districts.owned.some((s) => test(world.districts.kinds[s]));
 }
 
-/** The key the part depends on besides tile changes: slots, terrain, the tide, the year (Sunk crime decay). */
+/**
+ * The key the part depends on besides tile changes: slots, terrain, the tide, the year (Sunk crime decay) and, while a
+ * king tide runs, coverage (a Floodwatch built mid-tide lifts the tide's land-value term where it reaches).
+ */
 function partKey(world: World): string {
   const year = Math.floor(world.tick / (DAYS_PER_MONTH * MONTHS_PER_YEAR));
-  return `${world.slotsVersion}|${world.terrainVersion}|${world.tide > 0 ? 1 : 0}|${year}`;
+  return `${world.slotsVersion}|${world.terrainVersion}|${world.tide > 0 ? world.coverageVersion : -1}|${year}`;
 }
 
 /**
@@ -111,11 +114,13 @@ export function writeDistrictPart(world: World): void {
     if (!mods || kind === 'shore') continue;
     const r = slotRect(world, slot);
     const wd = mods.lvShore || mods.kingTide ? waterDist(world, slot) : null;
-    // Sunk crime decays from the annex day (half-life in days).
+    // Sunk crime decays from the annex day (half-life in days), stepped by sim year (the part is rebuilt on the
+    // first day of each year).
     let crime = 0;
     if (mods.crime) {
       const at = world.districts.annexedAt[slot] ?? world.tick;
-      crime = mods.crime.v * Math.pow(0.5, Math.max(0, world.tick - at) / mods.crime.halfLifeDays);
+      const yearDays = DAYS_PER_MONTH * MONTHS_PER_YEAR;
+      crime = mods.crime.v * halfLifeShare(Math.floor(Math.max(0, world.tick - at) / yearDays) * yearDays, mods.crime.halfLifeDays);
     }
     const tide = mods.kingTide && world.tide > 0 ? mods.kingTide.lv : 0;
     for (let ly = 0; ly < SLOT; ly++) {
@@ -153,6 +158,18 @@ export function writeDistrictPart(world: World): void {
       }
     }
   }
+}
+
+/**
+ * What is left of a term with half-life `h` days after `t` days: halves every h days, linear between the halvings
+ * (exact arithmetic, the same on every engine; within 6% of 0.5^(t/h) everywhere).
+ */
+export function halfLifeShare(t: number, h: number): number {
+  if (!(h > 0) || !(t > 0)) return 1;
+  const n = Math.floor(t / h);
+  let v = 1;
+  for (let k = 0; k < n && v > 1e-9; k++) v *= 0.5;
+  return v * (1 - (0.5 * (t - n * h)) / h);
 }
 
 /** Max-combine `v` over the Chebyshev r-neighbourhood of (x, y), owned land only, clipped to the slot ± r. */

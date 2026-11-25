@@ -191,6 +191,12 @@ export const POWER_FACTIONS: readonly FactionId[] = ['board', 'basalt', 'nacre',
  * 80 per Airport; the Undertow min(0.25 × alley tiles, 60) and the Kites min(0.5 × skyway
  * tiles, 100). The alley and skyway terms are capped so cheap tiles can't buy the Balance of
  * Power (power.gangs ≥ 30% is an ending claim). Tile counts are world.stats.roads.
+ *
+ * Megacity terms (MEGACITY §6.2, §8.4, §9.2): Board +100 per Charter Hall; Basalt +120 per Hexworks and per
+ * Basalt-sponsored Spire, +150 per Foreman's Gantry while Ironwork is the current ending; Nacre's `perSpire` counts
+ * Nacre-sponsored and unsponsored (old) Spires only, +120 per Pearl Atrium, +150 per Glass Smile while Pearlescence is
+ * current; Undertow +100 per Hullhouse and +80 per complete Salvage crown; Kites +100 per Kite Mast. An Independent
+ * Spire counts for nobody.
  */
 export function powerWeight(world: World, f: FactionId): number {
   const st = world.story;
@@ -209,7 +215,8 @@ export function powerWeight(world: World, f: FactionId): number {
         W.board.perPrecinct * countOf(world, 'precinct') +
         W.board.perClinic * countOf(world, 'clinic') +
         (flags.honestTie ? W.board.honestTie : 0) +
-        (rights === 'board' ? W.board.launchRights : 0)
+        (rights === 'board' ? W.board.launchRights : 0) +
+        W.board.perCharterHall * countOf(world, 'charterhall')
       );
     case 'basalt': {
       const branded = typeof flags.branded === 'number' ? flags.branded : flags.branded ? 1 : 0;
@@ -221,26 +228,33 @@ export function powerWeight(world: World, f: FactionId): number {
         W.basalt.branded * branded +
         (patron === 'basalt' ? W.basalt.patron : 0) +
         W.basalt.perSeaport * countOf(world, 'seaport') +
-        (rights === 'basalt' ? W.basalt.launchRights : 0)
+        (rights === 'basalt' ? W.basalt.launchRights : 0) +
+        W.basalt.perHexworks * countOf(world, 'hexworks') +
+        W.basalt.perSpireBasalt * spiresBy(world, 'basalt') +
+        (st.ending === 'ironwork' ? W.basalt.perGantry * countOf(world, 'gantry') : 0)
       );
     }
     case 'nacre':
       return (
         s.jobsCom / W.nacre.jobsComDiv +
         W.nacre.perDatahub * countOf(world, 'datahub') +
-        W.nacre.perSpire * countOf(world, 'spire') +
+        W.nacre.perSpire * spiresBy(world, 'nacre') +
         W.nacre.perGlarewall * countOf(world, 'glarewall') +
         W.nacre.perCrownGlare * crowns.glare +
         (patron === 'nacre' ? W.nacre.patron : 0) +
         W.nacre.perAirport * countOf(world, 'airport') +
-        (rights === 'nacre' ? W.nacre.launchRights : 0)
+        (rights === 'nacre' ? W.nacre.launchRights : 0) +
+        W.nacre.perPearlAtrium * countOf(world, 'pearlatrium') +
+        (st.ending === 'pearl' ? W.nacre.perGlassSmile * countOf(world, 'glasssmile') : 0)
       );
     case 'undertow':
       return (
         W.undertow.perTurfTile * tiles.undertow +
         W.undertow.perTidemarket * countOf(world, 'tidemarket') +
         (flags.oneTide === 'undertow' ? W.undertow.oneTide : 0) +
-        Math.min(W.undertow.perAlley * Math.max(0, roads?.alley ?? 0), W.undertow.alleyMax)
+        Math.min(W.undertow.perAlley * Math.max(0, roads?.alley ?? 0), W.undertow.alleyMax) +
+        W.undertow.perHullhouse * countOf(world, 'hullhouse') +
+        W.undertow.perCrownSalvage * (crowns.salvage ?? 0)
       );
     case 'kites':
       return (
@@ -249,11 +263,22 @@ export function powerWeight(world: World, f: FactionId): number {
         W.kites.perCrownNest * crowns.nest +
         (flags.oneTide === 'kites' ? W.kites.oneTide : 0) +
         Math.min(W.kites.perSkywayTile * Math.max(0, roads?.skyway ?? 0), W.kites.skywayMax) +
-        (rights === 'kites' ? W.kites.launchRights : 0)
+        (rights === 'kites' ? W.kites.launchRights : 0) +
+        W.kites.perKiteMast * countOf(world, 'kitemast')
       );
     default:
       return 0;
   }
+}
+
+/**
+ * Corp Spires paid for by a corp (MEGACITY §6.2): a Spire without a sponsor (every v1–v3 Spire) reads as Nacre, so
+ * old cities keep today's Balance of Power; an Independent Spire ('none') counts for nobody.
+ */
+export function spiresBy(world: World, corp: 'basalt' | 'nacre'): number {
+  let n = 0;
+  for (const b of world.buildings.values()) if (b.type === 'spire' && (b.sponsor ?? 'nacre') === corp) n++;
+  return n;
 }
 
 /** power.f = 100 × weight_f / Σ weights (0 for the Tuning, or when nothing has weight). */

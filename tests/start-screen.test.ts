@@ -413,7 +413,7 @@ describe('the Showcase is released when the title closes (MEGACITY §11.2 item 1
 });
 
 describe('hold contract with a real Game', () => {
-  /** A horizontal run of land tiles near the middle of the map. */
+  /** A horizontal run of owned land tiles near the middle of the map (locked districts refuse roads, MEGACITY §3.4). */
   function landRun(g: Game, len: number): { x: number; y: number } | null {
     const w = g.world;
     const N = w.N;
@@ -421,7 +421,7 @@ describe('hold contract with a real Game', () => {
       for (const y of [N / 2 + d, N / 2 - d]) {
         for (let x = 4; x + len < N - 4; x++) {
           let ok = true;
-          for (let i = 0; i < len && ok; i++) ok = w.tileAt(x + i, y)?.terrain === Terrain.Land;
+          for (let i = 0; i < len && ok; i++) ok = w.tileAt(x + i, y)?.terrain === Terrain.Land && w.isOwned(x + i, y);
           if (ok) return { x, y };
         }
       }

@@ -250,7 +250,7 @@ export function lockedReason(world: World, tool: ToolId): string | null {
   if (def.gate) {
     const g = gateReason(world, def.gate, tool);
     if (g) return g;
-    if (tool === 'terminal' && world.vertical.liveStations.size < 4) return 'Needs a live ribbon of 4 stations';
+    if (tool === 'terminal' && world.vertical.metrics.railMaxStations < 4) return 'Needs a live ribbon of 4 stations';
     return null;
   }
   if (world.maxPopulation >= def.unlockPop) return null;
