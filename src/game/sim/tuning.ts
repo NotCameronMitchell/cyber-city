@@ -187,3 +187,12 @@ export const COM_BOOST_DECAY = 0.97;
 export const FLAVOR_INTERVAL: [number, number] = [8, 20];
 /** Advisor checks run every this many ticks. */
 export const ADVISOR_PERIOD = 5;
+
+// ── Metro network (MEGACITY §6.3) ───────────────────────────────────────────
+/** Powered, online Metro Stations in ≥ 2 owned districts link: every station's transit radius then reads this. */
+export const METRO_NET_RADIUS = 12;
+/** Trips within METRO_TRIP_RADIUS (Chebyshev) of a linked station × this. */
+export const METRO_TRIP_MUL = 0.9;
+export const METRO_TRIP_RADIUS = 4;
+/** A live Grand Terminal: every Maglev and Metro Station's transit radius × this, city-wide. */
+export const TERMINAL_TRANSIT_MUL = 1.5;

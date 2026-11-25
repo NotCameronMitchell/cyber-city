@@ -15,11 +15,11 @@
 
 import { artOffset } from '../districts/slots';
 import { completeStage } from '../buildingStats';
-import { CROWNS, GANG_IDS, GANG_NEWS_NAME, REGION, RIBBON, STANDING, TURF, TURF_OWNER } from '../config';
+import { BUILDINGS, CROWNS, GANG_IDS, GANG_NEWS_NAME, REGION, RIBBON, STANDING, TURF, TURF_OWNER } from '../config';
 import { capitalizeFirst, districtName } from '../news';
 import { Rng } from '../rng';
 import { scratchFor } from '../frame';
-import { DAYS_PER_MONTH, RoadKind, Terrain, ZoneType, type BuildingType } from '../types';
+import { DAYS_PER_MONTH, RoadKind, Terrain, ZoneType, type Building, type BuildingType } from '../types';
 import type { World } from '../world';
 import { standing, tier } from './factions';
 import { composeLayers, onMonthBands, resetLayers } from './mods';
@@ -69,7 +69,15 @@ interface MapSet {
   tz: Uint8Array;
   tf: Uint8Array;
   tmp: Uint8Array;
+  /** Set tiles per indicator from the tile pass (a dilation of nothing is skipped): abandoned, water, ribbon, alley, deck, city. */
+  n: Int32Array;
 }
+const NA = 0;
+const NB = 1;
+const NC = 2;
+const NALLEY = 3;
+const NSKY = 4;
+const ND = 5;
 const makeMapSet = (area: number): MapSet => ({
   eligBase: new Uint8Array(area),
   elig: new Uint8Array(area),
@@ -94,6 +102,7 @@ const makeMapSet = (area: number): MapSet => ({
   tz: new Uint8Array(area),
   tf: new Uint8Array(area),
   tmp: new Uint8Array(area),
+  n: new Int32Array(6),
 });
 const scratch = scratchFor((area) => ({
   ...makeMapSet(area),
@@ -220,12 +229,16 @@ function anyIn(a: Uint8Array, N: number, box: TileBox): boolean {
   }
   return false;
 }
-/** dilate() over the owned box, or clear the box when the source holds nothing there. */
-function dilateOwned(world: World, src: Uint8Array, r: number, out: Uint8Array, tmp: Uint8Array): void {
+/**
+ * dilate() over the owned box, or clear the box when the source holds nothing there (`count`: the source's set tiles
+ * when the tile pass counted them, so the empty case costs no scan; an in-place empty source is already clear).
+ */
+function dilateOwned(world: World, src: Uint8Array, r: number, out: Uint8Array, tmp: Uint8Array, count = -1): void {
   const N = world.N;
   const box = world.ownedBox;
   if (box.x1 < box.x0) return;
-  if (!anyIn(src, N, box)) {
+  if (count === 0 && out === src) return;
+  if (count === 0 || (count < 0 && !anyIn(src, N, box))) {
     for (let y = box.y0; y <= box.y1; y++) out.fill(0, y * N + box.x0, y * N + box.x1 + 1);
     return;
   }
@@ -274,13 +287,13 @@ function mapStep(world: World, M: MapSet, k: number): void {
   const au = TURF.affinity.undertow;
   const ak = TURF.affinity.kites;
   // Two steps a day on a 5×5 region pair one full-map dilation with a light step: (rows, rows) (rows, rows)
-  // (rows, near-city) (buildings, abandoned) (water, ribbon + alley) (Undertow ×2) (tall, span + sky) (Kites ×2).
+  // (rows, near-city) (buildings, ribbon + alley) (abandoned, water) (Undertow ×2) (tall, span + sky) (Kites ×2).
   if (k < 5) tileRows(world, M, ((N * k) / 5) | 0, ((N * (k + 1)) / 5) | 0);
-  else if (k === 5) dilateOwned(world, M.mD, 3, M.nearCity, M.tmp);
+  else if (k === 5) dilateOwned(world, M.mD, 3, M.nearCity, M.tmp, M.n[ND]);
   else if (k === 6) buildingMaps(world, M);
-  else if (k === 7) dilateOwned(world, M.mA, au.abandonedRadius, M.mA, M.tmp);
-  else if (k === 8) dilateOwned(world, M.mB, au.waterRadius, M.mB, M.tmp);
-  else if (k === 9) undertowMasks(world, M);
+  else if (k === 7) undertowMasks(world, M);
+  else if (k === 8) dilateOwned(world, M.mA, au.abandonedRadius, M.mA, M.tmp, M.n[NA]);
+  else if (k === 9) dilateOwned(world, M.mB, au.waterRadius, M.mB, M.tmp, M.n[NB]);
   else if (k === 10) undertowAffinity(world, M, 0, N >> 1);
   else if (k === 11) undertowAffinity(world, M, N >> 1, N);
   else if (k === 12) dilateOwned(world, M.mTall, ak.tallRadius, M.mTall, M.tmp);
@@ -304,6 +317,14 @@ function tileRows(world: World, M: MapSet, y0: number, y1: number): void {
   const HW = RoadKind.Highway;
   const RAMP = RoadKind.Ramp;
   const ALLEY = RoadKind.Alley;
+  const cnt = M.n;
+  if (y0 === 0) cnt.fill(0);
+  let nA = 0;
+  let nB = 0;
+  let nC = 0;
+  let nAl = 0;
+  let nSky = 0;
+  let nD = 0;
   for (let y = y0; y < y1; y++) {
     const srow = (y >> 6) * R;
     for (let sx = 0; sx * 64 < N; sx++) {
@@ -326,18 +347,30 @@ function tileRows(world: World, M: MapSet, y0: number, y1: number): void {
         const t = tiles[i];
         const water = t.terrain === WATER;
         eligBase[i] = water ? 0 : 1;
-        mB[i] = water ? 1 : 0;
+        const vb = water ? 1 : 0;
+        mB[i] = vb;
+        nB += vb;
         const ab = t.abandoned;
-        mA[i] = ab ? 1 : 0;
-        mC[i] = rail[i] ? 1 : 0;
+        const va = ab ? 1 : 0;
+        mA[i] = va;
+        nA += va;
+        const vc = rail[i] ? 1 : 0;
+        mC[i] = vc;
+        nC += vc;
         const z = t.zone;
         const road = t.road;
-        mD[i] = road || (z !== 0 && t.level > 0) || t.buildingId >= 0 ? 1 : 0;
+        const vd = road || (z !== 0 && t.level > 0) || t.buildingId >= 0 ? 1 : 0;
+        mD[i] = vd;
+        nD += vd;
         const rk = t.roadKind;
-        mAlley[i] = road && rk === ALLEY ? 1 : 0;
-        mSky[i] = sky[i] !== 0 ? 1 : 0;
+        const val = road && rk === ALLEY ? 1 : 0;
+        mAlley[i] = val;
+        nAl += val;
+        const vs = sky[i] !== 0 ? 1 : 0;
+        mSky[i] = vs;
+        nSky += vs;
         // vertical.tallMask's tile half (tall zone tiles off buildings); buildingMaps adds the tall buildings.
-        mTall[i] = t.buildingId < 0 && isTallZoneTile(t) ? 1 : 0;
+        mTall[i] = t.buildingId < 0 && tallZoneTile(t) ? 1 : 0;
         tz[i] = z;
         let f = z === IND ? 1 : 0;
         if (!ab && ((z === COM && t.level >= 2) || (z === RES && t.level === 3))) f |= 2;
@@ -346,7 +379,15 @@ function tileRows(world: World, M: MapSet, y0: number, y1: number): void {
       }
     }
   }
+  cnt[NA] += nA;
+  cnt[NB] += nB;
+  cnt[NC] += nC;
+  cnt[NALLEY] += nAl;
+  cnt[NSKY] += nSky;
+  cnt[ND] += nD;
 }
+/** vertical.isTallZoneTile, bound once (an imported binding read per tile is a getter call under the test transform). */
+const tallZoneTile = isTallZoneTile;
 
 /** Building footprints (eligibility), the protection masks, the pact spread block and the building indicators. */
 function buildingMaps(world: World, M: MapSet): void {
@@ -381,7 +422,7 @@ function buildingMaps(world: World, M: MapSet): void {
       fillRect(pactBlock, b.x - r, b.y - r, x1 + r, y1 + r, N);
     } else if (b.type === 'seaport') fillRect(mSea, b.x - rSea, b.y - rSea, x1 + rSea, y1 + rSea, N);
     // A footprint grown by r is its Chebyshev dilation: stamped dilated, no map pass (MEGACITY O6).
-    if (isTallBuilding(b)) fillRect(M.mTall, b.x, b.y, x1, y1, N);
+    if (TALL_TYPES.has(b.type) && isTallBuilding(b)) fillRect(M.mTall, b.x, b.y, x1, y1, N);
     if (b.type === 'glarewall') fillRect(mGlare, b.x - rGlare, b.y - rGlare, x1 + rGlare, y1 + rGlare, N);
     else if (b.type === 'frame') fillRect(mFrame, b.x - rFrame, b.y - rFrame, x1 + rFrame, y1 + rFrame, N);
   }
@@ -391,6 +432,16 @@ function buildingMaps(world: World, M: MapSet): void {
     for (let i = a; i < e; i++) if (lv[i] >= lvBlock) pactBlock[i] = 1;
   });
 }
+
+/**
+ * Building types that can count as tall (vertical.isTallBuilding true at some stage): the rest skip its buildingStats
+ * call in the map rebuild.
+ */
+const TALL_TYPES: ReadonlySet<string> = new Set(
+  Object.values(BUILDINGS)
+    .filter((d) => [1, 2, 3].some((stage) => isTallBuilding({ id: 0, type: d.type, x: 0, y: 0, size: d.size, offline: 0, powered: true, stage: stage as 1 | 2 | 3, buildDays: 0 } as Building)))
+    .map((d) => d.type),
+);
 
 /** Per-slot affinity bonus of a district kind (MEGACITY §8.4: the Bazaar for both gangs, the Sunk for the Undertow). */
 function slotBonus(world: World, gang: GangId): Float32Array {
@@ -414,10 +465,11 @@ function undertowMasks(world: World, M: MapSet): void {
   // footprint within 6 (mSea) is stamped already dilated by buildingMaps. Every map is read only on owned land: the
   // dilations run over the owned box (MEGACITY O6).
   // (Abandoned within 1, mA, and water within 3, mB, are steps of their own.)
-  dilateOwned(world, mC, au.ribbonRadius, mC, tmp);
+  dilateOwned(world, mC, au.ribbonRadius, mC, tmp, M.n[NC]);
   // The Kites' alley term reads mAlleyK: the same dilation unless the radii differ (both 1, TURF.affinity).
-  if (TURF.affinity.kites.alleyRadius !== au.alleyRadius) dilateOwned(world, mAlley, TURF.affinity.kites.alleyRadius, M.mAlleyK, tmp);
-  dilateOwned(world, mAlley, au.alleyRadius, mAlley, tmp);
+  const nAl = M.n[NALLEY];
+  if (TURF.affinity.kites.alleyRadius !== au.alleyRadius) dilateOwned(world, mAlley, TURF.affinity.kites.alleyRadius, M.mAlleyK, tmp, nAl);
+  dilateOwned(world, mAlley, au.alleyRadius, mAlley, tmp, nAl);
   if (TURF.affinity.kites.alleyRadius === au.alleyRadius) M.mAlleyK.set(mAlley);
 }
 
@@ -468,7 +520,7 @@ function kitesMasks(world: World, M: MapSet): void {
   spanMask(world, mSpan);
   dilateOwned(world, mSpan, ak.spanRadius, mSpan, tmp);
   // Glarewalls and frames are stamped already dilated by buildingMaps (a footprint grown by r is its dilation).
-  dilateOwned(world, mSky, ak.skywayRadius, mSky, tmp);
+  dilateOwned(world, mSky, ak.skywayRadius, mSky, tmp, M.n[NSKY]);
 }
 
 /** The Kites' affinity map on owned tiles of rows y0..y1 − 1 (elsewhere untouched). */

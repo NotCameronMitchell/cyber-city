@@ -13,7 +13,7 @@
 // only once complete. The `PortView` interface is frozen (Step 0).
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { AIRPORT, BUILDINGS, POP_SCALE, SEAPORT, SPACEPORT, TOURISM } from '../config';
+import { AIRPORT, BUILDINGS, DISTRICTS, PORT_LIMITS, POP_SCALE, SEAPORT, SPACEPORT, TOURISM } from '../config';
 import type { Building } from '../types';
 import type { World } from '../world';
 import type { Census } from './census';
@@ -37,6 +37,16 @@ export interface PortView {
 
 const fmt = (n: number) => Math.round(n).toLocaleString('en-US');
 const LANDMARK_VISITORS: Partial<Record<string, number>> = { ...TOURISM.landmark };
+
+/** Visitors of the districts whose kind draws them (DistrictMods.visitorsPerMarket), each district on its own. */
+export function districtVisitors(census: Census): number {
+  let v = 0;
+  for (const d of census.byDistrict) {
+    const m = DISTRICTS[d.kind]?.mods.visitorsPerMarket;
+    if (m && d.marketTiles > 0) v += Math.min(m.cap, (m.per * d.marketTiles) / m.tiles);
+  }
+  return v;
+}
 
 /** A port that works: online, powered and (Spaceport) complete. */
 export function portLive(b: Building): boolean {
@@ -108,7 +118,10 @@ export class PortSystem implements PortView {
     this.seaports = sea;
     this.airports = air;
     this.spaceports = space;
-    this.exportJobs = SEAPORT.exportJobs * Math.min(sea, SEAPORT.maxCounted);
+    // The counted Seaports follow the port limit for the owned districts (MEGACITY §3.5: 2 at 1–3 districts, as
+    // SEAPORT.maxCounted, 3 at 4–6, …).
+    const owned = Math.max(1, world.districts.owned.length);
+    this.exportJobs = SEAPORT.exportJobs * Math.min(sea, Math.max(SEAPORT.maxCounted, PORT_LIMITS.seaport(owned)));
     this.comJobs = AIRPORT.comJobs * air + SPACEPORT.comJobs * space;
     this.indJobs = SPACEPORT.indJobs * space;
 
@@ -121,7 +134,11 @@ export class PortSystem implements PortView {
       landmarks +
       TOURISM.perEdgePoint * g.edgePoints +
       // City life (MEGACITY §6.4.1): a happening's visitors (a monthly rate) while it has sim days left.
-      (world.cityEvent && world.cityEvent.daysLeft > 0 ? world.cityEvent.visitors : 0);
+      (world.cityEvent && world.cityEvent.daysLeft > 0 ? world.cityEvent.visitors : 0) +
+      // Sky Lobbies (MEGACITY §5.5, capped city-wide by vertical.refresh) and each Bazaar district's night markets
+      // (§3.3: 600 per 10 developed Market tiles there, 30,000 at most per district).
+      (world.vertical.lobbyVisitors ?? 0) +
+      districtVisitors(census);
     let mood = approval / TOURISM.approvalRef;
     mood = mood < TOURISM.moodMin ? TOURISM.moodMin : mood > TOURISM.moodMax ? TOURISM.moodMax : mood;
     mood *= 1 - TOURISM.crimeHit * census.avgCrime;

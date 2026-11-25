@@ -54,6 +54,7 @@ const COM = ZoneType.Commercial;
 const IND = ZoneType.Industrial;
 const clamp01 = (v: number): number => (v < 0 ? 0 : v > 1 ? 1 : v);
 const BAND = SLICE.bandRows;
+const METRO_MUL = Tuning.METRO_TRIP_MUL;
 const FL = C_L;
 const FR = C_R;
 const FU = C_U;
@@ -372,15 +373,29 @@ export class FieldSystem {
       lists[k].length = 0;
       radii[k].length = 0;
     }
+    // The Metro network (MEGACITY §6.3): live stations in ≥ 2 owned districts link (transit r12, trips × 0.9 within
+    // r4); a live Grand Terminal lifts every Maglev and Metro Station's transit radius × 1.5.
+    let metroSlots = 0;
+    let terminal = false;
+    for (const b of g.buildings) {
+      if (b.offline > 0 || !b.powered || (b.buildDays ?? 0) > 0) continue;
+      if (b.type === 'metro') metroSlots |= 1 << world.slotAt(b.x, b.y);
+      else if (b.type === 'terminal') terminal = true;
+    }
+    const linked = (metroSlots & (metroSlots - 1)) !== 0;
     for (const b of g.buildings) {
       if (b.offline > 0 || !b.powered) continue;
       buildingStats(b, st);
       if (!st.effect || st.radius <= 0) continue;
       const k = EFFECT_INDEX[st.effect];
       if (k === undefined) continue;
+      let r = st.radius;
+      if (b.type === 'metro' && linked) r = T.METRO_NET_RADIUS;
+      if (terminal && (b.type === 'metro' || b.type === 'maglev')) r *= T.TERMINAL_TRANSIT_MUL;
       lists[k].push(b);
-      radii[k].push(st.radius);
+      radii[k].push(r);
     }
+    this.metroTrips(world, g, linked);
     const L = this.lay(g);
     const all = L.all;
     const box: Win = { x0: L.x0, y0: L.y0, x1: L.x1, y1: L.y1 };
@@ -465,6 +480,27 @@ export class FieldSystem {
     void N;
   }
 
+  /** Trip multiplier near linked Metro Stations (null while the network is not linked). */
+  metroNear: Uint8Array | null = null;
+
+  /** Mark the tiles within METRO_TRIP_RADIUS of a linked, live Metro Station (MEGACITY §6.3). */
+  private metroTrips(world: World, g: SimGrid, linked: boolean): void {
+    if (!linked) {
+      this.metroNear = null;
+      return;
+    }
+    const N = this.N;
+    const m = this.metroNear ?? new Uint8Array(this.area);
+    m.fill(0);
+    const r = T.METRO_TRIP_RADIUS;
+    for (const b of g.buildings) {
+      if (b.type !== 'metro' || b.offline > 0 || !b.powered) continue;
+      for (let y = Math.max(0, b.y - r); y <= Math.min(N - 1, b.y + b.size - 1 + r); y++)
+        m.fill(1, y * N + Math.max(0, b.x - r), y * N + Math.min(N - 1, b.x + b.size - 1 + r) + 1);
+    }
+    this.metroNear = m;
+  }
+
   // ── Traffic ───────────────────────────────────────────────────────────────
   /**
    * Capacity-aware traffic (§3.8). Trips from developed zones land on their claiming road
@@ -507,6 +543,7 @@ export class FieldSystem {
     const zc = g.zonedCount;
     const zl = g.zoned;
     const zstep = banded ? step * N : zc + 1;
+    const metro = this.metroNear;
     for (let k0 = 0; k0 < zc; k0 += zstep) {
       yield K.TrafficZone;
       const k1 = Math.min(zc, k0 + zstep);
@@ -518,7 +555,8 @@ export class FieldSystem {
         if (r < 0) continue;
         const z = zone[i];
         const cap = z === RES && wealth[i] === 0 && alleyNear[i] ? CAP_AFF[lv] : CAP_T[z * 12 + lv * 3 + wealth[i]];
-        raw[r] += cap * T.TRIPS_PER_UNIT[z] * (1 - T.TRANSIT_TRIP_CUT * transit[i]) * tm * tripMul[i];
+        const near = metro !== null && metro[i] === 1 ? METRO_MUL : 1;
+        raw[r] += cap * T.TRIPS_PER_UNIT[z] * (1 - T.TRANSIT_TRIP_CUT * transit[i]) * tm * tripMul[i] * near;
       }
     }
     // 2. Building trips (already include BUILDING_TRIPS and a Stratablock's internal-life cut), then diversions.
@@ -528,7 +566,7 @@ export class FieldSystem {
       const trips = buildingStats(b, st).trips;
       if (trips <= 0) continue;
       const c = (b.y + (b.size >> 1)) * N + b.x + (b.size >> 1);
-      let t = trips * (1 - T.TRANSIT_TRIP_CUT * transit[c]) * tm * tripMul[c];
+      let t = trips * (1 - T.TRANSIT_TRIP_CUT * transit[c]) * tm * tripMul[c] * (metro !== null && metro[c] === 1 ? METRO_MUL : 1);
       if (docks) {
         const sc = g.dockOf.get(b.id);
         if (sc !== undefined) {
