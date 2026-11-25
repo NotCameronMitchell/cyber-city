@@ -2948,6 +2948,14 @@ const UL = (() => {
   };
 })();
 
+/**
+ * A city of one district inside a bigger region (§3.9 "a one-district city keeps today's view"): the ground paints the
+ * owned box ± the peek margin only, and the renderer sizes the slab to it. Exported for the renderer and tests.
+ */
+export function oneDistrict(world: World): boolean {
+  return world.region > 1 && world.districts.owned.length === 1;
+}
+
 /** Owns the chunk canvases and draws the cached ground every frame. */
 export class GroundCache {
   private chunks = new Map<number, Chunk>();
@@ -3090,9 +3098,12 @@ export class GroundCache {
     this.OX = -world.N * HALF_W - 32;
     this.tileBuf = new Int32Array(world.area);
     const N = world.N;
-    this.box = { x0: 0, y0: 0, x1: N - 1, y1: N - 1 };
     const p = ANNEX.peek;
     this.peekBox = { x0: Math.max(0, b.x0 - p), y0: Math.max(0, b.y0 - p), x1: Math.min(N - 1, b.x1 + p), y1: Math.min(N - 1, b.y1 + p) };
+    // A one-district city keeps today's look (§3.9): fog only in the peek margin, on a slab the size of the owned box ±
+    // peek (renderer.ts), with the sky and the distant skyline beyond it. From the first annex the whole region is the
+    // slab, locked land fogged and deeper past the margin.
+    this.box = oneDistrict(world) ? { ...this.peekBox } : { x0: 0, y0: 0, x1: N - 1, y1: N - 1 };
     this.boxKey = key;
   }
 
@@ -3487,11 +3498,16 @@ export class GroundCache {
     const N = world.N;
     const info = this.terrain(world);
     const d = img.data;
+    const bx = this.box;
     for (let y = Math.max(0, y0); y <= Math.min(N - 1, y1); y++)
       for (let x = Math.max(0, x0); x <= Math.min(N - 1, x1); x++) {
         const i = y * N + x;
-        const c = this.ulColour(world, info, i);
         const o = i * 4;
+        if (x < bx.x0 || x > bx.x1 || y < bx.y0 || y > bx.y1) {
+          d[o + 3] = 0;
+          continue;
+        }
+        const c = this.ulColour(world, info, i);
         d[o] = c[0];
         d[o + 1] = c[1];
         d[o + 2] = c[2];

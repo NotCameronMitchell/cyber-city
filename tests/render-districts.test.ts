@@ -594,6 +594,39 @@ describe('the Renderer with districts on the canvas mock (§3.9)', () => {
     expect(counts.overview * 516 * 516 * 4).toBeLessThanOrEqual(Math.max(4 * MB, 6 * 516 * 516 * 4));
   });
 
+  it('a one-district city paints only the owned box ± the peek margin (today\'s view: sky and skyline beyond); an annex paints the region', async () => {
+    const { GroundCache, oneDistrict } = await import('../src/render/ground');
+    const w = World.generate(2091, 'One', undefined, 3);
+    expect(oneDistrict(w)).toBe(true);
+    const gc = new GroundCache();
+    const ctx = document.createElement('canvas').getContext('2d') as CanvasRenderingContext2D;
+    const P = ANNEX.peek;
+    const ob = w.ownedBox;
+    type C = { k: number; i: number; j: number; empty: boolean; rendered: boolean };
+    const inner = gc as unknown as { box: { x0: number; y0: number; x1: number; y1: number }; chunks: Map<number, C>; chunkRect(c: C): { x0: number; y0: number; x1: number; y1: number } };
+    // The whole region in view (zoom 0.12 on a 1440×900 screen), by day and by night.
+    for (const night of [0, 1]) for (let k = 0; k < 30; k++) gc.draw(ctx, w, { camX: 0, camY: w.N * HALF_H, zoom: 0.12, dpr: 1, width: 1440, height: 900 }, night, 5, false);
+    expect(inner.box).toEqual({ x0: ob.x0 - P, y0: ob.y0 - P, x1: ob.x1 + P, y1: ob.y1 + P });
+    // Every painted chunk touches the peek box's world rect; the region's far corners have none.
+    const b = inner.box;
+    const wr = { x0: (b.x0 - b.y1 - 1) * HALF_W, x1: (b.x1 - b.y0 + 1) * HALF_W, y0: (b.x0 + b.y0) * HALF_H, y1: (b.x1 + b.y1 + 2) * HALF_H };
+    let painted = 0;
+    for (const c of inner.chunks.values()) {
+      if (c.empty) continue;
+      const r = inner.chunkRect(c);
+      expect(r.x1 > wr.x0 - 64 && r.x0 < wr.x1 + 64 && r.y1 > wr.y0 - 64 && r.y0 < wr.y1 + 64).toBe(true);
+      if (c.rendered) painted++;
+    }
+    expect(painted).toBeGreaterThan(0);
+    // The first annex: the whole region is the slab, locked land fog to its edges.
+    w.annex(1);
+    expect(oneDistrict(w)).toBe(false);
+    gc.draw(ctx, w, { camX: 0, camY: w.N * HALF_H, zoom: 0.12, dpr: 1, width: 1440, height: 900 }, 0, 5, false);
+    expect(inner.box).toEqual({ x0: 0, y0: 0, x1: w.N - 1, y1: w.N - 1 });
+    // A 1×1 region (a legacy 64 map) is all owned: the whole map, as before.
+    expect(oneDistrict(World.generate(5, 'Legacy', undefined, 1))).toBe(false);
+  });
+
   it('a fast pan renders at most the per-frame chunk cap (current bucket and overview together); the underlay fills the holes', async () => {
     const { GroundCache } = await import('../src/render/ground');
     const { renderPasses, resetPasses } = await import('../src/render/passes');

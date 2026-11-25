@@ -753,13 +753,19 @@ export class Renderer {
     ctx.globalAlpha = 1;
     ctx.globalCompositeOperation = 'source-over';
     ctx.imageSmoothingEnabled = true;
-    // The slab under the map, its rim and the sky's parallax follow the owned box when it is square (one district,
-    // MEGACITY §3.9): a migrated start slot sits 64 tiles in, and the backdrop reads its camera as on the 64 map.
+    // The slab under the map, its rim and the sky's parallax follow the owned box ± the peek margin when it is square
+    // (one district, MEGACITY §3.9: today's view, the sky and the distant skyline round the city; the ground paints fog
+    // only in that margin): a migrated start slot sits 64 tiles in, and the backdrop reads its camera as on that map.
     // With more districts the whole region is the slab (locked land is fog on it).
     const ob = world.ownedBox;
-    const square = !multi && ob.x1 - ob.x0 === ob.y1 - ob.y0 && ob.x0 === ob.y0;
-    const slabN = square ? ob.x1 - ob.x0 + 1 : world.N;
-    const slabDy = square ? 2 * ob.x0 * HALF_H : 0;
+    const pk = ANNEX.peek;
+    const sx0 = Math.max(0, ob.x0 - pk);
+    const sy0 = Math.max(0, ob.y0 - pk);
+    const sx1 = Math.min(world.N - 1, ob.x1 + pk);
+    const sy1 = Math.min(world.N - 1, ob.y1 + pk);
+    const square = !multi && sx1 - sx0 === sy1 - sy0 && sx0 === sy0;
+    const slabN = square ? sx1 - sx0 + 1 : world.N;
+    const slabDy = square ? 2 * sx0 * HALF_H : 0;
     this.backdrop.drawSky(ctx, this.cssW, this.cssH, dpr, cam.x, cam.y - slabDy, zoom, night, time);
 
     // 2. World space from here on.
