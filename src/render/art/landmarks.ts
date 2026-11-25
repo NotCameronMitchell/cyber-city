@@ -336,15 +336,30 @@ const pearlatrium: Recipe = (p) => {
 
 /** Hullhouse (Undertow): a long hall under three upturned hulls, containers and nets. */
 const hullhouse: Recipe = (p) => {
+  // A great upturned hull raised on a yard of stacked containers, a hull-stack tower on its corner, a dock crane with
+  // nets and green lamps: the Undertow's hall, asymmetric, made of at least three materials, everything hung.
   slab(p, 3, mat([90, 86, 80], [18, 18, 20]), 1);
   const rust = mat([132, 84, 60], [30, 18, 16]);
   const green = mat([56, 92, 80], [12, 22, 22]);
-  p.box(0.15, 0.15, 2.85, 2.6, 1, 22, rust, { win: { style: 'capsule', floor: 7, col: 6, w: 0.6, h: 0.5, lit: 1.3 }, noTop: true });
-  for (let i = 0; i < 3; i++) hull(p, 0.1, 0.1 + i * 0.85, 2.95, 0.95 + i * 0.85, 22, 14, i % 2 ? green : mat([60, 120, 140], [12, 26, 34]));
-  hullStack(p, dctx([2.0, 2.1, 2.95, 2.95], 1, 46));
-  p.laundry(0.3, 2.62, 1.6, 2.62, 16);
-  lampString(p, [0.2, 2.7, 20], [1.9, 2.7, 18], 8, [182, 255, 46], 3, 8);
-  p.door(0.15, 2.6, 2.85, 2.6, 0.12, 0.3, 1, 10, [182, 255, 46]);
+  const CONT: RGB[] = [[132, 84, 60], [60, 120, 140], [56, 92, 80], [150, 120, 60]];
+  // The container yard: two rows, three high, staggered.
+  for (let L = 0; L < 3; L++)
+    for (let r = 0; r < 3; r++) {
+      const sh = ((L + r) % 2) * 0.1;
+      p.container(0.12 + sh, 0.15 + r * 0.78, 2.15 - sh, 0.85 + r * 0.78, 1 + L * 9, 8.6, CONT[(L + r) % 4]);
+    }
+  // The hall under the keel: a capsule-windowed wall on the yard, the hull over the whole span.
+  p.box(0.2, 0.2, 2.1, 2.45, 28, 40, rust, { win: { style: 'capsule', floor: 6, col: 6, w: 0.6, h: 0.5, lit: 1.4 }, noTop: true });
+  hull(p, 0.05, 0.1, 2.3, 2.6, 40, 20, green);
+  // The corner tower: a hull stack, and a crane leaning out over the canal.
+  hullStack(p, dctx([2.15, 1.95, 2.95, 2.95], 1, 84));
+  crane(p, 2.6, 0.45, 1, 92, 1.6, mat([200, 160, 60]));
+  p.laundry(0.3, 2.62, 1.6, 2.62, 30);
+  p.laundry(2.18, 0.4, 2.18, 1.6, 22);
+  lampString(p, [0.2, 2.7, 27], [2.1, 2.7, 24], 9, [182, 255, 46], 3, 8);
+  lampString(p, [2.3, 0.2, 50], [2.3, 2.5, 34], 7, [182, 255, 46], 4, 7);
+  p.door(0.15, 2.6, 2.1, 2.6, 0.2, 0.45, 1, 10, [182, 255, 46]);
+  p.wallSign(0.2, 2.45, 2.1, 2.45, 0.6, 0.9, 30, 37, [182, 255, 46], true);
   warn(p, 1.5, 1.2, 40);
 };
 

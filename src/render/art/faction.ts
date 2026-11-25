@@ -433,13 +433,15 @@ function swingLamp(p: Painter, u: number, v: number, z: number, len = 6) {
 /** A: Hull Stack — containers three high under an upturned boat hull. */
 export const hullStack: Design = (p, d) => {
   const [u0, v0, u1, v1] = d.b;
-  const ch = Math.max(6, (d.h * 0.62) / 3);
-  for (let L = 0; L < 3; L++) {
+  // Containers stay container-sized (≈ 9–11 px); a taller use stacks more of them.
+  const levels = Math.max(3, Math.min(6, Math.round((d.h * 0.62) / 10)));
+  const ch = Math.max(6, (d.h * 0.62) / levels);
+  for (let L = 0; L < levels; L++) {
     const shift = (L % 2) * 0.12;
     p.container(u0 + 0.06 + shift, v0 + 0.1, u1 - 0.1 + shift * 0.3, v0 + (v1 - v0) * 0.5, d.z0 + L * ch, ch - 0.5, CONT[L % 4]);
     p.container(u0 + 0.1, v0 + (v1 - v0) * 0.5 + 0.02, u1 - 0.06 - shift, v1 - 0.1, d.z0 + L * ch, ch - 0.5, CONT[(L + 2) % 4]);
   }
-  const hz = d.z0 + 3 * ch;
+  const hz = d.z0 + levels * ch;
   hull(p, u0, v0 + 0.05, u1 + 0.1, v1 - 0.05, hz, d.z0 + d.h - hz, HULLG);
   // Cut windows lit green, a net hanging off the front.
   p.door(u0 + 0.1, v1 - 0.1, u1 - 0.06, v1 - 0.1, 0.2, 0.4, d.z0 + ch + 2, d.z0 + 2 * ch - 2, GLAMP);
@@ -509,8 +511,9 @@ export const craneHab: Design = (p, d) => {
 // ════════════════════════════════════════════════════════════════════════════
 
 /** A mast with a blinking tip (registers the Kites tip pattern). */
+const MASTC = mat([150, 140, 178], [70, 60, 100]);
 function kmast(p: Painter, u: number, v: number, z: number, h: number, i: number) {
-  pole(p, u, v, z, z + h, CABLE, 0.6);
+  pole(p, u, v, z, z + h, MASTC, 0.7);
   p.lamp(u, v, z + h, i % 3 === 0 ? STRING : LILAC, 8);
   sigAt(p, u, v, z + h, (x, y) => ({ k: 'tips', x, y, c: LILAC, n: i }));
 }
@@ -535,6 +538,10 @@ export const antennaForest: Design = (p, d) => {
     if (i % 4 === 1) p.dish(u, v, base + h * 0.6, 0.05);
   }
   lampString(p, [u0 + 0.15, v1 - 0.15, base + d.h * 0.3], [u1 - 0.15, v1 - 0.15, base + d.h * 0.2], 7, [STRING, LILAC], 4, 6);
+  // Two diamond banners on the tallest masts, so the forest reads at a distance.
+  const w = Math.min(u1 - u0, v1 - v0);
+  sail(p, u0 + w * 0.3, v1 - w * 0.3, base + d.h * 0.45, w * 0.36, d.h * 0.16, mat([214, 196, 250], [48, 40, 70]), LILAC);
+  sail(p, u1 - w * 0.25, v0 + w * 0.3, base + d.h * 0.6, w * 0.3, d.h * 0.13, SAILC, LILAC);
   kite(p, u1 + 0.3, v0 - 0.2, d.z0 + d.h * 1.05);
   p.reach(d.z0 + d.h);
 };

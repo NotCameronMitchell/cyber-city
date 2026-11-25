@@ -30,6 +30,7 @@
 
 import { BUILDINGS, BUILDING_ORDER } from '../game/config';
 import { CLASSIC_TOPS, classicId } from '../game/heights';
+import { hash2 } from '../game/rng';
 import { skylineLang } from '../game/marks';
 import { standing } from '../game/story/factions';
 import type { EndingId, FactionId } from '../game/story/types';
@@ -47,7 +48,7 @@ import { PORT_PALS, drawPortLive, portRecipe, portVariant, seaportGhostFacing } 
 import { SERVICE_PALS, SERVICE_RECIPES, STYLED_SERVICES, arcologyRecipe, serviceStyleRecipe } from './art/services';
 import { NIGHT_STEPS, SpriteCache, nightBucket, nightOfBucket, scaleBucket, scaleOfBucket, type Sprite } from './art/sprites';
 import { STORY_PALS, STORY_RECIPES, memorialLowerWards } from './art/story';
-import { STYLES, serviceLookGroup, styleDress, styleIndex, stylePal, tintFor, topOf, variantAccent, type StyleDef } from './art/styles';
+import { STYLES, accentBody, serviceLookGroup, styleCap, styleDress, styleIndex, stylePal, tintFor, topOf, variantAccent, type StyleDef } from './art/styles';
 import { STACK_PAL, stackRecipe, stackVariant } from './art/vertical';
 import { FORMS, LOT_RECIPES, ZONE_PALS, ZONE_RECIPES, dressBase, dressTier, type Recipe } from './art/zones';
 import { css, glowSprite } from './palette';
@@ -361,7 +362,10 @@ function kitModel(sp: ZoneSpec): Model {
   }
   const T = truthTop(zone, level, variant, tier);
   const acc = variantAccent(kind, dvar);
-  const pal = lang ? legacyPal(lang) : stylePal(ZONE_PALS[zone - 1][tier][palBit], st, acc);
+  // The body's neon pick (§3.7, §6.1): the district accent on a share of the bodies, a style sign colour on the rest.
+  const pick = hash2(body.form * 7 + body.seed * 3 + shape, hc * 5 + palBit * 2 + level * 13, 0x5a1e + st.index);
+  const accBody = accentBody(st, pick);
+  const pal = lang ? legacyPal(lang) : stylePal(ZONE_PALS[zone - 1][tier][palBit], st, acc, pick);
   const seed = classicSeed(zone, level, hc, palBit) + body.form * 131 + body.seed * 17 + styleKey * 1009;
   const fallback = zoneModelId(zone, level, variant, tier);
   let recipe: Recipe;
@@ -378,7 +382,8 @@ function kitModel(sp: ZoneSpec): Model {
   const classic = !lang && body.form < KIT_FIRST;
   const post = (p: Painter) => {
     if (classic) classicDress(p, body.seed, zone, level, acc);
-    if (!lang) styleDress(p, st, acc, zone, level, W, H);
+    if (!lang) styleDress(p, st, acc, zone, level, W, H, accBody);
+    if (classic && !lang) styleCap(p, st, body.seed + hc, level);
     if (lantern) lanternDress(p, topOf(p));
   };
   return buildModel(id, recipe, pal, classic ? classicSeed(zone, level, body.form, palBit) : seed, Math.max(W, H), zone, level, tier, { W, H, sty, post, fallback: classic && kind === 'shore' ? -1 : fallback });
@@ -459,7 +464,9 @@ const SPONSORS = ['nacre', 'basalt', 'none'] as const;
 const NEUTRAL_PAL: ArtPal = { neon: [200, 230, 255], neon2: [255, 255, 255], up: [170, 200, 255], warm: 0.25, cool: 0.55 };
 
 /** Heights each faction building's looks 1–2 reach (close to today's look 0). */
-const FACTION_LOOK_H: Partial<Record<BuildingType, number>> = { foundry: 168, glarewall: 136, tidemarket: 44, roost: 90, commons: 58 };
+// The Tidemarket's and Roost's designs need height to read (a hull on stacked containers, a crane, masts): they rise to
+// ≤ 96 px, under any skybridge tube (a tube's clearance never drops below 98 px: the lowest anchor is an L3 body ≥ 128).
+const FACTION_LOOK_H: Partial<Record<BuildingType, number>> = { foundry: 168, glarewall: 136, tidemarket: 86, roost: 96, commons: 58 };
 
 /** A faction design as a whole building: a slab, the design over the footprint, the offline warning. */
 function designRecipe(d: Design, size: number, h: number, inset = 0.08): Recipe {

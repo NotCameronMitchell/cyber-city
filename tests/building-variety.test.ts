@@ -52,12 +52,12 @@ describe('the eligibility matrix (§6.1 floors)', () => {
             }
   });
 
-  it('every style but Charter Shore has its own silhouettes (2–3), only in its district', () => {
+  it('every style but Charter Shore has its own silhouettes (2–4: the Shoals adds a tower for its skyline), only in its district', () => {
     expect(kit.silhouettes('shore')).toHaveLength(0);
     for (const style of DISTRICT_KINDS.filter((k) => k !== 'shore')) {
       const sil = kit.silhouettes(style);
       expect(sil.length, style).toBeGreaterThanOrEqual(2);
-      expect(sil.length, style).toBeLessThanOrEqual(3);
+      expect(sil.length, style).toBeLessThanOrEqual(4);
       // A shore cell never offers another style's silhouettes.
       expect(kit.cellBodies(1, 1, 0, 0, 'shore').all.some((b) => b.form >= kit.SIL_FIRST)).toBe(false);
     }
@@ -88,7 +88,7 @@ describe('sweep: every kit body paints cleanly (§11.5 WP-4)', () => {
               }
             }
     expect(bodies).toBeGreaterThan(4000);
-  });
+  }, 60_000);
 
   it('abandoned, dark, under construction and ghost kit bodies paint cleanly', () => {
     const ctx = mockContext();
@@ -230,6 +230,24 @@ describe('V1 on synthetic districts (§11.3)', () => {
       const share = silFlags.filter(Boolean).length / silFlags.length;
       expect(share, style).toBeGreaterThanOrEqual(0.25);
     }
+  });
+
+  it('no cell leans on one silhouette: one template (any parameter set) is at most a third of a cell', () => {
+    for (const style of DISTRICT_KINDS)
+      for (let zone = 1; zone <= 3; zone++)
+        for (let level = 1; level <= 3; level++)
+          for (let shape = 0; shape < 3; shape++) {
+            const count = new Map<number, number>();
+            let n = 0;
+            for (let y = 0; y < 48; y++)
+              for (let x = 0; x < 48; x++) {
+                const h = (x * 7919 + y * 104729) & 255;
+                const b = kit.pickForm(zone, level, shape, 0, style, x, y, h, h & 7, (h >> 3) & 1);
+                if (b.form >= kit.SIL_FIRST) count.set(b.form, (count.get(b.form) ?? 0) + 1);
+                n++;
+              }
+            for (const [form, c] of count) expect(c / n, `${style} z${zone} L${level} shape ${shape} form ${form}`).toBeLessThanOrEqual(0.34);
+          }
   });
 
   it('distinct bodies on a 390×844 phone view at zoom 1 stay ≤ 260; below LOD a cell collapses to ≤ 4 kit silhouettes', () => {

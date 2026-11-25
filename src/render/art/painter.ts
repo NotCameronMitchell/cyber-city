@@ -137,6 +137,10 @@ export interface ArtPal {
   cool: number;
   /** Curtain-wall glass for this palette ($$$ zone palettes); default GLASS. */
   glass?: Mat;
+  /** District window light (MEGACITY §6.1 styles): the warm and cool hues instead of today's; default today's. */
+  win?: readonly [RGB, RGB];
+  /** District share of lit windows at night (× today's); default 1. */
+  lit?: number;
 }
 
 /** A flat roof a recipe drew (zone sprites only; dressTier places props on it). */
@@ -562,9 +566,9 @@ export class Painter {
     const n = this.n;
     const on = this.lights && !this.abandoned;
     // Night lighting comes on progressively; curtain walls stay calmer.
-    const litFrac = on ? Math.min(0.92, (0.03 + n * 0.5) * (w.lit ?? 1) * this.litBoost * (w.style === 'curtain' ? 0.6 : 1)) : 0;
-    const style = w.style;
     const P = this.pal;
+    const litFrac = on ? Math.min(0.92, (0.03 + n * 0.5) * (w.lit ?? 1) * (P.lit ?? 1) * this.litBoost * (w.style === 'curtain' ? 0.6 : 1)) : 0;
+    const style = w.style;
     const curtain = style === 'curtain';
 
     // Glass for unlit windows: reflects the sky by day, near-black at night.
@@ -575,7 +579,7 @@ export class Painter {
     // Lit colours: 3 hues × 2 intensities.
     const litT = Math.min(1, 0.35 + n * 0.9) * (curtain ? 0.82 : 1);
     // $$$ zone sprites: gold or platinum accents instead of the signature neon.
-    const hues: RGB[] = [WARM, COOL, this.luxe ? P.neon2 : P.neon, WHITE];
+    const hues: RGB[] = [P.win?.[0] ?? WARM, P.win?.[1] ?? COOL, this.luxe ? P.neon2 : P.neon, WHITE];
     const litCols: string[] = [];
     for (const h of hues) {
       litCols.push(css(mix(glassRGB, h, litT)), css(mix(glassRGB, shade(h, 0.62), litT)));

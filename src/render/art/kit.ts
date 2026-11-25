@@ -92,11 +92,11 @@ function wn(k: KitCtx, i = 0): WinSpec {
   if (k.zone === 3 && w.style === 'curtain') return { style: 'band', floor: 9, col: 8, w: 1, h: 0.4 };
   return w;
 }
-/** Trim neon: the district accent, else the palette's. */
-const trim = (p: Painter, k: KitCtx, second = false): RGB => k.acc ?? (second ? p.pal.neon2 : p.pal.neon);
+/** Trim neon: the body's signature (the district accent on accent bodies, a style sign colour on the rest). */
+const trim = (p: Painter, _k: KitCtx, second = false): RGB => (second ? p.pal.neon2 : p.pal.neon);
 /** Sign colour: style signs, else the palette. */
 function sc(p: Painter, k: KitCtx, i = 0): RGB {
-  if (k.acc && (i + k.s) % 2 === 0) return k.acc;
+  if (k.acc && (i + k.s) % 2 === 0) return p.pal.neon;
   const s = k.st.signs;
   return s.length ? s[(i + k.s) % s.length] : i % 2 ? p.pal.neon2 : p.pal.neon;
 }
@@ -1269,6 +1269,7 @@ export const TEMPLATES: Tpl[][] = [HAB, COM, IND];
 const PILE = mat([96, 80, 62], [20, 16, 16]);
 const DECK = mat([150, 124, 92], [30, 24, 22]);
 const ROPE = mat([200, 180, 140], [40, 36, 30]);
+const SAIL = mat([236, 236, 246], [52, 52, 70]);
 
 /** Stilts under a raised floor at z on the footprint corners and edges. */
 function stilts(p: Painter, u0: number, v0: number, u1: number, v1: number, z: number) {
@@ -1354,6 +1355,55 @@ const SIL: Partial<Record<DistrictKind, Tpl[]>> = {
         p.wallSign(0.15, k.H - 0.15, k.W - 0.15, k.H - 0.15, 0.05, 0.3, wz - 7, wz - 2, sc(p, k));
         p.lamp(k.W - 0.06, k.H - 0.06, 8, [220, 240, 255], 12);
         flagPole(p, k.W - 0.1, 0.2, wz, sc(p, k, 1));
+      },
+    },
+    {
+      name: 'sail-crowned tower',
+      zone: 1,
+      zones: [1, 2],
+      cells: ['S2', 'S3', 'P3'],
+      draw: (p, k) => {
+        // A white rendered harbour tower with rope-railed balcony bands; its roof deck carries a mast and a sail, a
+        // small dome or a second slim tower (parameter set), the Shoals' own skyline.
+        const pair = k.W !== k.H;
+        const cu = k.W / 2;
+        const cv = k.H / 2;
+        const ru = pair && k.W > k.H ? 0.62 : 0.3;
+        const rv = pair && k.H > k.W ? 0.62 : 0.3;
+        const deck = k.s === 1 ? Math.round(k.T * 0.72) : k.T;
+        const rail = mat([236, 236, 240], [44, 46, 60]);
+        p.box(cu - ru - 0.06, cv - rv - 0.06, cu + ru + 0.06, cv + rv + 0.06, 0, 3, PILE, { uplight: false, top: DECK });
+        vol(p, k, cu - ru, cv - rv, cu + ru, cv + rv, 3, deck, wl(p, k), k.s === 2 ? { style: 'curtain', floor: 6, col: 6, w: 1, h: 0.82, margin: 1 } : wn(k), true);
+        const step = k.s === 3 ? 7 : 14;
+        if (!p.lod) for (let z = 3 + step; z < deck - 4; z += step) {
+          p.box(cu - ru, cv + rv, cu + ru, cv + rv + 0.06, z - 1, z, rail, { uplight: false });
+          p.box(cu + ru, cv - rv, cu + ru + 0.06, cv + rv, z - 1, z, rail, { uplight: false });
+        }
+        if (k.s === 1) {
+          // A setback deck, then a slimmer top floor under a dome.
+          vol(p, k, cu - ru * 0.6, cv - rv * 0.6, cu + ru * 0.6, cv + rv * 0.6, deck, k.T - 6, wl(p, k, 1), wn(k, 1));
+          p.box(cu - ru * 0.62, cv - rv * 0.62, cu + ru * 0.62, cv + rv * 0.62, k.T - 6, k.T, rail, { top: rf(k, 1) });
+          p.dome(cu, cv, Math.min(ru, rv) * 0.5, k.T, 7, rf(k, 1));
+          p.greens(cu - ru + 0.04, cv - rv + 0.04, cu + ru - 0.04, cv + rv - 0.04, deck, 3);
+        } else if (k.s === 2) {
+          p.dome(cu, cv, Math.min(ru, rv) * 0.7, k.T, 9, rf(k, 1));
+        } else {
+          // The mast and its sail.
+          const mu = cu + ru * 0.4;
+          const mv = cv - rv * 0.4;
+          pole(p, mu, mv, k.T, k.T + 16, STEEL, 0.5);
+          if (p.g) {
+            p.begin_();
+            p.m(mu, mv, k.T + 15);
+            p.l(mu, mv, k.T + 2);
+            p.l(mu - Math.max(0.5, ru * 1.6), mv + rv * 0.2, k.T + 3);
+            p.g.closePath();
+            p.fill(p.col(SAIL, k.s === 3 ? 0.95 : 1.12, 0.95));
+          }
+          if (!p.lod) p.neon([mu, mv, k.T + 16, mu - Math.max(0.5, ru * 1.6), mv + rv * 0.2, k.T + 3], sc(p, k, 1), 0.6);
+          p.ac(cu - ru * 0.5, cv + rv * 0.3, k.T);
+        }
+        if (!p.lod) p.lamp(cu + ru + 0.03, cv + rv + 0.03, 6, [220, 240, 255], 10);
       },
     },
   ],
@@ -1718,19 +1768,93 @@ const SIL: Partial<Record<DistrictKind, Tpl[]>> = {
       cells: ['S3', 'P3'],
       draw: (p, k) => {
         const pair = k.W !== k.H;
-        p.box(0.08, 0.08, k.W - 0.08, k.H - 0.08, 0, 14, wl(p, k, 1), { win: { style: 'band', floor: 7, col: 7, w: 1, h: 0.45 }, top: rf(k) });
+        // Parameter sets: 0 a round shaft and flared glass cab; 1 a square office shaft with a boxed cab on a taller podium;
+        // 2 a thick shaft under a wide saucer and a dish; 3 two cab rings, a lower one for the apron.
+        const podZ = k.s === 1 ? 24 : k.s === 3 ? 10 : 14;
+        p.box(0.08, 0.08, k.W - 0.08, k.H - 0.08, 0, podZ, wl(p, k, 1), { win: { style: 'band', floor: 7, col: 7, w: 1, h: 0.45 }, top: rf(k) });
         const c = pair ? (k.W > k.H ? [1.4, 0.5] : [0.5, 1.4]) : [0.5, 0.5];
-        const cabH = 14;
-        p.cyl(c[0], c[1], 0.2, 14, k.T - cabH, wl(p, k), rf(k));
-        p.cylBands(c[0], c[1], 0.2, 14, k.T - cabH, 9);
-        // The flared glass cab and its lit band.
-        p.cyl(c[0], c[1], 0.34, k.T - cabH, k.T - 4, mat([90, 140, 170], [14, 30, 50]), DARK, 0.4);
-        p.neonRing(c[0], c[1], 0.36, k.T - cabH + 4, [255, 210, 80], 1.1);
-        p.cyl(c[0], c[1], 0.38, k.T - 4, k.T, DARK, rf(k));
+        const cabH = k.s === 2 ? 10 : 14;
+        const rs = k.s === 2 ? 0.27 : 0.2;
+        const glassCab = mat([90, 140, 170], [14, 30, 50]);
+        if (k.s === 1) {
+          vol(p, k, c[0] - 0.24, c[1] - 0.24, c[0] + 0.24, c[1] + 0.24, podZ, k.T - cabH, wl(p, k), { style: 'band', floor: 8, col: 8, w: 1, h: 0.3 }, true);
+          p.box(c[0] - 0.34, c[1] - 0.34, c[0] + 0.34, c[1] + 0.34, k.T - cabH, k.T - 4, glassCab, { top: DARK, uplight: false });
+          p.neon([c[0] - 0.34, c[1] + 0.34, k.T - cabH + 3, c[0] + 0.34, c[1] + 0.34, k.T - cabH + 3, c[0] + 0.34, c[1] - 0.34, k.T - cabH + 3], [255, 210, 80], 1);
+          p.box(c[0] - 0.38, c[1] - 0.38, c[0] + 0.38, c[1] + 0.38, k.T - 4, k.T, DARK, { top: rf(k), uplight: false });
+        } else {
+          p.cyl(c[0], c[1], rs, podZ, k.T - cabH, wl(p, k), rf(k));
+          p.cylBands(c[0], c[1], rs, podZ, k.T - cabH, k.s === 2 ? 14 : 9);
+          if (k.s === 3) {
+            const zl = Math.round(podZ + (k.T - podZ) * 0.45);
+            p.cyl(c[0], c[1], 0.3, zl, zl + 7, glassCab, DARK, 0.4);
+            p.neonRing(c[0], c[1], 0.31, zl + 3, [120, 220, 255], 0.9);
+          }
+          // The flared glass cab and its lit band.
+          const rc = k.s === 2 ? 0.46 : 0.34;
+          p.cyl(c[0], c[1], rc, k.T - cabH, k.T - 4, glassCab, DARK, 0.4);
+          p.neonRing(c[0], c[1], rc + 0.02, k.T - cabH + 4, k.s === 2 ? [120, 220, 255] : [255, 210, 80], 1.1);
+          p.cyl(c[0], c[1], rc + 0.04, k.T - 4, k.T, DARK, rf(k));
+        }
         p.glow(c[0], c[1], k.T - 8, [150, 220, 255], 50, p.glowA() * 0.6);
+        if (k.s === 2) p.dish(c[0] - 0.12, c[1] + 0.1, k.T, 0.1);
         pole(p, c[0], c[1], k.T, k.T + 12, STEEL);
         p.blinker(c[0], c[1], k.T + 12, [255, 59, 92], 2.4, 14);
         if (pair) vol(p, k, k.W > k.H ? 0.12 : 0.12, k.W > k.H ? 0.12 : 0.12, k.W > k.H ? 0.9 : 0.88, k.W > k.H ? 0.88 : 0.9, 14, Math.round(k.T * 0.5), wl(p, k), wn(k), true);
+      },
+    },
+    {
+      name: 'wing-roof terminal',
+      zone: 2,
+      zones: [2, 1],
+      cells: ['S2', 'S3', 'P2', 'P3'],
+      draw: (p, k) => {
+        // A glass hall under a swept wing canopy, like a small air terminal; tall lots stack an office tower on it with a
+        // radar dish, a banded mast or a second wing (parameter set).
+        const tall = k.lv >= 3;
+        const hz = tall ? 22 : k.T - 5;
+        const glass = { style: 'curtain', floor: 7, col: 6, w: 1, h: 0.8, margin: 1 } as WinSpec;
+        p.box(0.12, 0.14, k.W - 0.12, k.H - 0.12, 0, hz, wl(p, k), { win: glass, glass: glassOf(k), top: rf(k) });
+        // The wing: a thin slab rising towards the front corner, wider than the hall.
+        const wz = hz + (tall ? 3 : 5);
+        if (p.g) {
+          const m = mat([206, 210, 216], [40, 42, 52]);
+          p.begin_();
+          p.m(0.02, 0.04, hz + 1);
+          p.l(k.W + 0.02, 0.04, hz + 1);
+          p.l(k.W + 0.04, k.H + 0.04, wz);
+          p.l(0.02, k.H + 0.04, wz);
+          p.g.closePath();
+          p.fill(p.col(m, 1.08, 0.97));
+          p.begin_();
+          p.m(0.02, k.H + 0.04, wz);
+          p.l(k.W + 0.04, k.H + 0.04, wz);
+          p.l(k.W + 0.04, k.H + 0.04, wz - 1.6);
+          p.l(0.02, k.H + 0.04, wz - 1.6);
+          p.g.closePath();
+          p.fill(p.col(m, 0.7));
+          if (!p.lod) p.neon([0.02, k.H + 0.04, wz - 0.8, k.W + 0.04, k.H + 0.04, wz - 0.8], trim(p, k), 0.7);
+        }
+        if (!tall) {
+          p.door(0.12, k.H - 0.12, k.W - 0.12, k.H - 0.12, 0.3, 0.7, 0, 7, [255, 230, 190]);
+          p.blinker(k.W - 0.2, 0.2, wz + 1, [255, 59, 92], 2.4, 10);
+          return;
+        }
+        const pair = k.W !== k.H;
+        const c = pair ? (k.W > k.H ? [1.3, 0.5] : [0.5, 1.3]) : [0.5, 0.5];
+        const r = k.s === 2 ? 0.22 : 0.28;
+        const top = k.s === 3 ? k.T - 8 : k.T;
+        vol(p, k, c[0] - r, c[1] - r, c[0] + r, c[1] + r, wz, top, wl(p, k, 1), k.s % 2 ? wn(k) : { style: 'band', floor: 8, col: 8, w: 1, h: 0.35 }, true);
+        if (k.s === 3) {
+          // A second wing high up, the tower's own roof.
+          p.box(c[0] - r - 0.12, c[1] - r - 0.12, c[0] + r + 0.12, c[1] + r + 0.12, top, k.T, mat([206, 210, 216], [40, 42, 52]), { top: rf(k), trim: trim(p, k) });
+        } else if (k.s === 1 || k.s === 0) {
+          p.dish(c[0], c[1], k.T, 0.12);
+          p.blinker(c[0] + r * 0.6, c[1] - r * 0.6, k.T + 2, [255, 59, 92], 2.4, 12);
+        } else {
+          pole(p, c[0], c[1], k.T, k.T + 14, STEEL, 0.6);
+          for (let z = k.T + 3; z < k.T + 14; z += 4) p.neon([c[0] - 0.04, c[1], z, c[0] + 0.04, c[1], z], [255, 80, 80], 0.8);
+          p.blinker(c[0], c[1], k.T + 14, [255, 59, 92], 2.4, 14);
+        }
       },
     },
   ],
@@ -1781,7 +1905,21 @@ const SIL: Partial<Record<DistrictKind, Tpl[]>> = {
           p.box(c[0] + ru, c[1] - rv, c[0] + ru + 0.05, c[1] + rv, z - 0.8, z, mat([140, 96, 60], [30, 20, 14]), { uplight: false });
           if (Math.round(z / step) % 2 === 0 && !p.lod) p.lamp(c[0] + ru, c[1] + rv, z + 2, sc(p, k, z), 6);
         }
-        pyramid(p, c[0] - ru - 0.04, c[1] - rv - 0.04, c[0] + ru + 0.04, c[1] + rv + 0.04, k.T - roofH, roofH, mat([86, 156, 132], [16, 36, 34], 'roof'));
+        // Roofs by parameter set: a verdigris pyramid, a copper hip, a copper dome on a drum, a lantern pavilion.
+        const verd = mat([86, 156, 132], [16, 36, 34], 'roof');
+        const copper = mat([184, 115, 51], [36, 22, 16], 'roof');
+        const rb = [c[0] - ru - 0.04, c[1] - rv - 0.04, c[0] + ru + 0.04, c[1] + rv + 0.04];
+        if (k.s === 0) pyramid(p, rb[0], rb[1], rb[2], rb[3], k.T - roofH, roofH, verd);
+        else if (k.s === 1) hip(p, rb[0], rb[1], rb[2], rb[3], k.T - roofH, roofH, copper);
+        else if (k.s === 2) {
+          p.box(rb[0], rb[1], rb[2], rb[3], k.T - roofH, k.T - roofH + 3, copper, { uplight: false });
+          p.dome(c[0], c[1], Math.min(ru, rv) * 0.9, k.T - roofH + 3, roofH - 3, copper);
+        } else {
+          p.box(rb[0], rb[1], rb[2], rb[3], k.T - roofH, k.T - roofH + 2, wl(p, k, 2), { top: rf(k), uplight: false });
+          for (const [u, v] of [[rb[0] + 0.04, rb[3] - 0.04], [rb[2] - 0.04, rb[3] - 0.04], [rb[2] - 0.04, rb[1] + 0.04]]) pole(p, u, v, k.T - roofH + 2, k.T - 3, mat([140, 96, 60], [30, 20, 14]), 0.8);
+          pyramid(p, rb[0] - 0.03, rb[1] - 0.03, rb[2] + 0.03, rb[3] + 0.03, k.T - 3, 3, verd);
+          if (!p.lod) p.lamp(c[0], c[1], k.T - roofH + 5, sc(p, k, 2), 10);
+        }
         p.blade(c[0] + ru + 0.06, c[1] + rv - 0.1, 'u', 0.1, 6, Math.min(k.T - roofH - 2, 40), sc(p, k, 1));
         p.lamp(c[0], c[1], k.T + 2, [255, 200, 120], 14);
       },
@@ -1930,8 +2068,11 @@ function cellOf(zone: number, level: number, shape: number, tier: number, style:
   const off = Math.floor(hash2(key, 3, 0x2f) * 9);
   sty.forEach((b, i) => s[(i + off) % 9].push(b));
   const classesWithStyle = s.filter((x) => x.length > 0).length;
-  // ≥ 25% of the district's picks overall: aim for ~45% inside the cells a style covers.
-  const pStyle = classesWithStyle ? Math.min(0.92, (0.45 * 9) / classesWithStyle) : 0;
+  // ≥ 25% of the district's picks overall: aim for ~45% inside the cells a style covers, but a cell served by a single
+  // silhouette gives it at most ~30% (one shape on every other block reads as a clone, whatever its parameters).
+  const nTpl = new Set(sty.map((b) => b.form)).size;
+  const target = nTpl >= 2 ? 0.45 : 0.3;
+  const pStyle = classesWithStyle ? Math.min(0.92, (target * 9) / classesWithStyle) : 0;
   c = { gen: g, sty: s, pStyle, all: [...classic, ...gen, ...sty], styleCount: sty.length };
   cells.set(key, c);
   return c;

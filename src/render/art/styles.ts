@@ -20,6 +20,7 @@
 import { DISTRICTS } from '../../game/config';
 import { DISTRICT_KINDS, type DistrictKind } from '../../game/types';
 import { css, hexToRgb, mix, type RGB } from '../palette';
+import { arch, hip, pyramid } from './parts';
 import { mat, type ArtPal, type Mat, type Painter, type Roof, type WinSpec } from './painter';
 
 /** Roof habits a kit template may draw on its top (§6.1 parameters). */
@@ -55,6 +56,14 @@ export interface StyleDef {
   warm: number;
   /** Street lamp / prop light colour. */
   lamp: RGB;
+  /** Night window light: the warm and cool hues (shore: today's). */
+  win?: readonly [RGB, RGB];
+  /** Share of lit windows at night (× today's). */
+  lit?: number;
+  /** Share of a district's bodies whose signature neon is the district accent (the rest pick a style sign colour). */
+  accShare?: number;
+  /** Share of the other bodies that still wear a roof neon (quiet styles few, the Bazaar all). */
+  trimRate?: number;
 }
 
 const wall = (c: RGB, n?: RGB) => mat(c, n, 'wall');
@@ -105,6 +114,9 @@ export const STYLES: Record<DistrictKind, StyleDef> = {
     signRate: 0.35,
     warm: 0.05,
     lamp: [220, 240, 255],
+    win: [[255, 226, 176], [178, 232, 255]],
+    accShare: 0.4,
+    trimRate: 0.45,
   },
   sunk: {
     id: 'sunk',
@@ -124,6 +136,10 @@ export const STYLES: Record<DistrictKind, StyleDef> = {
     signRate: 0.5,
     warm: 0.1,
     lamp: [182, 255, 46],
+    win: [[255, 186, 104], [196, 255, 140]],
+    lit: 0.85,
+    accShare: 0.45,
+    trimRate: 0.55,
   },
   flats: {
     id: 'flats',
@@ -142,6 +158,10 @@ export const STYLES: Record<DistrictKind, StyleDef> = {
     signRate: 0.3,
     warm: 0.2,
     lamp: [255, 170, 70],
+    win: [[255, 150, 56], [255, 204, 120]],
+    lit: 0.9,
+    accShare: 0.4,
+    trimRate: 0.35,
   },
   terraces: {
     id: 'terraces',
@@ -160,6 +180,10 @@ export const STYLES: Record<DistrictKind, StyleDef> = {
     signRate: 0.3,
     warm: 0.25,
     lamp: [255, 214, 150],
+    win: [[255, 222, 160], [255, 238, 206]],
+    lit: 0.8,
+    accShare: 0.4,
+    trimRate: 0.2,
   },
   reedmere: {
     id: 'reedmere',
@@ -171,10 +195,18 @@ export const STYLES: Record<DistrictKind, StyleDef> = {
     tint: { wall: [[132, 116, 88], [28, 26, 24], 0.72], roof: [[96, 138, 92], [16, 34, 26], 0.68] },
     wins: [GRID, W('grid', 7, 7, 0.6, 0.35), BAND],
     roofKinds: ['garden', 'gable', 'thatch', 'plant'],
-    signs: [[160, 255, 200]],
+    signs: [
+      [255, 226, 150],
+      [160, 255, 200],
+      [255, 200, 120],
+    ],
     signRate: 0.15,
     warm: 0.2,
     lamp: [220, 255, 200],
+    win: [[255, 210, 136], [238, 236, 214]],
+    lit: 0.6,
+    accShare: 0.28,
+    trimRate: 0.12,
   },
   skeleton: {
     id: 'skeleton',
@@ -194,6 +226,10 @@ export const STYLES: Record<DistrictKind, StyleDef> = {
     signRate: 0.45,
     warm: 0,
     lamp: [255, 214, 150],
+    win: [[226, 234, 255], [176, 150, 255]],
+    lit: 0.62,
+    accShare: 0.35,
+    trimRate: 0.4,
   },
   tarmac: {
     id: 'tarmac',
@@ -208,16 +244,20 @@ export const STYLES: Record<DistrictKind, StyleDef> = {
     signs: [
       [255, 210, 80],
       [255, 255, 255],
+      [255, 70, 90],
     ],
     signRate: 0.35,
     warm: 0,
     lamp: [255, 220, 170],
+    win: [[255, 238, 204], [150, 204, 255]],
+    accShare: 0.4,
+    trimRate: 0.45,
   },
   bazaar: {
     id: 'bazaar',
     index: 8,
-    walls: [wall([196, 150, 90], [40, 30, 24]), wall([210, 200, 184], [42, 40, 44]), wall([150, 120, 96], [32, 26, 26]), wall([206, 170, 110], [42, 34, 26]), wall([110, 150, 140], [22, 32, 34]), wall([176, 128, 80], [36, 26, 22])],
-    roofs: [roof([86, 156, 132], [16, 36, 34]), roof([184, 115, 51], [36, 22, 16])],
+    walls: [wall([200, 152, 88], [40, 30, 24]), wall([222, 212, 190], [44, 42, 46]), wall([190, 128, 118], [40, 26, 30]), wall([104, 156, 140], [22, 32, 34]), wall([176, 100, 70], [36, 22, 20]), wall([96, 108, 150], [22, 24, 40]), wall([206, 176, 120], [42, 34, 26])],
+    roofs: [roof([86, 156, 132], [16, 36, 34]), roof([184, 115, 51], [36, 22, 16]), roof([164, 86, 62], [34, 18, 16]), roof([84, 86, 98], [18, 18, 26])],
     tarps: [tarp([200, 60, 60]), tarp([60, 140, 120]), tarp([220, 170, 60]), tarp([120, 60, 140])],
     metal: mat([150, 110, 70]),
     tint: { wall: [[192, 148, 96], [40, 30, 24], 0.72], roof: [[92, 156, 132], [16, 36, 34], 0.68], tarp: [[200, 80, 60], [40, 18, 18], 0.55] },
@@ -233,6 +273,10 @@ export const STYLES: Record<DistrictKind, StyleDef> = {
     signRate: 0.9,
     warm: 0.25,
     lamp: [255, 200, 120],
+    win: [[255, 172, 92], [255, 120, 168]],
+    lit: 1.1,
+    accShare: 0.3,
+    trimRate: 1,
   },
 };
 
@@ -273,12 +317,18 @@ const tintCache = new Map<number, StyleDef['tint']>();
  */
 export function tintFor(st: StyleDef, i: number): StyleDef['tint'] {
   if (!st.tint) return null;
-  const k = st.index * 16 + (i % st.walls.length);
+  const k = st.index * 64 + (i % (st.walls.length * st.roofs.length));
   let t = tintCache.get(k);
   if (t === undefined) {
     const w = st.walls[i % st.walls.length];
     const base = st.tint.wall;
-    t = { ...st.tint, wall: [mix(w.day, base ? base[0] : w.day, 0.35), mix(w.night, base ? base[1] : w.night, 0.35), base ? base[2] * 0.92 : 0.65] };
+    const r = st.roofs[Math.floor(i / st.walls.length) % st.roofs.length];
+    const rb = st.tint.roof;
+    t = {
+      ...st.tint,
+      wall: [mix(w.day, base ? base[0] : w.day, 0.35), mix(w.night, base ? base[1] : w.night, 0.35), base ? base[2] * 0.92 : 0.65],
+      roof: rb ? [mix(r.day, rb[0], 0.3), mix(r.night, rb[1], 0.3), rb[2]] : rb,
+    };
     tintCache.set(k, t);
   }
   return t;
@@ -290,17 +340,32 @@ export function tintFor(st: StyleDef, i: number): StyleDef['tint'] {
  * apart at night too. Charter Shore keeps today's palettes (a migrated city keeps its colour mix).
  */
 const palCache = new Map<string, ArtPal>();
-export function stylePal(pal: ArtPal, st: StyleDef, acc: RGB | null): ArtPal {
+/**
+ * `pick` (0..1, a hash of the body) chooses the body's signature neon: the district accent for `accShare` of the bodies
+ * (so two variants of a kind read apart), else one of the style's sign colours, so a district at night is many lights
+ * in its own key rather than one outline repeated on every roof.
+ */
+export function stylePal(pal: ArtPal, st: StyleDef, acc: RGB | null, pick = 0): ArtPal {
   if (st.id === 'shore' || !acc) return pal;
-  const key = `${st.id}|${acc.join(',')}|${pal.neon.join(',')}|${pal.neon2.join(',')}|${pal.warm}|${pal.cool}`;
+  const share = st.accShare ?? 0.4;
+  const own = pick < share;
+  const signs = st.signs;
+  const si = own || !signs.length ? -1 : Math.floor(((pick - share) / (1 - share)) * signs.length) % signs.length;
+  const key = `${st.id}|${acc.join(',')}|${si}|${pal.neon.join(',')}|${pal.neon2.join(',')}|${pal.warm}|${pal.cool}`;
   let out = palCache.get(key);
   if (!out) {
     const warm = Math.max(0.03, Math.min(0.9, pal.warm + st.warm * 1.6 - (st.warm < 0.06 ? 0.25 : 0)));
     const cool = Math.max(0.03, Math.min(1 - warm, pal.cool + (st.warm < 0.06 ? 0.2 : -st.warm)));
-    out = { neon: mix(acc, pal.neon, 0.2), neon2: pal.neon2, up: mix(st.lamp, acc, 0.35), warm, cool, glass: pal.glass ?? st.glass };
+    const neon = si < 0 ? mix(acc, pal.neon, 0.15) : mix(signs[si], pal.neon, 0.1);
+    out = { neon, neon2: si < 0 ? pal.neon2 : mix(acc, pal.neon2, 0.5), up: mix(st.lamp, acc, 0.35), warm, cool, glass: pal.glass ?? st.glass, win: st.win, lit: st.lit };
     palCache.set(key, out);
   }
   return out;
+}
+
+/** Is a body's signature neon its district accent (stylePal's pick rule)? */
+export function accentBody(st: StyleDef, pick: number): boolean {
+  return st.id !== 'shore' && pick < (st.accShare ?? 0.4);
 }
 
 // ── Props for today's forms in a non-shore style (after the recipe, like dressTier) ──
@@ -319,16 +384,18 @@ export function topOf(p: Painter): Roof | null {
  * The district accent on a roof (§3.7: roof trims): a wash of the accent over the top roof and a neon trim on its two
  * front edges, so two districts of one kind read apart from above.
  */
-export function roofTrim(p: Painter, r: Roof, c: RGB) {
+export function roofTrim(p: Painter, r: Roof, c: RGB, accentBody = true, trimRate = 0.5) {
   const z = r.z + 0.3;
   const g = p.g;
-  // About half the roofs take the wash (the body's seed decides), all take the trim: an accent, not a uniform.
-  if (g && r.u1 - r.u0 > 0.1 && r.v1 - r.v0 > 0.1 && ((p.seed >>> 3) & 1) === 0) {
+  const own = accentBody || (p.seed >>> 3) % 3 === 0;
+  // The accent wash (§3.7): on the accent bodies and a third of the rest, so two variants of a kind read apart by day.
+  if (g && r.u1 - r.u0 > 0.1 && r.v1 - r.v0 > 0.1 && own) {
     p.begin_();
     p.quad(r.u0 + 0.02, r.v0 + 0.02, z, r.u1 - 0.02, r.v0 + 0.02, z, r.u1 - 0.02, r.v1 - 0.02, z, r.u0 + 0.02, r.v1 - 0.02, z);
-    p.fill(css(mix(c, [40, 40, 50], p.n * 0.6), 0.3 - p.n * 0.16));
+    p.fill(css(mix(c, [40, 40, 50], p.n * 0.6), 0.46 - p.n * 0.26));
   }
-  p.neon([r.u0, r.v1, z, r.u1, r.v1, z, r.u1, r.v0, z], c, 0.65);
+  // The roof neon in the body's own sign colour, on about two bodies in three: lights, not a uniform outline.
+  if (accentBody || ((p.seed >>> 5) % 97) / 97 < trimRate) p.neon([r.u0, r.v1, z, r.u1, r.v1, z, r.u1, r.v0, z], p.pal.neon, 0.65);
 }
 
 const STAIN = mat([60, 72, 64], [10, 14, 14]);
@@ -340,10 +407,10 @@ const SOCK: RGB = [255, 130, 40];
  * Style props on a today's-form body (zone recipes only, after the recipe; registers nothing). Footprint W × H
  * (1 × 1 for today's forms). Shore draws nothing.
  */
-export function styleDress(p: Painter, st: StyleDef, acc: RGB | null, zone: number, level: number, W = 1, H = 1): void {
+export function styleDress(p: Painter, st: StyleDef, acc: RGB | null, zone: number, level: number, W = 1, H = 1, accentBody = true): void {
   if (st.id === 'shore') return;
   const top = topOf(p);
-  if (acc && top) roofTrim(p, top, acc);
+  if (acc && top) roofTrim(p, top, acc, accentBody, st.trimRate);
   const g = p.g;
   const lod = p.lod;
   const fu = W - 0.04;
@@ -423,6 +490,69 @@ export function styleDress(p: Painter, st: StyleDef, acc: RGB | null, zone: numb
           p.lamp(t * W, fv + 0.06, 9 - Math.sin(t * Math.PI) * 2, st.signs[k % st.signs.length], 7);
         }
       }
+      break;
+  }
+}
+
+/** A style's rising caps for today's forms (§6.1 "Roofs" column): which kinds, on what share, in which materials. */
+interface CapRule {
+  rate: number;
+  maxLevel: number;
+  kinds: ('pyramid' | 'hip' | 'gable' | 'arch' | 'dome' | 'saw')[];
+  mats: Mat[];
+}
+const STYLE_CAPS: Partial<Record<DistrictKind, CapRule>> = {
+  bazaar: { rate: 0.5, maxLevel: 3, kinds: ['pyramid', 'hip', 'pyramid', 'dome'], mats: [roof([184, 115, 51], [36, 22, 16]), roof([86, 156, 132], [16, 36, 34]), roof([164, 86, 62], [34, 18, 16])] },
+  terraces: { rate: 0.42, maxLevel: 3, kinds: ['hip', 'gable', 'hip'], mats: [roof([170, 96, 72], [34, 20, 18]), roof([150, 110, 86], [30, 22, 20]), roof([96, 100, 110], [20, 22, 28])] },
+  shoals: { rate: 0.3, maxLevel: 3, kinds: ['dome', 'arch'], mats: [roof([232, 234, 238], [46, 48, 62]), roof([170, 206, 220], [30, 42, 58])] },
+  reedmere: { rate: 0.42, maxLevel: 3, kinds: ['gable', 'gable', 'hip'], mats: [roof([92, 140, 90], [16, 34, 26]), roof([176, 150, 90], [36, 30, 20])] },
+  tarmac: { rate: 0.34, maxLevel: 2, kinds: ['arch'], mats: [roof([156, 162, 168], [30, 32, 40]), roof([200, 200, 206], [40, 40, 48])] },
+  flats: { rate: 0.34, maxLevel: 2, kinds: ['saw', 'gable'], mats: [roof([110, 110, 118], [22, 22, 28]), roof([132, 96, 74], [30, 20, 20])] },
+  sunk: { rate: 0.3, maxLevel: 2, kinds: ['gable', 'hip'], mats: [roof([132, 84, 60], [30, 18, 16]), roof([70, 96, 120], [16, 22, 30])] },
+};
+
+/**
+ * A rising cap on the top flat roof of a today's form in a district style (copper pyramids in the Bazaar, terracotta hips
+ * on the Terraces, domes in the Shoals, hangar arcs on the Tarmac…), on a share of the bodies: the classic forms take
+ * their district's roofline, not only its colours. Drawn after the recipe (dressing: the recorded top excludes it).
+ */
+export function styleCap(p: Painter, st: StyleDef, s: number, level: number): void {
+  const rule = STYLE_CAPS[st.id];
+  if (!rule || level > rule.maxLevel) return;
+  const h = ((p.seed >>> 2) * 7 + s * 37) % 100;
+  if (h >= rule.rate * 100) return;
+  const top = topOf(p);
+  if (!top) return;
+  const du = top.u1 - top.u0;
+  const dv = top.v1 - top.v0;
+  if (du < 0.22 || dv < 0.22 || top.area < 0.06) return;
+  const kind = rule.kinds[(s + (p.seed >>> 6)) % rule.kinds.length];
+  const m = rule.mats[((p.seed >>> 4) + s) % rule.mats.length];
+  const e = 0.015;
+  const u0 = top.u0 + e;
+  const v0 = top.v0 + e;
+  const u1 = top.u1 - e;
+  const v1 = top.v1 - e;
+  const rise = Math.max(5, Math.min(level >= 3 ? 16 : 11, Math.min(du, dv) * 24));
+  const z = top.z;
+  switch (kind) {
+    case 'pyramid':
+      pyramid(p, u0, v0, u1, v1, z, rise, m);
+      break;
+    case 'hip':
+      hip(p, u0, v0, u1, v1, z, rise * 0.8, m);
+      break;
+    case 'gable':
+      p.gable(u0, v0, u1, v1, z, rise * 0.7, m, du >= dv ? 'u' : 'v');
+      break;
+    case 'arch':
+      arch(p, u0, v0, u1, v1, z, rise * 0.75, m, du >= dv ? 'u' : 'v');
+      break;
+    case 'dome':
+      p.dome((u0 + u1) / 2, (v0 + v1) / 2, Math.min(du, dv) * 0.4, z, rise * 0.8, m);
+      break;
+    case 'saw':
+      p.saw(u0, v0, u1, v1, z, rise * 0.6, Math.max(2, Math.round(du * 4)), m, p.pal.neon);
       break;
   }
 }
