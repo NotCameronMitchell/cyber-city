@@ -87,14 +87,22 @@ export class ScriptedMayor {
   actions = 0;
   /** Whether the mayor builds services at all (off = stress test). */
   private readonly services: boolean;
+  /**
+   * Count empty lots and services inside its own grid only (MegaMayor, one mayor per district: a lot or a clinic in
+   * another district is not this mayor's). Off by default: a lone mayor counts the whole map, as it always has.
+   */
+  private readonly ownGrid: boolean;
+  private readonly span: number;
 
   constructor(
     readonly world: World,
     readonly sim: Simulation,
-    opts: { ox?: number; oy?: number; span?: number; services?: boolean } = {},
+    opts: { ox?: number; oy?: number; span?: number; services?: boolean; ownGrid?: boolean } = {},
   ) {
     this.services = opts.services ?? true;
+    this.ownGrid = opts.ownGrid ?? false;
     const span = opts.span ?? 11;
+    this.span = span;
     const N = world.N;
     this.ox = opts.ox ?? Math.floor((N - span * 4) / 2);
     this.oy = opts.oy ?? Math.floor((N - span * 4) / 2);
@@ -168,15 +176,31 @@ export class ScriptedMayor {
     return ok;
   }
 
+  /** Is (x, y) inside this mayor's grid (its blocks and ring roads)? */
+  private inGrid(x: number, y: number): boolean {
+    const e = this.span * 4;
+    return x >= this.ox && y >= this.oy && x <= this.ox + e && y <= this.oy + e;
+  }
+
   private count(type: BuildingType): number {
     let n = 0;
-    for (const b of this.world.buildings.values()) if (b.type === type) n++;
+    for (const b of this.world.buildings.values()) if (b.type === type && (!this.ownGrid || this.inGrid(b.x, b.y))) n++;
     return n;
   }
 
   private emptyLots(role: 'res' | 'com' | 'ind'): number {
     const zone = role === 'res' ? 1 : role === 'com' ? 2 : 3;
     let n = 0;
+    if (this.ownGrid) {
+      const N = this.world.N;
+      const e = this.span * 4;
+      for (let y = this.oy; y <= Math.min(N - 1, this.oy + e); y++)
+        for (let x = this.ox; x <= Math.min(N - 1, this.ox + e); x++) {
+          const t = this.world.tiles[y * N + x];
+          if (t.zone === zone && t.level === 0 && !t.abandoned) n++;
+        }
+      return n;
+    }
     for (const t of this.world.tiles) if (t.zone === zone && t.level === 0 && !t.abandoned) n++;
     return n;
   }

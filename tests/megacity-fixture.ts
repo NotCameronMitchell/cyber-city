@@ -3,10 +3,11 @@
 // WP-2's tools). Each slot is §2.1's fill: a road every 4 tiles, 3×3 blocks zoned at levels 1–3 with tiers, a
 // reactor every 9th block and a service every 7th; generated water is left as it is.
 
-import { ringOf, slotRect } from '../src/game/districts/slots';
+import { ringOf, slotNeighbours, slotRect } from '../src/game/districts/slots';
 import { Simulation } from '../src/game/sim';
-import { Terrain, type BuildingType, type Region, type SlotId, type WealthTier } from '../src/game/types';
+import { Terrain, type BuildingType, type DistrictKind, type Region, type SlotId, type WealthTier } from '../src/game/types';
 import { World } from '../src/game/world';
+import { ScriptedMayor } from './helpers';
 
 const SERVICES: BuildingType[] = ['precinct', 'clinic', 'datahub', 'maglev', 'plaza', 'spire'];
 
@@ -84,4 +85,77 @@ export function cachedMegacity(region: Region, n: number): World {
     cache.set(key, json);
   }
   return World.deserialize(JSON.parse(json));
+}
+
+/** The kind order MegaMayor annexes candidates in (§11.3 D1: "candidates in a fixed kind order"). */
+export const MEGA_KIND_ORDER: readonly DistrictKind[] = ['flats', 'bazaar', 'terraces', 'reedmere', 'shoals', 'skeleton', 'tarmac', 'sunk'];
+
+/**
+ * The MegaMayor (MEGACITY §11.4, WP-1; Step 9 adds the PACING harness, grants and the buyer): a ScriptedMayor per owned
+ * district, each on its own grid centred in its slot and counting only its own lots and services, plus annexing. `annex`
+ * performs an annex and says whether it happened (default: the structural World.annex; a Game passes
+ * `(s) => game.annex(s, lease).ok`), `opens` filters candidates (the Sunk opens after `ch4.brine`, a story rule).
+ */
+export class MegaMayor {
+  readonly mayors = new Map<SlotId, ScriptedMayor>();
+  private readonly annexFn: (slot: SlotId) => boolean;
+  private readonly opens: (slot: SlotId) => boolean;
+
+  constructor(
+    readonly world: World,
+    readonly sim: Simulation,
+    opts: { annex?: (slot: SlotId) => boolean; opens?: (slot: SlotId) => boolean } = {},
+  ) {
+    this.annexFn =
+      opts.annex ??
+      ((s) => {
+        this.world.annex(s);
+        return this.world.slotOwned[s] === 1;
+      });
+    this.opens = opts.opens ?? ((s) => this.world.districts.kinds[s] !== 'sunk');
+  }
+
+  /** The mayor of a slot, its grid centred in the slot (the 64 map's offset: 10 tiles in). */
+  private mayorOf(slot: SlotId): ScriptedMayor {
+    let m = this.mayors.get(slot);
+    if (!m) {
+      const r = slotRect(this.world, slot);
+      m = new ScriptedMayor(this.world, this.sim, { ox: r.x0 + 10, oy: r.y0 + 10, ownGrid: true });
+      this.mayors.set(slot, m);
+    }
+    return m;
+  }
+
+  /** Open every owned district (each mayor's opening: a power plant and a few blocks). */
+  opening(): void {
+    for (const s of this.world.districts.owned) if (!this.mayors.has(s)) this.mayorOf(s).opening();
+  }
+
+  /** Locked slots next to owned land that may open, in MEGA_KIND_ORDER, lowest slot first within a kind. */
+  candidates(): SlotId[] {
+    const w = this.world;
+    const R = w.region as Region;
+    const out = new Set<SlotId>();
+    for (const s of w.districts.owned) for (const n of slotNeighbours(R, s)) if (!w.slotOwned[n] && this.opens(n)) out.add(n);
+    const rank = (s: SlotId) => {
+      const k = MEGA_KIND_ORDER.indexOf(w.districts.kinds[s]);
+      return k < 0 ? MEGA_KIND_ORDER.length : k;
+    };
+    return [...out].sort((a, b) => rank(a) - rank(b) || a - b);
+  }
+
+  /** Annex the first candidate and open it (its mayor's opening). Returns the slot, or −1 when none could be annexed. */
+  annexNext(): SlotId {
+    for (const s of this.candidates()) {
+      if (!this.annexFn(s)) continue;
+      this.mayorOf(s).opening();
+      return s;
+    }
+    return -1;
+  }
+
+  /** One planning turn of every district's mayor (call monthly). */
+  turn(): void {
+    for (const s of this.world.districts.owned) this.mayorOf(s).turn();
+  }
 }
