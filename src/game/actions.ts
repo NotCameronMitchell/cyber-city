@@ -1,3 +1,4 @@
+import { pumpHallSite } from './districts/annex';
 import { updateDistrictLayers } from './districts/effects';
 import { artOffset } from './districts/slots';
 import { buildingStats } from './buildingStats';
@@ -431,6 +432,39 @@ function waterSiteReason(world: World, x: number, y: number, size: number): stri
   return sides >= 2 ? null : 'Needs 2 sides on open water';
 }
 
+/**
+ * A shore site for a small building (§6.3: the Pump House "a shore tile", the 1×1 Harbour Beacon): the side of the
+ * footprint that has owned open water 4-adjacent to it (S, E, N, W as shoreFacing), or −1. A 1-tile channel serves;
+ * the Seaport keeps its 2-deep berth (ownedShoreFacing).
+ */
+export function shoreSide(world: World, x: number, y: number, size: number): 0 | 1 | 2 | 3 | -1 {
+  for (const face of [2, 1, 0, 3] as const)
+    for (let k = 0; k < size; k++) {
+      const bx = face === 1 ? x + size : face === 3 ? x - 1 : x + k;
+      const by = face === 0 ? y - 1 : face === 2 ? y + size : y + k;
+      if (ownedOpenWater(world, bx, by)) return face;
+    }
+  return -1;
+}
+
+/** pumpHallSite of a locked Sunk slot, cached (locked terrain never changes: setTerrain writes owned tiles only). */
+const HALL_SITES = new WeakMap<World, Map<SlotId, { x: number; y: number } | null>>();
+function lockedHallSite(world: World, slot: SlotId): { x: number; y: number } | null {
+  let m = HALL_SITES.get(world);
+  if (!m) HALL_SITES.set(world, (m = new Map()));
+  if (!m.has(slot)) m.set(slot, pumpHallSite(world, slot));
+  return m.get(slot)!;
+}
+
+/** Shore buildings placed by shoreSide rather than a Seaport's berth (§6.3). */
+const SHORE_TILE_TYPES: ReadonlySet<BuildingType> = new Set<BuildingType>(['pumphouse', 'beacon']);
+
+/**
+ * The Tidal Turbine's site is checked, but World.addBuilding (frozen, Step 9) cannot place a footprint on water yet:
+ * the plan says so instead of showing a green ghost that the build would then refuse.
+ */
+export const WATER_SITE_LATER = "Can't build on water yet";
+
 /** Pump Houses per district (§6.3) and their distance from the old pump hall. */
 export const PUMP_RULES = { maxPerDistrict: 16, hallRadius: 6, days: 90 } as const;
 
@@ -455,6 +489,12 @@ function districtSiteReason(world: World, type: BuildingType, x: number, y: numb
     if (kind !== 'sunk' && kind !== 'shoals' && kind !== 'reedmere') return 'Needs the Shoals, the Sunk or Reedmere';
     for (const b of world.buildings.values())
       if (b.type === 'pumphall' && footprintGap(x, y, size, b.x, b.y, b.size) <= PUMP_RULES.hallRadius) return 'Too close to the old pump hall';
+    // The hall of a Sunk not annexed yet stands where annexing will put it (a pure function of the slot's terrain).
+    for (let s = 0; s < world.region * world.region; s++) {
+      if (world.slotOwned[s] || world.districts.kinds[s] !== 'sunk') continue;
+      const site = lockedHallSite(world, s);
+      if (site && footprintGap(x, y, size, site.x, site.y, BUILDINGS.pumphall.size) <= PUMP_RULES.hallRadius) return 'Too close to the old pump hall';
+    }
     const slot = world.slotAt(x, y);
     let n = 0;
     for (const b of world.buildings.values()) if (b.type === 'pumphouse' && world.slotAt(b.x, b.y) === slot) n++;
@@ -963,7 +1003,10 @@ export function planAction(world: World, tool: ToolId, from: Point, to: Point, o
     if (def.needsRoad && !access) return bad('Needs road access');
     const siteReason = onWater ? waterSiteReason(world, o.x, o.y, def.size) : districtSiteReason(world, tool, o.x, o.y, def.size);
     if (siteReason) return bad(siteReason);
-    if (def.site === 'shore' && ownedShoreFacing(world, o.x, o.y, def.size) < 0)
+    if (onWater) return bad(WATER_SITE_LATER);
+    if (def.site === 'shore' && SHORE_TILE_TYPES.has(tool)) {
+      if (shoreSide(world, o.x, o.y, def.size) < 0) return bad('Needs owned water beside it');
+    } else if (def.site === 'shore' && ownedShoreFacing(world, o.x, o.y, def.size) < 0)
       return bad(shoreFacing(world, o.x, o.y, def.size) >= 0 ? 'The berth must be in the city' : 'Needs a straight shore');
     const turfReason = turfGateReason(world, def.gate, o.x, o.y, def.size);
     if (turfReason) return bad(turfReason);
@@ -1062,7 +1105,7 @@ export function applyAction(world: World, tool: ToolId, from: Point, to: Point, 
     if (tool === 'stack') world.setStage(b, 1, STACK_STAGES[0].days);
     const def = BUILDINGS[tool];
     if (def.site === 'shore') {
-      const f = ownedShoreFacing(world, fp.x, fp.y, fp.size);
+      const f = SHORE_TILE_TYPES.has(tool) ? shoreSide(world, fp.x, fp.y, fp.size) : ownedShoreFacing(world, fp.x, fp.y, fp.size);
       b.facing = f === -1 ? 2 : f;
     }
     // Spire sponsor and faction looks (MEGACITY §6.2): the picker's choice, else Nacre and a hash of the id.

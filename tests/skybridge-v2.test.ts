@@ -169,6 +169,73 @@ describe('placement rules (§5.3 rules 1–3, 6–9)', () => {
     else expect(q.reason).toBe('Another skybridge crosses here');
   });
 
+  it.each(REGIONS)('%i×%i: rule 7 checks every tube over a gap tile: a third bridge crossing two at one tile is refused at the lower one', (R) => {
+    const w = skyWorld(R);
+    const x = sx(24, R);
+    const y = sy(24, R);
+    // L1: Spire to Spire along row y (roof 200), its gap over (x, y).
+    const s1 = w.addBuilding('spire', x - 5, y)!;
+    const s2 = w.addBuilding('spire', x + 3, y)!;
+    s1.powered = s2.powered = true;
+    expect(applyAction(w, 'skybridge', { x: s1.x, y: s1.y }, { x: s2.x, y: s2.y }).valid).toBe(true);
+    // L2: two L3 towers on column x, crossing L1 at (x, y) well below it.
+    tower(w, x, y - 3);
+    tower(w, x, y + 3);
+    expect(applyAction(w, 'skybridge', { x, y: y - 3 }, { x, y: y + 3 }).valid).toBe(true);
+    expect(w.links).toHaveLength(2);
+    const [l1, l2] = w.links;
+    // L3: two more L3 towers inside L2's span, one tile apart across (x, y): at L2's height.
+    tower(w, x, y - 1);
+    tower(w, x, y + 1);
+    const roof3 = vertical.linkRoof(w, { ax: x, ay: y - 1, bx: x, by: y + 1 });
+    expect(Math.abs(vertical.linkRoof(w, l1) - roof3)).toBeGreaterThanOrEqual(SKYBRIDGE.crossGap);
+    expect(Math.abs(vertical.linkRoof(w, l2) - roof3)).toBeLessThan(SKYBRIDGE.crossGap);
+    expect(planAction(w, 'skybridge', { x, y: y - 1 }, { x, y: y + 1 }).reason).toBe('Another skybridge crosses here');
+    expect(vertical.skybridgePartners(w, x, y - 1).find((p) => p.x === x && p.y === y + 1)?.reason).toBe('Another skybridge crosses here');
+  });
+
+  it.each(REGIONS)('%i×%i: rule 6 on a route: the via tower needs two free bridges, else the route is refused with its limit', (R) => {
+    const w = skyWorld(R);
+    const y = sy(30, R);
+    const A = { x: sx(10, R), y };
+    const V = { x: sx(14, R), y };
+    const D = { x: sx(18, R), y };
+    const B = { x: sx(14, R), y: y + 4 };
+    for (const p of [A, V, D, B]) tower(w, p.x, p.y);
+    // With V free the route A → V → B builds.
+    const free = planAction(w, 'skybridge', A, B);
+    expect(free.valid).toBe(true);
+    expect(free.route?.via).toEqual(V);
+    // V ↔ D first: V has 1 of its 2.
+    expect(applyAction(w, 'skybridge', V, D).valid).toBe(true);
+    const p = planAction(w, 'skybridge', A, B);
+    expect(p.valid).toBe(false);
+    expect(p.reason).toBe('This tower has its 2 bridges');
+    const badge = vertical.skybridgePartners(w, A.x, A.y).find((q) => q.x === B.x && q.y === B.y);
+    expect(badge).toMatchObject({ ok: false, reason: 'This tower has its 2 bridges' });
+    expect(applyAction(w, 'skybridge', A, B).valid).toBe(false);
+    expect(w.links).toHaveLength(1);
+  });
+
+  it.each(REGIONS)('%i×%i: the partner badge shows what the plan charges (× buildCostMul), direct and routed', (R) => {
+    const w = skyWorld(R);
+    const y = sy(30, R);
+    const A = { x: sx(10, R), y };
+    const V = { x: sx(14, R), y };
+    const B = { x: sx(14, R), y: y + 4 };
+    for (const p of [A, V, B]) tower(w, p.x, p.y);
+    w.mods.buildCostMul = 1.25;
+    const partners = vertical.skybridgePartners(w, A.x, A.y);
+    const direct = partners.find((q) => q.x === V.x && q.y === V.y && !q.route)!;
+    const routed = partners.find((q) => q.x === B.x && q.y === B.y && q.route)!;
+    expect(direct.cost).toBe(planAction(w, 'skybridge', A, V).cost);
+    expect(routed.cost).toBe(planAction(w, 'skybridge', A, B).cost);
+    expect(direct.cost).toBe(Math.round(vertical.bridgeCost(3) * 1.25));
+    const funds = w.funds;
+    expect(applyAction(w, 'skybridge', A, V).valid).toBe(true);
+    expect(funds - w.funds).toBe(direct.cost);
+  });
+
   it.each(REGIONS)('%i×%i: a bridge goes dark when an end stops being tall (no upkeep, one news line) and relights', (R) => {
     const w = skyWorld(R);
     const a = { x: sx(10, R), y: sy(50, R) };

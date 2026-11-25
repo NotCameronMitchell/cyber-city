@@ -936,18 +936,19 @@ interface Pt {
   y: number;
 }
 
-/** Does any existing bridge use (x, y) as a gap tile? Returns that link, else null. */
-function gapLinkAt(world: World, x: number, y: number): SkyLink | null {
-  for (const l of world.links) {
-    const minX = Math.min(l.ax, l.bx);
-    const maxX = Math.max(l.ax, l.bx);
-    const minY = Math.min(l.ay, l.by);
-    const maxY = Math.max(l.ay, l.by);
-    if (l.ay === l.by) {
-      if (y === l.ay && x > minX && x < maxX) return l;
-    } else if (x === l.ax && y > minY && y < maxY) return l;
-  }
-  return null;
+/** Does this bridge use (x, y) as a gap tile? */
+function gapCovers(l: SkyLink, x: number, y: number): boolean {
+  if (l.ay === l.by) return y === l.ay && x > Math.min(l.ax, l.bx) && x < Math.max(l.ax, l.bx);
+  return x === l.ax && y > Math.min(l.ay, l.by) && y < Math.max(l.ay, l.by);
+}
+
+/**
+ * §5.3 rule 7: does a tube at `roof` cross any existing bridge on gap tile (x, y) closer than SKYBRIDGE.crossGap?
+ * Every bridge over the tile counts (two tubes can already cross there, or overlap at two heights).
+ */
+function crossesAt(world: World, x: number, y: number, roof: number): boolean {
+  for (const l of world.links) if (gapCovers(l, x, y) && Math.abs(linkRoof(world, l) - roof) < SKYBRIDGE.crossGap) return true;
+  return false;
 }
 
 /** The roof a link's tube hangs under: the lower anchor's (§5.3 rule 4). */
@@ -1068,10 +1069,7 @@ export function checkSpan(world: World, A: Anchor, B: Anchor): SpanCheck {
       const y = ay + dy * k;
       if (!world.isOwned(x, y)) why = NOT_ANNEXED;
       else if (heightOf(world, x, y) > tube.clear) why = 'A taller building is in the way';
-      else {
-        const other = gapLinkAt(world, x, y);
-        if (other && Math.abs(linkRoof(world, other) - out.roof) < SKYBRIDGE.crossGap) why = 'Another skybridge crosses here';
-      }
+      else if (crossesAt(world, x, y, out.roof)) why = 'Another skybridge crosses here';
       if (why) at = { x, y };
     }
     if (!why) {
@@ -1145,26 +1143,42 @@ export function skybridgePartners(world: World, ax: number, ay: number): Partner
   const lane = new Map<number, Anchor>();
   lanePartners(world, A, lane);
   const out: Partner[] = [];
+  // The badge shows what the plan charges (§5.4): the tool's cost × world.mods.buildCostMul, as planAction prices it.
+  const mul = world.mods.buildCostMul;
+  const price = (c: number) => Math.round(c * mul);
   const direct = [...lane.values()].sort((p, q) => anchorDist(A, p) - anchorDist(A, q) || p.i - q.i);
   const valid: Anchor[] = [];
   for (const B of direct) {
     const c = checkSpan(world, A, B);
-    out.push({ x: B.i % N, y: (B.i / N) | 0, ok: c.reason === null, ...(c.reason ? { reason: c.reason } : {}), cost: c.cost });
+    out.push({ x: B.i % N, y: (B.i / N) | 0, ok: c.reason === null, ...(c.reason ? { reason: c.reason } : {}), cost: price(c.cost) });
     if (!c.reason) valid.push(B);
   }
-  // Routes: tall towers within reach that don't line up with A, through one valid partner.
+  // Routes: tall towers within reach that don't line up with A, through one valid partner V. A route adds two bridges
+  // on V, so V needs two free (§5.3 rule 6); a route only a full V could carry shows V's limit as its reason.
   const seen = new Set<number>([A.key, ...lane.keys()]);
+  const full: { V: Anchor; C: Anchor; cost: number }[] = [];
   for (const V of valid) {
+    const room = linksOnAnchor(world, V.key) <= V.limit - 2;
     const second = new Map<number, Anchor>();
     lanePartners(world, V, second);
     for (const C of second.values()) {
       if (seen.has(C.key) || anchorDist(A, C) > SKY_V2.maxGap) continue;
       const c2 = checkSpan(world, V, C);
       if (c2.reason) continue;
-      seen.add(C.key);
       const c1 = checkSpan(world, A, V);
-      out.push({ x: C.i % N, y: (C.i / N) | 0, ok: true, cost: c1.cost + c2.cost, route: { via: { x: V.i % N, y: (V.i / N) | 0 } } });
+      if (!room) {
+        full.push({ V, C, cost: c1.cost + c2.cost });
+        continue;
+      }
+      seen.add(C.key);
+      out.push({ x: C.i % N, y: (C.i / N) | 0, ok: true, cost: price(c1.cost + c2.cost), route: { via: { x: V.i % N, y: (V.i / N) | 0 } } });
     }
+  }
+  for (const f of full) {
+    if (seen.has(f.C.key)) continue;
+    seen.add(f.C.key);
+    const p = { x: f.C.i % N, y: (f.C.i / N) | 0 };
+    out.push({ ...p, ok: false, reason: limitReason(f.V), cost: price(f.cost), route: { via: { x: f.V.i % N, y: (f.V.i / N) | 0 } } });
   }
   return out;
 }
@@ -1346,6 +1360,8 @@ export function planSkybridge(world: World, from: Pt, to: Pt, plan: ActionPlan):
   if (c.axis === null) {
     // Not lined up: a two-bridge route through a valid partner of A that lines up with B (§5.4).
     const route = skybridgePartners(world, from.x, from.y).find((p) => p.route && anchorAt(world, p.x, p.y)?.key === B!.key);
+    // The only route runs through a tower without two free bridges (§5.3 rule 6).
+    if (route && !route.ok) return fail(route.reason ?? limitReason(anchorAt(world, route.route!.via.x, route.route!.via.y)!), [from, to]);
     if (route?.route) {
       const V = anchorAt(world, route.route.via.x, route.route.via.y)!;
       const c1 = checkSpan(world, A, V);

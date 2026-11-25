@@ -12,7 +12,9 @@ import {
   planAction,
   portLimitReason,
   ruinRestored,
+  WATER_SITE_LATER,
 } from '../src/game/actions';
+import { pumpHallSite } from '../src/game/districts/annex';
 import { BUILDINGS, PORT_LIMITS, ROAD_KINDS, RUINS, ZONES } from '../src/game/config';
 import { slotRect } from '../src/game/districts/slots';
 import { Ground, REGIONS, RoadKind, Terrain, ZoneType, type BuildingType, type DistrictKind, type Region, type ToolId } from '../src/game/types';
@@ -232,12 +234,70 @@ describe.each(REGIONS)('%i×%i: new building rules (§6.3)', (R) => {
     });
   });
 
-  it('the Tidal Turbine stands on owned open water with 2 sides on water', () => {
+  it('Pump Houses: any owned land tile beside owned water (a 1-tile channel serves); the hall of a Sunk not annexed yet counts', () => {
+    shown(['pumphouse'], () => {
+      const rm = withKind(R, 'reedmere');
+      const w = rm.w;
+      // A 1-tile channel: the Seaport's 2-deep berth rule refused it ("Needs a straight shore").
+      water(w, rm.x0 + 10, rm.y0 + 20, rm.x0 + 30, rm.y0 + 20);
+      const p = planAction(w, 'pumphouse', { x: rm.x0 + 15, y: rm.y0 + 19 }, { x: rm.x0 + 15, y: rm.y0 + 19 });
+      expect(p.valid).toBe(true);
+      const funds = w.funds;
+      expect(applyAction(w, 'pumphouse', { x: rm.x0 + 15, y: rm.y0 + 19 }, { x: rm.x0 + 15, y: rm.y0 + 19 }).valid).toBe(true);
+      expect(w.funds).toBeLessThan(funds);
+      expect(w.buildingAt(rm.x0 + 15, rm.y0 + 19)?.facing).toBe(2); // the water lies south
+      // No water beside it: its own reason (≤ 32 characters).
+      const dry = planAction(w, 'pumphouse', { x: rm.x0 + 40, y: rm.y0 + 40 }, { x: rm.x0 + 40, y: rm.y0 + 40 });
+      expect(dry.reason).toBe('Needs owned water beside it');
+      expect(dry.reason!.length).toBeLessThanOrEqual(32);
+    });
+    // The old pump hall of a Sunk still locked: where annexing will put it (pumpHallSite), r6 applies already.
+    shown(['pumphouse'], () => {
+      let checked = 0;
+      for (let seed = 1; seed < 60 && !checked; seed++) {
+        const w = World.generate(seed, 'Hall', undefined, R);
+        w.funds = 1e9;
+        w.maxPopulation = 1e7;
+        const sunk = w.districts.kinds.indexOf('sunk');
+        const site = sunk >= 0 ? pumpHallSite(w, sunk) : null;
+        if (!site) continue;
+        // A wet district beside it, annexed (the Sunk stays locked).
+        const wet = [sunk - 1, sunk + 1, sunk - R, sunk + R].find(
+          (s) => s >= 0 && s < R * R && (w.districts.kinds[s] === 'shoals' || w.districts.kinds[s] === 'reedmere') && Math.abs((s % R) - (sunk % R)) + Math.abs(((s / R) | 0) - ((sunk / R) | 0)) === 1,
+        );
+        if (wet === undefined) continue;
+        w.annex(wet);
+        const r = slotRect(w, wet);
+        for (let y = r.y0; y <= r.y1 && !checked; y++)
+          for (let x = r.x0; x <= r.x1 && !checked; x++) {
+            const gap = Math.max(0, site.x - x, x - (site.x + 2), site.y - y, y - (site.y + 2));
+            if (gap > 6 || w.tiles[w.idx(x, y)].terrain !== Terrain.Land || w.tiles[w.idx(x, y)].buildingId >= 0) continue;
+            // Owned water beside it (set up if the generator left none).
+            const n = [[0, 1], [1, 0], [0, -1], [-1, 0]].map(([dx, dy]) => ({ x: x + dx, y: y + dy })).find((q) => w.isOwned(q.x, q.y));
+            if (!n) continue;
+            w.tiles[w.idx(n.x, n.y)].terrain = Terrain.Water;
+            w.clearTile(x, y);
+            expect(planAction(w, 'pumphouse', { x, y }, { x, y }).reason).toBe('Too close to the old pump hall');
+            checked++;
+          }
+      }
+      expect(checked).toBe(1);
+    });
+  });
+
+  it('the Tidal Turbine checks owned open water with 2 sides on water, then says it cannot be built on water yet (never a green ghost)', () => {
     shown(['tidal'], () => {
       const rm = withKind(R, 'reedmere');
       const w = rm.w;
       water(w, rm.x0 + 10, rm.y0 + 10, rm.x0 + 20, rm.y0 + 20);
-      expect(planAction(w, 'tidal', { x: rm.x0 + 15, y: rm.y0 + 15 }, { x: rm.x0 + 15, y: rm.y0 + 15 }).valid).toBe(true);
+      // A good site: World.addBuilding (frozen) cannot place water footprints yet (Step 9), so the plan refuses it.
+      const good = planAction(w, 'tidal', { x: rm.x0 + 15, y: rm.y0 + 15 }, { x: rm.x0 + 15, y: rm.y0 + 15 });
+      expect(good.valid).toBe(false);
+      expect(good.reason).toBe(WATER_SITE_LATER);
+      expect(good.tiles.every((t) => !t.ok)).toBe(true);
+      const funds = w.funds;
+      expect(applyAction(w, 'tidal', { x: rm.x0 + 15, y: rm.y0 + 15 }, { x: rm.x0 + 15, y: rm.y0 + 15 }).valid).toBe(false);
+      expect(w.funds).toBe(funds);
       expect(planAction(w, 'tidal', { x: rm.x0 + 30, y: rm.y0 + 30 }, { x: rm.x0 + 30, y: rm.y0 + 30 }).reason).toBe('Needs open water');
       // A 2×2 pond the turbine fills: no side faces water.
       water(w, rm.x0 + 40, rm.y0 + 40, rm.x0 + 41, rm.y0 + 41);

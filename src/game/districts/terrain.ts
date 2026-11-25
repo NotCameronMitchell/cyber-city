@@ -724,6 +724,10 @@ export function generateSlot(
     else tHi = t;
   }
   shareAt(tHi);
+  // Every slot is buildable (§3.6.2: ≥ 35% of its land in one 4-connected piece): a rare seed whose pieces fall short
+  // gets sandbars joining its largest piece to the nearest others, while the water stays in range. Slots that already
+  // pass are untouched (so every pinned terrain hash holds).
+  if (kind !== 'terraces') joinLand(BUILDABLE_SHARE, lo);
 
   // Terrace steps: cells of a step smaller than 3×3 merge into the lower step (§3.7); water is step 0.
   if (kind === 'terraces') {
@@ -739,6 +743,78 @@ export function generateSlot(
       t.elev = wet[i] ? 0 : elevS[i];
       t.ground = Ground.Plain;
     }
+}
+
+/** The share of a slot's land its largest 4-connected piece must hold (§3.6.2, the layout test's bound). */
+const BUILDABLE_SHARE = 0.35;
+const compS = new Int32Array(S2);
+const queueS = new Int32Array(S2);
+const fromS = new Int32Array(S2);
+
+/**
+ * Join land pieces of `wet` with one-tile sandbars (the shortest 4-connected water path from the largest piece to the
+ * next piece it reaches) until the largest holds `share` of the land, never taking the water share below `minWater`.
+ */
+function joinLand(share: number, minWater: number): void {
+  for (let pass = 0; pass < 24; pass++) {
+    compS.fill(-1);
+    let n = 0;
+    let land = 0;
+    let best = -1;
+    let bestSize = 0;
+    for (let s = 0; s < S2; s++) {
+      if (wet[s] || compS[s] >= 0) continue;
+      let head = 0;
+      let tail = 0;
+      queueS[tail++] = s;
+      compS[s] = n;
+      while (head < tail) {
+        const i = queueS[head++];
+        const x = i % SLOT;
+        for (let d = 0; d < 4; d++) {
+          const j = d === 0 ? (x + 1 < SLOT ? i + 1 : -1) : d === 1 ? (x > 0 ? i - 1 : -1) : d === 2 ? (i + SLOT < S2 ? i + SLOT : -1) : i - SLOT;
+          if (j < 0 || wet[j] || compS[j] >= 0) continue;
+          compS[j] = n;
+          queueS[tail++] = j;
+        }
+      }
+      land += tail;
+      if (tail > bestSize) {
+        bestSize = tail;
+        best = n;
+      }
+      n++;
+    }
+    if (best < 0 || bestSize >= share * land) return;
+    // Multi-source BFS from the largest piece over water to the nearest other piece.
+    fromS.fill(-2);
+    let head = 0;
+    let tail = 0;
+    for (let i = 0; i < S2; i++)
+      if (compS[i] === best) {
+        fromS[i] = -1;
+        queueS[tail++] = i;
+      }
+    let hit = -1;
+    while (head < tail && hit < 0) {
+      const i = queueS[head++];
+      const x = i % SLOT;
+      for (let d = 0; d < 4 && hit < 0; d++) {
+        const j = d === 0 ? (x + 1 < SLOT ? i + 1 : -1) : d === 1 ? (x > 0 ? i - 1 : -1) : d === 2 ? (i + SLOT < S2 ? i + SLOT : -1) : i - SLOT;
+        if (j < 0 || fromS[j] !== -2) continue;
+        fromS[j] = i;
+        if (!wet[j]) hit = j;
+        else queueS[tail++] = j;
+      }
+    }
+    if (hit < 0) return;
+    let water = 0;
+    for (let i = 0; i < S2; i++) water += wet[i];
+    let len = 0;
+    for (let i = fromS[hit]; i >= 0 && wet[i]; i = fromS[i]) len++;
+    if ((water - len) / S2 < minWater) return;
+    for (let i = fromS[hit]; i >= 0 && wet[i]; i = fromS[i]) wet[i] = 0;
+  }
 }
 
 /** Lower every tile of step ≥ e that no all-≥ e 3×3 window covers to e − 1. */

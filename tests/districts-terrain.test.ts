@@ -232,3 +232,16 @@ describe('kind shapes (§3.7)', () => {
     }
   });
 });
+
+describe('every slot stays buildable on the rare seed (§3.6.2; review fix)', () => {
+  it('seed 1401182120 on a 5×5 region: its Driftsand Banks slot (22) joins its pieces with sandbars to ≥ 35% of its land, water still in range', () => {
+    const w = World.generate(1401182120, 'Banks', undefined, 5);
+    const s = 22;
+    expect(w.districts.kinds[s]).toBe('shoals');
+    const st = landStats(w, s);
+    const [lo, hi] = waterRange('shoals', w.variantOf(s), presetOf(DISTRICTS.shoals.variants, w.variantOf(s)));
+    expect(st.water).toBeGreaterThanOrEqual(lo);
+    expect(st.water).toBeLessThanOrEqual(hi);
+    expect(st.biggest / st.land).toBeGreaterThanOrEqual(0.35);
+  });
+});
