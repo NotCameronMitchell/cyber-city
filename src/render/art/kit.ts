@@ -1775,10 +1775,11 @@ const SIL: Partial<Record<DistrictKind, Tpl[]>> = {
         const roofH = 12;
         vol(p, k, c[0] - ru, c[1] - rv, c[0] + ru, c[1] + rv, 0, k.T - roofH, wl(p, k), { style: 'grid', floor: 7, col: 6, w: 0.5, h: 0.5 });
         // A balcony on every floor, every other one with lanterns.
-        for (let z = 7; z < k.T - roofH - 2; z += 7) {
-          p.box(c[0] - ru, c[1] + rv, c[0] + ru, c[1] + rv + 0.06, z - 1, z, mat([184, 115, 51], [36, 22, 16]), { uplight: false });
-          p.box(c[0] + ru, c[1] - rv, c[0] + ru + 0.06, c[1] + rv, z - 1, z, mat([184, 115, 51], [36, 22, 16]), { uplight: false });
-          if ((z / 7) % 2 === 0 && !p.lod) p.lamp(c[0] + ru, c[1] + rv, z + 2, sc(p, k, z), 6);
+        const step = 7 * (2 + (k.s & 1));
+        for (let z = step; z < k.T - roofH - 2; z += step) {
+          p.box(c[0] - ru, c[1] + rv, c[0] + ru, c[1] + rv + 0.05, z - 0.8, z, mat([140, 96, 60], [30, 20, 14]), { uplight: false });
+          p.box(c[0] + ru, c[1] - rv, c[0] + ru + 0.05, c[1] + rv, z - 0.8, z, mat([140, 96, 60], [30, 20, 14]), { uplight: false });
+          if (Math.round(z / step) % 2 === 0 && !p.lod) p.lamp(c[0] + ru, c[1] + rv, z + 2, sc(p, k, z), 6);
         }
         pyramid(p, c[0] - ru - 0.04, c[1] - rv - 0.04, c[0] + ru + 0.04, c[1] + rv + 0.04, k.T - roofH, roofH, mat([86, 156, 132], [16, 36, 34], 'roof'));
         p.blade(c[0] + ru + 0.06, c[1] + rv - 0.1, 'u', 0.1, 6, Math.min(k.T - roofH - 2, 40), sc(p, k, 1));

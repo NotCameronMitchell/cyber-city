@@ -459,7 +459,7 @@ const SPONSORS = ['nacre', 'basalt', 'none'] as const;
 const NEUTRAL_PAL: ArtPal = { neon: [200, 230, 255], neon2: [255, 255, 255], up: [170, 200, 255], warm: 0.25, cool: 0.55 };
 
 /** Heights each faction building's looks 1–2 reach (close to today's look 0). */
-const FACTION_LOOK_H: Partial<Record<BuildingType, number>> = { foundry: 112, glarewall: 136, tidemarket: 44, roost: 72, commons: 58 };
+const FACTION_LOOK_H: Partial<Record<BuildingType, number>> = { foundry: 168, glarewall: 136, tidemarket: 44, roost: 90, commons: 58 };
 
 /** A faction design as a whole building: a slab, the design over the footprint, the offline warning. */
 function designRecipe(d: Design, size: number, h: number, inset = 0.08): Recipe {

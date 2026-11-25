@@ -216,7 +216,7 @@ export const STYLES: Record<DistrictKind, StyleDef> = {
   bazaar: {
     id: 'bazaar',
     index: 8,
-    walls: [wall([196, 150, 90], [40, 30, 24]), wall([176, 128, 80], [36, 26, 22]), wall([150, 120, 96], [32, 26, 26]), wall([206, 170, 110], [42, 34, 26])],
+    walls: [wall([196, 150, 90], [40, 30, 24]), wall([210, 200, 184], [42, 40, 44]), wall([150, 120, 96], [32, 26, 26]), wall([206, 170, 110], [42, 34, 26]), wall([110, 150, 140], [22, 32, 34]), wall([176, 128, 80], [36, 26, 22])],
     roofs: [roof([86, 156, 132], [16, 36, 34]), roof([184, 115, 51], [36, 22, 16])],
     tarps: [tarp([200, 60, 60]), tarp([60, 140, 120]), tarp([220, 170, 60]), tarp([120, 60, 140])],
     metal: mat([150, 110, 70]),
@@ -259,7 +259,7 @@ export function variantAccent(kind: DistrictKind, variant: number): RGB | null {
     if (hex) {
       const c = hexToRgb(hex);
       const grey = (c[0] + c[1] + c[2]) / 3;
-      a = c.map((v) => Math.max(0, Math.min(255, grey + (v - grey) * 1.9))) as RGB;
+      a = c.map((v) => Math.max(0, Math.min(255, grey + (v - grey) * 1.6))) as RGB;
     } else a = null;
     accents.set(key, a);
   }
@@ -322,12 +322,13 @@ export function topOf(p: Painter): Roof | null {
 export function roofTrim(p: Painter, r: Roof, c: RGB) {
   const z = r.z + 0.3;
   const g = p.g;
-  if (g && r.u1 - r.u0 > 0.1 && r.v1 - r.v0 > 0.1) {
+  // About half the roofs take the wash (the body's seed decides), all take the trim: an accent, not a uniform.
+  if (g && r.u1 - r.u0 > 0.1 && r.v1 - r.v0 > 0.1 && ((p.seed >>> 3) & 1) === 0) {
     p.begin_();
     p.quad(r.u0 + 0.02, r.v0 + 0.02, z, r.u1 - 0.02, r.v0 + 0.02, z, r.u1 - 0.02, r.v1 - 0.02, z, r.u0 + 0.02, r.v1 - 0.02, z);
-    p.fill(css(mix(c, [40, 40, 50], p.n * 0.6), 0.42 - p.n * 0.2));
+    p.fill(css(mix(c, [40, 40, 50], p.n * 0.6), 0.3 - p.n * 0.16));
   }
-  p.neon([r.u0, r.v1, z, r.u1, r.v1, z, r.u1, r.v0, z], c, 0.8);
+  p.neon([r.u0, r.v1, z, r.u1, r.v1, z, r.u1, r.v0, z], c, 0.65);
 }
 
 const STAIN = mat([60, 72, 64], [10, 14, 14]);
