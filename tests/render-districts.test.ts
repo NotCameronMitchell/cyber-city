@@ -338,6 +338,15 @@ describe('the parcel cache and sort keys (§6.1)', () => {
       else w.clearTile(x, y);
     }
     off();
+    // Touches only mark blocks stale (§3.9 R0); sync makes a box exact, get everything.
+    expect(cache.pending).toBeGreaterThan(0);
+    const box = { x0: 80, y0: 80, x1: 95, y1: 95 };
+    cache.sync(w, box, 0);
+    for (let y = box.y0; y <= box.y1; y++)
+      for (let x = box.x0; x <= box.x1; x++) expect([x, y, map[y * N + x] & PARCEL_MEMBER ? 1 : 0]).toEqual([x, y, parcelAt(w, x, y) ? 1 : 0]);
+    expect(cache.pending).toBeGreaterThan(0);
+    expect(cache.get(w)).toBe(map);
+    expect(cache.pending).toBe(0);
     const out: Parcel = { hx: 0, hy: 0, x: 0, y: 0, w: 1, h: 1, level: 0, tier: 0 };
     let parcels = 0;
     for (let y = 64; y < 128; y++)

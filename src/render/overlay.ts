@@ -1547,47 +1547,55 @@ export class RoadAccessMap {
   private queue = new Int32Array(0);
   private dirty = true;
   private world: World | null = null;
-  /** Rects whose roads changed since the last get() (growth's level and tier changes never touch a road). */
-  private rects: { x0: number; y0: number; x1: number; y1: number }[] = [];
+  /**
+   * 8×8 blocks a 'tiles' event touched since they were last checked (a flag per block and the list of flagged ones).
+   * A speed-3 frame carries up to ~1,700 events on a 25-district city, almost all growth (no road changes) and off
+   * screen: an event only flags its blocks, and `get` checks the kinds snapshot of the flagged blocks near the box it
+   * is asked for (all of them without a box), patching where a road changed (§3.9 R0).
+   */
+  private stale = new Uint8Array(0);
+  private list = new Int32Array(0);
+  private n = 0;
   /** Whole builds and local patches since construction (tests: R0). */
   full = 0;
   patches = 0;
 
   /**
-   * Tiles changed in `r`: only a road change matters (the kinds snapshot tells), so a growth event costs a look at
-   * its own tiles; or everything (no rect: a world swap or an annex).
+   * Tiles changed in `r`: flag the blocks it touches (checked lazily by `get`); or everything (no rect: a world swap
+   * or an annex).
    */
   invalidate(r?: { x0: number; y0: number; x1: number; y1: number }, world?: World) {
-    if (!r || this.dirty) {
-      if (!r) this.dirty = true;
-      return;
-    }
-    if (world && world === this.world && this.kinds.length === world.area) {
-      const N = world.N;
-      const kinds = this.kinds;
-      let changed = false;
-      for (let y = Math.max(0, r.y0); y <= Math.min(N - 1, r.y1) && !changed; y++)
-        for (let x = Math.max(0, r.x0); x <= Math.min(N - 1, r.x1); x++) {
-          const i = y * N + x;
-          const t = world.tiles[i];
-          const k = t.road ? t.roadKind : KIND_NONE;
-          if (k !== kinds[i]) {
-            changed = true;
-            break;
-          }
-        }
-      if (!changed) return;
-    }
-    if (this.rects.length >= 32) {
-      // Many scattered edits: one whole build is cheaper than patching each.
+    if (!r) {
       this.dirty = true;
-      this.rects.length = 0;
       return;
     }
-    this.rects.push({ ...r });
+    // A whole build is pending (or the world is not this one yet: get() builds it whole).
+    if (this.dirty || !world || world !== this.world || this.kinds.length !== world.area) return;
+    const N = world.N;
+    const bw = (N + 7) >> 3;
+    const bx0 = Math.max(0, r.x0) >> 3;
+    const by0 = Math.max(0, r.y0) >> 3;
+    const bx1 = Math.min(N - 1, r.x1) >> 3;
+    const by1 = Math.min(N - 1, r.y1) >> 3;
+    for (let by = by0; by <= by1; by++)
+      for (let bx = bx0; bx <= bx1; bx++) {
+        const b = by * bw + bx;
+        if (this.stale[b]) continue;
+        this.stale[b] = 1;
+        this.list[this.n++] = b;
+      }
   }
 
-  get(world: World): Uint8Array {
+  /** Blocks flagged and not yet checked (tests). */
+  get pending(): number {
+    return this.n;
+  }
+
+  /**
+   * The access flags (1 = the tile has road access). Exact everywhere without `box`; with a tile box (the sweep's),
+   * exact inside it: flagged blocks within ROAD_ACCESS_RANGE of the box are checked, the rest wait.
+   */
+  get(world: World, box?: { x0: number; y0: number; x1: number; y1: number }): Uint8Array {
     const N = world.N;
     const area = world.area;
     if (this.data.length !== area || this.world !== world) {
@@ -1596,12 +1604,16 @@ export class RoadAccessMap {
       this.dist = new Uint8Array(area);
       this.near = new Int32Array(area);
       this.queue = new Int32Array(area);
+      const bw = (N + 7) >> 3;
+      this.stale = new Uint8Array(bw * bw);
+      this.list = new Int32Array(bw * bw);
       this.world = world;
       this.dirty = true;
     }
     if (this.dirty) {
       this.dirty = false;
-      this.rects.length = 0;
+      for (let k = 0; k < this.n; k++) this.stale[this.list[k]] = 0;
+      this.n = 0;
       this.full++;
       countPass('region:access');
       fillKinds(world, this.kinds);
@@ -1611,21 +1623,42 @@ export class RoadAccessMap {
       for (let i = 0; i < N * N; i++) out[i] = dist[i] !== 255 ? 1 : 0;
       return out;
     }
-    if (!this.rects.length) return this.data;
+    if (!this.n) return this.data;
     const out = this.data;
     const R = ROAD_ACCESS_RANGE;
     const tiles = world.tiles;
-    for (const r of this.rects) {
-      this.patches++;
-      // Refresh the kinds snapshot inside the rect, then the access within ROAD_ACCESS_RANGE of it.
-      for (let y = Math.max(0, r.y0); y <= Math.min(N - 1, r.y1); y++)
-        for (let x = Math.max(0, r.x0); x <= Math.min(N - 1, r.x1); x++) {
-          const t = tiles[y * N + x];
-          this.kinds[y * N + x] = t.road ? t.roadKind : KIND_NONE;
+    const kinds = this.kinds;
+    const bw = (N + 7) >> 3;
+    const list = this.list;
+    let m = 0;
+    for (let k = 0; k < this.n; k++) {
+      const b = list[k];
+      const x0 = (b % bw) << 3;
+      const y0 = ((b / bw) | 0) << 3;
+      const x1 = Math.min(N - 1, x0 + 7);
+      const y1 = Math.min(N - 1, y0 + 7);
+      if (box && (x1 + R < box.x0 || x0 - R > box.x1 || y1 + R < box.y0 || y0 - R > box.y1)) {
+        list[m++] = b;
+        continue;
+      }
+      this.stale[b] = 0;
+      // Refresh the kinds snapshot of the block; only a road change needs the access within ROAD_ACCESS_RANGE of it.
+      let changed = false;
+      for (let y = y0; y <= y1; y++)
+        for (let x = x0; x <= x1; x++) {
+          const i = y * N + x;
+          const t = tiles[i];
+          const kd = t.road ? t.roadKind : KIND_NONE;
+          if (kd !== kinds[i]) {
+            kinds[i] = kd;
+            changed = true;
+          }
         }
-      this.patch(world, out, Math.max(0, r.x0 - R), Math.max(0, r.y0 - R), Math.min(N - 1, r.x1 + R), Math.min(N - 1, r.y1 + R));
+      if (!changed) continue;
+      this.patches++;
+      this.patch(world, out, Math.max(0, x0 - R), Math.max(0, y0 - R), Math.min(N - 1, x1 + R), Math.min(N - 1, y1 + R));
     }
-    this.rects.length = 0;
+    this.n = m;
     return out;
   }
 

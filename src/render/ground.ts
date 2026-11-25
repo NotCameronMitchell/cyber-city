@@ -297,6 +297,8 @@ export class TerrainInfo {
    * the Sunk is locked (a dark hall in the fog).
    */
   readonly deco: Uint8Array;
+  /** Tarmac windsock sites (tile indices), beside each runway threshold; drawn live on owned land. */
+  readonly socks: number[] = [];
 
   constructor(world: World) {
     countPass('region:terrainInfo');
@@ -405,14 +407,25 @@ export class TerrainInfo {
         const ts = tarmacSites(world, s);
         for (const r of ts.runways) {
           const alongX = r.x1 - r.x0 > r.y1 - r.y0;
+          // The centre line across the strip carries the runway numbers, one tile in from each threshold.
+          const mid = alongX ? (r.y0 + r.y1) >> 1 : (r.x0 + r.x1) >> 1;
           for (let y = r.y0; y <= r.y1; y++)
             for (let x = r.x0; x <= r.x1; x++) {
               const i = y * N + x;
               if (world.tiles[i].terrain !== Terrain.Land) continue;
               const a = alongX ? x - r.x0 : y - r.y0;
               const L = alongX ? r.x1 - r.x0 : r.y1 - r.y0;
-              this.deco[i] = a < 3 || a > L - 3 ? DECO_RUNWAY_END : DECO_RUNWAY;
+              const across = alongX ? y : x;
+              this.deco[i] =
+                across === mid && a === 1 ? DECO_RUNWAY_NUM_LO : across === mid && a === L - 1 ? DECO_RUNWAY_NUM_HI : a < 3 || a > L - 3 ? DECO_RUNWAY_END : DECO_RUNWAY;
             }
+          // A windsock on the grass beside each threshold (drawn live, swaying, §3.9 Tarmac ground character).
+          for (const end of [0, 1]) {
+            const sx = alongX ? (end ? r.x1 - 1 : r.x0 + 1) : r.x1 + 2;
+            const sy = alongX ? r.y1 + 2 : end ? r.y1 - 1 : r.y0 + 1;
+            const t = world.tileAt(sx, sy);
+            if (t && t.terrain === Terrain.Land) this.socks.push(sy * N + sx);
+          }
         }
         const ap = ts.apron;
         if (ap)
@@ -560,6 +573,11 @@ export const DECO_RUNWAY = 1;
 export const DECO_RUNWAY_END = 2;
 export const DECO_APRON = 3;
 export const DECO_HALL = 4;
+/** The runway number tile at each threshold (the centre line, one tile in): 5 = the low end (reads towards +axis), 6 = the high end. */
+export const DECO_RUNWAY_NUM_LO = 5;
+export const DECO_RUNWAY_NUM_HI = 6;
+/** Runway headings painted at the thresholds (x-axis strips "09" / "27", y-axis strips "18" / "36"). */
+const RUNWAY_DIGITS: Record<string, [string, string]> = { x: ['09', '27'], y: ['18', '36'] };
 
 // ── Palette per night bucket ───────────────────────────────────────────────
 
@@ -1430,6 +1448,26 @@ export class GroundPainter {
     if (t.ground === Ground.Reed) {
       this.b1.f(P.reedBase).rect(x, y, 1, 1);
       if (!this.detail || t.road) return;
+      // Reedmere's timber boardwalks through the reeds: one line along x and one along y per 16×16 cell (§3.9).
+      if (this.world.kindAt(x, y) === 'reedmere' && t.buildingId < 0 && t.zone === ZoneType.None) {
+        const o = this.info.o;
+        const cx = (x - o) >> 4;
+        const cy = (y - o) >> 4;
+        const rowY = (cy << 4) + 3 + Math.floor(hash2(cx, cy, this.info.seed + 250) * 10) + o;
+        const colX = (cx << 4) + 3 + Math.floor(hash2(cx, cy, this.info.seed + 251) * 10) + o;
+        const b = this.b2.f(P.board);
+        const gap = this.b3.f(P.boardGap);
+        const th = this.lw(1);
+        if (y === rowY) {
+          b.rect(x, y + 0.36, 1, 0.28);
+          for (let k = 1; k < 5; k++) gap.rect(x + k * 0.2, y + 0.36, th, 0.28);
+        }
+        if (x === colX) {
+          b.rect(x + 0.36, y, 0.28, 1);
+          for (let k = 1; k < 5; k++) gap.rect(x + 0.36, y + k * 0.2, 0.28, th);
+        }
+        if (y === rowY || x === colX) return;
+      }
       const p = this.b1.s(P.reed, this.lw(1.1), 'round');
       const q = this.b1.s(P.reedDark, this.lw(1.1), 'round');
       for (let k = 0; k < 7; k++) {
@@ -1554,9 +1592,20 @@ export class GroundPainter {
     this.b1.f(P.runway).rect(x, y, 1, 1);
     if (!this.lines) return;
     const th = this.lw(1.6);
-    const runway = (dx: number, dy: number) => this.info.deco[(y + dy) * this.N + x + dx] === DECO_RUNWAY || this.info.deco[(y + dy) * this.N + x + dx] === DECO_RUNWAY_END;
+    const runway = (dx: number, dy: number) => {
+      const d = this.info.deco[(y + dy) * this.N + x + dx];
+      return d === DECO_RUNWAY || d === DECO_RUNWAY_END || d === DECO_RUNWAY_NUM_LO || d === DECO_RUNWAY_NUM_HI;
+    };
     const alongX = runway(-1, 0) || runway(1, 0);
     const p = this.b3.f(P.runwayLine);
+    if (deco === DECO_RUNWAY_NUM_LO || deco === DECO_RUNWAY_NUM_HI) {
+      // The faded heading, two painted digits reading towards the runway's middle.
+      const [lo, hi] = RUNWAY_DIGITS[alongX ? 'x' : 'y'];
+      const text = deco === DECO_RUNWAY_NUM_LO ? lo : hi;
+      const up = deco === DECO_RUNWAY_NUM_LO ? 1 : -1;
+      for (let k = 0; k < 2; k++) runwayDigit(p, x, y, alongX, up, text.charCodeAt(k) - 48, k === 0 ? -1 : 1, th * 0.9);
+      return;
+    }
     if (deco === DECO_RUNWAY_END) {
       // Threshold bars (the faded runway numbers read as bars at this scale).
       for (let k = 0; k < 3; k++) {
@@ -2698,6 +2747,42 @@ export class GroundPainter {
 }
 
 /** Lamp positions (tile space, before rail lift) along a bridge deck of half-width `dh`. */
+/** Seven-segment masks for 0-9 (bits a b c d e f g). */
+const SEG7 = [0x3f, 0x06, 0x5b, 0x4f, 0x66, 0x6d, 0x7d, 0x07, 0x7f, 0x6f];
+
+/**
+ * One painted runway digit on tile (x, y), in tile space: `up` (+1 / −1) is the direction along the runway the digit
+ * reads towards, `side` (−1 left, +1 right) its half of the centre line, `th` the stroke.
+ */
+function runwayDigit(p: CanvasPath, x: number, y: number, alongX: boolean, up: number, d: number, side: number, th: number) {
+  const m = SEG7[d] ?? 0;
+  // Digit box: 0.22 wide (across), 0.5 tall (along), centred 0.14 either side of the centre line.
+  const w = 0.22;
+  const h = 0.5;
+  const c = 0.5 + side * 0.14 * -up;
+  // Local (u across, v along: 0 at the digit's foot) → tile space.
+  const seg = (u0: number, v0: number, u1: number, v1: number) => {
+    const ua = c - w / 2 + Math.min(u0, u1) * w;
+    const ub = c - w / 2 + Math.max(u0, u1) * w;
+    const va = 0.25 + Math.min(v0, v1) * h;
+    const vb = 0.25 + Math.max(v0, v1) * h;
+    const wu = Math.max(th, ub - ua);
+    const wv = Math.max(th, vb - va);
+    // `up` flips both axes so the digit is upright for a reader rolling in from that threshold.
+    const U = up > 0 ? ua : 1 - ua - wu;
+    const V = up > 0 ? va : 1 - va - wv;
+    if (alongX) p.rect(x + V, y + U, wv, wu);
+    else p.rect(x + U, y + V, wu, wv);
+  };
+  if (m & 1) seg(0, 1, 1, 1); // a: top
+  if (m & 2) seg(1, 0.5, 1, 1); // b
+  if (m & 4) seg(1, 0, 1, 0.5); // c
+  if (m & 8) seg(0, 0, 1, 0); // d: bottom
+  if (m & 16) seg(0, 0, 0, 0.5); // e
+  if (m & 32) seg(0, 0.5, 0, 1); // f
+  if (m & 64) seg(0, 0.5, 1, 0.5); // g: middle
+}
+
 function bridgeLamps(mask: number, dh: number): [number, number][] {
   const a = 0.5 - dh + 0.025;
   const b = 0.5 + dh - 0.025;
@@ -2744,10 +2829,6 @@ function scaleOf(k: number): number {
   return k === OVERVIEW ? OVERVIEW_SCALE : Math.pow(2, k / 4);
 }
 
-function intersects(a: Rect, b: Rect): boolean {
-  return a.x0 < b.x1 && a.x1 > b.x0 && a.y0 < b.y1 && a.y1 > b.y0;
-}
-
 /** World rect covered by an inclusive tile rect, expanded by the ground spill. */
 export function tileRectToWorld(r: Rect): Rect {
   return {
@@ -2762,11 +2843,15 @@ const now = () => (typeof performance !== 'undefined' ? performance.now() : Date
 
 /** The overview fallback's memory cap (§3.9: within 4 MB, unless the view itself needs more chunks). */
 const OVERVIEW_BUDGET = 4 * 1024 * 1024;
-const chunkKey = (k: number, sky: boolean, i: number, j: number) => `${k}:${sky ? 1 : 0}:${i}:${j}`;
+/**
+ * A chunk's map key (§3.9 R0: a number, not a string, so the dozens to thousands of 'tiles' events a frame at speed 3
+ * look chunks up without building strings): bucket k (OVERVIEW −100 .. 12), the view band and the grid cell.
+ */
+const chunkKey = (k: number, sky: boolean, i: number, j: number) => (((k + 128) * 2 + (sky ? 1 : 0)) * 4096 + i + 2048) * 4096 + j + 2048;
 
 /** Owns the chunk canvases and draws the cached ground every frame. */
 export class GroundCache {
-  private chunks = new Map<string, Chunk>();
+  private chunks = new Map<number, Chunk>();
   private pool: HTMLCanvasElement[] = [];
   private painter = new GroundPainter();
   private info: TerrainInfo | null = null;
@@ -2812,17 +2897,37 @@ export class GroundCache {
    */
   invalidate(tiles: Rect) {
     if (!this.N) return;
-    const r = tileRectToWorld(tiles);
+    // The world rect the tiles' ground art covers (tileRectToWorld, inlined: no allocation unless a chunk takes it).
+    const x0 = (tiles.x0 - tiles.y1 - 1) * HALF_W - SPILL;
+    const x1 = (tiles.x1 + 1 - tiles.y0) * HALF_W + SPILL;
+    const y0 = (tiles.x0 + tiles.y0) * HALF_H - SPILL;
+    const y1 = (tiles.x1 + tiles.y1 + 2) * HALF_H + SPILL;
+    const N = this.N;
     for (const b of this.buckets.values()) {
-      const rg = this.range(b.k, r);
-      for (let j = rg.j0; j <= rg.j1; j++)
-        for (let i = rg.i0; i <= rg.i1; i++) {
+      const s = scaleOf(b.k);
+      const W = CHUNK_PX / s;
+      const p = PAD / s;
+      const maxI = Math.floor((N * HALF_W + SPILL - this.OX) / W);
+      const maxJ = Math.floor((N * 2 * HALF_H + SPILL - OY) / W);
+      const i0 = Math.max(0, Math.floor((x0 - this.OX) / W));
+      const i1 = Math.min(maxI, Math.floor((x1 - this.OX) / W));
+      const j0 = Math.max(0, Math.floor((y0 - OY) / W));
+      const j1 = Math.min(maxJ, Math.floor((y1 - OY) / W));
+      for (let j = j0; j <= j1; j++)
+        for (let i = i0; i <= i1; i++) {
           const c = this.chunks.get(chunkKey(b.k, b.sky, i, j));
           if (!c || !c.rendered || c.empty) continue;
-          if (!intersects(r, this.chunkRect(c))) continue;
-          c.dirty = c.dirty
-            ? { x0: Math.min(c.dirty.x0, r.x0), y0: Math.min(c.dirty.y0, r.y0), x1: Math.max(c.dirty.x1, r.x1), y1: Math.max(c.dirty.y1, r.y1) }
-            : r;
+          // The padded chunk rect (chunkRect, inlined).
+          const cx0 = this.OX + i * W - p;
+          const cy0 = OY + j * W - p;
+          if (!(x0 < cx0 + W + 2 * p && x1 > cx0 && y0 < cy0 + W + 2 * p && y1 > cy0)) continue;
+          const d = c.dirty;
+          if (d) {
+            if (x0 < d.x0) d.x0 = x0;
+            if (y0 < d.y0) d.y0 = y0;
+            if (x1 > d.x1) d.x1 = x1;
+            if (y1 > d.y1) d.y1 = y1;
+          } else c.dirty = { x0, y0, x1, y1 };
         }
     }
   }
@@ -3314,6 +3419,54 @@ export class GroundCache {
     if (env.zoom >= 0.45) this.runwayLights(ctx, world, b, env, view);
     ctx.globalAlpha = 1;
     ctx.globalCompositeOperation = 'source-over';
+    if (env.zoom >= 0.45 && info.socks.length) this.windsocks(ctx, world, info, env, view);
+  }
+
+  /** Tarmac windsocks beside the old thresholds (§3.9): a pole and a striped sock swaying in the wind. */
+  private windsocks(ctx: CanvasRenderingContext2D, world: World, info: TerrainInfo, env: ArtEnv, view: Rect) {
+    const N = world.N;
+    const n = env.night;
+    const pole = css(mix([200, 200, 210], [90, 90, 110], n));
+    const orange = css(mix([255, 120, 40], [170, 80, 40], n));
+    const white = css(mix([245, 240, 235], [120, 116, 130], n));
+    ctx.lineCap = 'round';
+    for (const i of info.socks) {
+      const x = i % N;
+      const y = (i / N) | 0;
+      if (!world.isOwned(x, y)) continue;
+      const t = world.tiles[i];
+      if (t.road || t.buildingId >= 0 || (t.zone !== ZoneType.None && t.level > 0)) continue;
+      const wx = (x - y) * HALF_W;
+      const wy = (x + y) * HALF_H + HALF_H;
+      if (wx < view.x0 - 20 || wx > view.x1 + 20 || wy < view.y0 || wy - 20 > view.y1) continue;
+      ctx.strokeStyle = pole;
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(wx, wy);
+      ctx.lineTo(wx, wy - 15);
+      ctx.stroke();
+      // The sock: four stripes, flapping (angle and droop) with a slow gust.
+      const h = hash2(x - info.o, y - info.o, info.seed + 260);
+      const gust = 0.5 + 0.5 * Math.sin(env.time * (0.7 + h * 0.4) + h * 9);
+      const ang = -0.25 + 0.5 * Math.sin(env.time * 2.1 + h * 20) * 0.3 + (1 - gust) * 0.5;
+      const ca = Math.cos(ang);
+      const sa = Math.sin(ang);
+      const len = 9;
+      for (let k = 0; k < 4; k++) {
+        const u0 = (k / 4) * len;
+        const u1 = ((k + 1) / 4) * len;
+        const r0 = 2.2 - k * 0.35;
+        const r1 = 2.2 - (k + 1) * 0.35;
+        ctx.fillStyle = k & 1 ? white : orange;
+        ctx.beginPath();
+        ctx.moveTo(wx + u0 * ca, wy - 14 + u0 * sa - r0);
+        ctx.lineTo(wx + u1 * ca, wy - 14 + u1 * sa - r1);
+        ctx.lineTo(wx + u1 * ca, wy - 14 + u1 * sa + r1);
+        ctx.lineTo(wx + u0 * ca, wy - 14 + u0 * sa + r0);
+        ctx.closePath();
+        ctx.fill();
+      }
+    }
   }
 
   /** Runway edge lights running towards the touchdown end (§5.2), brighter at night. Additive, world space. */

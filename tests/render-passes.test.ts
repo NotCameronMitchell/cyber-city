@@ -67,19 +67,21 @@ describe.each([
     let now = 0;
     g.msClock = () => now;
     const acc = { ms: 0 };
+    // The whole 'tiles' handlers (every cache they mark: ground chunks, the overlay, the access and parcel blocks, the
+    // atlas, the skyway layout, the tall flags) and the per-frame refreshes that do the deferred work.
     const undo = timeMethods(acc, [
-      [ground.GroundCache.prototype, 'invalidate'],
+      [Renderer.prototype, 'onTiles'],
+      [story.StoryRender.prototype, 'onTiles'],
+      [Renderer.prototype, 'turfChanged'],
+      [Renderer.prototype, 'turfStep'],
       [ground.GroundCache.prototype, 'patchTerrain'],
-      [overlay.RoadAccessMap.prototype, 'invalidate'],
       [overlay.RoadAccessMap.prototype, 'get'],
-      [overlay.OverlayLayer.prototype, 'invalidate'],
-      [ParcelCache.prototype, 'touch'],
+      [ParcelCache.prototype, 'sync'],
       [ParcelCache.prototype, 'get'],
-      [atlas.Atlas.prototype, 'invalidate'],
-      [skyway.SkywayLayer.prototype, 'invalidate'],
       [skyway.SkywayLayer.prototype, 'prepare'],
       [story.StoryRender.prototype, 'prepare'],
     ]);
+    void atlas;
     try {
       cam.zoom = 0.6;
       cam.centerOnTile(g.world.N / 2, g.world.N / 2);
@@ -100,10 +102,12 @@ describe.each([
       const frames = 360; // 6 s at 60 fps
       const times: number[] = [];
       const t0 = g.world.tick;
+      const wall0 = performance.now();
       for (let k = 0; k < frames; k++) times.push(frame());
       off();
       const days = g.world.tick - t0;
-      const seconds = frames / 60;
+      // The throttles run on the wall clock: under a loaded CI box the 360 frames can take longer than 6 s.
+      const seconds = Math.max(frames / 60, (performance.now() - wall0) / 1000);
       times.sort((a, b) => a - b);
       const mean = times.reduce((a, b) => a + b, 0) / times.length;
       const p95 = times[Math.ceil(0.95 * times.length) - 1];
@@ -121,8 +125,10 @@ describe.each([
       g.overlay = 'landValue';
       g.setTool('seaport');
       resetPasses();
+      const wall1 = performance.now();
       for (let k = 0; k < 120; k++) frame();
-      for (const [k, v] of Object.entries(renderPasses)) expect([k, v <= 2 / 0.25 + 1]).toEqual([k, true]);
+      const sec2 = Math.max(2, (performance.now() - wall1) / 1000);
+      for (const [k, v] of Object.entries(renderPasses)) expect([k, v <= sec2 / 0.25 + 1]).toEqual([k, true]);
       expect(renderPasses['owned:overlay'] ?? 0).toBeGreaterThan(0);
     } finally {
       undo();
@@ -149,7 +155,8 @@ describe('R0: an annex rebuilds the region caches once; a world swap too', () =>
       resetPasses();
       g.world.districts.grants = 1;
       const s = g.world.districts.kinds.findIndex((k, i) => i === 1 && k !== 'sunk') >= 0 ? 1 : 3;
-      expect(g.annex(s).ok).toBe(true);
+      // A lease answer in case the slot is Tarmac Reach (New City seeds vary); ignored for every other kind.
+      expect(g.annex(s, 'nacre')).toMatchObject({ ok: true });
       for (let k = 0; k < 10; k++) r.render(1 / 60, (5 + k) / 60);
       expect(renderPasses['region:terrainInfo']).toBe(1);
       expect(renderPasses['region:parcels'] ?? 0).toBeLessThanOrEqual(1);

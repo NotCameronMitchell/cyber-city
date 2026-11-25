@@ -68,40 +68,105 @@ import { StoryRender } from './story';
 
 /** Tiles of margin so tall buildings whose base is off-screen still draw. */
 const OBJECT_MARGIN = 10;
+/** Row bands of the turf diff, one a frame (§3.9 R0). */
+const TURF_BANDS = 8;
 /** Fog lift after an annex (§1.4: 1.5 s). */
 const FOG_LIFT_SEC = ANNEX.fogLiftSec;
 
 
 /**
- * The render-side parcel cache (§6.1, WP-3): parcels.ts' map bits, refilled for the aligned blocks a 'tiles' event
- * touches (fillParcelMap with its rect) and whole on a world swap or an annex.
+ * The render-side parcel cache (§6.1, WP-3): parcels.ts' map bits. A 'tiles' event only marks the aligned 2×2 blocks
+ * it touches stale (§3.9 R0: a speed-3 frame on a 25-district city carries up to ~1,700 of them, almost all off
+ * screen); `sync` refills the stale blocks inside the drawn box before the sweep, plus a bounded number elsewhere, and
+ * `get` refills every stale block. Filled whole on a world swap or an annex.
  */
 export class ParcelCache {
   map = new Uint8Array(0);
   private world: World | null = null;
+  /** Stale 2×2 blocks: a flag per block and the list of flagged ones (block index = (y >> 1) × (N >> 1) + (x >> 1)). */
+  private stale = new Uint8Array(0);
+  private list = new Int32Array(0);
+  private n = 0;
   /** Blocks refilled since the last whole fill (tests: R0). */
   partial = 0;
 
-  /** The map for `world`, filled whole when the world changed. */
-  get(world: World): Uint8Array {
+  private ensure(world: World): void {
     if (world !== this.world || this.map.length !== world.area) {
       this.world = world;
       this.map = new Uint8Array(world.area);
+      const bw = world.N >> 1;
+      this.stale = new Uint8Array(bw * bw);
+      this.list = new Int32Array(bw * bw);
+      this.n = 0;
       countPass('region:parcels');
       fillParcelMap(world, this.map);
     }
+  }
+
+  /** The map for `world` with every stale block refilled (filled whole when the world changed). */
+  get(world: World): Uint8Array {
+    this.ensure(world);
+    if (this.n) this.drain(world, null, Infinity);
     return this.map;
   }
 
-  /** Tiles changed in a rect: refill the aligned blocks it touches. */
+  /**
+   * The map for `world`, exact inside the tile box `box` (the sweep's), with up to `budget` stale blocks elsewhere
+   * refilled oldest first, so the backlog drains while the camera looks elsewhere.
+   */
+  sync(world: World, box: { x0: number; y0: number; x1: number; y1: number }, budget = 384): Uint8Array {
+    this.ensure(world);
+    if (this.n) this.drain(world, box, budget);
+    return this.map;
+  }
+
+  /** Blocks still stale (tests). */
+  get pending(): number {
+    return this.n;
+  }
+
+  private drain(world: World, box: { x0: number; y0: number; x1: number; y1: number } | null, budget: number): void {
+    const bw = world.N >> 1;
+    const list = this.list;
+    const stale = this.stale;
+    let m = 0;
+    for (let k = 0; k < this.n; k++) {
+      const b = list[k];
+      const x = (b % bw) << 1;
+      const y = ((b / bw) | 0) << 1;
+      const inBox = box !== null && x + 1 >= box.x0 && x <= box.x1 && y + 1 >= box.y0 && y <= box.y1;
+      if (inBox || budget > 0) {
+        if (!inBox) budget--;
+        stale[b] = 0;
+        fillParcelMap(world, this.map, x, y, x + 1, y + 1);
+        this.partial++;
+      } else list[m++] = b;
+    }
+    this.n = m;
+  }
+
+  /** Tiles changed in a rect: mark the aligned blocks it touches stale (refilled by `sync` / `get`). */
   touch(world: World, r: { x0: number; y0: number; x1: number; y1: number }) {
     if (world !== this.world) return;
-    fillParcelMap(world, this.map, r.x0, r.y0, r.x1, r.y1);
-    this.partial++;
+    const N = world.N;
+    const bw = N >> 1;
+    const bx0 = Math.max(0, r.x0) >> 1;
+    const by0 = Math.max(0, r.y0) >> 1;
+    const bx1 = Math.min(N - 1, r.x1) >> 1;
+    const by1 = Math.min(N - 1, r.y1) >> 1;
+    const stale = this.stale;
+    for (let by = by0; by <= by1; by++)
+      for (let bx = bx0; bx <= bx1; bx++) {
+        const b = by * bw + bx;
+        if (stale[b]) continue;
+        stale[b] = 1;
+        this.list[this.n++] = b;
+      }
   }
 
   reset() {
     this.world = null;
+    this.n = 0;
   }
 }
 
@@ -211,6 +276,10 @@ export class Renderer {
   /** Turf wash levels the ground chunks were painted with (diffed on 'turf', §3.9 R0). */
   private turfSeen = new Uint8Array(0);
   private turfWorld: World | null = null;
+  /** The turf diff in progress: the next row band (-1 = none), and whether a 'turf' event came during the sweep. */
+  private turfBand = -1;
+  private turfAgain = false;
+  private turfBox = new Int32Array(0);
   /** The pins drawn this frame (CSS px; input reads the same geometry through districts.annexPins). */
   pins: AnnexPin[] = [];
   /** Diagnostics (tests, the browser checks): the band drawn, sprites the skyline sweep drew and dropped. */
@@ -243,18 +312,11 @@ export class Renderer {
         this.parcels.reset();
         const w = this.game.world;
         this.atlas.invalidate(w, slotRect(w, e.slot));
+        this.seedTurf();
         // The fog lifts off the new district (§1.4: 1.5 s).
         this.lift = { slot: e.slot, t0: this.lastTime };
       }),
-      ev.on('tiles', (r) => {
-        const w = this.game.world;
-        this.ground.invalidate(r);
-        this.overlay.invalidate();
-        this.access.invalidate(r, w);
-        this.parcels.touch(w, r);
-        this.atlas.invalidate(w, r);
-        this.skyway.invalidate(w, r);
-      }),
+      ev.on('tiles', (r) => this.onTiles(r)),
       // Pump House reclamation: water depth is patched locally (§3.9 R0).
       ev.on('terrain', (r) => this.ground.patchTerrain(this.game.world, r)),
       ev.on('world', () => this.onWorldChanged()),
@@ -268,7 +330,23 @@ export class Renderer {
       ev.on('vertical', () => this.overlay.invalidate()),
       ev.on('settings', () => this.qualityMaybeChanged()),
     );
+    this.seedTurf();
     this.resize();
+  }
+
+  /**
+   * A 'tiles' event (§3.9 R0): growth sends one per changed tile, up to ~1,700 in one speed-3 frame on a 25-district
+   * city. Each cache only marks what it must: chunk dirty rects (by index range), parcel and access blocks (refilled
+   * or checked lazily, near the view first), the atlas slot, the skyway layout only near a deck.
+   */
+  onTiles(r: { x0: number; y0: number; x1: number; y1: number }): void {
+    const w = this.game.world;
+    this.ground.invalidate(r);
+    this.overlay.invalidate();
+    this.access.invalidate(r, w);
+    this.parcels.touch(w, r);
+    this.atlas.invalidate(w, r);
+    this.skyway.invalidate(w, r);
   }
 
   /** Detach event listeners (not needed for the app's lifetime renderer, handy for tests / hot reload). */
@@ -296,24 +374,37 @@ export class Renderer {
 
   /**
    * Turf moved (§3.9 R0): diff the wash levels the chunks were painted with over the owned segments and repaint only
-   * the slots where they changed, instead of every chunk on the map.
+   * the slots where they changed, instead of every chunk on the map. The diff runs in TURF_BANDS row bands, one a frame
+   * (a 25-district city has 102,400 owned tiles; the wash lands a few frames later, which nobody sees). A 'turf' event
+   * during a sweep finishes it, then sweeps again.
    */
   private turfChanged() {
+    if (this.turfBand < 0) this.turfBand = 0;
+    else this.turfAgain = true;
+  }
+
+  /** One band of the turf diff (called each frame while a sweep runs). */
+  private turfStep() {
     const w = this.game.world;
     const turf = w.turf;
-    if (this.turfWorld !== w || this.turfSeen.length !== w.area) {
-      this.turfWorld = w;
-      this.turfSeen = new Uint8Array(w.area);
-    }
+    if (this.turfWorld !== w || this.turfSeen.length !== w.area) this.seedTurf();
     const seen = this.turfSeen;
     const N = w.N;
     const R = w.region;
-    countPass('owned:turf');
-    const box = new Int32Array(R * R * 4).fill(-1);
-    for (let s = 0; s < w.segCount; s += 2)
-      for (let i = w.segs[s]; i < w.segs[s + 1]; i++) {
-        const o = turf.owner[i];
-        const st = turf.str[i];
+    const band = this.turfBand;
+    if (band === 0) countPass('owned:turf');
+    const rows = Math.ceil(N / TURF_BANDS);
+    const lo = band * rows * N;
+    const hi = Math.min(N, (band + 1) * rows) * N;
+    const box = this.turfBox.length === R * R * 4 ? this.turfBox.fill(-1) : (this.turfBox = new Int32Array(R * R * 4).fill(-1));
+    const owner = turf.owner;
+    const str = turf.str;
+    for (let s = 0; s < w.segCount; s += 2) {
+      const a = Math.max(lo, w.segs[s]);
+      const e = Math.min(hi, w.segs[s + 1]);
+      for (let i = a; i < e; i++) {
+        const o = owner[i];
+        const st = str[i];
         const lv = o === 1 || o === 2 ? o * 4 + (st >= 75 ? 3 : st >= 50 ? 2 : st >= 25 ? 1 : 0) : 0;
         if (lv === seen[i]) continue;
         seen[i] = lv;
@@ -326,13 +417,43 @@ export class Renderer {
           box[k + 2] = x;
           box[k + 3] = y;
         } else {
-          box[k] = Math.min(box[k], x);
-          box[k + 1] = Math.min(box[k + 1], y);
-          box[k + 2] = Math.max(box[k + 2], x);
-          box[k + 3] = Math.max(box[k + 3], y);
+          if (x < box[k]) box[k] = x;
+          if (y < box[k + 1]) box[k + 1] = y;
+          if (x > box[k + 2]) box[k + 2] = x;
+          if (y > box[k + 3]) box[k + 3] = y;
         }
       }
+    }
     for (let k = 0; k < box.length; k += 4) if (box[k] >= 0) this.ground.invalidate({ x0: box[k], y0: box[k + 1], x1: box[k + 2], y1: box[k + 3] });
+    this.turfBand = band + 1;
+    if (this.turfBand >= TURF_BANDS) {
+      this.turfBand = this.turfAgain ? 0 : -1;
+      this.turfAgain = false;
+    }
+  }
+
+  /**
+   * The wash levels the ground chunks paint with now (a new world, or an annex, which repaints every chunk): the next
+   * 'turf' diff then repaints only what moved, instead of every tile with turf on the first month after a load.
+   */
+  private seedTurf() {
+    const w = this.game.world;
+    if (this.turfWorld !== w || this.turfSeen.length !== w.area) {
+      this.turfWorld = w;
+      this.turfSeen = new Uint8Array(w.area);
+    }
+    countPass('owned:turfSeed');
+    this.turfBand = -1;
+    this.turfAgain = false;
+    const seen = this.turfSeen;
+    const owner = w.turf.owner;
+    const str = w.turf.str;
+    for (let s = 0; s < w.segCount; s += 2)
+      for (let i = w.segs[s], e = w.segs[s + 1]; i < e; i++) {
+        const o = owner[i];
+        const st = str[i];
+        seen[i] = o === 1 || o === 2 ? o * 4 + (st >= 75 ? 3 : st >= 50 ? 2 : st >= 25 ? 1 : 0) : 0;
+      }
   }
 
   /**
@@ -366,7 +487,7 @@ export class Renderer {
     this.access.invalidate();
     this.parcels.reset();
     this.atlas.reset();
-    this.turfWorld = null;
+    this.seedTurf();
     this.lift = null;
     this.runsKey = -1;
     this.qualityMaybeChanged();
@@ -472,6 +593,7 @@ export class Renderer {
     const world = game.world;
     if (worldId(world) !== this.worldToken) this.onWorldChanged();
     if ((this.frameNo & 15) === 0) this.qualityMaybeChanged();
+    if (this.turfBand >= 0) this.turfStep();
     const cam = this.camera;
     // Eases and the City map snap (§3.9) advance on the frame clock.
     cam.update(dt);
@@ -598,6 +720,8 @@ export class Renderer {
         target = fc;
       }
     }
+    // Parcels: the stale blocks under the sweep refill now, a bounded number elsewhere (§3.9 R0).
+    this.parcels.sync(world, tilesObj);
     const band: SkylineBand = { on: skyline, maxD2: Infinity };
     if (skyline) this.skylineBudget(world, tilesObj, view, band, skylineCap(this.cls, quality, lowerDetail));
     this.drawObjects(target, world, tilesObj, view, env, band, lanes);
@@ -618,7 +742,7 @@ export class Renderer {
       this.story.drawAnchors(ctx, world, tilesObj, env);
       if (game.bridgeSource) drawSkybridgeGhosts(ctx, game, env, lanes);
     }
-    if (zoom >= 0.45) drawNoRoad(ctx, world, this.access.get(world), tilesObj, time, zoom, view);
+    if (zoom >= 0.45) drawNoRoad(ctx, world, this.access.get(world, tilesObj), tilesObj, time, zoom, view);
     drawUnpowered(ctx, world, tilesObj, time, zoom, view);
     ctx.globalAlpha = 1;
     ctx.save();
@@ -690,7 +814,7 @@ export class Renderer {
   private skylineBudget(world: World, b: Rect, view: Rect, band: SkylineBand, cap: number) {
     const N = world.N;
     const tiles = world.tiles;
-    const pmap = this.parcels.get(world);
+    const pmap = this.parcels.map;
     const cx = (view.x0 + view.x1) / 2;
     const cy = (view.y0 + view.y1) / 2;
     const r2max = ((view.x1 - view.x0) ** 2 + (view.y1 - view.y0) ** 2) / 4 + 1;
@@ -763,7 +887,7 @@ export class Renderer {
     const skyway = this.skyway;
     const anySky = skyway.any;
     const story = this.story;
-    const pmap = this.parcels.get(world);
+    const pmap = this.parcels.map;
     const member = this.memberParcel;
     const head: Parcel = { hx: 0, hy: 0, x: 0, y: 0, w: 1, h: 1, level: 0, tier: 0 };
     const at = { wx: 0, wy: 0, x: 0, y: 0 };

@@ -219,11 +219,7 @@ export class StoryRender {
   constructor(private readonly game: Game) {
     const ev = game.events;
     this.unsubs.push(
-      ev.on('tiles', (r) => {
-        this.segDirty = true;
-        const q = this.tallRect;
-        this.tallRect = q ? { x0: Math.min(q.x0, r.x0), y0: Math.min(q.y0, r.y0), x1: Math.max(q.x1, r.x1), y1: Math.max(q.y1, r.y1) } : { ...r };
-      }),
+      ev.on('tiles', (r) => this.onTiles(r)),
       ev.on('vertical', () => {
         this.segDirty = true;
         this.tallDirty = true;
@@ -234,6 +230,19 @@ export class StoryRender {
         this.segs.clear();
       }),
     );
+  }
+
+  /** A 'tiles' event: the skybridge pieces re-key, the tall flags refresh inside the union of the rects (§3.9 R0). */
+  onTiles(r: { x0: number; y0: number; x1: number; y1: number }): void {
+    this.segDirty = true;
+    const q = this.tallRect;
+    if (!q) this.tallRect = { ...r };
+    else {
+      if (r.x0 < q.x0) q.x0 = r.x0;
+      if (r.y0 < q.y0) q.y0 = r.y0;
+      if (r.x1 > q.x1) q.x1 = r.x1;
+      if (r.y1 > q.y1) q.y1 = r.y1;
+    }
   }
 
   destroy(): void {
