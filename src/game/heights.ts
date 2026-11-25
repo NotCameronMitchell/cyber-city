@@ -118,8 +118,9 @@ const STACK_TOP = [0, 83, 177, 232] as const;
 
 /**
  * A tile's or building's top in world px (parcel-aware): a building's `height` (the Stratablock's by complete stage),
- * a developed zone tile its body's mass (a parcel member reads its parcel's drawn level), 8 for a lot, 0 otherwise.
- * Step 0b: every zone body is a classic form (CLASSIC_TOPS); WP-4's kit bodies read kitTop through here.
+ * a developed zone tile its body's mass, 8 for a lot, 0 otherwise. A parcel draws one body at its head's classic top
+ * (render/buildings.ts), so every member reads that drawn top: the head's form and palette at the parcel's level and
+ * tier (a lane over a member is blocked by the body the player sees, §5.3).
  */
 export function heightOf(world: World, x: number, y: number): number {
   const t = world.tileAt(x, y);
@@ -133,9 +134,9 @@ export function heightOf(world: World, x: number, y: number): number {
   if (t.zone === ZoneType.None) return 0;
   if (t.level <= 0) return 8;
   const p = parcelAt(world, x, y);
-  const level = p ? p.level : t.level;
-  const tier = p ? p.tier : t.wealth;
-  return CLASSIC_TOPS[classicId(t.zone, level, t.variant, tier)] ?? 0;
+  if (!p) return CLASSIC_TOPS[classicId(t.zone, t.level, t.variant, t.wealth)] ?? 0;
+  const head = world.tiles[p.hy * world.N + p.hx];
+  return CLASSIC_TOPS[classicId(t.zone, p.level, head.variant, p.tier)] ?? 0;
 }
 
 /**
