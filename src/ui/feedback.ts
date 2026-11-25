@@ -575,7 +575,8 @@ export class FpsMeter {
     this.el = h('div', { class: 'cc-fps', hidden: true, 'aria-hidden': 'true' });
   }
 
-  update(dt: number, visible: boolean): void {
+  /** `resting`: districts resting this field cycle (MEGACITY §3.11: "· resting 16" for players who look). */
+  update(dt: number, visible: boolean, resting = 0): void {
     setHidden(this.el, !visible);
     if (!visible || !(dt > 0)) return;
     this.frames++;
@@ -583,7 +584,7 @@ export class FpsMeter {
     if (dt > this.worst) this.worst = dt;
     if (this.acc >= 0.5) {
       const fps = Math.round(this.frames / this.acc);
-      setText(this.el, `${fps} FPS · ${(this.worst * 1000).toFixed(0)}ms`);
+      setText(this.el, `${fps} FPS · ${(this.worst * 1000).toFixed(0)}ms${resting > 0 ? ` · resting ${resting}` : ''}`);
       setClass(this.el, 'is-low', fps < 40);
       this.frames = 0;
       this.acc = 0;

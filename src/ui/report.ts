@@ -157,7 +157,7 @@ export class CityReport {
       // Ports and regional links (EXPANSION §6.2, §6.3): shown once they matter.
       (s.visitors > 0 ? `<div><dt>Visitors</dt><dd>${groupInt(s.visitors)}/mo</dd></div>` : '') +
       (s.edgeLinks > 0 || w.maxPopulation >= ROAD_KINDS[RoadKind.Highway].unlockPop
-        ? `<div><dt>Regional links</dt><dd>${s.edgeLinks}/${EDGE_LINKS.cap}</dd></div>`
+        ? `<div><dt>Regional links</dt><dd>${s.edgeLinks}/${EDGE_LINKS.cap + EDGE_LINKS.perDistrict * Math.max(0, w.districts.owned.length - 1)}</dd></div>`
         : '');
     if (this.jobs.dataset.html !== html) {
       this.jobs.dataset.html = html;

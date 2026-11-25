@@ -9,13 +9,14 @@
 //   brand      neon CYBER CITY wordmark in a chamfered frame, tagline
 //   actions    Continue card (save) · New city · Settings / How to play /
 //              About (the menu's own views) · Previous city (backup slot)
-//   sheet      New city: name + reroll, Story pace, Found city
+//   sheet      New city: name + reroll, Story pace, Region (MEGACITY §7.9), Found city
 //
 // Leaving fades the title out (LEAVE_MS) while the HUD fades in, then the
 // hold ends and the game resumes at 1×. Logic without DOM: startModel.ts.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { defaultRegion } from '../../game/device';
+import { defaultRegion, deviceClass, deviceProfile, isPcLike, runMicroBench } from '../../game/device';
+import { storageGet, storageSet } from '../../game/storage';
 import './start.css';
 import { DAY_CYCLE_SECONDS } from '../../game/config';
 import { CITY_NAME_MAX, randomCityName, randomSeed, type Game } from '../../game/game';
@@ -26,11 +27,21 @@ import type { Renderer } from '../../render/renderer';
 import type { UI } from '../ui';
 import { h, prefersReducedMotion, setAttr, setClass, setHidden, setText } from '../dom';
 import { icon } from '../icons';
+import { abbr as abbrPop } from '../format';
 import { PACE } from '../menu';
 import {
   LEAVE_MS,
+  REGION_COPY,
+  REGION_FOOTNOTE,
+  REGION_KEY,
+  REGION_TAG,
   StartFlow,
   a2hsHint,
+  foundPlan,
+  initialRegion,
+  readRegion,
+  regionWarning,
+  type RegionSide,
   citySummary,
   driftOffset,
   holdGame,
@@ -91,6 +102,13 @@ export class StartScreen {
   private readonly note: HTMLElement;
   private readonly foundBtn: HTMLButtonElement;
   private pace: StoryPace = 'relaxed';
+  /** The Region control (MEGACITY §7.9): 3×3 or 5×5, the device default tagged Recommended, remembered per device. */
+  private readonly regionBtns: HTMLButtonElement[] = [];
+  private readonly regionLine: HTMLElement;
+  private readonly regionWarn: HTMLElement;
+  private region: RegionSide = 3;
+  /** The player touched the Region control this time the sheet opened (a late benchmark no longer moves it). */
+  private regionTouched = false;
 
   private buttons: StartButtons = startButtons({ hasCity: false, hasBackup: false });
   /** Continue is offered: a save, a restored snapshot, or a city played this session. */
@@ -207,6 +225,20 @@ export class StartScreen {
       paceSeg.append(b);
     }
     this.paceDesc = h('p', { class: 'cc-start-desc', 'aria-live': 'polite' });
+    const regionSeg = h('div', { class: 'cc-seg cc-start-seg cc-region-seg', role: 'radiogroup', 'aria-labelledby': 'cc-start-region-k' });
+    for (const r of [3, 5] as const) {
+      const b = h(
+        'button',
+        { class: 'cc-seg-btn cc-region-btn', type: 'button', role: 'radio', 'aria-checked': 'false', 'data-region': r },
+        h('span', { class: 'cc-region-long', text: REGION_COPY[r].label }),
+        h('span', { class: 'cc-region-short', text: REGION_COPY[r].short }),
+        h('span', { class: 'cc-region-tag', text: REGION_TAG, hidden: true }),
+      );
+      this.regionBtns.push(b);
+      regionSeg.append(b);
+    }
+    this.regionLine = h('p', { class: 'cc-start-desc', 'aria-live': 'polite' });
+    this.regionWarn = h('p', { class: 'cc-start-regionwarn', role: 'status', hidden: true });
     this.note = h('p', { class: 'cc-start-note' });
     this.foundBtn = h(
       'button',
@@ -238,6 +270,15 @@ export class StartScreen {
           ),
         ),
         h('div', { class: 'cc-start-field' }, h('span', { class: 'cc-start-k', id: 'cc-start-pace-k', text: 'Story pace' }), paceSeg, this.paceDesc),
+        h(
+          'div',
+          { class: 'cc-start-field' },
+          h('span', { class: 'cc-start-k', id: 'cc-start-region-k', text: 'Region' }),
+          regionSeg,
+          this.regionLine,
+          this.regionWarn,
+          h('p', { class: 'cc-start-foot-note', text: REGION_FOOTNOTE }),
+        ),
       ),
       // The backup note sits with Found city, so it can never scroll out of sight.
       h('div', { class: 'cc-start-sheet-foot' }, this.note, this.foundBtn),
@@ -360,6 +401,7 @@ export class StartScreen {
         date: w.dateLabel(),
         population: w.stats.population,
         story: { n: v.chapter.n, numeral: v.chapter.numeral, title: v.chapter.title, phase: v.chapter.phase, ended: !!v.ending },
+        region: w.region,
       });
       setText(this.slotKicker, s.chapter);
       setHidden(this.slotKicker, !s.chapter);
@@ -373,7 +415,9 @@ export class StartScreen {
     setHidden(this.prevBtn, !b.previous);
     if (b.previous) {
       const info = game.previousSaveInfo();
-      setText(this.prevName, info?.cityName ? ` · ${info.cityName}` : '');
+      // §7.9: "Neon Bay · 2.41M · 5×5".
+      const size = info && (info.region === 3 || info.region === 5) ? ` · ${info.region}×${info.region}` : '';
+      setText(this.prevName, info?.cityName ? ` · ${info.cityName} · ${abbrPop(info.maxPopulation)}${size}` : '');
     }
     const hint = a2hsHint(readEnv(this.returning));
     setText(this.hintText, hint ?? '');
@@ -409,6 +453,14 @@ export class StartScreen {
     const { game } = this;
     this.nameInput.value = randomCityName(randomSeed());
     this.setPace(game.settings.storyPace);
+    this.regionTouched = false;
+    this.setRegion(initialRegion(readRegion(storageGet(REGION_KEY)), defaultRegion() === 5 ? 5 : 3), false);
+    // A PC-like device measures itself once (§3.11); a result before the player touches the control moves the default.
+    if (isPcLike(deviceProfile()) && readRegion(storageGet(REGION_KEY)) === null) {
+      void runMicroBench().then(() => {
+        if (!this.regionTouched && this.flow.phase === 'setup') this.setRegion(defaultRegion() === 5 ? 5 : 3, false);
+      });
+    }
     const keeps = this.city && worthKeeping({ tick: game.world.tick, buildingCount: game.world.buildings.size, tiles: game.world.tiles });
     const note = replaceNote({ current: this.city ? game.world.cityName : null, keeps, backup: game.previousSaveInfo()?.cityName ?? null });
     setText(this.note, note);
@@ -447,6 +499,29 @@ export class StartScreen {
     setText(this.paceDesc, PACE[p]?.desc ?? '');
   }
 
+  /** Select a region (`remember`: the player chose it, so the next New City on this device starts there). */
+  private setRegion(r: RegionSide, remember: boolean): void {
+    this.region = r;
+    const def = defaultRegion() === 5 ? 5 : 3;
+    for (const b of this.regionBtns) {
+      const v = Number(b.dataset.region) as RegionSide;
+      const on = v === r;
+      setAttr(b, 'aria-checked', on ? 'true' : 'false');
+      setAttr(b, 'tabindex', on ? '0' : '-1');
+      setClass(b, 'is-on', on);
+      const tag = b.querySelector<HTMLElement>('.cc-region-tag');
+      if (tag) setHidden(tag, v !== def);
+    }
+    setText(this.regionLine, REGION_COPY[r].line);
+    const warn = regionWarning(r, deviceClass());
+    setText(this.regionWarn, warn ? `! ${warn}` : '');
+    setHidden(this.regionWarn, !warn);
+    if (remember) {
+      this.regionTouched = true;
+      storageSet(REGION_KEY, String(r));
+    }
+  }
+
   private found(): void {
     if (this.flow.phase !== 'setup') return;
     const { game } = this;
@@ -454,10 +529,11 @@ export class StartScreen {
     if (game.settings.storyPace !== this.pace) game.updateSettings({ storyPace: this.pace });
     // First launch: found the untouched map waiting under the showcase (the camera is framed on it). Otherwise a fresh map.
     const keepMap = !this.city && !worthKeeping({ tick: game.world.tick, buildingCount: game.world.buildings.size, tiles: game.world.tiles });
-    const seed = keepMap ? game.world.seed : randomSeed();
+    // Region (MEGACITY §7.9): the waiting map is kept only for the same region; otherwise its seed at the chosen size.
+    const plan = foundPlan({ keepMap, worldSeed: game.world.seed, worldRegion: game.world.region, region: this.region, fresh: randomSeed() });
     const before = { N: game.world.N, region: game.world.region };
-    // Region (MEGACITY §3.11): the device default until WP-5 adds the New City sheet's Region control.
-    game.newCity(name || undefined, seed, defaultRegion());
+    // The chosen region: the remembered one or the device default, unless the player picked another (§7.9).
+    game.newCity(name || undefined, plan.seed, plan.region);
     // No room to keep a copy of the current city (§3.10): nothing changed, the Export toast says so; stay on the sheet.
     if (game.keepCopyFailed !== null) return;
     this.nightClock();
@@ -550,6 +626,11 @@ export class StartScreen {
       this.setPace(pace.dataset.pace as StoryPace);
       return;
     }
+    const region = t.closest<HTMLElement>('[data-region]');
+    if (region && this.sheet.contains(region)) {
+      this.setRegion(region.dataset.region === '5' ? 5 : 3, true);
+      return;
+    }
     const act = t.closest<HTMLElement>('[data-act]')?.dataset.act;
     if (!act) {
       // A tap on the dimmed title behind the sheet closes it.
@@ -637,6 +718,14 @@ export class StartScreen {
       const next = this.paceBtns[(i + (e.key === 'ArrowRight' ? 1 : this.paceBtns.length - 1)) % this.paceBtns.length];
       this.setPace(next.dataset.pace as StoryPace);
       next.focus();
+      return;
+    }
+    // Region: arrows move the choice, as for Story pace (§7.9).
+    if (phase === 'setup' && target?.dataset.region && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
+      e.preventDefault();
+      const next = target.dataset.region === '5' ? 3 : 5;
+      this.setRegion(next, true);
+      this.regionBtns.find((b) => b.dataset.region === String(next))?.focus();
       return;
     }
     // aria-modal: Tab wraps inside the title (or its sheet) instead of leaving for the page.

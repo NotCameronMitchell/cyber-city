@@ -8,6 +8,9 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { defaultRegion } from '../game/device';
+import { cityLifeOn, crowdsOn, weatherOf, weatherPatch, WEATHER_SETTINGS, type WeatherSetting } from '../game/settings';
+import { storageGet } from '../game/storage';
+import { REGION_KEY, readRegion } from './start/startModel';
 import { BUILDINGS, ZONES } from '../game/config';
 import { randomCityName, randomSeed } from '../game/game';
 import { STORY_PACES, type Settings, type StoryPace } from '../game/types';
@@ -25,14 +28,47 @@ interface Toggle {
   icon: IconName;
 }
 
-const TOGGLES: Toggle[] = [
+/**
+ * On / off rows. Weather (Full / Light / Off) replaced the Rain toggle (MEGACITY §7.6); Crowds and City life read
+ * "unknown as default" through game/settings.ts, so their switches show the effective value. City life sits right
+ * after City events, each with its line, so the two are not confused.
+ */
+export const TOGGLES: Toggle[] = [
   { key: 'sound', label: 'Sound effects', desc: 'Synth clicks, builds and alerts', icon: 'sound' },
   { key: 'music', label: 'Music', desc: 'Slow generative synth score', icon: 'music' },
-  { key: 'rain', label: 'Rain', desc: 'Passing neon downpours', icon: 'rain' },
   { key: 'dayNight', label: 'Day / night cycle', desc: 'Off keeps the city at night', icon: 'moon' },
+  { key: 'crowds', label: 'Crowds', desc: 'People on the sidewalks, umbrellas in the rain', icon: 'pop' },
   { key: 'events', label: 'City events', desc: 'Grid hacks, crew surges, investments', icon: 'broadcast' },
+  { key: 'cityLife', label: 'City life', desc: 'Night markets, lantern nights, match nights: one ticker line each', icon: 'sparkle' },
   { key: 'showFps', label: 'Show FPS', desc: 'Frame-rate readout', icon: 'gauge' },
 ];
+
+/** The effective on / off value of a toggle (crowds and City life read unknown as default). */
+function toggleOn(s: Settings, key: keyof Settings): boolean {
+  if (key === 'crowds') return crowdsOn(s);
+  if (key === 'cityLife') return cityLifeOn(s);
+  return !!s[key];
+}
+
+/** How to play steps 15 and 16 (MEGACITY §7.7), verbatim. */
+export const HELP_MEGA: readonly { title: string; body: string }[] = [
+  {
+    title: '15 · Grow beyond the shore',
+    body: "Each chapter brings a land grant. Open the City map, pick a district next to your city and annex it. A city's region is 3×3 or 5×5 districts, chosen when you found it; a 3×3 city can grow to 5×5.",
+  },
+  {
+    title: '16 · Bridge the towers',
+    body: 'Pick Skybridge and tap a tall tower: its lanes light up. Tap a glowing partner to link them. Three linked towers make a Sky Lobby.',
+  },
+];
+
+const WEATHER_LABEL: Record<WeatherSetting, string> = { full: 'Full', light: 'Light', off: 'Off' };
+/** The read-only City line at the top of Settings (§7.6). */
+export function cityLine(name: string, region: number): string {
+  return region === 5 ? `${name} · 5×5 region · 25 districts` : region === 3 ? `${name} · 3×3 region · 9 districts` : name;
+}
+/** The Lower detail row's line (§7.6, a 5×5 city only). */
+export const LOWER_DETAIL_DESC = 'Far districts rest, no weather or crowds, lower top speed. For big cities on phones.';
 
 const TITLES: Record<View, string> = { main: '', settings: 'Settings', help: 'How to play', about: 'About' };
 
@@ -54,6 +90,12 @@ export class Menu {
   private readonly restoreDesc: HTMLElement;
   private readonly toggles = new Map<keyof Settings, HTMLButtonElement>();
   private readonly quality: HTMLButtonElement[] = [];
+  private readonly weather: HTMLButtonElement[] = [];
+  /** The read-only City line (§7.6) and WP-9's Grow to 25 districts slot beside it (a 3×3 city). */
+  private readonly cityText: HTMLElement;
+  /** WP-9 mounts its "Grow to 25 districts" button here (§3.11, §7.6); WP-5 leaves it empty. */
+  readonly growSlot: HTMLElement;
+  private readonly lowerRow: HTMLElement;
   private readonly paces: HTMLButtonElement[] = [];
   private readonly paceDesc: HTMLElement;
   private readonly mainMenuBtn: HTMLButtonElement;
@@ -100,13 +142,25 @@ export class Menu {
       this.restoreBtn,
       this.mainMenuBtn,
       h('div', { class: 'cc-menu-sep' }),
-      item('view:settings', 'gear', 'Settings', 'Story pace, sound, weather, quality'),
+      item('view:settings', 'gear', 'Settings', 'Story pace, weather, crowds, quality'),
       item('view:help', 'help', 'How to play', 'Roads, zones, power, the story'),
       item('view:about', 'info', 'About', 'Credits'),
     );
 
     // ── Settings ───────────────────────────────────────────────────────────
     const settings = h('div', { class: 'cc-menu-view cc-settings', hidden: true });
+    // The City line (§7.6): which size the city is, read-only; WP-9's Grow button goes in growSlot on a 3×3 city.
+    this.cityText = h('span');
+    this.growSlot = h('span', { class: 'cc-set-growslot', 'data-slot': 'grow' });
+    settings.append(
+      h(
+        'div',
+        { class: 'cc-set-row cc-set-city' },
+        h('span', { class: 'cc-menu-ico', html: icon('map') }),
+        h('span', { class: 'cc-menu-text' }, h('strong', { text: 'City' }), this.cityText),
+        this.growSlot,
+      ),
+    );
     // Story pace first: it is the setting that changes how the game feels most. Applies at once.
     const paceSeg = h('div', { class: 'cc-seg cc-seg-pace', role: 'radiogroup', 'aria-label': 'Story pace' });
     for (const p of STORY_PACES) {
@@ -122,6 +176,22 @@ export class Menu {
         h('span', { class: 'cc-menu-ico', html: icon('comms') }),
         h('span', { class: 'cc-menu-text' }, h('strong', { text: 'Story pace' }), this.paceDesc),
         paceSeg,
+      ),
+    );
+    // Weather (§7.6, §6.4): Full / Light / Off, replacing the Rain toggle.
+    const wseg = h('div', { class: 'cc-seg cc-seg-weather', role: 'radiogroup', 'aria-label': 'Weather' });
+    for (const w of WEATHER_SETTINGS) {
+      const b = h('button', { class: 'cc-seg-btn', type: 'button', role: 'radio', 'aria-checked': 'false', 'data-weather': w, text: WEATHER_LABEL[w] });
+      this.weather.push(b);
+      wseg.append(b);
+    }
+    settings.append(
+      h(
+        'div',
+        { class: 'cc-set-row is-stack' },
+        h('span', { class: 'cc-menu-ico', html: icon('rain') }),
+        h('span', { class: 'cc-menu-text' }, h('strong', { text: 'Weather' }), h('span', { text: 'Rain, storms and morning fog. Light is gentler.' })),
+        wseg,
       ),
     );
     for (const t of TOGGLES) {
@@ -152,6 +222,17 @@ export class Menu {
         seg,
       ),
     );
+    // Lower detail (§7.6, §3.11): a 5×5 city only.
+    const lowerSw = h('button', { class: 'cc-switch', type: 'button', role: 'switch', 'aria-checked': 'false', 'data-setting': 'lowerDetail', 'aria-label': 'Lower detail' }, h('i'));
+    this.toggles.set('lowerDetail', lowerSw);
+    this.lowerRow = h(
+      'div',
+      { class: 'cc-set-row', hidden: true },
+      h('span', { class: 'cc-menu-ico', html: icon('gauge') }),
+      h('span', { class: 'cc-menu-text' }, h('strong', { text: 'Lower detail' }), h('span', { text: LOWER_DETAIL_DESC })),
+      lowerSw,
+    );
+    settings.append(this.lowerRow);
 
     // ── How to play ────────────────────────────────────────────────────────
     const step = (ico: IconName, title: string, body: string, accent = '#22e5ff', extra?: string) => {
@@ -196,6 +277,9 @@ export class Menu {
         step('comms', '12 · Read messages', 'Story messages and faction cards arrive with a banner and wait for you; the game keeps running. Tap to read. The chapter goes on once its messages are read; faction cards take their default answer when the ring runs out.', '#22e5ff'),
         step('eye', '13 · Read the choices', 'Under each choice, a line says what it does: "Basalt ++" means Basalt will like it, Trace is how close anyone is to finding you. Hold a choice for the exact effects. Tap a speaker to see who they are.', '#ff2bd6'),
         step('clock', '14 · Set the story pace', 'Settings › Story pace: Relaxed (the default) leaves the most time to build between chapters; Brisk is the quickest.', '#ffb02e'),
+        // MEGACITY §7.7: two steps after the fourteen (WP-9 adds 17).
+        step('map', HELP_MEGA[0].title, HELP_MEGA[0].body, '#ffd84d'),
+        step('skybridge', HELP_MEGA[1].title, HELP_MEGA[1].body, '#8fe3ff'),
       ),
       h('p', { class: 'cc-help-foot', text: 'Watch the treasury: taxes come in monthly, upkeep goes out. Tap your credits to open the budget.' }),
     );
@@ -272,10 +356,18 @@ export class Menu {
     }
     const s = game.settings;
     for (const [key, el] of this.toggles) {
-      const on = !!s[key];
+      const on = toggleOn(s, key);
       setAttr(el, 'aria-checked', on ? 'true' : 'false');
       setClass(el, 'is-on', on);
     }
+    const weather = weatherOf(s);
+    for (const b of this.weather) {
+      const on = b.dataset.weather === weather;
+      setAttr(b, 'aria-checked', on ? 'true' : 'false');
+      setClass(b, 'is-on', on);
+    }
+    setText(this.cityText, cityLine(w.cityName, w.region));
+    setHidden(this.lowerRow, w.region !== 5);
     for (const b of this.quality) {
       const on = b.dataset.quality === s.quality;
       setAttr(b, 'aria-checked', on ? 'true' : 'false');
@@ -299,7 +391,13 @@ export class Menu {
     const setting = closestData(t, 'setting', this.el);
     if (setting) {
       const key = setting.dataset.setting as keyof Settings;
-      game.updateSettings({ [key]: !game.settings[key] } as Partial<Settings>);
+      game.updateSettings({ [key]: !toggleOn(game.settings, key) } as Partial<Settings>);
+      return;
+    }
+    const wb = closestData(t, 'weather', this.el);
+    if (wb) {
+      // `rain` is still written (weather !== 'off') for older builds (game/settings.ts weatherPatch).
+      game.updateSettings(weatherPatch(wb.dataset.weather as WeatherSetting));
       return;
     }
     const q = closestData(t, 'quality', this.el);
@@ -372,7 +470,8 @@ export class Menu {
         input: { label: 'City name', value: randomCityName(randomSeed()), maxLength: 24, reroll: () => randomCityName(randomSeed()) },
         onConfirm: (name) => {
           this.resumeSpeed = 0; // newCity() sets its own speed
-          game.newCity(name || undefined, undefined, defaultRegion()); // the device default region (MEGACITY §3.11) until WP-5's control
+          // The region last chosen on this device's New City sheet, else the device default (MEGACITY §7.9).
+          game.newCity(name || undefined, undefined, readRegion(storageGet(REGION_KEY)) ?? defaultRegion());
           modals.closeAll();
           // No room to keep a copy of this city: nothing changed and the Export toast says so (§3.10).
           if (game.keepCopyFailed === null) game.toast(`Charter signed: welcome to ${game.world.cityName}`, 'good');

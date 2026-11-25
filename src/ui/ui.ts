@@ -533,7 +533,7 @@ export class UI {
     this.pill.update(this.game);
     // A chapter title, Charter Night or the ending covers the map: a plan waiting for ✓ waits behind it.
     setClass(this.topStack, 'is-story', this.story.fullscreen);
-    this.fps.update(dt, this.game.settings.showFps);
+    this.fps.update(dt, this.game.settings.showFps, this.game.sim.resting | 0);
     this.ticker.update(performance.now());
     this.inspect.update(dt);
     this.story.update(dt);

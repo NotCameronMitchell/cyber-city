@@ -506,3 +506,52 @@ describe('tray section chips and rumoured cards (MEGACITY §7.1)', () => {
     expect(cardState(w, 'solar')).toBe('open');
   });
 });
+
+// ── Megacity settings, help and tips (MEGACITY §7.6, §7.7, Appendix A) ─────────
+import { HELP_MEGA, LOWER_DETAIL_DESC, TOGGLES, cityLine } from '../src/ui/menu';
+import { newsTip } from '../src/ui/tips';
+import { cityLifeOn, crowdsOn, weatherOf, weatherPatch } from '../src/game/settings';
+
+describe('settings rows (MEGACITY §7.6)', () => {
+  it('Weather replaces the Rain toggle; Crowds and City life are switches; City life sits after City events', () => {
+    const keys = TOGGLES.map((t) => t.key);
+    expect(keys).not.toContain('rain');
+    expect(keys).toContain('crowds');
+    expect(keys.indexOf('cityLife')).toBe(keys.indexOf('events') + 1);
+    for (const t of TOGGLES) expect(t.desc.length, t.key).toBeGreaterThan(0);
+    // The "unknown reads as default" rules the switches show.
+    expect(weatherOf({ rain: true })).toBe('full');
+    expect(weatherOf({ rain: false })).toBe('off');
+    expect(weatherPatch('light')).toEqual({ weather: 'light', rain: true });
+    expect(weatherPatch('off')).toEqual({ weather: 'off', rain: false });
+    expect(crowdsOn({ quality: 'high' })).toBe(true);
+    expect(crowdsOn({ quality: 'low' })).toBe(false);
+    expect(cityLifeOn({})).toBe(true);
+  });
+
+  it('the read-only City line names the size; the Lower detail line is the §7.6 copy', () => {
+    expect(cityLine('Neon Bay', 5)).toBe('Neon Bay · 5×5 region · 25 districts');
+    expect(cityLine('Neon Bay', 3)).toBe('Neon Bay · 3×3 region · 9 districts');
+    expect(LOWER_DETAIL_DESC).toBe('Far districts rest, no weather or crowds, lower top speed. For big cities on phones.');
+  });
+
+  it('help steps 15 and 16 are the §7.7 copy', () => {
+    expect(HELP_MEGA.map((s) => s.title)).toEqual(['15 · Grow beyond the shore', '16 · Bridge the towers']);
+    expect(HELP_MEGA[1].body).toBe('Pick Skybridge and tap a tall tower: its lanes light up. Tap a glowing partner to link them. Three linked towers make a Sky Lobby.');
+  });
+
+  it('the Megacity tips are Appendix A verbatim, ≤ 110 characters; the advisor lines raise the sim tips', () => {
+    for (const id of ['grant', 'citymap', 'annexed', 'skybridge', 'skylobby', 'frame', 'pumphouse', 'sponsor', 'legacy', 'floodplain', 'brownfield', 'ruins'] as const) {
+      expect(TIPS[id].text.length, id).toBeLessThanOrEqual(110);
+      expect(icon(TIPS[id].icon), id).not.toContain('undefined');
+    }
+    expect(TIPS.grant.text).toBe('You earned a land grant. Open the City map to choose where your city grows next.');
+    expect(toolTip('skybridge')).toBe('skybridge');
+    expect(toolTip('pumphouse')).toBe('pumphouse');
+    expect(toolTip('spire')).toBe('sponsor');
+    expect(newsTip("Advisor: Reedmere's floodplain holds homes at level 2. A Floodwatch Station lifts the limit.")).toBe('floodplain');
+    expect(newsTip('Advisor: brownfield smog over Kessel Flats. Build on it, or add parks and a Reclaim Works.')).toBe('brownfield');
+    expect(newsTip('Advisor: ruins in the Sunk come back as homes with a road and power.')).toBe('ruins');
+    expect(newsTip('Night market in Paper Lane tonight.')).toBeNull();
+  });
+});

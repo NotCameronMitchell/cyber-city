@@ -75,6 +75,8 @@ export interface CitySummaryInput {
   date: string;
   population: number;
   story: StorySlice | null;
+  /** The city's region side (MEGACITY §7.9: the card shows its size); missing or 1 → not shown. */
+  region?: number;
 }
 
 export interface CitySummary {
@@ -107,7 +109,7 @@ export function citySummary(i: CitySummaryInput): CitySummary {
   const ch = chapterLine(i.story);
   return {
     name: i.cityName.trim() || 'Unnamed city',
-    meta: `${i.date} · ${residents(i.population)}`,
+    meta: `${i.date} · ${residents(i.population)}${i.region === 3 || i.region === 5 ? ` · ${i.region}×${i.region}` : ''}`,
     chapter: ch.text,
     kind: ch.kind,
   };
@@ -354,4 +356,44 @@ export interface HintEnv {
 export function a2hsHint(e: HintEnv): string | null {
   if (!e.returning || !e.coarse || e.standalone || !e.topLevel || e.dismissed || !e.web) return null;
   return e.ios ? 'Full screen: Share › Add to Home Screen' : 'Full screen: menu › Add to Home screen';
+}
+
+// ── Region (docs/MEGACITY.md §7.9) ──────────────────────────────────────────
+
+/** The remembered New City region (this device only, never across devices). */
+export const REGION_KEY = 'cybercity.ui.region.v1';
+
+export type RegionSide = 3 | 5;
+
+/** The Region control's copy (§7.9). `short` is used below 380 px wide. */
+export const REGION_COPY: Record<RegionSide, { label: string; short: string; line: string }> = {
+  3: { label: '3×3 · 9 districts', short: '3×3 · 9', line: 'Nine districts, a city of 4–5 million. Best on phones.' },
+  5: { label: '5×5 · 25 districts', short: '5×5 · 25', line: '25 districts, a city of up to 12 million. Best on a computer.' },
+};
+export const REGION_TAG = 'Recommended';
+export const REGION_WARNING = '25 districts are a lot for a phone: it will run in lower detail (far districts rest, no weather, lower top speed).';
+export const REGION_FOOTNOTE = 'Both have the same story. A 3×3 city can grow to 5×5 later, never back.';
+
+/** A stored region choice, or null when missing or unreadable. */
+export function readRegion(raw: string | null | undefined): RegionSide | null {
+  return raw === '3' ? 3 : raw === '5' ? 5 : null;
+}
+
+/** The control's starting choice: the remembered one, else the device default. */
+export function initialRegion(remembered: RegionSide | null, def: RegionSide): RegionSide {
+  return remembered ?? def;
+}
+
+/** The amber warning under the control: only for 5×5 on a handheld device (§7.9, §3.11). */
+export function regionWarning(region: RegionSide, cls: 'pc' | 'handheld'): string | null {
+  return region === 5 && cls === 'handheld' ? REGION_WARNING : null;
+}
+
+/**
+ * What Found city builds (§7.9): on first launch the waiting map is kept only if its region matches; otherwise the
+ * same seed is generated at the chosen size (the start map looks identical, §3.1). Anything else gets a fresh seed.
+ */
+export function foundPlan(o: { keepMap: boolean; worldSeed: number; worldRegion: number; region: RegionSide; fresh: number }): { seed: number; region: RegionSide; kept: boolean } {
+  if (!o.keepMap) return { seed: o.fresh, region: o.region, kept: false };
+  return { seed: o.worldSeed, region: o.region, kept: o.worldRegion === o.region };
 }

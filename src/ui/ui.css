@@ -5053,3 +5053,18 @@ body {
   color: var(--cc-ink-2);
   white-space: normal;
 }
+
+/* Settings (MEGACITY §7.6): the City line's Grow slot (WP-9 fills it) and the Weather control. */
+.cc-set-growslot:empty {
+  display: none;
+}
+
+.cc-seg-weather .cc-seg-btn {
+  flex: 1 1 0;
+}
+
+/* The land grant hint chip (MEGACITY §8.2). */
+.cc-hc.is-grant,
+.cc-sum-misc.is-grant {
+  color: var(--cc-gold);
+}

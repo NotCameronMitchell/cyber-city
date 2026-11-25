@@ -151,6 +151,10 @@ export class Hud {
     setClass(this.cycleBtn, 'is-paused', s === 0);
     setAttr(this.cycleBtn, 'aria-label', s === 0 ? `Resume at ${shown}× speed` : `Speed ${s}× — tap to change`);
     setClass(this.el, 'is-paused', s === 0);
+    // Lower detail caps every speed (MEGACITY §3.11): the speed buttons say so.
+    const cap = this.ctx.game.speedCapNote;
+    for (let i = 1; i < this.speedBtns.length; i++) setAttr(this.speedBtns[i], 'title', cap ? `${['Pause', 'Normal speed', 'Fast', 'Fastest'][i]} · ${cap}` : `${['Pause', 'Normal speed', 'Fast', 'Fastest'][i]} (${i})`);
+    setAttr(this.cycleBtn, 'title', cap ?? '');
   }
 
   /** Throttled refresh of every figure. */
