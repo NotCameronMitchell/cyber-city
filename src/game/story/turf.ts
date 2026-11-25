@@ -263,20 +263,27 @@ function computeMaps(world: World): void {
 }
 
 /**
- * Steps of one map rebuild, each ≤ ≈ 0.6 ms in Node at 25 districts (MEGACITY O6): 8 row bands of the tile pass,
- * buildings, the near-city dilation, the Undertow's other dilations, its affinity in two row halves, the Kites'
- * dilations, their affinity in two row halves.
+ * Steps of one map rebuild, each ≤ ≈ 0.6 ms in Node at 25 districts (MEGACITY O6): 5 row bands of the tile pass, the
+ * near-city dilation, buildings, the abandoned and water dilations, the Undertow's small ones, its affinity in two row
+ * halves, the tall dilation, the Kites' other dilations, their affinity in two row halves.
  */
 const MAP_STEPS = 16;
 
 function mapStep(world: World, M: MapSet, k: number): void {
   const N = world.N;
-  if (k < 8) tileRows(world, M, ((N * k) / 8) | 0, ((N * (k + 1)) / 8) | 0);
-  else if (k === 8) buildingMaps(world, M);
-  else if (k === 9) dilateOwned(world, M.mD, 3, M.nearCity, M.tmp);
-  else if (k === 10) undertowMasks(world, M);
-  else if (k === 11) undertowAffinity(world, M, 0, N >> 1);
-  else if (k === 12) undertowAffinity(world, M, N >> 1, N);
+  const au = TURF.affinity.undertow;
+  const ak = TURF.affinity.kites;
+  // Two steps a day on a 5×5 region pair one full-map dilation with a light step: (rows, rows) (rows, rows)
+  // (rows, near-city) (buildings, abandoned) (water, ribbon + alley) (Undertow ×2) (tall, span + sky) (Kites ×2).
+  if (k < 5) tileRows(world, M, ((N * k) / 5) | 0, ((N * (k + 1)) / 5) | 0);
+  else if (k === 5) dilateOwned(world, M.mD, 3, M.nearCity, M.tmp);
+  else if (k === 6) buildingMaps(world, M);
+  else if (k === 7) dilateOwned(world, M.mA, au.abandonedRadius, M.mA, M.tmp);
+  else if (k === 8) dilateOwned(world, M.mB, au.waterRadius, M.mB, M.tmp);
+  else if (k === 9) undertowMasks(world, M);
+  else if (k === 10) undertowAffinity(world, M, 0, N >> 1);
+  else if (k === 11) undertowAffinity(world, M, N >> 1, N);
+  else if (k === 12) dilateOwned(world, M.mTall, ak.tallRadius, M.mTall, M.tmp);
   else if (k === 13) kitesMasks(world, M);
   else if (k === 14) kitesAffinity(world, M, 0, N >> 1);
   else kitesAffinity(world, M, N >> 1, N);
@@ -402,12 +409,11 @@ function slotBonus(world: World, gang: GangId): Float32Array {
 /** The Undertow's dilations besides the near-city mask (each skipped when its indicator is empty). */
 function undertowMasks(world: World, M: MapSet): void {
   const au = TURF.affinity.undertow;
-  const { mA, mB, mC, mAlley, tmp } = M;
+  const { mC, mAlley, tmp } = M;
   // Abandoned within 1 (mA), water within 3 (mB), ribbon within 1 (mC), alley within 1 (mAlley); the seaport
   // footprint within 6 (mSea) is stamped already dilated by buildingMaps. Every map is read only on owned land: the
   // dilations run over the owned box (MEGACITY O6).
-  dilateOwned(world, mA, au.abandonedRadius, mA, tmp);
-  dilateOwned(world, mB, au.waterRadius, mB, tmp);
+  // (Abandoned within 1, mA, and water within 3, mB, are steps of their own.)
   dilateOwned(world, mC, au.ribbonRadius, mC, tmp);
   // The Kites' alley term reads mAlleyK: the same dilation unless the radii differ (both 1, TURF.affinity).
   if (TURF.affinity.kites.alleyRadius !== au.alleyRadius) dilateOwned(world, mAlley, TURF.affinity.kites.alleyRadius, M.mAlleyK, tmp);
@@ -456,10 +462,9 @@ function undertowAffinity(world: World, M: MapSet, y0: number, y1: number): void
 function kitesMasks(world: World, M: MapSet): void {
   const N = world.N;
   const ak = TURF.affinity.kites;
-  const { mTall, mSpan, mSky, tmp } = M;
+  const { mSpan, mSky, tmp } = M;
   void N;
-  // mTall is vertical.tallMask's map, built by tileRows and buildingMaps.
-  dilateOwned(world, mTall, ak.tallRadius, mTall, tmp);
+  // mTall (vertical.tallMask's map, built by tileRows and buildingMaps) is dilated in its own step.
   spanMask(world, mSpan);
   dilateOwned(world, mSpan, ak.spanRadius, mSpan, tmp);
   // Glarewalls and frames are stamped already dilated by buildingMaps (a footprint grown by r is its dilation).
