@@ -51,11 +51,19 @@ export const enum K {
   Post,
   Budget,
   End,
+  /** One day's share of the banded turf maps (O6). */
+  Turf,
   Count,
 }
 
 /** A resumable unit of work: yields the kind of its next atomic step before running it. */
 export type Unit = Generator<K, void, void>;
+
+/**
+ * Zoned-list entries per step of the banded zoned sweeps (power's demand sweep, the census count, growth, the budget
+ * projection): ≈ 0.25 ms at Node speed, so a 25-district city's 45,000 zoned tiles take 5–6 steps (MEGACITY §3.3).
+ */
+export const ZONED_CHUNK = 8192;
 
 /** Run a unit to completion (whole-day and recompute paths). */
 export function drain(u: Unit): void {

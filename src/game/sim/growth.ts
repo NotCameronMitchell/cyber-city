@@ -29,6 +29,7 @@ import { DAYS_PER_MONTH, Ground, ZoneType, type Demand, type WealthTier } from '
 import * as Wealth from '../wealth';
 import type { World } from '../world';
 import type { SimGrid } from './grid';
+import { K, ZONED_CHUNK, drain, type Unit } from './slice';
 import type { FieldSystem } from './fields';
 import { zoneDraw, type PowerGrid } from './power';
 import * as Tuning from './tuning';
@@ -92,6 +93,29 @@ export class GrowthSystem {
   }
 
   run(world: World, g: SimGrid, power: PowerGrid, fields: FieldSystem, demand: Demand): void {
+    drain(this.runUnit(world, g, power, fields, demand, false));
+  }
+
+  /**
+   * Growth as a resumable unit (MEGACITY §3.3 C1): the zoned list in chunks of ZONED_CHUNK, in order, so the rolls are
+   * the whole pass's. Not restartable (it changes tiles): `stop()` returning true between chunks (a player action
+   * re-scanned the grid mid-day) ends this day's growth there.
+   */
+  *runUnit(world: World, g: SimGrid, power: PowerGrid, fields: FieldSystem, demand: Demand, banded: boolean, stop?: () => boolean): Unit {
+    this.reached.fill(0);
+    this.reachedWealth.fill(0);
+    this.changes = 0;
+    this.tierSteps = 0;
+    const zc = g.zonedCount;
+    const step = banded ? ZONED_CHUNK : zc + 1;
+    for (let k0 = 0; k0 < zc; k0 += step) {
+      yield K.Growth;
+      if (stop && stop()) return;
+      this.runRange(world, g, power, fields, demand, k0, Math.min(zc, k0 + step));
+    }
+  }
+
+  private runRange(world: World, g: SimGrid, power: PowerGrid, fields: FieldSystem, demand: Demand, k0: number, k1: number): void {
     const rng = world.rng;
     const tiles = world.tiles;
     const f = world.fields;
@@ -106,12 +130,7 @@ export class GrowthSystem {
     const ground = g.ground;
     const floodCap = g.floodCap;
     const N = world.N;
-    this.reached.fill(0);
-    this.reachedWealth.fill(0);
-    this.changes = 0;
-    this.tierSteps = 0;
-
-    for (let k = 0; k < g.zonedCount; k++) {
+    for (let k = k0; k < k1; k++) {
       if (rng.next() >= T.GROWTH_SAMPLE) continue;
       const i = g.zoned[k];
       const z = zone[i];

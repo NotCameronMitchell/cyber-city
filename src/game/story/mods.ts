@@ -188,6 +188,24 @@ export function clampMods(m: SimMods): void {
   }
 }
 
+// ── Sim hooks ───────────────────────────────────────────────────────────────
+
+/**
+ * Story upkeep the sim runs on the last REGION[R].turfBands days of each month (MEGACITY §3.3, O6: turf's banded
+ * month maps), registered by the story module that owns it, so the sim calls it without importing story logic.
+ */
+const bandHooks: ((world: World) => void)[] = [];
+
+/** Register a month-band hook (idempotent). */
+export function onMonthBands(fn: (world: World) => void): void {
+  if (!bandHooks.includes(fn)) bandHooks.push(fn);
+}
+
+/** The registered month-band hooks (the sim's unit C2 calls each on a band day). */
+export function monthBandHooks(): readonly ((world: World) => void)[] {
+  return bandHooks;
+}
+
 // ── Layers ──────────────────────────────────────────────────────────────────
 
 /** Compose counter per composed layer set (MEGACITY §3.3, O3: the sim's coverage cache keys on it). */
@@ -235,51 +253,56 @@ export function makeLayerParts(area: number): LayerParts {
  * tripMul / abandonMul / taxMul multiply. Results are kept sane: additive layers
  * ±1, transitAdd and parkAdd 0..1, multipliers ≥ 0. The district part (MEGACITY
  * §3.3) merges like the story parts; at identity it changes nothing. Call after
- * any owner rewrites its part (~0.1 ms).
+ * any owner rewrites its part. With the world's owned segments (MEGACITY §3.3,
+ * O1) only owned tiles are merged: a locked tile is off the map for the sim, and
+ * an annex re-composes. One loop per output layer (streams better than one fused
+ * loop: ≈ 3.3 against 4.2 ms for 102,400 tiles in Node).
  */
-export function composeLayers(world: Pick<World, 'layers' | 'layerParts'>): void {
+export function composeLayers(world: Pick<World, 'layers' | 'layerParts'> & Partial<Pick<World, 'segs' | 'segCount'>>): void {
   const out = world.layers;
   layerVersions.set(out, layersVersion(out) + 1);
   const { turf: a, vertical: b, local: c, district: d } = world.layerParts;
   const n = out.crimeAdd.length;
-  const oc = out.crimeAdd;
-  const ol = out.lvAdd;
-  const ot = out.transitAdd;
-  const otr = out.tripMul;
-  const oab = out.abandonMul;
-  const otx = out.taxMul;
-  const op = out.parkAdd;
-  const opo = out.pollutionAdd;
-  const ac = a.crimeAdd, bc = b.crimeAdd, cc = c.crimeAdd, dc = d.crimeAdd;
-  const al = a.lvAdd, bl = b.lvAdd, cl = c.lvAdd, dl = d.lvAdd;
-  const at = a.transitAdd, bt = b.transitAdd, ct = c.transitAdd, dt = d.transitAdd;
-  const atr = a.tripMul, btr = b.tripMul, ctr = c.tripMul, dtr = d.tripMul;
-  const aab = a.abandonMul, bab = b.abandonMul, cab = c.abandonMul, dab = d.abandonMul;
-  const atx = a.taxMul, btx = b.taxMul, ctx = c.taxMul, dtx = d.taxMul;
-  const ap = a.parkAdd, bp = b.parkAdd, cp = c.parkAdd, dp = d.parkAdd;
-  const apo = a.pollutionAdd, bpo = b.pollutionAdd, cpo = c.pollutionAdd, dpo = d.pollutionAdd;
-  for (let i = 0; i < n; i++) {
-    const cr = ac[i] + bc[i] + cc[i] + dc[i];
-    oc[i] = cr < -1 ? -1 : cr > 1 ? 1 : cr;
-    const lv = al[i] + bl[i] + cl[i] + dl[i];
-    ol[i] = lv < -1 ? -1 : lv > 1 ? 1 : lv;
-    let t = at[i];
-    if (bt[i] > t) t = bt[i];
-    if (ct[i] > t) t = ct[i];
-    if (dt[i] > t) t = dt[i];
-    ot[i] = t < 0 ? 0 : t > 1 ? 1 : t;
-    const tr = atr[i] * btr[i] * ctr[i] * dtr[i];
-    otr[i] = tr > 0 ? tr : 0;
-    const ab = aab[i] * bab[i] * cab[i] * dab[i];
-    oab[i] = ab > 0 ? ab : 0;
-    const tx = atx[i] * btx[i] * ctx[i] * dtx[i];
-    otx[i] = tx > 0 ? tx : 0;
-    let p = ap[i];
-    if (bp[i] > p) p = bp[i];
-    if (cp[i] > p) p = cp[i];
-    if (dp[i] > p) p = dp[i];
-    op[i] = p < 0 ? 0 : p > 1 ? 1 : p;
-    const po = apo[i] + bpo[i] + cpo[i] + dpo[i];
-    opo[i] = po < -1 ? -1 : po > 1 ? 1 : po;
+  const segs = world.segs;
+  const sc = world.segCount ?? 0;
+  const one = !segs || sc <= 0;
+  for (let k = 0; k < (one ? 2 : sc); k += 2) {
+    const lo = one ? 0 : segs![k];
+    const hi = one ? n : segs![k + 1];
+    add4(out.crimeAdd, a.crimeAdd, b.crimeAdd, c.crimeAdd, d.crimeAdd, lo, hi);
+    add4(out.lvAdd, a.lvAdd, b.lvAdd, c.lvAdd, d.lvAdd, lo, hi);
+    max4(out.transitAdd, a.transitAdd, b.transitAdd, c.transitAdd, d.transitAdd, lo, hi);
+    mul4(out.tripMul, a.tripMul, b.tripMul, c.tripMul, d.tripMul, lo, hi);
+    mul4(out.abandonMul, a.abandonMul, b.abandonMul, c.abandonMul, d.abandonMul, lo, hi);
+    mul4(out.taxMul, a.taxMul, b.taxMul, c.taxMul, d.taxMul, lo, hi);
+    max4(out.parkAdd, a.parkAdd, b.parkAdd, c.parkAdd, d.parkAdd, lo, hi);
+    add4(out.pollutionAdd, a.pollutionAdd, b.pollutionAdd, c.pollutionAdd, d.pollutionAdd, lo, hi);
+  }
+}
+
+/** o = clamp(a + b + c + d, −1, 1) on [lo, hi). */
+function add4(o: Float32Array, a: Float32Array, b: Float32Array, c: Float32Array, d: Float32Array, lo: number, hi: number): void {
+  for (let i = lo; i < hi; i++) {
+    const v = a[i] + b[i] + c[i] + d[i];
+    o[i] = v < -1 ? -1 : v > 1 ? 1 : v;
+  }
+}
+
+/** o = clamp(max(a, b, c, d), 0, 1) on [lo, hi). */
+function max4(o: Float32Array, a: Float32Array, b: Float32Array, c: Float32Array, d: Float32Array, lo: number, hi: number): void {
+  for (let i = lo; i < hi; i++) {
+    let t = a[i];
+    if (b[i] > t) t = b[i];
+    if (c[i] > t) t = c[i];
+    if (d[i] > t) t = d[i];
+    o[i] = t < 0 ? 0 : t > 1 ? 1 : t;
+  }
+}
+
+/** o = max(a · b · c · d, 0) on [lo, hi). */
+function mul4(o: Float32Array, a: Float32Array, b: Float32Array, c: Float32Array, d: Float32Array, lo: number, hi: number): void {
+  for (let i = lo; i < hi; i++) {
+    const v = a[i] * b[i] * c[i] * d[i];
+    o[i] = v > 0 ? v : 0;
   }
 }

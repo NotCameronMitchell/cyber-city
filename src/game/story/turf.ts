@@ -15,16 +15,16 @@
 
 import { artOffset } from '../districts/slots';
 import { completeStage } from '../buildingStats';
-import { CROWNS, GANG_IDS, GANG_NEWS_NAME, RIBBON, STANDING, TURF, TURF_OWNER } from '../config';
+import { CROWNS, GANG_IDS, GANG_NEWS_NAME, REGION, RIBBON, STANDING, TURF, TURF_OWNER } from '../config';
 import { capitalizeFirst, districtName } from '../news';
 import { Rng } from '../rng';
 import { scratchFor } from '../frame';
 import { DAYS_PER_MONTH, RoadKind, Terrain, ZoneType, type BuildingType } from '../types';
 import type { World } from '../world';
 import { standing, tier } from './factions';
-import { composeLayers, resetLayers } from './mods';
+import { composeLayers, onMonthBands, resetLayers } from './mods';
 import type { EndingRules, GangId, ModPatch } from './types';
-import { spanMask, tallMask } from './vertical';
+import { isTallBuilding, isTallZoneTile, spanMask } from './vertical';
 
 const WATER = Terrain.Water;
 const RES = ZoneType.Residential;
@@ -36,7 +36,42 @@ const K = 2; // TURF_OWNER.kites
 const KEEPS_TURF: ReadonlySet<BuildingType> = new Set<BuildingType>(['tidemarket', 'roost']);
 
 // ── Scratch (module-level, reused; one set per frame size, MEGACITY §3.1) ───
-const scratch = scratchFor((area) => ({
+
+/**
+ * One set of turf maps (MEGACITY §3.3, O6): the per-tile inputs of one pass over the owned tiles (indicators and the
+ * typed tile mirror the affinity terms read) and the maps the monthly rules read. The shared scratch holds one for
+ * the whole-map path; each world banding its month (`bandStep`) has its own.
+ */
+interface MapSet {
+  /** Owned land (no water); `elig` is this minus building footprints. */
+  eligBase: Uint8Array;
+  elig: Uint8Array;
+  nearCity: Uint8Array;
+  affU: Float32Array;
+  affK: Float32Array;
+  protU: Uint8Array;
+  protK: Uint8Array;
+  pactBlock: Uint8Array;
+  // Indicators (dilated in place by the affinity steps).
+  mA: Uint8Array;
+  mB: Uint8Array;
+  mC: Uint8Array;
+  mD: Uint8Array;
+  mAlley: Uint8Array;
+  mAlleyK: Uint8Array;
+  mSea: Uint8Array;
+  mSky: Uint8Array;
+  mGlare: Uint8Array;
+  mTall: Uint8Array;
+  mSpan: Uint8Array;
+  mFrame: Uint8Array;
+  /** Tile mirror: zone, and flags (1 Fab, 2 dense Market / Hab, 4 Highway or Ramp road). */
+  tz: Uint8Array;
+  tf: Uint8Array;
+  tmp: Uint8Array;
+}
+const makeMapSet = (area: number): MapSet => ({
+  eligBase: new Uint8Array(area),
   elig: new Uint8Array(area),
   nearCity: new Uint8Array(area),
   affU: new Float32Array(area),
@@ -44,16 +79,25 @@ const scratch = scratchFor((area) => ({
   protU: new Uint8Array(area),
   protK: new Uint8Array(area),
   pactBlock: new Uint8Array(area),
-  crack: new Uint8Array(area),
   mA: new Uint8Array(area),
   mB: new Uint8Array(area),
   mC: new Uint8Array(area),
   mD: new Uint8Array(area),
-  /** Expansion indicators (EXPANSION §8.4): back alley, seaport footprint, skyway deck. */
   mAlley: new Uint8Array(area),
+  mAlleyK: new Uint8Array(area),
   mSea: new Uint8Array(area),
   mSky: new Uint8Array(area),
+  mGlare: new Uint8Array(area),
+  mTall: new Uint8Array(area),
+  mSpan: new Uint8Array(area),
+  mFrame: new Uint8Array(area),
+  tz: new Uint8Array(area),
+  tf: new Uint8Array(area),
   tmp: new Uint8Array(area),
+});
+const scratch = scratchFor((area) => ({
+  ...makeMapSet(area),
+  crack: new Uint8Array(area),
   list: new Int32Array(area),
 }));
 const count = [0, 0, 0];
@@ -106,36 +150,86 @@ export function breakPact(world: World, gang: GangId): boolean {
 
 // ── Maps ────────────────────────────────────────────────────────────────────
 
-/** Binary Chebyshev dilation (separable sliding window, O(area)) on an N×N map. `src` may equal `out`; `tmp` may not. */
-function dilate(src: Uint8Array, r: number, out: Uint8Array, tmp: Uint8Array, N: number): Uint8Array {
+/**
+ * Binary Chebyshev dilation (separable sliding window) on an N×N map. `src` may equal `out`; `tmp` may not. With `box`
+ * (inclusive; MEGACITY O6) only that rectangle is read and written, every tile outside it counting as 0: exact on the
+ * box when `src` is 0 outside it (turf indicators are 0 off the owned land), and `out` keeps its old values outside.
+ * The vertical half slides a row window (column counts), so both halves stream rows.
+ */
+function dilate(src: Uint8Array, r: number, out: Uint8Array, tmp: Uint8Array, N: number, box?: TileBox): Uint8Array {
+  const x0 = box ? box.x0 : 0;
+  const x1 = box ? box.x1 : N - 1;
+  const y0 = box ? box.y0 : 0;
+  const y1 = box ? box.y1 : N - 1;
+  if (x1 < x0 || y1 < y0) return out;
   if (r <= 0) {
-    if (out !== src) out.set(src);
+    if (out !== src) for (let y = y0; y <= y1; y++) out.set(src.subarray(y * N + x0, y * N + x1 + 1), y * N + x0);
     return out;
   }
-  for (let y = 0; y < N; y++) {
+  for (let y = y0; y <= y1; y++) {
     const row = y * N;
     let c = 0;
-    for (let x = 0; x <= r && x < N; x++) c += src[row + x];
-    for (let x = 0; x < N; x++) {
+    for (let x = x0; x <= x0 + r && x <= x1; x++) c += src[row + x];
+    for (let x = x0; x <= x1; x++) {
       tmp[row + x] = c > 0 ? 1 : 0;
       const xo = x - r;
-      if (xo >= 0) c -= src[row + xo];
+      if (xo >= x0) c -= src[row + xo];
       const xi = x + r + 1;
-      if (xi < N) c += src[row + xi];
+      if (xi <= x1) c += src[row + xi];
     }
   }
-  for (let x = 0; x < N; x++) {
-    let c = 0;
-    for (let y = 0; y <= r && y < N; y++) c += tmp[y * N + x];
-    for (let y = 0; y < N; y++) {
-      out[y * N + x] = c > 0 ? 1 : 0;
-      const yo = y - r;
-      if (yo >= 0) c -= tmp[yo * N + x];
-      const yi = y + r + 1;
-      if (yi < N) c += tmp[yi * N + x];
+  const w = x1 - x0 + 1;
+  const cols = colScratch(w);
+  cols.fill(0);
+  for (let y = y0; y <= y0 + r && y <= y1; y++) {
+    const row = y * N + x0;
+    for (let x = 0; x < w; x++) cols[x] += tmp[row + x];
+  }
+  for (let y = y0; y <= y1; y++) {
+    const row = y * N + x0;
+    for (let x = 0; x < w; x++) out[row + x] = cols[x] > 0 ? 1 : 0;
+    const yo = y - r;
+    if (yo >= y0) {
+      const ro = yo * N + x0;
+      for (let x = 0; x < w; x++) cols[x] -= tmp[ro + x];
+    }
+    const yi = y + r + 1;
+    if (yi <= y1) {
+      const ri = yi * N + x0;
+      for (let x = 0; x < w; x++) cols[x] += tmp[ri + x];
     }
   }
   return out;
+}
+let colBuf = new Int32Array(0);
+function colScratch(n: number): Int32Array {
+  if (colBuf.length < n) colBuf = new Int32Array(n);
+  return colBuf.subarray(0, n);
+}
+interface TileBox {
+  x0: number;
+  y0: number;
+  x1: number;
+  y1: number;
+}
+/** Is any tile of `a` set inside the box? (A dilation of nothing is nothing: skip the pass, MEGACITY O6.) */
+function anyIn(a: Uint8Array, N: number, box: TileBox): boolean {
+  for (let y = box.y0; y <= box.y1; y++) {
+    const row = y * N;
+    for (let i = row + box.x0, e = row + box.x1; i <= e; i++) if (a[i]) return true;
+  }
+  return false;
+}
+/** dilate() over the owned box, or clear the box when the source holds nothing there. */
+function dilateOwned(world: World, src: Uint8Array, r: number, out: Uint8Array, tmp: Uint8Array): void {
+  const N = world.N;
+  const box = world.ownedBox;
+  if (box.x1 < box.x0) return;
+  if (!anyIn(src, N, box)) {
+    for (let y = box.y0; y <= box.y1; y++) out.fill(0, y * N + box.x0, y * N + box.x1 + 1);
+    return;
+  }
+  dilate(src, r, out, tmp, N, box);
 }
 
 function fillRect(a: Uint8Array, x0: number, y0: number, x1: number, y1: number, N: number): void {
@@ -159,43 +253,109 @@ function eligibleAt(world: World, i: number): boolean {
 }
 
 /**
- * Rebuild eligibility, the near-city mask, both affinity maps (§3.3), the
- * protection masks and the pact spread block. ~0.3 ms on a full map.
+ * Rebuild eligibility, the near-city mask, both affinity maps (§3.3), the protection masks and the pact spread block
+ * into the shared scratch: every step of MAP_STEPS in order (MEGACITY O6; the banded month runs the same steps over
+ * several days into its own set).
  */
 function computeMaps(world: World): void {
+  const M = scratch(world.area);
+  for (let k = 0; k < MAP_STEPS; k++) mapStep(world, M, k);
+}
+
+/**
+ * Steps of one map rebuild, each ≤ ≈ 0.6 ms in Node at 25 districts (MEGACITY O6): 4 row quarters of the tile pass,
+ * buildings, the near-city dilation, the Undertow's other dilations, its affinity in two row halves, the Kites'
+ * dilations, their affinity in two row halves.
+ */
+const MAP_STEPS = 12;
+
+function mapStep(world: World, M: MapSet, k: number): void {
   const N = world.N;
-  const area = world.area;
-  const { elig, nearCity, affU, affK, protU, protK, pactBlock, mA, mB, mC, mD, mAlley, mSea, mSky, tmp } = scratch(world.area);
+  if (k < 4) tileRows(world, M, ((N * k) / 4) | 0, ((N * (k + 1)) / 4) | 0);
+  else if (k === 4) buildingMaps(world, M);
+  else if (k === 5) dilateOwned(world, M.mD, 3, M.nearCity, M.tmp);
+  else if (k === 6) undertowMasks(world, M);
+  else if (k === 7) undertowAffinity(world, M, 0, N >> 1);
+  else if (k === 8) undertowAffinity(world, M, N >> 1, N);
+  else if (k === 9) kitesMasks(world, M);
+  else if (k === 10) kitesAffinity(world, M, 0, N >> 1);
+  else kitesAffinity(world, M, N >> 1, N);
+}
+
+/**
+ * The one pass over Tile objects, rows y0..y1 − 1: owned land, the indicators and the tile mirror. A locked tile is
+ * off the map (MEGACITY §3.4, O1): every indicator 0, never eligible, and its water is not "water near" an owned tile.
+ */
+function tileRows(world: World, M: MapSet, y0: number, y1: number): void {
+  const N = world.N;
+  const R = world.region;
   const tiles = world.tiles;
-  const f = world.fields;
   const rail = world.rail;
   const sky = world.sky;
-  const A = TURF.affinity;
-  const au = A.undertow;
-  const ak = A.kites;
-  // Indicators. mA abandoned, mB water, mC ribbon, mD city presence; mAlley back alley,
-  // mSky skyway deck, mSea seaport footprint (expansion, §8.4).
-  // A locked tile is off the map (MEGACITY §3.4, O1): not eligible, and its water is not "water near" an owned tile.
-  mSea.fill(0);
-  const segs = world.segs;
-  for (let i = 0; i < area; i++) elig[i] = 0;
-  for (let s = 0; s < world.segCount; s += 2) elig.fill(1, segs[s], segs[s + 1]);
-  for (let i = 0; i < area; i++) {
-    const t = tiles[i];
-    const water = t.terrain === WATER && elig[i] === 1;
-    if (t.terrain === WATER) elig[i] = 0;
-    mA[i] = t.abandoned ? 1 : 0;
-    mB[i] = water ? 1 : 0;
-    mC[i] = rail[i] ? 1 : 0;
-    mD[i] = t.road || (t.zone !== 0 && t.level > 0) || t.buildingId >= 0 ? 1 : 0;
-    mAlley[i] = t.road && t.roadKind === RoadKind.Alley ? 1 : 0;
-    mSky[i] = sky[i] !== 0 ? 1 : 0;
+  const own = world.slotOwned;
+  const { eligBase, mA, mB, mC, mD, mAlley, mSky, mTall, tz, tf } = M;
+  const HW = RoadKind.Highway;
+  const RAMP = RoadKind.Ramp;
+  const ALLEY = RoadKind.Alley;
+  for (let y = y0; y < y1; y++) {
+    const srow = (y >> 6) * R;
+    for (let sx = 0; sx * 64 < N; sx++) {
+      const a = y * N + sx * 64;
+      const b = a + 64;
+      if (!own[srow + sx]) {
+        eligBase.fill(0, a, b);
+        mA.fill(0, a, b);
+        mB.fill(0, a, b);
+        mC.fill(0, a, b);
+        mD.fill(0, a, b);
+        mAlley.fill(0, a, b);
+        mSky.fill(0, a, b);
+        mTall.fill(0, a, b);
+        tz.fill(0, a, b);
+        tf.fill(0, a, b);
+        continue;
+      }
+      for (let i = a; i < b; i++) {
+        const t = tiles[i];
+        const water = t.terrain === WATER;
+        eligBase[i] = water ? 0 : 1;
+        mB[i] = water ? 1 : 0;
+        const ab = t.abandoned;
+        mA[i] = ab ? 1 : 0;
+        mC[i] = rail[i] ? 1 : 0;
+        const z = t.zone;
+        const road = t.road;
+        mD[i] = road || (z !== 0 && t.level > 0) || t.buildingId >= 0 ? 1 : 0;
+        const rk = t.roadKind;
+        mAlley[i] = road && rk === ALLEY ? 1 : 0;
+        mSky[i] = sky[i] !== 0 ? 1 : 0;
+        // vertical.tallMask's tile half (tall zone tiles off buildings); buildingMaps adds the tall buildings.
+        mTall[i] = t.buildingId < 0 && isTallZoneTile(t) ? 1 : 0;
+        tz[i] = z;
+        let f = z === IND ? 1 : 0;
+        if (!ab && ((z === COM && t.level >= 2) || (z === RES && t.level === 3))) f |= 2;
+        if (road && (rk === HW || rk === RAMP)) f |= 4;
+        tf[i] = f;
+      }
+    }
   }
-  dilate(mD, 3, nearCity, tmp, N);
+}
+
+/** Building footprints (eligibility), the protection masks, the pact spread block and the building indicators. */
+function buildingMaps(world: World, M: MapSet): void {
+  const N = world.N;
+  const { elig, eligBase, protU, protK, pactBlock, mSea, mGlare, mFrame } = M;
+  elig.set(eligBase);
   protU.fill(0);
   protK.fill(0);
   pactBlock.fill(0);
+  mSea.fill(0);
+  mGlare.fill(0);
+  mFrame.fill(0);
   const P = TURF.protect;
+  const rSea = TURF.affinity.undertow.seaportRadius;
+  const rGlare = TURF.affinity.kites.glarewallRadius;
+  const rFrame = TURF.affinity.kites.frameRadius;
   for (const b of world.buildings.values()) {
     const x1 = b.x + b.size - 1;
     const y1 = b.y + b.size - 1;
@@ -212,80 +372,242 @@ function computeMaps(world: World): void {
     } else if (b.type === 'spire' || b.type === 'arcology') {
       const r = TURF.pact.noSpreadRadius;
       fillRect(pactBlock, b.x - r, b.y - r, x1 + r, y1 + r, N);
-    } else if (b.type === 'seaport') fillRect(mSea, b.x, b.y, x1, y1, N);
+    } else if (b.type === 'seaport') fillRect(mSea, b.x - rSea, b.y - rSea, x1 + rSea, y1 + rSea, N);
+    // A footprint grown by r is its Chebyshev dilation: stamped dilated, no map pass (MEGACITY O6).
+    if (isTallBuilding(b)) fillRect(M.mTall, b.x, b.y, x1, y1, N);
+    if (b.type === 'glarewall') fillRect(mGlare, b.x - rGlare, b.y - rGlare, x1 + rGlare, y1 + rGlare, N);
+    else if (b.type === 'frame') fillRect(mFrame, b.x - rFrame, b.y - rFrame, x1 + rFrame, y1 + rFrame, N);
   }
   const lvBlock = TURF.pact.noSpreadLandValue;
-  for (let i = 0; i < area; i++) if (f.landValue[i] >= lvBlock) pactBlock[i] = 1;
+  const lv = world.fields.landValue;
+  forOwned(world, (a, e) => {
+    for (let i = a; i < e; i++) if (lv[i] >= lvBlock) pactBlock[i] = 1;
+  });
+}
 
-  // Undertow: abandoned within 1 (mA), water within 3 (mB), ribbon within 1 (mC),
-  // alley within 1 (mAlley) and a seaport footprint within 6 (mSea).
-  dilate(mA, au.abandonedRadius, mA, tmp, N);
-  dilate(mB, au.waterRadius, mB, tmp, N);
-  dilate(mC, au.ribbonRadius, mC, tmp, N);
-  dilate(mSea, au.seaportRadius, mSea, tmp, N);
-  // The alley indicator is dilated once at the Undertow radius; the Kites' radius is the same
-  // (both 1, TURF.affinity), and if they ever differ the Kites term re-dilates below.
-  dilate(mAlley, au.alleyRadius, mAlley, tmp, N);
+/** Per-slot affinity bonus of a district kind (MEGACITY §8.4: the Bazaar for both gangs, the Sunk for the Undertow). */
+function slotBonus(world: World, gang: GangId): Float32Array {
+  const R = world.region;
+  const out = new Float32Array(R * R);
+  const A = TURF.affinity[gang] as { bazaar?: number; sunk?: number };
+  for (let s = 0; s < R * R; s++) {
+    if (!world.slotOwned[s]) continue;
+    const kind = world.districts.kinds[s];
+    if (kind === 'bazaar' && A.bazaar) out[s] = A.bazaar;
+    else if (kind === 'sunk' && A.sunk) out[s] = A.sunk;
+  }
+  return out;
+}
+
+/** The Undertow's dilations besides the near-city mask (each skipped when its indicator is empty). */
+function undertowMasks(world: World, M: MapSet): void {
+  const au = TURF.affinity.undertow;
+  const { mA, mB, mC, mAlley, tmp } = M;
+  // Abandoned within 1 (mA), water within 3 (mB), ribbon within 1 (mC), alley within 1 (mAlley); the seaport
+  // footprint within 6 (mSea) is stamped already dilated by buildingMaps. Every map is read only on owned land: the
+  // dilations run over the owned box (MEGACITY O6).
+  dilateOwned(world, mA, au.abandonedRadius, mA, tmp);
+  dilateOwned(world, mB, au.waterRadius, mB, tmp);
+  dilateOwned(world, mC, au.ribbonRadius, mC, tmp);
+  // The Kites' alley term reads mAlleyK: the same dilation unless the radii differ (both 1, TURF.affinity).
+  if (TURF.affinity.kites.alleyRadius !== au.alleyRadius) dilateOwned(world, mAlley, TURF.affinity.kites.alleyRadius, M.mAlleyK, tmp);
+  dilateOwned(world, mAlley, au.alleyRadius, mAlley, tmp);
+  if (TURF.affinity.kites.alleyRadius === au.alleyRadius) M.mAlleyK.set(mAlley);
+}
+
+/** The Undertow's affinity map on owned tiles of rows y0..y1 − 1 (elsewhere untouched). */
+function undertowAffinity(world: World, M: MapSet, y0: number, y1: number): void {
+  const N = world.N;
+  const au = TURF.affinity.undertow;
+  const { mA, mB, mC, mSea, mAlley, affU, tz } = M;
+  const f = world.fields;
   const crime = f.crime;
   const pol = f.pollution;
   const lv = f.landValue;
   const sec = f.security;
-  for (let i = 0; i < area; i++) {
-    const t = tiles[i];
-    let v =
-      au.base +
-      au.crime * crime[i] +
-      au.pollution * pol[i] +
-      au.lowLandValue * (1 - lv[i]) +
-      au.abandonedNear * mA[i] +
-      au.waterNear * mB[i] +
-      (t.zone === IND ? au.fab : 0) +
-      au.security * sec[i] +
-      au.ribbonNear * mC[i] +
-      au.alleyNear * mAlley[i] +
-      au.seaportNear * mSea[i];
-    affU[i] = v < 0 ? 0 : v > 1 ? 1 : v;
-  }
-
-  // Kites: tall anchor within 3 or active span within 1 (mA), Glarewall within 4 (mB).
-  tallMask(world, mA);
-  dilate(mA, ak.tallRadius, mA, tmp, N);
-  spanMask(world, mC);
-  dilate(mC, ak.spanRadius, mC, tmp, N);
-  mB.fill(0);
-  for (const b of world.buildings.values()) {
-    if (b.type === 'glarewall') fillRect(mB, b.x, b.y, b.x + b.size - 1, b.y + b.size - 1, N);
-  }
-  dilate(mB, ak.glarewallRadius, mB, tmp, N);
-  // Alley within 1 (mAlley; re-dilated only if the radii differ) and a skyway deck within 1 (mSky).
-  if (ak.alleyRadius !== au.alleyRadius) {
-    for (let i = 0; i < area; i++) {
-      const t = tiles[i];
-      mAlley[i] = t.road && t.roadKind === RoadKind.Alley ? 1 : 0;
+  const bonus = slotBonus(world, 'undertow');
+  const R = world.region;
+  // A segment can span several owned slots in its row: the district bonus is read per 64-tile chunk.
+  forOwnedRows(world, y0, y1, (a0, e0) => {
+    for (let a = a0; a < e0; a += 64) {
+    const e = a + 64;
+    const extra = bonus[(((a / N) | 0) >> 6) * R + ((a % N) >> 6)];
+    for (let i = a; i < e; i++) {
+      const v =
+        au.base +
+        au.crime * crime[i] +
+        au.pollution * pol[i] +
+        au.lowLandValue * (1 - lv[i]) +
+        au.abandonedNear * mA[i] +
+        au.waterNear * mB[i] +
+        (tz[i] === IND ? au.fab : 0) +
+        au.security * sec[i] +
+        au.ribbonNear * mC[i] +
+        au.alleyNear * mAlley[i] +
+        au.seaportNear * mSea[i] +
+        extra;
+      affU[i] = v < 0 ? 0 : v > 1 ? 1 : v;
     }
-    dilate(mAlley, ak.alleyRadius, mAlley, tmp, N);
-  }
-  dilate(mSky, ak.skywayRadius, mSky, tmp, N);
+    }
+  });
+}
+
+/** The Kites' masks and dilations: tall anchor within 3 or active span within 1, Glarewall within 4, frames within 2. */
+function kitesMasks(world: World, M: MapSet): void {
+  const N = world.N;
+  const ak = TURF.affinity.kites;
+  const { mTall, mSpan, mSky, tmp } = M;
+  void N;
+  // mTall is vertical.tallMask's map, built by tileRows and buildingMaps.
+  dilateOwned(world, mTall, ak.tallRadius, mTall, tmp);
+  spanMask(world, mSpan);
+  dilateOwned(world, mSpan, ak.spanRadius, mSpan, tmp);
+  // Glarewalls and frames are stamped already dilated by buildingMaps (a footprint grown by r is its dilation).
+  dilateOwned(world, mSky, ak.skywayRadius, mSky, tmp);
+}
+
+/** The Kites' affinity map on owned tiles of rows y0..y1 − 1 (elsewhere untouched). */
+function kitesAffinity(world: World, M: MapSet, y0: number, y1: number): void {
+  const N = world.N;
+  const ak = TURF.affinity.kites;
+  const { mTall, mSpan, mGlare, mAlleyK, mSky, mFrame, tf, affK } = M;
+  const f = world.fields;
+  const crime = f.crime;
   const traffic = f.traffic;
   const net = f.net;
-  for (let i = 0; i < area; i++) {
-    const t = tiles[i];
-    const dense = !t.abandoned && ((t.zone === COM && t.level >= 2) || (t.zone === RES && t.level === 3)) ? 1 : 0;
-    // Highways and their ramps carry the city's through traffic: no Kites magnet there (§8.4).
-    const busy = t.road && (t.roadKind === RoadKind.Highway || t.roadKind === RoadKind.Ramp) ? 0 : traffic[i];
-    let v =
-      ak.base +
-      ak.crime * crime[i] +
-      ak.traffic * busy +
-      ak.net * net[i] +
-      ak.dense * dense +
-      ak.tallNear * (mA[i] | mC[i]) +
-      ak.security * sec[i] +
-      ak.glarewallNear * mB[i] +
-      ak.alleyNear * mAlley[i] +
-      ak.skywayNear * mSky[i];
-    affK[i] = v < 0 ? 0 : v > 1 ? 1 : v;
+  const sec = f.security;
+  const bonus = slotBonus(world, 'kites');
+  const R = world.region;
+  forOwnedRows(world, y0, y1, (a0, e0) => {
+    for (let a = a0; a < e0; a += 64) {
+    const e = a + 64;
+    const extra = bonus[(((a / N) | 0) >> 6) * R + ((a % N) >> 6)];
+    for (let i = a; i < e; i++) {
+      const fl = tf[i];
+      // Highways and their ramps carry the city's through traffic: no Kites magnet there (§8.4).
+      const busy = fl & 4 ? 0 : traffic[i];
+      const v =
+        ak.base +
+        ak.crime * crime[i] +
+        ak.traffic * busy +
+        ak.net * net[i] +
+        ak.dense * (fl & 2 ? 1 : 0) +
+        ak.tallNear * (mTall[i] | mSpan[i]) +
+        ak.security * sec[i] +
+        ak.glarewallNear * mGlare[i] +
+        ak.alleyNear * mAlleyK[i] +
+        ak.skywayNear * mSky[i] +
+        ak.frameNear * mFrame[i] +
+        extra;
+      affK[i] = v < 0 ? 0 : v > 1 ? 1 : v;
+    }
+    }
+  });
+}
+
+/** fn(a, e) for every owned segment of rows y0..y1 − 1 (a segment never spans two rows). */
+function forOwnedRows(world: World, y0: number, y1: number, fn: (a: number, e: number) => void): void {
+  const segs = world.segs;
+  const N = world.N;
+  const lo = y0 * N;
+  const hi = y1 * N;
+  for (let s = 0; s < world.segCount; s += 2) {
+    const a = segs[s];
+    if (a < lo) continue;
+    if (a >= hi) break;
+    fn(a, segs[s + 1]);
   }
+}
+
+/** fn(a, e) for every owned segment [a, e) in index order (world.segs, MEGACITY §3.3 O1). */
+function forOwned(world: World, fn: (a: number, e: number) => void): void {
+  const segs = world.segs;
+  for (let s = 0; s < world.segCount; s += 2) fn(segs[s], segs[s + 1]);
+}
+
+// ── The banded month (MEGACITY §3.3, O6) ────────────────────────────────────
+
+/** A world's banded map rebuild: its own map set, the steps done and what it was built against. */
+interface Bands {
+  M: MapSet;
+  /** Steps done (MAP_STEPS = complete). */
+  done: number;
+  /** The month-end tick the bands are for. */
+  monthEnd: number;
+  slots: number;
+  terrain: number;
+}
+const bandsOf = new WeakMap<World, Bands>();
+
+/**
+ * Run this day's share of next month end's map rebuild (the sim calls it once a day, unit C2). The last
+ * `REGION[R].turfBands` days before a month end share MAP_STEPS steps into the world's own map set, so
+ * `update` at the month end only copies them in (it rebuilds whole when the bands are missing or an annex or a terrain
+ * change came between). Nothing runs while turf cannot form yet (no gang seeded or due, no turf). Returns the steps run.
+ */
+export function bandStep(world: World): number {
+  const bands = REGION[world.region].turfBands;
+  const day = world.tick % DAYS_PER_MONTH;
+  const d = day - (DAYS_PER_MONTH - bands);
+  if (d < 0) return 0;
+  if (!mapsNeeded(world)) return 0;
+  let B = bandsOf.get(world);
+  if (!B || B.M.elig.length !== world.area) {
+    B = { M: makeMapSet(world.area), done: 0, monthEnd: -1, slots: -1, terrain: -1 };
+    bandsOf.set(world, B);
+  }
+  const monthEnd = world.tick - day + DAYS_PER_MONTH;
+  if (d === 0 || B.monthEnd !== monthEnd || B.slots !== world.slotsVersion || B.terrain !== world.terrainVersion) {
+    B.done = 0;
+    B.monthEnd = monthEnd;
+    B.slots = world.slotsVersion;
+    B.terrain = world.terrainVersion;
+  }
+  // Day d of the window runs steps [⌊d · S / bands⌋, ⌊(d + 1) · S / bands⌋): 1–2 steps a day on 8 bands, 3 on 4.
+  const until = Math.min(MAP_STEPS, Math.floor(((d + 1) * MAP_STEPS) / bands));
+  let n = 0;
+  while (B.done < until) {
+    mapStep(world, B.M, B.done++);
+    n++;
+  }
+  return n;
+}
+
+onMonthBands((world) => void bandStep(world));
+
+/**
+ * The month end's maps: the banded set when it is complete for this month end and nothing structural changed (its
+ * affinity and near-city maps then read the city as of the band days; eligibility, protection and the pact block are
+ * rebuilt now from today's buildings), else a whole rebuild.
+ */
+function monthMaps(world: World): void {
+  const B = bandsOf.get(world);
+  if (
+    !B ||
+    B.done < MAP_STEPS ||
+    B.monthEnd !== world.tick ||
+    B.slots !== world.slotsVersion ||
+    B.terrain !== world.terrainVersion ||
+    B.M.elig.length !== world.area
+  ) {
+    computeMaps(world);
+    return;
+  }
+  const S = scratch(world.area);
+  S.eligBase.set(B.M.eligBase);
+  S.nearCity.set(B.M.nearCity);
+  S.affU.set(B.M.affU);
+  S.affK.set(B.M.affK);
+  buildingMaps(world, S);
+  B.done = 0;
+}
+
+/** Turf can form or exists: a gang seeded, a gang's seed population reached, or tiles held. */
+function mapsNeeded(world: World): boolean {
+  const tk = world.turf;
+  if (tk.seeded.undertow || tk.seeded.kites) return true;
+  for (const g of GANG_IDS) if (world.maxPopulation >= TURF.seedPop[g]) return true;
+  return tk.stats.tiles.undertow + tk.stats.tiles.kites > 0;
 }
 
 /** Crackdown zones still hitting this month (tick ≤ until), as a tile mask. */
@@ -318,20 +640,27 @@ function markDisc(a: Uint8Array, cx: number, cy: number, r: number, N: number): 
 }
 
 function countTiles(world: World): void {
-  const area = world.area;
   const owner = world.turf.owner;
   count[0] = count[1] = count[2] = 0;
-  for (let i = 0; i < area; i++) count[owner[i]]++;
+  // Owned land only (turf never forms on a locked tile); count[0] (unowned tiles) is read by nothing.
+  forOwned(world, (a, e) => {
+    for (let i = a; i < e; i++) count[owner[i]]++;
+  });
 }
 
 /** Owned land (non-water) tiles: the cap and `turf.share` denominators (a locked district is off the map, §3.4). */
 export function landTiles(world: World): number {
+  const c = landCache.get(world);
+  // Land changes only with the owned slots or the terrain (MEGACITY §3.3: Pump House reclamation bumps terrainVersion).
+  if (c && c.slots === world.slotsVersion && c.terrain === world.terrainVersion) return c.n;
   let n = 0;
   const tiles = world.tiles;
   const segs = world.segs;
   for (let s = 0; s < world.segCount; s += 2) for (let i = segs[s]; i < segs[s + 1]; i++) if (tiles[i].terrain !== WATER) n++;
+  landCache.set(world, { slots: world.slotsVersion, terrain: world.terrainVersion, n });
   return n;
 }
+const landCache = new WeakMap<World, { slots: number; terrain: number; n: number }>();
 
 /** Most tiles one gang may hold (§3.1). */
 export function capFor(world: World): number {
@@ -348,17 +677,18 @@ function free(world: World, i: number): void {
 
 /** Mean security over developed tiles (the `security.avg` metric). */
 export function securityAvg(world: World): number {
-  const area = world.area;
   const tiles = world.tiles;
   const sec = world.fields.security;
   let s = 0;
   let n = 0;
-  for (let i = 0; i < area; i++) {
-    const t = tiles[i];
-    if (t.zone === 0 || t.level === 0 || t.abandoned) continue;
-    s += sec[i];
-    n++;
-  }
+  forOwned(world, (a, e) => {
+    for (let i = a; i < e; i++) {
+      const t = tiles[i];
+      if (t.zone === 0 || t.level === 0 || t.abandoned) continue;
+      s += sec[i];
+      n++;
+    }
+  });
   return n ? s / n : 0;
 }
 
@@ -463,7 +793,6 @@ function seedNews(world: World, gang: GangId, i: number, tagback: boolean): void
  */
 export function update(world: World): void {
   const N = world.N;
-  const area = world.area;
   const { elig } = scratch(world.area);
   const tk = world.turf;
   const st = world.story;
@@ -472,15 +801,19 @@ export function update(world: World): void {
   const owner = tk.owner;
   const con = tk.contested;
   const rng = new Rng(st.rng);
-  computeMaps(world);
+  // Before turf can form, nothing below reads the maps (no owner, no seeding, no tagback, no scatter).
+  if (mapsNeeded(world)) monthMaps(world);
   countTiles(world);
   const cap = capFor(world);
 
-  // Housekeeping: turf on tiles that stopped being eligible; contested countdown.
-  for (let i = 0; i < area; i++) {
-    if (owner[i] && !elig[i]) free(world, i);
-    if (con[i]) con[i] = con[i] > DAYS_PER_MONTH ? con[i] - DAYS_PER_MONTH : 0;
-  }
+  // Housekeeping: turf on tiles that stopped being eligible; contested countdown (owned land only: turf never forms
+  // on a locked tile, MEGACITY §3.4).
+  forOwned(world, (a, e) => {
+    for (let i = a; i < e; i++) {
+      if (owner[i] && !elig[i]) free(world, i);
+      if (con[i]) con[i] = con[i] > DAYS_PER_MONTH ? con[i] - DAYS_PER_MONTH : 0;
+    }
+  });
 
   // Seeding (§3.2).
   for (const g of GANG_IDS) {
@@ -550,7 +883,6 @@ export function update(world: World): void {
 
 /** Rule 1, hold: str += round((aff − 0.35) × 40), security / ribbon / crackdown hits, protection floor. */
 function hold(world: World): void {
-  const area = world.area;
   const { affU, affK, protU, protK, crack } = scratch(world.area);
   const tk = world.turf;
   const owner = tk.owner;
@@ -566,7 +898,9 @@ function hold(world: World): void {
   const floor = T.protectFloor;
   const crackHit = T.crackdown.monthly;
   const anyCrack = computeCrack(world);
-  for (let i = 0; i < area; i++) {
+  const segs = world.segs;
+  for (let sg = 0; sg < world.segCount; sg += 2)
+  for (let i = segs[sg], e = segs[sg + 1]; i < e; i++) {
     const o = owner[i];
     if (!o) continue;
     const s0 = str[i];
@@ -597,7 +931,9 @@ function spread(world: World, rng: Rng, cap: number): void {
   const T = TURF;
   const spreadMin = T.spreadMin;
   let n = 0;
-  for (let i = 0; i < area; i++) if (owner[i] && str[i] >= spreadMin) list[n++] = i;
+  forOwned(world, (a, e) => {
+    for (let i = a; i < e; i++) if (owner[i] && str[i] >= spreadMin) list[n++] = i;
+  });
   if (!n) return;
   for (let k = n - 1; k > 0; k--) {
     const j = Math.floor(rng.next() * (k + 1));
@@ -665,7 +1001,6 @@ function spread(world: World, rng: Rng, cap: number): void {
  * load, crackdowns, pacts and any direct turf edit.
  */
 export function refreshStats(world: World): void {
-  const area = world.area;
   const tk = world.turf;
   const owner = tk.owner;
   const str = tk.str;
@@ -680,7 +1015,9 @@ export function refreshStats(world: World): void {
   let bu = -1;
   let bk = -1;
   let contested = 0;
-  for (let i = 0; i < area; i++) {
+  const segs = world.segs;
+  for (let sg = 0; sg < world.segCount; sg += 2)
+  for (let i = segs[sg], e = segs[sg + 1]; i < e; i++) {
     const o = owner[i];
     if (!o) continue;
     const secured = sec[i] >= securedAt;
@@ -711,7 +1048,6 @@ export function refreshStats(world: World): void {
 /** The turf partial layers (§3.5) plus the Tidemarket crime disc. */
 function writeLayers(world: World): void {
   const N = world.N;
-  const area = world.area;
   const L = world.layerParts.turf;
   resetLayers(L);
   const tk = world.turf;
@@ -735,7 +1071,9 @@ function writeLayers(world: World): void {
   }
   const contestCrime = T.contestCrime;
   const resLv = T.resLvPerStr;
-  for (let i = 0; i < area; i++) {
+  const segs = world.segs;
+  for (let sg = 0; sg < world.segCount; sg += 2)
+  for (let i = segs[sg], e = segs[sg + 1]; i < e; i++) {
     const o = owner[i];
     if (!o) continue;
     const s = str[i] / 100;
@@ -769,17 +1107,18 @@ function writeLayers(world: World): void {
  */
 export function computeSeam(world: World): number | null {
   const N = world.N;
-  const area = world.area;
   const { list } = scratch(world.area);
   const owner = world.turf.owner;
   let nu = 0;
   let nk = 0;
-  for (let i = 0; i < area; i++) {
-    if (owner[i] === U) list[nu++] = i;
-  }
+  forOwned(world, (a, e) => {
+    for (let i = a; i < e; i++) if (owner[i] === U) list[nu++] = i;
+  });
   if (!nu) return world.story.seam;
   // Kites tiles go after the Undertow ones in the same scratch list.
-  for (let i = 0; i < area; i++) if (owner[i] === K) list[nu + nk++] = i;
+  forOwned(world, (a, e) => {
+    for (let i = a; i < e; i++) if (owner[i] === K) list[nu + nk++] = i;
+  });
   if (!nk) return world.story.seam;
   let best = Infinity;
   let a = -1;
@@ -810,18 +1149,19 @@ export function computeSeam(world: World): number | null {
 
 /** Street take (§3.5): 4 CR × s per developed turf tile per month, for one gang. */
 export function streetTake(world: World, gang: GangId): number {
-  const area = world.area;
   const owner = world.turf.owner;
   const str = world.turf.str;
   const tiles = world.tiles;
   const code = gangCode(gang);
   let s = 0;
-  for (let i = 0; i < area; i++) {
-    if (owner[i] !== code) continue;
-    const t = tiles[i];
-    if (t.zone === 0 || t.level === 0 || t.abandoned) continue;
-    s += str[i];
-  }
+  forOwned(world, (a, e) => {
+    for (let i = a; i < e; i++) {
+      if (owner[i] !== code) continue;
+      const t = tiles[i];
+      if (t.zone === 0 || t.level === 0 || t.abandoned) continue;
+      s += str[i];
+    }
+  });
   return (TURF.streetTake * s) / 100;
 }
 
@@ -844,7 +1184,8 @@ export function pactCut(world: World): number {
  */
 export function turfPatch(world: World): ModPatch {
   const t = world.turf.stats.tiles;
-  const per = TURF.demandPer100;
+  // Per owned district (MEGACITY §3.3): one district is unchanged, a gang at its cap over nine adds what it does today.
+  const per = TURF.demandPer100 / Math.max(1, world.districts.owned.length);
   const p: ModPatch = {};
   if (t.undertow > 0) p.demandInd = (per * t.undertow) / 100;
   if (t.kites > 0) p.demandCom = (per * t.kites) / 100;

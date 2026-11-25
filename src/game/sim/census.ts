@@ -15,6 +15,7 @@ import { Ground, ZoneType, type CityStats, type Demand, type DistrictKind, type 
 import type { World } from '../world';
 import type { SimGrid } from './grid';
 import type { FieldSystem } from './fields';
+import { K, ZONED_CHUNK, drain, type Unit } from './slice';
 import type { PowerGrid } from './power';
 import * as Tiers from './tiers';
 import * as Tuning from './tuning';
@@ -52,6 +53,7 @@ export interface DistrictTally {
 }
 /** Scratch stats object reused for every building (no per-tick allocation). */
 const STATS = blankStats();
+const blankTally = (): DistrictTally => ({ slot: 0, kind: 'shore', residents: 0, jobs: 0, developed: 0, ruins: 0, fabTiles: 0, marketTiles: 0, lvSum: 0 });
 
 export class Census {
   population = 0;
@@ -100,38 +102,133 @@ export class Census {
   readonly byDistrict: DistrictTally[] = [];
   /** Slot → index in byDistrict (−1 unowned). */
   private slotIndex = new Int32Array(0);
+  /** A count in progress (countUnit): accumulators and the work tallies, published in its last step. */
+  private readonly acc = {
+    dev: [0, 0, 0, 0],
+    lots: [0, 0, 0, 0],
+    lotsRoad: [0, 0, 0, 0],
+    lc: new Int32Array(16),
+    tc: new Int32Array(12),
+    tierRes: 0,
+    pop: 0,
+    jobsCom: 0,
+    jobsInd: 0,
+    noRoad: 0,
+    aband: 0,
+    ruins: 0,
+  };
+  private readonly work: DistrictTally[] = [];
+  private workIndex = new Int32Array(0);
 
   /**
    * Count heads, jobs and development from the grid (no field reads). With `world`, also the per-district tallies
-   * (MEGACITY §3.3). Ruins (ground Rubble) count in `ruins`, never in `abandoned`.
+   * (MEGACITY §3.3). Ruins (ground Rubble) count in `ruins`, never in `abandoned`. Whole pass.
    */
   count(g: SimGrid, world?: World): void {
-    const tally = world ? this.prepareDistricts(world) : null;
-    const N = g.N;
+    drain(this.countUnit(g, world, false));
+  }
+
+  /**
+   * The count as a resumable unit (MEGACITY §3.3 A1 / C1): the zoned list in chunks of ZONED_CHUNK tiles into private
+   * accumulators, then the buildings; the public numbers and the tallies change only in the last step, so a reader
+   * between two steps sees the previous count whole.
+   */
+  *countUnit(g: SimGrid, world: World | undefined, banded: boolean): Unit {
+    const acc = this.acc;
+    acc.dev.fill(0);
+    acc.lots.fill(0);
+    acc.lotsRoad.fill(0);
+    acc.lc.fill(0);
+    acc.tc.fill(0);
+    acc.tierRes = 0;
+    acc.pop = 0;
+    acc.jobsCom = 0;
+    acc.jobsInd = 0;
+    acc.noRoad = 0;
+    acc.aband = 0;
+    acc.ruins = 0;
+    const tally = world ? this.prepareWork(world) : null;
+    const zc = g.zonedCount;
+    const step = banded ? ZONED_CHUNK : zc + 1;
+    for (let k0 = 0; k0 < zc; k0 += step) {
+      yield K.Census;
+      this.countZoned(g, world ? world.region : 1, tally, k0, Math.min(zc, k0 + step));
+    }
+    yield K.Census;
+    // Stage-aware (Stratablocks count complete, powered stages only; §4.2).
+    const st = STATS;
+    const si = this.workIndex;
+    let pop = acc.pop;
+    let jobsCom = acc.jobsCom;
+    let jobsInd = acc.jobsInd;
     const R = world ? world.region : 1;
-    const si = this.slotIndex;
+    for (const b of g.buildings) {
+      buildingStats(b, st);
+      pop += st.residents;
+      jobsCom += st.jobsCom;
+      jobsInd += st.jobsInd;
+      if (tally) {
+        const d = tally[si[(b.y >> 6) * R + (b.x >> 6)]];
+        if (d) {
+          d.residents += st.residents;
+          d.jobs += st.jobsCom + st.jobsInd;
+        }
+      }
+    }
+    // Publish.
+    this.developed.splice(0, 4, acc.dev[0], acc.dev[1], acc.dev[2], acc.dev[3]);
+    this.lots.splice(0, 4, acc.lots[0], acc.lots[1], acc.lots[2], acc.lots[3]);
+    this.lotsWithRoad.splice(0, 4, acc.lotsRoad[0], acc.lotsRoad[1], acc.lotsRoad[2], acc.lotsRoad[3]);
+    this.levelCount.set(acc.lc);
+    this.tierCount.set(acc.tc);
+    if (tally) this.publishTallies(world!);
+    this.ruins = acc.ruins;
+    this.tierResidents = acc.tierRes;
+    const r = this.roads;
+    r.street = g.kindTiles(0);
+    r.avenue = g.kindTiles(1);
+    r.highway = g.kindTiles(2);
+    r.alley = g.kindTiles(3);
+    r.ramp = g.kindTiles(4);
+    r.skyway = g.skyCount;
+    this.edgeLinks = g.edgePoints;
+    this.population = pop;
+    this.jobsCom = jobsCom;
+    this.jobsInd = jobsInd;
+    this.noRoad = acc.noRoad;
+    this.abandoned = acc.aband;
+    // Whole tens of people (POP_SCALE), like every head count: the unit change stays exact (MEGACITY §4.1).
+    const workforce = Math.round((pop * T.WORKFORCE_SHARE) / POP_SCALE) * POP_SCALE;
+    const jobs = jobsCom + jobsInd;
+    this.workforce = workforce;
+    this.employed = Math.min(workforce, jobs);
+    this.unemployment = workforce > 0 ? 1 - this.employed / workforce : 0;
+    this.jobFill = jobs > 0 ? this.employed / jobs : 1;
+    const scale = Math.min(1, Math.max(T.UNEMPLOYMENT_FLOOR, pop / T.UNEMPLOYMENT_FULL_POP));
+    this.joblessPressure = this.unemployment * scale;
+  }
+
+  /** Zoned entries k0..k1 of the grid into the accumulators (and the work tallies). */
+  private countZoned(g: SimGrid, R: number, tally: DistrictTally[] | null, k0: number, k1: number): void {
+    const acc = this.acc;
+    const N = g.N;
+    const si = this.workIndex;
     const ground = g.ground;
-    let ruins = 0;
-    const { zone, level, abandoned } = g;
-    const dev = this.developed;
-    const lots = this.lots;
-    const lotsRoad = this.lotsWithRoad;
-    const lc = this.levelCount;
-    const tc = this.tierCount;
-    const { wealth, alleyNear } = g;
-    dev.fill(0);
-    lots.fill(0);
-    lotsRoad.fill(0);
-    lc.fill(0);
-    tc.fill(0);
-    let tierRes = 0;
-    let pop = 0;
-    let jobsCom = 0;
-    let jobsInd = 0;
-    let noRoad = 0;
-    let aband = 0;
-    for (let k = 0; k < g.zonedCount; k++) {
-      const i = g.zoned[k];
+    const { zone, level, abandoned, wealth, alleyNear, zoned } = g;
+    const dev = acc.dev;
+    const lots = acc.lots;
+    const lotsRoad = acc.lotsRoad;
+    const lc = acc.lc;
+    const tc = acc.tc;
+    let tierRes = acc.tierRes;
+    let pop = acc.pop;
+    let jobsCom = acc.jobsCom;
+    let jobsInd = acc.jobsInd;
+    let noRoad = acc.noRoad;
+    let aband = acc.aband;
+    let ruins = acc.ruins;
+    for (let k = k0; k < k1; k++) {
+      const i = zoned[k];
       const z = zone[i];
       const l = level[i];
       const road = g.hasRoad(i);
@@ -169,45 +266,13 @@ export class Census {
         }
       }
     }
-    // Stage-aware (Stratablocks count complete, powered stages only; §4.2).
-    const st = STATS;
-    for (const b of g.buildings) {
-      buildingStats(b, st);
-      pop += st.residents;
-      jobsCom += st.jobsCom;
-      jobsInd += st.jobsInd;
-      if (tally) {
-        const d = tally[si[(b.y >> 6) * R + (b.x >> 6)]];
-        if (d) {
-          d.residents += st.residents;
-          d.jobs += st.jobsCom + st.jobsInd;
-        }
-      }
-    }
-    this.ruins = ruins;
-    this.tierResidents = tierRes;
-    const r = this.roads;
-    r.street = g.kindTiles(0);
-    r.avenue = g.kindTiles(1);
-    r.highway = g.kindTiles(2);
-    r.alley = g.kindTiles(3);
-    r.ramp = g.kindTiles(4);
-    r.skyway = g.skyCount;
-    this.edgeLinks = g.edgePoints;
-    this.population = pop;
-    this.jobsCom = jobsCom;
-    this.jobsInd = jobsInd;
-    this.noRoad = noRoad;
-    this.abandoned = aband;
-    // Whole tens of people (POP_SCALE), like every head count: the unit change stays exact (MEGACITY §4.1).
-    const workforce = Math.round((pop * T.WORKFORCE_SHARE) / POP_SCALE) * POP_SCALE;
-    const jobs = jobsCom + jobsInd;
-    this.workforce = workforce;
-    this.employed = Math.min(workforce, jobs);
-    this.unemployment = workforce > 0 ? 1 - this.employed / workforce : 0;
-    this.jobFill = jobs > 0 ? this.employed / jobs : 1;
-    const scale = Math.min(1, Math.max(T.UNEMPLOYMENT_FLOOR, pop / T.UNEMPLOYMENT_FULL_POP));
-    this.joblessPressure = this.unemployment * scale;
+    acc.tierRes = tierRes;
+    acc.pop = pop;
+    acc.jobsCom = jobsCom;
+    acc.jobsInd = jobsInd;
+    acc.noRoad = noRoad;
+    acc.aband = aband;
+    acc.ruins = ruins;
   }
 
   /** Averages over developed tiles (call after fields are up to date). */
@@ -322,19 +387,18 @@ export class Census {
     return out;
   }
 
-  /** Reset the per-district tallies for the world's owned slots (in annex order); returns the slot-indexed lookup. */
-  private prepareDistricts(world: World): DistrictTally[] {
+  /** Reset the work tallies for the world's owned slots (in annex order); `workIndex` maps a slot to its row. */
+  private prepareWork(world: World): DistrictTally[] {
     const R = world.region;
-    if (this.slotIndex.length !== R * R) this.slotIndex = new Int32Array(R * R);
-    this.slotIndex.fill(-1);
+    if (this.workIndex.length !== R * R) this.workIndex = new Int32Array(R * R);
+    this.workIndex.fill(-1);
     const owned = world.districts.owned;
-    const list = this.byDistrict;
+    const list = this.work;
     list.length = owned.length;
     for (let k = 0; k < owned.length; k++) {
       const s = owned[k];
       let d = list[k];
-      if (!d)
-        d = list[k] = { slot: s, kind: 'shore', residents: 0, jobs: 0, developed: 0, ruins: 0, fabTiles: 0, marketTiles: 0, lvSum: 0 };
+      if (!d) d = list[k] = blankTally();
       d.slot = s;
       d.kind = world.districts.kinds[s] ?? 'shore';
       d.residents = 0;
@@ -344,9 +408,34 @@ export class Census {
       d.fabTiles = 0;
       d.marketTiles = 0;
       d.lvSum = 0;
-      if (s >= 0 && s < R * R) this.slotIndex[s] = k;
+      if (s >= 0 && s < R * R) this.workIndex[s] = k;
     }
     return list;
+  }
+
+  /** The finished work tallies become `byDistrict` (lvSum is averages()' own, kept). */
+  private publishTallies(world: World): void {
+    const src = this.work;
+    const out = this.byDistrict;
+    const R = world.region;
+    if (this.slotIndex.length !== R * R) this.slotIndex = new Int32Array(R * R);
+    this.slotIndex.set(this.workIndex);
+    out.length = src.length;
+    for (let k = 0; k < src.length; k++) {
+      const s = src[k];
+      let d = out[k];
+      if (!d) d = out[k] = blankTally();
+      const lv = d.slot === s.slot ? d.lvSum : 0;
+      d.slot = s.slot;
+      d.kind = s.kind;
+      d.residents = s.residents;
+      d.jobs = s.jobs;
+      d.developed = s.developed;
+      d.ruins = s.ruins;
+      d.fabTiles = s.fabTiles;
+      d.marketTiles = s.marketTiles;
+      d.lvSum = lv;
+    }
   }
 
   /** world.stats.districts (one row per owned district, reused), ruins and ruinsRestored (MEGACITY §3.3). */

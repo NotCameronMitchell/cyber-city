@@ -21,6 +21,7 @@ import type { World } from '../world';
 import type { Census } from './census';
 import type { SimGrid } from './grid';
 import { portLive, type PortSystem } from './ports';
+import { K, ZONED_CHUNK, drain, type Unit } from './slice';
 import * as Tiers from './tiers';
 import * as Tuning from './tuning';
 
@@ -41,15 +42,16 @@ const STATS = blankStats();
  * history). `ports` adds the port income lines (none without it).
  */
 export function projectBudget(world: World, g: SimGrid, census: Census, out: BudgetReport, ports?: PortSystem): void {
+  drain(projectUnit(world, g, census, out, ports, false));
+}
+
+/** The zoned tax base of entries k0..k1 into `base` and `flat`. */
+function taxBase(world: World, g: SimGrid, base: number[], flat: number[], k0: number, k1: number): void {
   const lvField = world.fields.landValue;
   const taxMul = world.layers.taxMul;
-  const mods = world.mods;
   const tiles = world.tiles;
   const { wealth, alleyNear } = g;
-  const base = [0, 0, 0, 0];
-  /** The same tax base with every tile at $ and no affordable quarters (stats.tierEffect.tax). */
-  const flat = [0, 0, 0, 0];
-  for (let k = 0; k < g.zonedCount; k++) {
+  for (let k = k0; k < k1; k++) {
     const i = g.zoned[k];
     if (!g.developed(i)) continue;
     const z = g.zone[i];
@@ -64,6 +66,26 @@ export function projectBudget(world: World, g: SimGrid, census: Census, out: Bud
     }
     flat[z] += cap0 * yieldMul;
   }
+}
+
+/**
+ * The projection as a resumable unit (MEGACITY §3.3 C2): the zoned tax base in chunks of ZONED_CHUNK, then the
+ * buildings and the lines; world.budget changes only in the last step.
+ */
+export function* projectUnit(world: World, g: SimGrid, census: Census, out: BudgetReport, ports: PortSystem | undefined, banded: boolean): Unit {
+  const lvField = world.fields.landValue;
+  const taxMul = world.layers.taxMul;
+  const mods = world.mods;
+  const base = [0, 0, 0, 0];
+  /** The same tax base with every tile at $ and no affordable quarters (stats.tierEffect.tax). */
+  const flat = [0, 0, 0, 0];
+  const zc = g.zonedCount;
+  const step = banded ? ZONED_CHUNK : zc + 1;
+  for (let k0 = 0; k0 < zc; k0 += step) {
+    yield K.Budget;
+    taxBase(world, g, base, flat, k0, Math.min(zc, k0 + step));
+  }
+  yield K.Budget;
   upkeepByType.clear();
   const st = STATS;
   for (const b of g.buildings) {

@@ -40,12 +40,12 @@
 // events publish in C2, so the UI never sees half a day.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { DISTRICTS, EDGE_LINKS, LOW_DETAIL, MAX_TAX, SLEEP, SLICE, TOURISM } from './config';
+import { DISTRICTS, EDGE_LINKS, LOW_DETAIL, MAX_TAX, REGION, SLEEP, SLICE, TOURISM } from './config';
 import { DAYS_PER_MONTH, type Demand, type SlotId } from './types';
 import type { World } from './world';
-import { layersVersion } from './story/mods';
+import { composeLayers, layersVersion, monthBandHooks } from './story/mods';
 import { Advisor } from './sim/advisor';
-import { projectBudget, settleMonth } from './sim/budget';
+import { projectBudget, projectUnit, settleMonth } from './sim/budget';
 import { Census } from './sim/census';
 import { FieldSystem, type Win } from './sim/fields';
 import { SimGrid } from './sim/grid';
@@ -125,6 +125,8 @@ export class Simulation {
   private gen = 0;
   /** Steps run and the largest step (ms) of the last stepSlice call (tests, the frame guard). */
   lastSlice = { steps: 0, spent: 0, maxStep: 0, maxKind: K.Begin as K };
+  /** world.slotsVersion the layers were last composed for (recomputeAll re-composes after an annex). */
+  private composedSlots = -1;
   /** A full field pass is due (recomputeAround saw traffic change outside its window): runs on the next days. */
   private fullFieldsDue = false;
 
@@ -154,6 +156,7 @@ export class Simulation {
     this.lastAction = new Float64Array(slots).fill(-Infinity);
     this.act = new Uint8Array(slots);
     this.activeList = new ChunkList(world.N, world.region);
+    this.composedSlots = world.slotsVersion;
   }
 
   /** Read-only port numbers (visitors, trade, demand adds, spaceport progress; EXPANSION §2.7). */
@@ -281,8 +284,7 @@ export class Simulation {
     yield K.Census;
     this.growth.countDays(g, this.power);
     if (this.coverageStale()) yield* this.guard(() => this.coverageUnit(banded));
-    yield K.Census;
-    this.census.count(g, w);
+    yield* this.guard(() => this.census.countUnit(g, w, banded));
 
     // ── B: this day's field phase ──
     const stagger = this.fieldStagger;
@@ -327,10 +329,11 @@ export class Simulation {
     d.res += (this.target.res - d.res) * DEMAND_SMOOTH;
     d.com += (this.target.com - d.com) * DEMAND_SMOOTH;
     d.ind += (this.target.ind - d.ind) * DEMAND_SMOOTH;
-    yield K.Growth;
-    this.growth.run(w, g, this.power, f, d);
+    // Growth changes tiles, so it is never restarted: a recompute between two of its chunks ends this day's growth.
+    const gen = this.gen;
+    yield* this.growth.runUnit(w, g, this.power, f, d, banded, () => this.gen !== gen);
+    if (this.growth.changes > 0 || this.growth.tierSteps > 0) yield* this.guard(() => this.census.countUnit(g, w, banded));
     yield K.Post;
-    if (this.growth.changes > 0 || this.growth.tierSteps > 0) this.census.count(g, w);
     const monthEnd = w.tick % DAYS_PER_MONTH === 0;
     if (this.districtDaily) this.districtDaily(w, monthEnd);
 
@@ -345,14 +348,21 @@ export class Simulation {
       if (w.taxRate > cap) w.taxRate = cap;
     }
     if (monthEnd || w.tick % PROJECT_EVERY === 0) {
-      yield K.Budget;
-      projectBudget(w, g, this.census, w.budget, this.portSystem);
+      yield* this.guard(() => projectUnit(w, g, this.census, w.budget, this.portSystem, banded));
     }
     yield K.End;
     if (monthEnd) {
       settleMonth(w);
       w.events.emit('month');
       w.events.emit('sfx', 'money');
+    }
+    // O6: next month end's turf maps, banded over its last REGION[R].turfBands days (turf.update copies them in).
+    if (w.tick % DAYS_PER_MONTH >= DAYS_PER_MONTH - REGION[w.region].turfBands) {
+      const hooks = monthBandHooks();
+      if (hooks.length) {
+        yield K.Turf;
+        for (const h of hooks) h(w);
+      }
     }
     this.advisor.milestones(w, this.census.population);
     this.incidents.update(w, g, f, this.census, this.options.events);
@@ -579,6 +589,11 @@ export class Simulation {
     const g = this.grid;
     const f = this.fields;
     this.gen++;
+    // An annex grew the owned land: the layers there were never composed (composeLayers merges owned tiles only).
+    if (w.slotsVersion !== this.composedSlots) {
+      this.composedSlots = w.slotsVersion;
+      composeLayers(w);
+    }
     f.active = null;
     g.scan(w, true);
     this.power.compute(w, g);
