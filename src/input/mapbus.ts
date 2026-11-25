@@ -30,3 +30,11 @@ export const mapBus: {
 export const MAP_PINCH_OUT = 0.8;
 /** Pinch-in on the City map at its largest zoom that leaves it (accumulated spread ratio above this). */
 export const MAP_PINCH_IN = 1.25;
+
+/**
+ * The skybridge tool's pill flash (§5.4 step 3): after a bridge builds, its payoff for 3 s ("SKYBRIDGE · 1,450 CR" /
+ * "600 walkers · cars −20%"); after a tap on a level-2 tower, "Grows tall at level 3". Input writes it, the pill reads it.
+ */
+export const skyBus: { flash: { title: string; cost: string; note: string; tone: 'good' | 'info'; until: number } | null } = { flash: null };
+/** How long a flash stays on the pill (ms). */
+export const SKY_FLASH_MS = 3000;

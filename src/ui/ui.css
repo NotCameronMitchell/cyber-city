@@ -4865,3 +4865,191 @@ body {
     min-width: 0;
   }
 }
+
+/* ── Skybridge tool pill (MEGACITY §5.4, §7.4): the source's state and the Show routes chip ── */
+.cc-pill.is-source {
+  min-height: 52px;
+  padding-top: 4px;
+  padding-bottom: 4px;
+  padding-right: 6px;
+  pointer-events: auto;
+}
+
+.cc-pill.is-good {
+  --edge: rgba(77, 255, 154, 0.6);
+}
+
+.cc-pill.is-good .cc-pill-note {
+  color: var(--cc-green);
+}
+
+.cc-pill-chip {
+  flex: none;
+  min-height: 44px;
+  min-width: 44px;
+  padding: 0 12px;
+  font-family: var(--cc-font);
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: #a9d6ff;
+  background: rgba(90, 170, 255, 0.14);
+  border-radius: 22px;
+  pointer-events: auto;
+}
+
+.cc-pill-chip[aria-pressed='true'] {
+  color: #06101e;
+  background: #5aaaff;
+}
+
+/* Extra controls above ✓ / ✕ (the Corp Spire's sponsor row, §6.2): the pill wraps into two lines. */
+.cc-pill.has-row {
+  flex-wrap: wrap;
+  row-gap: 6px;
+  max-width: min(440px, 100%);
+}
+
+.cc-pill-row {
+  flex: 1 1 100%;
+  order: 3;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  pointer-events: auto;
+}
+
+.cc-pill.has-row .cc-pill-btns {
+  order: 4;
+  margin-left: auto;
+}
+
+/* ── Crown picker (MEGACITY §6.2 Pickers): a 2-column grid, then the picked crown's looks ── */
+.cc-crown-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+
+.cc-crown-grid .cc-crown {
+  min-height: 44px;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+}
+
+.cc-crown-grid .cc-crown-main b {
+  font-size: 13px;
+}
+
+.cc-crown-grid .cc-crown-main span {
+  font-size: 11px;
+  line-height: 1.3;
+}
+
+.cc-crown-grid .cc-crown-chips {
+  justify-content: flex-start;
+}
+
+.cc-crown.is-on {
+  background: rgba(255, 43, 214, 0.16);
+  box-shadow: inset 0 0 0 1px rgba(255, 43, 214, 0.6);
+}
+
+.cc-crown-looks {
+  display: flex;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.cc-crown-look {
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 44px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 4px 2px;
+  font-size: 11px;
+  line-height: 1.2;
+  text-align: center;
+  color: var(--cc-ink-2);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.cc-crown-look.is-on {
+  color: var(--cc-ink);
+  background: rgba(255, 43, 214, 0.18);
+  box-shadow: inset 0 0 0 1px rgba(255, 43, 214, 0.6);
+}
+
+.cc-look-thumb {
+  display: block;
+  width: 44px;
+  height: 56px;
+}
+
+.cc-look-thumb canvas {
+  display: block;
+}
+
+.cc-crowns-go {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.cc-crowns-go .cc-btn {
+  flex: 1 1 0;
+}
+
+.cc-crowns-ok[aria-disabled='true'] {
+  filter: saturate(0.2) brightness(0.6);
+}
+
+/* ── The Corp Spire's sponsor step in the confirm pill (MEGACITY §6.2) ── */
+.cc-spire-pick {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  font-family: var(--cc-font);
+}
+
+.cc-spire-seg {
+  flex: 1 1 100%;
+}
+
+.cc-spire-seg .cc-seg-btn {
+  flex: 1 1 0;
+  min-width: 0;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+}
+
+.cc-spire-look {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 0 12px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--cc-ink);
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 22px;
+}
+
+.cc-spire-look b {
+  color: var(--cc-cyan);
+  font-size: 16px;
+}
+
+.cc-spire-sum {
+  font-size: 11px;
+  color: var(--cc-ink-2);
+  white-space: normal;
+}

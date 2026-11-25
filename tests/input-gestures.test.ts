@@ -327,3 +327,189 @@ describe('pickTile with the skyway slab (EXPANSION §3.7)', () => {
     expect(r).toEqual({ x: 20, y: 20, sky: true });
   });
 });
+
+// ── Megacity input (MEGACITY §7.4, §3.9; WP-5): the skybridge tool's silhouette first tap, badges, the tube pick,
+//    the drag snap, the reach view, and the annex pins.
+import { applyAction } from '../src/game/actions';
+import { Game } from '../src/game/game';
+import { heightOf } from '../src/game/heights';
+import * as vertical from '../src/game/story/vertical';
+import { ZoneType } from '../src/game/types';
+import { World } from '../src/game/world';
+import { ANCHOR_SLOP_PX, BADGE_TAP_R, badgeAt, inReach, pickAnchor, pickTube, reachView, silhouetteDistance, snapPartner } from '../src/input/skybridge';
+import { annexPins, pinAt } from '../src/render/districts';
+import { partnerBadges, BADGE_MAX } from '../src/render/overlay';
+import { startWorld, sx, sy } from './helpers';
+import { screenToTileF } from '../src/input/gestures';
+
+/** A level-3, powered tower tile. */
+function tower(w: World, x: number, y: number, zone = ZoneType.Residential): void {
+  w.setZone(x, y, zone);
+  w.setLevel(x, y, 3);
+  w.tiles[w.idx(x, y)].powered = true;
+}
+
+function skyWorld(): World {
+  const w = startWorld(3, 404);
+  w.funds = 1e8;
+  w.maxPopulation = 1e7;
+  w.story.unlocks.push('skybridge');
+  vertical.refresh(w);
+  return w;
+}
+
+function cityCam(w: World, x: number, y: number, zoom = 0.6, W = 390, H = 844): Camera {
+  const c = new Camera(w.N);
+  c.setViewport(W, H);
+  c.zoom = zoom;
+  c.centerOnTile(x, y);
+  return c;
+}
+
+describe('skybridge tool: the first tap hits the whole silhouette (§7.4)', () => {
+  it('a tap on a tower body high above its base picks the tower; 24 px beside it still does; far off does not', () => {
+    const w = skyWorld();
+    const a = { x: sx(20), y: sy(20) };
+    tower(w, a.x, a.y);
+    vertical.refresh(w);
+    const cam = cityCam(w, a.x, a.y, 0.6);
+    const base = cam.tileToScreen(a.x, a.y);
+    const top = heightOf(w, a.x, a.y);
+    expect(top).toBeGreaterThan(100);
+    // Halfway up the body: far above the ground tile the tap would otherwise pick.
+    const body = { x: base.x, y: base.y - (top * cam.zoom) / 2 };
+    expect(pickAnchor(w, cam, body.x, body.y)?.key).toBe(vertical.anchorAt(w, a.x, a.y)!.key);
+    // Just beside the silhouette, within the 24 px slop.
+    const right = base.x + 32 * cam.zoom;
+    expect(pickAnchor(w, cam, right + ANCHOR_SLOP_PX - 4, body.y)).not.toBeNull();
+    expect(pickAnchor(w, cam, right + ANCHOR_SLOP_PX + 30, body.y)).toBeNull();
+    // Above the roof by more than the slop: nothing.
+    expect(pickAnchor(w, cam, base.x, base.y - top * cam.zoom - ANCHOR_SLOP_PX - 20)).toBeNull();
+  });
+
+  it('the silhouette distance is 0 inside the extruded diamond and grows outside it', () => {
+    const w = skyWorld();
+    const cam = cityCam(w, 100, 100, 1);
+    const a = { x0: 100, y0: 100, x1: 100, y1: 100 };
+    const c = cam.tileToScreen(100, 100);
+    expect(silhouetteDistance(cam, a, 150, c.x, c.y)).toBe(0);
+    expect(silhouetteDistance(cam, a, 150, c.x, c.y - 140)).toBe(0);
+    expect(silhouetteDistance(cam, a, 150, c.x + 32 + 10, c.y)).toBeCloseTo(10, 5);
+  });
+
+  it('a nearer tower wins over one 20 px further; a tower in front wins a tie', () => {
+    const w = skyWorld();
+    const a = { x: sx(20), y: sy(20) };
+    tower(w, a.x, a.y);
+    tower(w, a.x + 1, a.y + 1);
+    vertical.refresh(w);
+    const cam = cityCam(w, a.x, a.y, 0.6);
+    const front = cam.tileToScreen(a.x + 1, a.y + 1);
+    // On the front tower's base: it is drawn over the one behind.
+    expect(pickAnchor(w, cam, front.x, front.y)?.key).toBe(vertical.anchorAt(w, a.x + 1, a.y + 1)!.key);
+  });
+});
+
+describe('skybridge tool: badges, snap, reach (§5.4, §7.4)', () => {
+  it('green badges are 44 px; a red dot draws at 16 px but takes a 44 px tap; at most 8 of each, none overlapping', () => {
+    const w = skyWorld();
+    const a = { x: sx(20), y: sy(20) };
+    tower(w, a.x, a.y);
+    // A dense row and column of partners at gaps 2..9, some blocked by taller towers in between.
+    for (let d = 3; d <= 11; d += 2) {
+      tower(w, a.x + d, a.y);
+      tower(w, a.x, a.y + d);
+      tower(w, a.x - d, a.y);
+    }
+    vertical.refresh(w);
+    const g = new Game();
+    expect(g.restore(JSON.parse(JSON.stringify(w.serialize())))).toBe(true);
+    g.setTool('skybridge');
+    g.skybridgeSource(a.x, a.y);
+    const cam = cityCam(g.world, a.x, a.y, 0.6);
+    const badges = partnerBadges(g, cam);
+    expect(badges.length).toBeGreaterThan(0);
+    expect(badges.filter((b) => b.kind !== 'bad').length).toBeLessThanOrEqual(BADGE_MAX);
+    expect(badges.filter((b) => b.kind === 'bad').length).toBeLessThanOrEqual(BADGE_MAX);
+    for (let i = 0; i < badges.length; i++)
+      for (let j = i + 1; j < badges.length; j++) expect(Math.hypot(badges[i].x - badges[j].x, badges[i].y - badges[j].y)).toBeGreaterThanOrEqual(badges[i].r + badges[j].r);
+    for (const b of badges) {
+      if (b.kind === 'ok') expect(b.r * 2).toBe(44);
+      // Each badge takes a tap 20 px from its centre, red dots included.
+      expect(badgeAt([b], b.x + 20, b.y)).toBe(b);
+    }
+    expect(BADGE_TAP_R * 2).toBe(44);
+    expect(inReach(g.skybridgePartners())).toBe(badges.filter((b) => b.kind === 'ok').length);
+  });
+
+  it('a drag snaps to the nearest green partner within 2 tiles of the finger, never to a red one or a route', () => {
+    const partners: vertical.Partner[] = [
+      { x: 10, y: 5, ok: true, cost: 1700 },
+      { x: 14, y: 5, ok: false, reason: 'A taller building is in the way', cost: 2700 },
+      { x: 10, y: 9, ok: true, cost: 1700, route: { via: { x: 10, y: 5 } } },
+    ];
+    expect(snapPartner(partners, 11, 6)).toEqual(partners[0]);
+    expect(snapPartner(partners, 13, 6)).toBeNull();
+    expect(snapPartner(partners, 14, 5)).toBeNull();
+    expect(snapPartner(partners, 10, 9)).toBeNull();
+  });
+
+  it('the reach view frames the source in the uncovered area, never zooming in and never below the street view', () => {
+    const w = skyWorld();
+    const cam = cityCam(w, 100, 100, 0.9);
+    cam.setInsets({ top: 76, bottom: 130 });
+    cam.streetMinZoom = 0.4;
+    const v = reachView(cam, { x0: 100, y0: 100, x1: 100, y1: 100 });
+    expect(v.zoom).toBeLessThanOrEqual(0.9);
+    expect(v.zoom).toBeGreaterThanOrEqual(0.45);
+    const far = reachView({ ...cam, zoom: 0.5, width: cam.width, height: cam.height, insets: cam.insets, streetMinZoom: 0.4, minZoom: 0.22 }, { x0: 100, y0: 100, x1: 100, y1: 100 });
+    expect(far.zoom).toBeLessThanOrEqual(0.5);
+  });
+});
+
+describe('skybridge tube pick (§7.4, §5.5): a slab at the tube height selects { x, y, link }', () => {
+  it('a tap on the drawn tube picks its link; the street below it does not', () => {
+    const w = skyWorld();
+    const a = { x: sx(20), y: sy(20) };
+    const b = { x: a.x + 4, y: a.y };
+    tower(w, a.x, a.y);
+    tower(w, b.x, b.y);
+    vertical.refresh(w);
+    const plan = applyAction(w, 'skybridge', a, b);
+    expect(plan.valid).toBe(true);
+    expect(w.links.length).toBe(1);
+    const l = w.links[0];
+    const { top, bottom } = vertical.tubeOf(vertical.linkRoof(w, l));
+    const cam = cityCam(w, a.x + 2, a.y, 1);
+    // The middle gap tile, at the tube's mid height.
+    const gx = a.x + 2;
+    const c = cam.tileToScreen(gx, a.y);
+    const z = (top + bottom) / 2;
+    const f = screenToTileF(cam, c.x, c.y - z * cam.zoom, { x: 0, y: 0 });
+    const hit = pickTube(w, f.x, f.y);
+    expect(hit?.link).toBe(l.id);
+    expect(Math.abs(hit!.x - gx)).toBeLessThanOrEqual(1);
+    // On the ground under it: no tube.
+    const g0 = screenToTileF(cam, c.x, c.y, { x: 0, y: 0 });
+    expect(pickTube(w, g0.x, g0.y)).toBeNull();
+  });
+});
+
+describe('annex pins (§3.9): input hit-tests what is drawn', () => {
+  it('pins only while a grant waits; a tap on a pin (with slack) finds its slot', () => {
+    const w = World.generate(7, 'Pins', undefined, 3);
+    const cam = new Camera(w.N);
+    cam.setViewport(390, 844);
+    cam.zoom = 0.3;
+    cam.centerOnTile(128, 96);
+    w.districts.grants = 0;
+    expect(annexPins(w, cam)).toEqual([]);
+    w.districts.grants = 1;
+    const pins = annexPins(w, cam);
+    expect(pins.length).toBeGreaterThan(0);
+    const p = pins[0];
+    expect(p.r * 2).toBe(44);
+    expect(pinAt(pins, p.x + 20, p.y)?.slot).toBe(p.slot);
+    expect(pinAt(pins, p.x + 60, p.y)).toBeNull();
+  });
+});

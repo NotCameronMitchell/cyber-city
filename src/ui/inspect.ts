@@ -105,8 +105,8 @@ export class InspectSheet {
   /** 'select' event. */
   onSelect(sel: Selection | null): void {
     const was = this.sel;
-    // A tap on a skyway deck selects the deck, not the ground (Selection.sky, EXPANSION §3.7).
-    this.sel = sel ? (sel.sky ? { x: sel.x, y: sel.y, sky: true } : { x: sel.x, y: sel.y }) : null;
+    // A tap on a skyway deck selects the deck, not the ground (Selection.sky, EXPANSION §3.7); a tube its link (§5.5).
+    this.sel = sel ? (sel.link !== undefined ? { x: sel.x, y: sel.y, link: sel.link } : sel.sky ? { x: sel.x, y: sel.y, sky: true } : { x: sel.x, y: sel.y }) : null;
     this.resetConfirm();
     this.story.select(this.sel);
     if (!sel) {
@@ -128,21 +128,33 @@ export class InspectSheet {
     if (!sel) return;
     const { game } = this.ctx;
     const sky = !!sel.sky && game.world.sky[game.world.idx(sel.x, sel.y)] !== 0;
-    const info = game.getTileInfo(sel.x, sel.y, sky);
+    // A skybridge tube (MEGACITY §5.5): its own sheet (walkers, cars, land, lobby, upkeep; Remove skybridge).
+    const info = sel.link !== undefined ? game.linkInfo(sel.link) : game.getTileInfo(sel.x, sel.y, sky);
     if (!info) {
       game.select(null);
       return;
     }
     const tile = game.world.tileAt(sel.x, sel.y)!;
-    // The skyway sheet is about the deck: the building under it is not on this sheet.
-    const building = !sky && tile.buildingId >= 0 ? game.world.buildings.get(tile.buildingId) ?? null : null;
+    // The skyway sheet is about the deck, the skybridge sheet about the tube: the building under it is not on it.
+    const building = !sky && sel.link === undefined && tile.buildingId >= 0 ? game.world.buildings.get(tile.buildingId) ?? null : null;
 
     setStyle(this.el, '--accent', info.color);
     setText(this.title, info.title);
     setText(this.sub, info.subtitle);
     setText(this.coords, `X${String(sel.x).padStart(2, '0')} · Y${String(sel.y).padStart(2, '0')}`);
     const cat = building ? BUILDINGS[building.type].category : null;
-    const kind = building ? KIND_LABEL[cat!] ?? 'Service' : sky || tile.road ? 'Transport' : tile.zone ? 'Zone' : 'Terrain';
+    const kind =
+      sel.link !== undefined
+        ? 'Skybridge'
+        : building
+          ? KIND_LABEL[cat!] ?? 'Service'
+          : !game.world.isOwned(sel.x, sel.y)
+            ? 'District'
+            : sky || tile.road
+              ? 'Transport'
+              : tile.zone
+                ? 'Zone'
+                : 'Terrain';
     setText(this.kind, kind);
 
     // Rows: reuse elements, add/remove only when the count changes.

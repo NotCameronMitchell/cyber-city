@@ -35,6 +35,8 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { snapSeaport } from '../game/actions';
+import { heightOf } from '../game/heights';
+import * as vertical from '../game/story/vertical';
 import { BUILDINGS, isBuildingTool } from '../game/config';
 import type { Game } from '../game/game';
 import { shoreSites } from '../game/ports';
@@ -94,7 +96,10 @@ import {
 import { annexPins, pinAt } from '../render/districts';
 import { HAPTIC_CONFIRM_MS, HAPTIC_TICK_MS, haptic } from './haptics';
 import { KeyboardInput, isTypingTarget } from './keyboard';
-import { MAP_PINCH_IN, MAP_PINCH_OUT, mapBus } from './mapbus';
+import { MAP_PINCH_IN, MAP_PINCH_OUT, SKY_FLASH_MS, mapBus, skyBus } from './mapbus';
+import { badgeAt, pickAnchor, pickTube, reachView, snapPartner } from './skybridge';
+import { ghostPick, partnerBadges } from '../render/overlay';
+import { ZoneType as Z } from '../game/types';
 
 type PointerKind = 'mouse' | 'touch' | 'pen';
 
@@ -122,7 +127,7 @@ interface TrackedPointer {
  *  scrub    long-press peek-inspect inside a build tool (never applies)
  *  void     gesture was cancelled (Esc / tool change); ignore until release
  */
-type Mode = 'idle' | 'pan' | 'build' | 'pinch' | 'tapzoom' | 'scrub' | 'void';
+type Mode = 'idle' | 'pan' | 'build' | 'pinch' | 'tapzoom' | 'scrub' | 'void' | 'bridge';
 
 const NO_TILE = -99999;
 
@@ -199,6 +204,10 @@ export class InputController {
   // ── City map: an annex pin under the press (a tap opens the City map on its slot), the map session.
   private pinSlot = -1;
   private mapSession = false;
+
+  // ── Skybridge tool (§5.4, §7.4): the anchor under the press, and the partner a drag snapped to.
+  private bridgePress: { x: number; y: number; key: number } | null = null;
+  private bridgeSnap: { x: number; y: number } | null = null;
 
   // ── Double-tap memory
   private lastTapT = -Infinity;
@@ -367,7 +376,12 @@ export class InputController {
    * and builds; a plan that is no longer valid toasts its reason (Game.confirmPending).
    */
   confirmPending(): void {
-    const plan = this.game.confirmPending();
+    // A Corp Spire places with the sponsor and look picked in the pill (MEGACITY §6.2, overlay's ghostPick).
+    const p = this.game.pendingConfirm;
+    const plan =
+      p && p.tool === 'spire' && p.tool === this.game.tool
+        ? this.game.apply(p.from, p.to, { sponsor: ghostPick.sponsor ?? 'nacre', look: ghostPick.look ?? 0 })
+        : this.game.confirmPending();
     if (plan?.valid) haptic(HAPTIC_CONFIRM_MS);
   }
 
@@ -474,6 +488,16 @@ export class InputController {
         break;
       case 'scrub':
         if (ptr === this.primary) this.updateScrub(ptr.x, ptr.y);
+        break;
+      case 'bridge':
+        if (ptr === this.primary && this.moved) {
+          if (this.bridgePress) this.bridgeDrag(ptr.x, ptr.y);
+          else {
+            this.panGesture(ptr.x - this.lastX, ptr.y - this.lastY, now);
+            this.lastX = ptr.x;
+            this.lastY = ptr.y;
+          }
+        }
         break;
       default:
         break;
@@ -621,6 +645,14 @@ export class InputController {
     }
 
     const tool = this.game.tool;
+    if (tool === 'skybridge') {
+      // Tap a tower, tap a partner (§5.4); a press on a tower that drags snaps to a partner; elsewhere a drag pans.
+      this.mode = 'bridge';
+      this.bridgeSnap = null;
+      this.bridgePress = pickAnchor(this.game.world, this.camera, ptr.x, ptr.y);
+      pointerActivity.building = !!this.bridgePress;
+      return;
+    }
     if (tool === 'inspect') {
       const slop = ptr.kind === 'mouse' ? DOUBLE_TAP_SLOP_MOUSE : DOUBLE_TAP_SLOP_TOUCH;
       const isSecondTap =
@@ -664,6 +696,9 @@ export class InputController {
     const fresh = this.mode !== 'pinch';
     // Cancel the drag, nothing applied; a plan waiting for ✓ keeps its ghost while two fingers look around.
     if (this.mode === 'build' && !this.holdPending) this.game.setPreview(null);
+    if (this.mode === 'bridge' && this.bridgeSnap) this.game.setPreview(null);
+    this.bridgePress = null;
+    this.bridgeSnap = null;
     pointerActivity.building = false;
     if (fresh) {
       const first = this.primary;
@@ -820,6 +855,14 @@ export class InputController {
         if (cancelled) this.game.setPreview(null);
         else this.commitBuild();
         break;
+      case 'bridge':
+        if (cancelled) break;
+        if (isTap) this.bridgeTap(ptr.x, ptr.y);
+        else if (this.bridgePress) this.bridgeRelease();
+        else this.startFling(now);
+        this.bridgePress = null;
+        this.bridgeSnap = null;
+        break;
       case 'tapzoom':
         if (!cancelled && isTap) {
           const cam = this.camera;
@@ -934,7 +977,27 @@ export class InputController {
     const t = this.pickAt(sx, sy, this.tmpHit, true);
     const sel = this.game.selected;
     const sky = !!t.sky;
-    if (sel && sel.x === t.x && sel.y === t.y && !!sel.sky === sky) {
+    // A skybridge tube (§7.4): picked as a slab at its height, unless a tower in front of it hides it.
+    const f = screenToTileF(this.camera, sx, sy, this.tmpF);
+    const tube = this.game.world.links.length ? pickTube(this.game.world, f.x, f.y) : null;
+    if (tube && !sky) {
+      const front = this.game.world.tileAt(t.x, t.y);
+      const fb = front && front.buildingId >= 0 ? this.game.world.buildings.get(front.buildingId) : null;
+      const depth = fb ? fb.x + fb.y + 2 * (fb.size - 1) : t.x + t.y;
+      const tall = front ? heightOf(this.game.world, t.x, t.y) : 0;
+      if (depth <= tube.depth || tall < tube.bottom) {
+        // Game.select treats two selections of one tile alike: clear first so the tube replaces the ground's sheet.
+        const again = sel?.link === tube.link;
+        this.game.select(null);
+        if (!again) this.game.select({ x: tube.x, y: tube.y, link: tube.link });
+        this.game.events.emit('sfx', 'click');
+        this.lastTapT = now;
+        this.lastTapX = sx;
+        this.lastTapY = sy;
+        return;
+      }
+    }
+    if (sel && sel.x === t.x && sel.y === t.y && !!sel.sky === sky && sel.link === undefined) {
       // Tapping the selected tile (or deck) again dismisses the info card.
       this.game.select(null);
       this.game.events.emit('sfx', 'click');
@@ -948,6 +1011,110 @@ export class InputController {
     this.lastTapT = now;
     this.lastTapX = sx;
     this.lastTapY = sy;
+  }
+
+  // ── Skybridge tool (§5.4, §7.4) ───────────────────────────────────────────
+
+  /**
+   * A tap with the Skybridge tool: a badge first (green builds, blue opens the two-bridge confirm, red shows its reason
+   * in the pill), then a tall tower's silhouette (selects it, or deselects it when it is the source; the camera eases
+   * so it and its reach show), else deselect. A level-2 tower says it grows tall at level 3.
+   */
+  private bridgeTap(sx: number, sy: number): void {
+    const g = this.game;
+    const cam = this.camera;
+    g.cancelPending();
+    if (g.bridgeSource) {
+      const b = badgeAt(partnerBadges(g, cam), sx, sy);
+      if (b) {
+        if (b.kind === 'ok') this.buildBridge(b.tx, b.ty);
+        else if (b.kind === 'route') {
+          const plan = g.commit(g.bridgeSource, { x: b.tx, y: b.ty });
+          if (g.pendingConfirm) haptic(HAPTIC_TICK_MS);
+          else if (!plan.valid) g.setPreview(plan);
+        } else {
+          // A red dot: its reason in the pill (and the red ghost on the map).
+          g.setPreview(g.planSkybridge(b.tx, b.ty));
+          g.events.emit('sfx', 'error');
+        }
+        return;
+      }
+    }
+    g.setPreview(null);
+    const hit = pickAnchor(g.world, cam, sx, sy);
+    if (hit) {
+      const was = g.bridgeSource;
+      const partners = g.skybridgeSource(hit.x, hit.y);
+      g.events.emit('sfx', 'click');
+      haptic(HAPTIC_TICK_MS);
+      if (partners && (!was || was.x !== hit.x || was.y !== hit.y)) this.easeToReach(hit.x, hit.y);
+      return;
+    }
+    // Empty ground deselects (§5.4 step 5); a level-2 tower explains itself.
+    if (g.bridgeSource) g.skybridgeSource(-1, -1);
+    const t = this.pickAt(sx, sy, this.tmpHit);
+    const tile = g.world.tileAt(t.x, t.y);
+    if (tile && tile.level === 2 && (tile.zone === Z.Residential || tile.zone === Z.Commercial) && !tile.abandoned) {
+      skyBus.flash = { title: 'Skybridge', cost: '', note: 'Grows tall at level 3', tone: 'info', until: performance.now() + SKY_FLASH_MS };
+    }
+  }
+
+  /** Build the bridge from the source to the partner at (tx, ty): at once, or its ✓ / ✕ for a route. */
+  private buildBridge(tx: number, ty: number): void {
+    const g = this.game;
+    const src = g.bridgeSource;
+    if (!src) return;
+    const plan = g.planSkybridge(tx, ty);
+    if (plan.valid && plan.confirm) {
+      g.commit(src, { x: tx, y: ty });
+      haptic(HAPTIC_TICK_MS);
+      return;
+    }
+    const out = g.applySkybridge(tx, ty);
+    if (!out.valid) return;
+    haptic(HAPTIC_CONFIRM_MS);
+    const p = out.bridge;
+    skyBus.flash = {
+      title: out.route ? '2 Skybridges' : 'Skybridge',
+      cost: `${out.cost.toLocaleString('en-US')} CR`,
+      note: p ? `${p.walkers.toLocaleString('en-US')} walkers · cars −${p.lobby ? 25 : 20}%` : '',
+      tone: 'good',
+      until: performance.now() + SKY_FLASH_MS,
+    };
+  }
+
+  /** A drag that began on a tower: it becomes the source, and the ghost snaps to the nearest green partner near the finger. */
+  private bridgeDrag(sx: number, sy: number): void {
+    const g = this.game;
+    const a = this.bridgePress!;
+    const src = g.bridgeSource;
+    if (!src || src.x !== a.x || src.y !== a.y) {
+      // Make the pressed tower the source (skybridgeSource toggles off when it already is one: re-pick it).
+      if (src) g.skybridgeSource(-1, -1);
+      g.skybridgeSource(a.x, a.y);
+    }
+    const t = screenToTileInto(this.camera, sx, sy, this.tmpTile);
+    const p = snapPartner(g.skybridgePartners(), t.x, t.y);
+    const key = p ? { x: p.x, y: p.y } : null;
+    if ((key?.x ?? -1) === (this.bridgeSnap?.x ?? -1) && (key?.y ?? -1) === (this.bridgeSnap?.y ?? -1)) return;
+    this.bridgeSnap = key;
+    g.setPreview(key ? g.planSkybridge(key.x, key.y) : null);
+    if (key && this.primary?.kind !== 'mouse') haptic(HAPTIC_TICK_MS, HAPTIC_TICK_GAP_MS);
+  }
+
+  /** Lift after a drag from a tower: build to the snapped partner, if any. */
+  private bridgeRelease(): void {
+    const s = this.bridgeSnap;
+    this.game.setPreview(null);
+    if (s) this.buildBridge(s.x, s.y);
+  }
+
+  /** §5.4 step 2: ease (0.3 s) so the source and its 10-tile reach show (never while pinching: a tap can't pinch). */
+  private easeToReach(x: number, y: number): void {
+    const a = vertical.anchorAt(this.game.world, x, y);
+    if (!a || this.mode === 'pinch') return;
+    const v = reachView(this.camera, a);
+    this.camera.easeTo(v.x, v.y, v.zoom, 0.3);
   }
 
   /** Height-aware tile pick: what the player sees under the point, towers (and, with `sky`, skyway decks) included. */
@@ -1115,7 +1282,7 @@ export class InputController {
     // The ghost of a plan waiting for ✓ stays put under a moving cursor.
     if (this.game.pendingConfirm) return;
     const tool = this.game.tool;
-    if (tool === 'inspect' || this.camera.mapView) {
+    if (tool === 'inspect' || tool === 'skybridge' || this.camera.mapView) {
       this.clearHover();
       return;
     }

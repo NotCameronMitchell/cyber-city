@@ -21,13 +21,15 @@ import type { Game } from '../game/game';
 import { pointerActivity } from '../input/gestures';
 import type { Camera } from '../render/camera';
 import { mapBus } from '../input/mapbus';
+import { partnerBadges } from '../render/overlay';
 import { BudgetPanel } from './budget';
 import { CityMap } from './citymap';
 import { Coach } from './coach';
 import { ConfirmDialog } from './confirm';
 import { Modals, type UIActions, type UIContext } from './context';
 import { Dock } from './dock';
-import { buzz, h, setClass } from './dom';
+import { buzz, h, setClass, setHidden } from './dom';
+import { SpirePicker } from './pickers';
 import { ActionPill, FpsMeter, MilestoneBanner, Toasts } from './feedback';
 import { gridLink } from './grid';
 import { Hud } from './hud';
@@ -68,6 +70,8 @@ export class UI {
   private readonly inspect: InspectSheet;
   private readonly toasts: Toasts;
   private readonly pill: ActionPill;
+  /** The Corp Spire's sponsor row in the confirm pill (MEGACITY §6.2). */
+  private readonly spire: SpirePicker;
   private readonly banner: MilestoneBanner;
   private readonly fps: FpsMeter;
   private readonly tips: Tips;
@@ -150,13 +154,21 @@ export class UI {
       alive: (id) => (id === 'undo' ? game.undoLeft() > 0 : id === 'map' ? game.world.region >= 3 : game.launchLead !== null),
       left: (id) => (id === 'undo' ? game.undoLeft() : (game.launchLead?.left ?? 0)),
     };
+    this.spire = new SpirePicker();
     this.pill = new ActionPill({
       confirm: () => {
-        const plan = game.confirmPending();
+        // The Corp Spire places with its sponsor and look (MEGACITY §6.2); everything else re-plans as before.
+        const p = game.pendingConfirm;
+        const plan = p && p.tool === 'spire' && p.tool === game.tool ? game.apply(p.from, p.to, this.spire.opts()) : game.confirmPending();
         if (plan?.valid) buzz(14);
       },
       cancel: () => game.cancelPending(),
     });
+    this.pill.row.append(this.spire.el);
+    this.spire.onChange = () => {
+      setHidden(this.pill.row, !this.spire.visible);
+      this.pill.invalidate();
+    };
     this.banner = new MilestoneBanner();
     this.fps = new FpsMeter();
     this.budget = new BudgetPanel(this.ctx);
@@ -375,7 +387,19 @@ export class UI {
       this.dock.closeTray();
       return true;
     }
+    // The Skybridge tool (§5.4 step 7): Esc deselects the source tower before it leaves the tool.
+    if (this.game.tool === 'skybridge' && this.game.bridgeSource) {
+      this.game.cancelPending();
+      this.game.setPreview(null);
+      this.game.skybridgeSource(-1, -1);
+      return true;
+    }
     return false;
+  }
+
+  /** The skybridge partner badges on screen now (the harness and tests read what input hit-tests, §7.4). */
+  badges(): ReturnType<typeof partnerBadges> {
+    return partnerBadges(this.game, this.ctx.camera);
   }
 
   // ── City map (MEGACITY §7.2) ───────────────────────────────────────────────
@@ -505,6 +529,7 @@ export class UI {
   /** Per frame. Cheap: diffed pill + throttled refreshes. */
   update(dt: number): void {
     if (!(dt >= 0) || dt > 1) dt = 0;
+    this.spire.sync(this.game);
     this.pill.update(this.game);
     // A chapter title, Charter Night or the ending covers the map: a plan waiting for ✓ waits behind it.
     setClass(this.topStack, 'is-story', this.story.fullscreen);

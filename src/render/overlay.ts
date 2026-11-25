@@ -821,7 +821,8 @@ export function drawPreviewTop(ctx: CanvasRenderingContext2D, game: Game, env: A
   const wy = (fp.x + fp.y) * HALF_H;
   const ok = plan.valid && plan.tiles.every((t) => t.ok);
   ctx.save();
-  drawBuildingGhost(ctx, wx, wy, plan.tool, ok, { ...env, ghost: true });
+  // The picked sponsor, look or crown (WP-5's pickers, MEGACITY §6.2) and the footprint, so the ghost shows its district look.
+  drawBuildingGhost(ctx, wx, wy, plan.tool, ok, { ...env, ghost: true }, { ...ghostPick, x: fp.x, y: fp.y });
   ctx.restore();
   // Footprint outline again on top so it reads through the ghost.
   ctx.save();
@@ -838,6 +839,8 @@ export function drawPreviewTop(ctx: CanvasRenderingContext2D, game: Game, env: A
 const ROUTE: RGB = [90, 170, 255];
 /** The UI's "Show routes" chip in the pill (WP-5) turns the blue "2" badges on (§5.4 step 2). */
 export const skybridgeView = { showRoutes: false };
+/** The placement ghost's picked look (WP-5's Spire sponsor row and crown picker, MEGACITY §6.2): empty = today's ghost. */
+export const ghostPick: { sponsor?: 'basalt' | 'nacre' | 'none'; look?: 0 | 1 | 2 | 3; crown?: import('../game/story/types').CrownId } = {};
 
 /** Tube centre of a bridge between two anchors (§5.3 rule 4: top R − 6, bottom R − 23, R the lower roof). */
 export function tubeZ(world: World, ax: number, ay: number, bx: number, by: number): number {

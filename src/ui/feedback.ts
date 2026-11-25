@@ -14,6 +14,9 @@ import { credits, groupInt, MINUS } from './format';
 import { footprintTouchesGrid } from './grid';
 import { icon, type IconName } from './icons';
 import { INFRA_POP, SECTIONS, toolMeta } from './tools';
+import { skyBus } from '../input/mapbus';
+import { inReach } from '../input/skybridge';
+import { skybridgeView } from '../render/overlay';
 
 // ── Toasts ─────────────────────────────────────────────────────────────────
 
@@ -196,10 +199,17 @@ export class ActionPill {
   private readonly note: HTMLElement;
   private readonly btns: HTMLElement;
   private readonly okBtn: HTMLButtonElement;
+  /** The Skybridge tool's "Show routes" chip (MEGACITY §5.4, §7.4): toggles the blue "2" route badges. */
+  private readonly routesBtn: HTMLButtonElement;
+  /** Extra controls above ✓ / ✕ (the Corp Spire's sponsor row, §6.2), mounted by the UI root. */
+  readonly row: HTMLElement;
   private lastPlan: ActionPlan | null = null;
   private lastFunds = NaN;
   private lastConfirm = false;
   private lastKey = '';
+  /** The skybridge source's partner count, cached by source and world version (the pill runs every frame). */
+  private reachKey = '';
+  private reachN = 0;
 
   constructor(hooks?: PillHooks) {
     this.ico = h('span', { class: 'cc-pill-ico' });
@@ -209,10 +219,16 @@ export class ActionPill {
     this.okBtn = h('button', { class: 'cc-pill-btn is-ok', type: 'button', 'data-act': 'pill-ok', 'aria-label': 'Build it', html: icon('check') });
     const noBtn = h('button', { class: 'cc-pill-btn is-no', type: 'button', 'data-act': 'pill-no', 'aria-label': 'Cancel', html: icon('close') });
     this.btns = h('span', { class: 'cc-pill-btns', hidden: true }, noBtn, this.okBtn);
+    this.routesBtn = h('button', { class: 'cc-pill-chip', type: 'button', 'data-act': 'pill-routes', 'aria-pressed': 'false', hidden: true, text: 'Show routes' });
+    this.row = h('div', { class: 'cc-pill-row', hidden: true });
     const text = h('span', { class: 'cc-pill-text' }, h('span', { class: 'cc-pill-line' }, this.name, this.cost), this.note);
-    this.el = h('div', { class: 'cc-pill', hidden: true, 'aria-hidden': 'true' }, this.ico, text, this.btns);
+    this.el = h('div', { class: 'cc-pill', hidden: true, 'aria-hidden': 'true' }, this.ico, text, this.routesBtn, this.row, this.btns);
     this.okBtn.addEventListener('click', () => hooks?.confirm());
     noBtn.addEventListener('click', () => hooks?.cancel());
+    this.routesBtn.addEventListener('click', () => {
+      skybridgeView.showRoutes = !skybridgeView.showRoutes;
+      this.lastKey = '';
+    });
   }
 
   /** The ✓ / ✕ buttons are showing. */
@@ -223,10 +239,56 @@ export class ActionPill {
   update(game: Game): void {
     const plan = game.tool === 'inspect' ? null : game.preview;
     const confirm = !!plan && game.pendingConfirm?.plan === plan;
-    if (plan === this.lastPlan && game.world.funds === this.lastFunds && confirm === this.lastConfirm) return;
+    const bridge = game.tool === 'skybridge';
+    const src = bridge ? game.bridgeSource : null;
+    const now = typeof performance !== 'undefined' ? performance.now() : 0;
+    const flash = bridge && skyBus.flash && now < skyBus.flash.until && !confirm ? skyBus.flash : null;
+    if (skyBus.flash && !flash && now >= skyBus.flash.until) skyBus.flash = null;
+    const quick = `${plan ? 'p' : '-'}|${src ? `${src.x},${src.y}` : ''}|${flash ? flash.until : 0}|${skybridgeView.showRoutes}|${game.world.version}`;
+    if (plan === this.lastPlan && game.world.funds === this.lastFunds && confirm === this.lastConfirm && quick === this.reachKey.split('#')[1]) return;
     this.lastPlan = plan;
     this.lastFunds = game.world.funds;
     this.lastConfirm = confirm;
+    // The source's partners (counted once per source and world version).
+    if (src) {
+      const k = `${src.x},${src.y},${game.world.version}`;
+      if (this.reachKey.split('#')[0] !== k) this.reachN = inReach(game.skybridgePartners());
+      this.reachKey = `${k}#${quick}`;
+    } else this.reachKey = `#${quick}`;
+    const showRoutes = !!src && !flash;
+    setHidden(this.routesBtn, !showRoutes);
+    if (showRoutes) {
+      setText(this.routesBtn, skybridgeView.showRoutes ? 'Hide routes' : 'Show routes');
+      setAttr(this.routesBtn, 'aria-pressed', skybridgeView.showRoutes ? 'true' : 'false');
+    }
+    if (flash || (src && (!plan || plan.tiles.length === 0))) {
+      // The skybridge tool between taps (§5.4): the payoff of the bridge just built, or the source's state.
+      const meta = toolMeta('skybridge');
+      const title = flash ? flash.title : 'Tap a partner';
+      const costText = flash ? flash.cost : '';
+      const note = flash ? flash.note : this.reachN > 0 ? `${this.reachN} in reach` : 'No partner in reach: try Show routes';
+      const key = `sky|${title}|${costText}|${note}|${showRoutes}|${skybridgeView.showRoutes}`;
+      if (key === this.lastKey) return;
+      this.lastKey = key;
+      this.el.dataset.tool = 'skybridge';
+      this.el.style.setProperty('--accent', meta.color);
+      setHtml(this.ico, icon(meta.icon));
+      setText(this.name, title);
+      setText(this.cost, costText);
+      setHidden(this.cost, !costText);
+      setText(this.note, note);
+      setHidden(this.note, !note);
+      setClass(this.el, 'is-bad', false);
+      setClass(this.el, 'is-warn', false);
+      setClass(this.el, 'is-refund', false);
+      setClass(this.el, 'is-good', !!flash && flash.tone === 'good');
+      setClass(this.el, 'is-confirm', false);
+      setClass(this.el, 'is-source', showRoutes);
+      setHidden(this.btns, true);
+      setAttr(this.el, 'aria-hidden', showRoutes ? 'false' : 'true');
+      setHidden(this.el, false);
+      return;
+    }
     if (!plan || plan.tiles.length === 0) {
       setHidden(this.el, true);
       this.lastKey = '';
@@ -243,7 +305,8 @@ export class ActionPill {
     const stranded =
       plan.valid && !note && !!fp && isBuildingTool(plan.tool) && BUILDINGS[plan.tool].powerSupply > 0 && !footprintTouchesGrid(game.world, fp.x, fp.y, fp.size);
     if (stranded) note = 'Not connected · touch a road or zone';
-    const key = `${plan.tool}|${label}|${costText}|${note}|${plan.valid}|${confirm}`;
+    const rowShown = confirm && !this.row.hidden;
+    const key = `${plan.tool}|${label}|${costText}|${note}|${plan.valid}|${confirm}|${showRoutes}|${skybridgeView.showRoutes}|${rowShown}`;
     if (key === this.lastKey) return;
     this.lastKey = key;
     this.el.dataset.tool = plan.tool;
@@ -257,11 +320,20 @@ export class ActionPill {
     setClass(this.el, 'is-bad', !plan.valid);
     setClass(this.el, 'is-warn', plan.valid && !!note);
     setClass(this.el, 'is-refund', refund > 0);
+    setClass(this.el, 'is-good', false);
     setClass(this.el, 'is-confirm', confirm);
+    setClass(this.el, 'is-source', showRoutes);
+    setClass(this.el, 'has-row', rowShown);
     setHidden(this.btns, !confirm);
-    setAttr(this.el, 'aria-hidden', confirm ? 'false' : 'true');
+    setAttr(this.el, 'aria-hidden', confirm || showRoutes ? 'false' : 'true');
     if (confirm) setAttr(this.okBtn, 'aria-label', `Build ${label}${costText ? `, ${costText}` : ''}`);
     setHidden(this.el, false);
+  }
+
+  /** Force the next update to re-render (the sponsor row changed). */
+  invalidate(): void {
+    this.lastKey = '';
+    this.lastPlan = null;
   }
 }
 

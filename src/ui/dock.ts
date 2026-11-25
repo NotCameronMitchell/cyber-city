@@ -716,7 +716,7 @@ export class Dock {
       tool === 'bulldoze'
         ? 'Drag to demolish'
         : tool === 'skybridge'
-          ? 'Drag from tower to tower'
+          ? 'Tap a tall tower, then a glowing partner'
           : tool === 'rail'
             ? 'Drag to lay track between stations'
             : tool === 'skyway'

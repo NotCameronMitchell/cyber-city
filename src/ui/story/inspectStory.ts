@@ -17,7 +17,9 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import type { CrownId, InspectAction } from '../../game/story/types';
-import type { Selection } from '../../game/types';
+import type { ActionPlan, Selection } from '../../game/types';
+import { ghostPick } from '../../render/overlay';
+import { CROWN_LOOK_NAMES, crownThumb } from '../pickers';
 import { highlight } from '../../render/highlight';
 import type { UIContext } from '../context';
 import { esc, h, replayClass, setHidden } from '../dom';
@@ -33,6 +35,10 @@ export class InspectStory {
   private sel: Selection | null = null;
   private actions: InspectAction[] = [];
   private mode: 'idle' | 'confirm' | 'crowns' = 'idle';
+  /** The crown picker's choice (§6.2): the crown, its look, and the Stratablock it is for. */
+  private pickCrown: CrownId | null = null;
+  private pickLook = 0;
+  private pickFor = -1;
   private key = '';
   private timer = 0;
   private readonly press: { readonly down: boolean };
@@ -54,7 +60,7 @@ export class InspectStory {
 
   refresh(): void {
     const sel = this.sel;
-    const acts = sel ? this.ctx.game.inspectActions(sel.x, sel.y, !!sel.sky) : [];
+    const acts = sel ? this.ctx.game.inspectActions(sel.x, sel.y, !!sel.sky, sel.link) : [];
     this.actions = acts;
     if (!acts.length && this.mode !== 'idle') this.setMode('idle');
     const key = `${this.mode}|${JSON.stringify(acts)}`;
@@ -67,16 +73,31 @@ export class InspectStory {
     for (let i = 0; i < acts.length; i++) {
       const a = acts[i];
       if (a.id === 'crown' && this.mode === 'crowns' && a.crowns) {
-        s += `<div class="cc-crowns" role="list"><div class="cc-crowns-head">Pick a crown · ${esc(a.label.replace(/^Raise to Crown · /, ''))}</div>`;
+        // MEGACITY §6.2 Pickers: a 2-column grid of crown cards; the picked crown shows its three looks (look 0 first),
+        // the ghost on the map shows the chosen look, and Crown it raises it with that look.
+        s += `<div class="cc-crowns" role="list"><div class="cc-crowns-head">Pick a crown · ${esc(a.label.replace(/^Raise to Crown · /, ''))}</div><div class="cc-crown-grid">`;
         for (const c of a.crowns) {
           const chips = c.favor
             .map((f) => `<span class="cc-hc is-fav ${f.v > 0 ? 'is-up' : 'is-down'}" style="--fc:${factionColor(f.f)}">${factionSigil(f.f, 14, 'cc-hc-sig')}<b>${f.v > 0 ? '+' : MINUS}${Math.abs(f.v)}</b></span>`)
             .join('');
+          const on = this.pickCrown === c.id;
           s +=
-            `<button class="cc-crown${c.enabled ? '' : ' is-off'}" type="button" role="listitem" data-crown="${c.id}" data-i="${i}"${c.enabled ? '' : ` aria-disabled="true" data-reason="${esc(c.reason ?? 'Not available')}"`}>` +
+            `<button class="cc-crown${c.enabled ? '' : ' is-off'}${on ? ' is-on' : ''}" type="button" role="listitem" aria-pressed="${on}" data-crown="${c.id}" data-i="${i}"${c.enabled ? '' : ` aria-disabled="true" data-reason="${esc(c.reason ?? 'Not available')}"`}>` +
             `<span class="cc-crown-main"><b>${esc(c.name)}</b><span>${esc(c.enabled ? c.summary : c.reason ?? c.summary)}</span></span><span class="cc-crown-chips">${chips}</span></button>`;
         }
-        s += `<button class="cc-btn is-ghost cc-crowns-cancel" type="button" data-act="cancel">${icon('back')}<span>Not yet</span></button></div>`;
+        s += '</div>';
+        if (this.pickCrown) {
+          const names = CROWN_LOOK_NAMES[this.pickCrown];
+          s += `<div class="cc-crown-looks" role="radiogroup" aria-label="Look">`;
+          for (let k = 0; k < names.length; k++) {
+            const on = this.pickLook === k;
+            s += `<button class="cc-crown-look${on ? ' is-on' : ''}" type="button" role="radio" aria-checked="${on}" data-look="${k}"><span class="cc-look-thumb" data-thumb="${this.pickCrown}:${k}"></span><span>${esc(names[k])}</span></button>`;
+          }
+          s += '</div>';
+        }
+        s +=
+          `<div class="cc-crowns-go"><button class="cc-btn is-ghost cc-crowns-cancel" type="button" data-act="cancel">${icon('back')}<span>Not yet</span></button>` +
+          `<button class="cc-btn is-primary cc-crowns-ok" type="button" data-act="crown-go" data-i="${i}"${this.pickCrown ? '' : ' aria-disabled="true"'}>${icon('stack')}<span>Crown it</span></button></div></div>`;
         continue;
       }
       if (a.id === 'crackdown' && this.mode === 'confirm') {
@@ -86,8 +107,10 @@ export class InspectStory {
           `<button class="cc-btn is-danger cc-story-act" type="button" data-act="go" data-i="${i}">${icon('shield')}<span>Crackdown</span></button></span></div>`;
         continue;
       }
-      const ico = a.id === 'crackdown' ? 'shield' : a.id === 'rights' ? 'key' : a.id === 'skyway' ? 'trash' : 'stack';
-      const cls = a.id === 'crackdown' ? ' is-crackdown' : a.id === 'rights' ? ' is-rights' : a.id === 'skyway' ? ' is-skyway' : '';
+      const ico =
+        a.id === 'crackdown' ? 'shield' : a.id === 'rights' ? 'key' : a.id === 'skyway' || a.id === 'bridgeRemove' ? 'trash' : a.id === 'map' ? 'map' : 'stack';
+      const cls =
+        a.id === 'crackdown' ? ' is-crackdown' : a.id === 'rights' ? ' is-rights' : a.id === 'skyway' || a.id === 'bridgeRemove' ? ' is-skyway' : a.id === 'map' ? ' is-map' : '';
       s +=
         `<button class="cc-story-act${a.enabled ? '' : ' is-off'}${cls}" type="button" data-act="${a.id}" data-i="${i}"${a.enabled ? '' : ` aria-disabled="true"`}>` +
         `<span class="cc-story-act-ico">${icon(a.enabled ? ico : 'lock')}</span>` +
@@ -95,16 +118,47 @@ export class InspectStory {
         `</button>`;
     }
     this.el.innerHTML = s;
+    // The look chips' tiny thumbnails (cached canvases).
+    for (const t of this.el.querySelectorAll<HTMLElement>('[data-thumb]')) {
+      const [crown, look] = (t.dataset.thumb ?? '').split(':');
+      const c = crownThumb(crown as CrownId, Number(look));
+      if (c) t.append(c);
+    }
   }
 
   private setMode(m: 'idle' | 'confirm' | 'crowns'): void {
     const changed = m !== this.mode;
     this.mode = m;
+    if (m !== 'crowns') this.setPick(null, 0);
     if (changed) this.onMode?.(m);
     window.clearTimeout(this.timer);
     if (m !== 'confirm') highlight.zone = null;
     if (m === 'confirm') this.timer = window.setTimeout(() => this.setMode('idle'), CONFIRM_MS);
     this.key = '';
+  }
+
+  /**
+   * The picked crown and look (§6.2): the map's ghost shows it over the Stratablock (a preview plan of its footprint
+   * with overlay's ghostPick), cleared when the picker closes.
+   */
+  private setPick(crown: CrownId | null, look: number, buildingId = -1): void {
+    const game = this.ctx.game;
+    const had = this.pickCrown !== null;
+    this.pickCrown = crown;
+    this.pickLook = look;
+    this.pickFor = buildingId;
+    const b = crown ? game.world.buildings.get(buildingId) : null;
+    if (b && crown) {
+      ghostPick.crown = crown;
+      ghostPick.look = look as 0 | 1 | 2;
+      const tiles: ActionPlan['tiles'] = [];
+      for (let y = b.y; y < b.y + b.size; y++) for (let x = b.x; x < b.x + b.size; x++) tiles.push({ x, y, ok: true });
+      game.setPreview({ tool: 'stack', tiles, cost: 0, valid: true, footprint: { x: b.x, y: b.y, size: b.size } });
+    } else if (had) {
+      delete ghostPick.crown;
+      delete ghostPick.look;
+      if (game.preview?.tool === 'stack' && game.tool === 'inspect') game.setPreview(null);
+    }
   }
 
   /** Called when the inspect sheet closes. */
@@ -134,7 +188,20 @@ export class InspectStory {
     }
     const crown = btn.dataset.crown as CrownId | undefined;
     if (crown && a) {
-      const r = game.raiseStage(a.buildingId, crown);
+      // Pick the crown (its looks show under the grid, look 0 preselected); Crown it raises it.
+      this.setPick(crown, 0, a.buildingId);
+      this.key = '';
+      this.refresh();
+      return;
+    }
+    if (btn.dataset.look !== undefined && this.pickCrown) {
+      this.setPick(this.pickCrown, Number(btn.dataset.look), this.pickFor);
+      this.key = '';
+      this.refresh();
+      return;
+    }
+    if (act === 'crown-go' && a && this.pickCrown) {
+      const r = game.raiseStage(a.buildingId, this.pickCrown, this.pickLook as 0 | 1 | 2);
       if (r.ok) game.toast('Crown under way. The skyline steps up.', 'good');
       this.setMode('idle');
       this.refresh();
@@ -165,6 +232,20 @@ export class InspectStory {
     } else if (act === 'skyway' && a.x !== undefined && a.y !== undefined) {
       const r = game.demolishSkySegment(a.x, a.y);
       if (r.ok) game.toast('Skyway segment removed', 'info');
+      this.refresh();
+    } else if (act === 'bridgeRemove' && this.sel?.link !== undefined) {
+      // MEGACITY §5.5: no refund once the 10 s undo has passed.
+      const r = game.removeSkybridge(this.sel.link);
+      if (r.ok) game.toast('Skybridge removed', 'info');
+    } else if (act === 'map' && a.x !== undefined && a.y !== undefined) {
+      // A locked district's preview (§7.5): the City map on that district.
+      const slot = game.world.slotAt(a.x, a.y);
+      game.select(null);
+      this.ctx.actions.openCityMap(slot);
+    } else if (act === 'frame') {
+      // Skeleton Row (§3.7): finish the frame as a Stratablock with its Plinth done.
+      const r = game.finishFrame(a.buildingId);
+      if (r.ok) game.toast('The frame is finished: a Stratablock stands.', 'good');
       this.refresh();
     }
   };
