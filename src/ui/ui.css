@@ -4220,6 +4220,30 @@ body {
   overflow: visible;
 }
 
+/* The Metro (§7.2): thin cyan lines between districts with a live station, a dark casing so they read on any impostor. */
+.cc-cm-metro path {
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.cc-cm-metro .is-case {
+  stroke: rgba(6, 4, 14, 0.7);
+  stroke-width: 4.5;
+}
+
+.cc-cm-metro .is-line {
+  stroke: var(--cc-cyan);
+  stroke-width: 2;
+  stroke-opacity: 0.9;
+}
+
+.cc-cm-metro .is-stop {
+  fill: #0b0716;
+  stroke: var(--cc-cyan);
+  stroke-width: 1.8;
+}
+
 .cc-cm-sel polygon {
   fill: rgba(255, 216, 77, 0.1);
   stroke: var(--cc-gold);
@@ -4481,6 +4505,10 @@ body {
 
 .cc-cm-line.is-dim {
   color: var(--cc-ink-3);
+}
+
+.cc-cm-line.is-metro {
+  color: var(--cc-cyan);
 }
 
 .cc-cm-list {

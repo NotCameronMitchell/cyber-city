@@ -33,6 +33,7 @@ import type { SlotId } from '../game/types';
 import type { World } from '../game/world';
 import { mapBus } from '../input/mapbus';
 import { styleVignette } from '../render/atlas';
+import { slotNames } from '../render/districts';
 import { HALF_H, HALF_W, type Camera } from '../render/camera';
 import type { UIContext } from './context';
 import { buzz, esc, h, setAttr, setClass, setHidden, setHtml, setStyle, setText } from './dom';
@@ -199,6 +200,68 @@ export function balanceLine(c: DistrictSlotView['census']): string {
   return parts.join(' · ');
 }
 
+/**
+ * The Metro on the City map (§7.2, §6.3): each owned district with a live Metro Station (powered, online, built) gives
+ * one stop (its live station nearest the district's centre); with stops in two or more districts they are joined by
+ * the shortest set of lines that links them all (a spanning tree over tile distance, so no line doubles another). One
+ * district alone draws nothing: the sim links stations only across districts. Stops are in world px.
+ */
+export interface MetroNet {
+  stops: { slot: SlotId; x: number; y: number }[];
+  /** Index pairs into `stops`. */
+  lines: [number, number][];
+  /** Every owned district with a live station (also when it is the only one). */
+  live: SlotId[];
+}
+
+export function metroNet(world: Pick<World, 'buildings' | 'region' | 'slotAt' | 'slotOwned'>): MetroNet {
+  const best = new Map<SlotId, { tx: number; ty: number; d: number }>();
+  for (const b of world.buildings.values()) {
+    if (b.type !== 'metro' || !b.powered || b.offline > 0 || (b.buildDays ?? 0) > 0) continue;
+    const slot = world.slotAt(b.x, b.y);
+    if (slot < 0 || world.slotOwned[slot] !== 1) continue;
+    const r = slotRect(world, slot);
+    const d = Math.abs(b.x + 0.5 - (r.x0 + r.x1 + 1) / 2) + Math.abs(b.y + 0.5 - (r.y0 + r.y1 + 1) / 2);
+    const cur = best.get(slot);
+    if (cur && cur.d <= d) continue;
+    best.set(slot, { tx: b.x, ty: b.y, d });
+  }
+  const live = [...best.keys()].sort((a, b) => a - b);
+  if (best.size < 2) return { stops: [], lines: [], live };
+  const tiles = [...best.entries()].sort((a, b) => a[0] - b[0]);
+  const stops = tiles.map(([slot, p]) => ({ slot, x: (p.tx - p.ty) * HALF_W, y: (p.tx + p.ty + 1) * HALF_H }));
+  // Prim's tree over at most R² stops.
+  const n = stops.length;
+  const inTree = new Array<boolean>(n).fill(false);
+  const dist = new Array<number>(n).fill(Infinity);
+  const from = new Array<number>(n).fill(-1);
+  const lines: [number, number][] = [];
+  dist[0] = 0;
+  for (let it = 0; it < n; it++) {
+    let u = -1;
+    for (let i = 0; i < n; i++) if (!inTree[i] && (u < 0 || dist[i] < dist[u])) u = i;
+    inTree[u] = true;
+    if (from[u] >= 0) lines.push([from[u], u]);
+    for (let i = 0; i < n; i++) {
+      if (inTree[i]) continue;
+      const d = Math.hypot(tiles[i][1].tx - tiles[u][1].tx, tiles[i][1].ty - tiles[u][1].ty);
+      if (d < dist[i]) {
+        dist[i] = d;
+        from[i] = u;
+      }
+    }
+  }
+  return { stops, lines, live };
+}
+
+/** The owned district's Metro line in the sheet: linked, or the hint that a station in a second district links them. */
+export function metroLine(net: MetroNet, slot: SlotId): string {
+  if (!net.live.includes(slot)) return '';
+  const n = net.stops.length - 1;
+  if (n <= 0) return 'Metro Station here: one in another district links them';
+  return `Metro: linked to ${n} other ${n === 1 ? 'district' : 'districts'}`;
+}
+
 // ── The panel ───────────────────────────────────────────────────────────────
 
 export class CityMap {
@@ -225,6 +288,14 @@ export class CityMap {
   private readonly growSlot: HTMLElement;
   private readonly svg: SVGSVGElement;
   private readonly poly: SVGPolygonElement;
+  private readonly metroCase: SVGPathElement;
+  private readonly metroPath: SVGPathElement;
+  private readonly metroStops: SVGPathElement;
+  private readonly metroHoles: SVGPathElement;
+  private readonly measure: CanvasRenderingContext2D | null;
+  private readonly textW = new Map<string, number>();
+  private net: MetroNet = { stops: [], lines: [], live: [] };
+  private netKey = '';
   private open_ = false;
   private slot: SlotId = -1;
   private lease: 'nacre' | 'basalt' | null = null;
@@ -280,7 +351,39 @@ export class CityMap {
     this.svg.setAttribute('class', 'cc-cm-sel');
     this.svg.setAttribute('aria-hidden', 'true');
     this.poly = document.createElementNS(svgNS, 'polygon');
-    this.svg.append(this.poly);
+    // The Metro (§7.2): a dark casing, the line and its stops, under the selection outline.
+    const metro = document.createElementNS(svgNS, 'g');
+    metro.setAttribute('class', 'cc-cm-metro');
+    this.metroCase = document.createElementNS(svgNS, 'path');
+    this.metroCase.setAttribute('class', 'is-case');
+    this.metroPath = document.createElementNS(svgNS, 'path');
+    this.metroPath.setAttribute('class', 'is-line');
+    this.metroStops = document.createElementNS(svgNS, 'path');
+    this.metroStops.setAttribute('class', 'is-stop');
+    // The lines pass under the atlas's name plates and icons (a mask cut at each plate), so no name is struck through;
+    // a stop under its district's plate reads as the line running into the name, like a station on a transit map.
+    const defs = document.createElementNS(svgNS, 'defs');
+    const mask = document.createElementNS(svgNS, 'mask');
+    mask.setAttribute('id', 'cc-cm-metro-mask');
+    mask.setAttribute('maskUnits', 'userSpaceOnUse');
+    const all = document.createElementNS(svgNS, 'rect');
+    for (const [k, v] of [['x', '-10000'], ['y', '-10000'], ['width', '20000'], ['height', '20000'], ['fill', 'white']]) all.setAttribute(k, v);
+    this.metroHoles = document.createElementNS(svgNS, 'path');
+    this.metroHoles.setAttribute('fill', 'black');
+    mask.append(all, this.metroHoles);
+    defs.append(mask);
+    const lines = document.createElementNS(svgNS, 'g');
+    lines.setAttribute('mask', 'url(#cc-cm-metro-mask)');
+    lines.append(this.metroCase, this.metroPath, this.metroStops);
+    metro.append(lines);
+    this.svg.append(defs, metro, this.poly);
+    let m: CanvasRenderingContext2D | null = null;
+    try {
+      m = document.createElement('canvas').getContext('2d');
+    } catch {
+      m = null;
+    }
+    this.measure = m;
     this.el = h('div', { class: 'cc-citymap', hidden: true, role: 'dialog', 'aria-labelledby': 'cc-cm-title' }, this.svg as unknown as HTMLElement, this.head, this.edgeEl, this.sheet);
     this.el.addEventListener('click', this.onClick);
     this.wireDrag();
@@ -300,6 +403,7 @@ export class CityMap {
     const g = this.ctx.game;
     if (g.world.region < 3) return;
     this.view = g.districtView();
+    this.readMetro();
     const start = g.world.districts.owned[0] ?? -1;
     const was = this.open_;
     this.open_ = true;
@@ -349,7 +453,18 @@ export class CityMap {
   refresh(): void {
     if (!this.open_) return;
     this.view = this.ctx.game.districtView();
+    this.readMetro();
     this.render();
+  }
+
+  /** Re-read the Metro network; a change redraws the lines on the next frame. */
+  private readMetro(): void {
+    const net = metroNet(this.ctx.game.world);
+    const key = net.stops.map((p) => `${p.slot}:${p.x},${p.y}`).join(';') + `|${net.live.join(',')}`;
+    if (key === this.netKey) return;
+    this.netKey = key;
+    this.net = net;
+    this.polyKey = '';
   }
 
   /** Per frame while open: keep the selection outline on its slot as the camera moves. */
@@ -366,12 +481,70 @@ export class CityMap {
     const key = `${this.slot}|${cam.x.toFixed(1)}|${cam.y.toFixed(1)}|${cam.zoom.toFixed(5)}|${cam.width}|${cam.height}`;
     if (key === this.polyKey) return;
     this.polyKey = key;
+    this.drawMetro(cam);
     if (this.slot < 0) {
       this.poly.setAttribute('points', '');
       return;
     }
     const pts = slotScreenPoly(this.ctx.game.world, cam, this.slot);
     this.poly.setAttribute('points', pts.map((p) => `${p[0].toFixed(1)},${p[1].toFixed(1)}`).join(' '));
+  }
+
+  /** The Metro lines and stops in screen px (thin at any atlas zoom). */
+  private drawMetro(cam: Camera): void {
+    const { stops, lines } = this.net;
+    let d = '';
+    for (const [a, b] of lines) {
+      const p = cam.worldToScreen(stops[a].x, stops[a].y);
+      const q = cam.worldToScreen(stops[b].x, stops[b].y);
+      d += `M${p.x.toFixed(1)} ${p.y.toFixed(1)}L${q.x.toFixed(1)} ${q.y.toFixed(1)}`;
+    }
+    let dots = '';
+    const r = 3;
+    for (const s of stops) {
+      const p = cam.worldToScreen(s.x, s.y);
+      dots += `M${(p.x - r).toFixed(1)} ${p.y.toFixed(1)}a${r} ${r} 0 1 0 ${2 * r} 0a${r} ${r} 0 1 0 ${-2 * r} 0`;
+    }
+    this.metroCase.setAttribute('d', d);
+    this.metroPath.setAttribute('d', d);
+    this.metroStops.setAttribute('d', dots);
+    this.metroHoles.setAttribute('d', d ? this.plateHoles(cam) : '');
+  }
+
+  /**
+   * The atlas's name plates and kind icons on screen (the same sizes Atlas.draw uses), as one path to cut out of the
+   * Metro lines' mask.
+   */
+  private plateHoles(cam: Camera): string {
+    const w = this.ctx.game.world;
+    const R = w.region;
+    const z = cam.zoom;
+    const big = Math.min(13, Math.max(9, 64 * HALF_W * z * 0.11));
+    const long = 64 * HALF_W * 2 * z > 150;
+    let d = '';
+    const rect = (x: number, y: number, rw: number, rh: number) => {
+      d += `M${x.toFixed(1)} ${y.toFixed(1)}h${rw.toFixed(1)}v${rh.toFixed(1)}h${(-rw).toFixed(1)}z`;
+    };
+    for (let k = 0; k < R * R; k++) {
+      const r = slotRect(w, k);
+      const c = cam.worldToScreen((r.x0 - r.y0) * HALF_W, (r.x0 + r.y0 + 64) * HALF_H);
+      const owned = w.slotOwned[k] === 1;
+      const { name, short } = slotNames(w, k);
+      const label = long ? name : short;
+      const font = `${owned ? 700 : 600} ${big}px system-ui, sans-serif`;
+      const key = `${font}|${label}`;
+      let tw = this.textW.get(key);
+      if (tw === undefined) {
+        if (this.measure) {
+          this.measure.font = font;
+          tw = this.measure.measureText(label).width;
+        } else tw = label.length * big * 0.55;
+        this.textW.set(key, tw);
+      }
+      rect(c.x - tw / 2 - 6, c.y - big * 0.7 - 2, tw + 12, big * 1.4 + 4);
+      if (!owned) rect(c.x - big * 0.75, c.y - big * 1.3 - big * 0.75, big * 1.5, big * 1.5);
+    }
+    return d;
   }
 
   /** The viewport changed: switch between the bottom sheet and the side panel, and refit the atlas. */
@@ -487,7 +660,7 @@ export class CityMap {
   private renderBody(s: DistrictSlotView, v: DistrictView): void {
     const g = this.ctx.game;
     const reactions = s.state === 'candidate' ? (this.lease ? g.annexReactions(s.slot, this.lease) : s.reactions) : [];
-    const key = JSON.stringify([s, this.lease, reactions, v.ended]);
+    const key = JSON.stringify([s, this.lease, reactions, v.ended, this.netKey]);
     if (key === this.bodyKey) return;
     this.bodyKey = key;
     setStyle(this.sheet, '--accent', s.color);
@@ -515,6 +688,8 @@ export class CityMap {
       if (c) html += `<p class="cc-cm-line">${esc(c)}</p>`;
       const b = balanceLine(s.census);
       if (b) html += `<p class="cc-cm-line is-dim">${esc(b)}</p>`;
+      const m = metroLine(this.net, s.slot);
+      if (m) html += `<p class="cc-cm-line is-metro">${esc(m)}</p>`;
     } else if (s.state !== 'notOpen') html += `<p class="cc-cm-line">${esc(terrainLine(s))}</p>`;
     if (s.perks.length) html += `<ul class="cc-cm-list is-perks">${s.perks.slice(0, 3).map((p) => `<li>+ ${esc(p)}</li>`).join('')}</ul>`;
     if (s.hazards.length) html += `<ul class="cc-cm-list is-hazards">${s.hazards.slice(0, 2).map((p) => `<li>! ${esc(p)}</li>`).join('')}</ul>`;

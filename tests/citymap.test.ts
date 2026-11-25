@@ -7,7 +7,7 @@ import { describe, expect, it } from 'vitest';
 import { DISTRICTS, districtPrice } from '../src/game/config';
 import { adjacentLocked, slotRect } from '../src/game/districts/slots';
 import { Game } from '../src/game/game';
-import type { Region, SlotId } from '../src/game/types';
+import type { Building, Region, SlotId } from '../src/game/types';
 import { World } from '../src/game/world';
 import { zoomRange } from '../src/input/input';
 import { MAP_PINCH_IN, MAP_PINCH_OUT, pinchMayLeaveMap } from '../src/input/mapbus';
@@ -20,6 +20,8 @@ import {
   censusLine,
   defaultSlot,
   footerModel,
+  metroLine,
+  metroNet,
   reactionSummary,
   slotAtScreen,
   slotScreenPoly,
@@ -200,6 +202,65 @@ describe('City map model (§7.2)', () => {
     expect(balanceLine(c(0, 5000, 0.1))).toBe('Jobs, no homes yet · Land value 10%');
     expect(balanceLine(c(0, 0))).toBe('');
     expect(balanceLine(undefined)).toBe('');
+  });
+});
+
+describe('Metro lines on the City map (§7.2, §6.3)', () => {
+  /** A 3×3 world owning `owned` (start slot 4 included) with fake buildings for the Metro read. */
+  function metroWorld(owned: SlotId[], list: Partial<Building>[]) {
+    const w = World.generate(77, 'Metro Bay', undefined, 3);
+    for (const s of owned) if (!w.slotOwned[s]) w.annex(s);
+    const buildings = new Map<number, Building>();
+    list.forEach((b, i) => buildings.set(i + 1, { id: i + 1, type: 'metro', size: 1, builtTick: 0, offline: 0, powered: true, x: 0, y: 0, ...b } as Building));
+    return { buildings, region: w.region, slotAt: (x: number, y: number) => w.slotAt(x, y), slotOwned: w.slotOwned };
+  }
+  /** A tile in slot `s` at (dx, dy) from its corner. */
+  const at = (s: SlotId, dx = 32, dy = 32) => {
+    const r = slotRect({ region: 3 }, s);
+    return { x: r.x0 + dx, y: r.y0 + dy };
+  };
+
+  it('one district alone draws no line; the sheet says a second district links it', () => {
+    const net = metroNet(metroWorld([4], [at(4)]));
+    expect(net.stops).toEqual([]);
+    expect(net.lines).toEqual([]);
+    expect(net.live).toEqual([4]);
+    expect(metroLine(net, 4)).toBe('Metro Station here: one in another district links them');
+    expect(metroLine(net, 1)).toBe('');
+  });
+
+  it('live stations in three districts: three stops joined by two lines that link them all, the shortest way', () => {
+    const net = metroNet(metroWorld([4, 1, 5], [at(4), at(1), at(5)]));
+    expect(net.stops.map((s) => s.slot)).toEqual([1, 4, 5]);
+    expect(net.lines.length).toBe(2);
+    // Slots 1 and 5 touch only at a corner: the tree runs through the start district, never 1–5 directly.
+    const pairs = net.lines.map(([a, b]) => [net.stops[a].slot, net.stops[b].slot].sort((x, y) => x - y).join('-')).sort();
+    expect(pairs).toEqual(['1-4', '4-5']);
+    // Stops sit on their station's tile centre in world px.
+    const p = at(4);
+    const stop = net.stops.find((s) => s.slot === 4)!;
+    expect(stop.x).toBe((p.x - p.y) * HALF_W);
+    expect(stop.y).toBe((p.x + p.y + 1) * HALF_H);
+    expect(metroLine(net, 4)).toBe('Metro: linked to 2 other districts');
+    const two = metroNet(metroWorld([4, 1], [at(4), at(1)]));
+    expect(metroLine(two, 1)).toBe('Metro: linked to 1 other district');
+  });
+
+  it('only live stations in owned districts count: unpowered, offline, still building or locked land draw nothing', () => {
+    const dead = metroWorld([4, 1], [at(4), { ...at(1), powered: false }, { ...at(1, 10, 10), offline: 3 }, { ...at(1, 20, 20), buildDays: 2 }, at(7)]);
+    const net = metroNet(dead);
+    expect(net.live).toEqual([4]);
+    expect(net.lines).toEqual([]);
+    // Other building types never count.
+    expect(metroNet(metroWorld([4, 1], [at(4), { ...at(1), type: 'maglev' }])).live).toEqual([4]);
+  });
+
+  it('a district with several stations shows one stop: the one nearest its centre', () => {
+    const net = metroNet(metroWorld([4, 1], [at(4), at(1, 2, 2), at(1, 30, 35), at(1, 60, 60)]));
+    const p = at(1, 30, 35);
+    const stop = net.stops.find((s) => s.slot === 1)!;
+    expect(stop.x).toBe((p.x - p.y) * HALF_W);
+    expect(net.lines.length).toBe(1);
   });
 });
 
