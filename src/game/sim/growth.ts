@@ -13,10 +13,19 @@
 // latches its potential tier (falling back while the grid can't feed it).
 // No rng draws: tier logic never shifts the other rolls. settle() is the
 // one-time batch for old saves (Simulation.settleWealth).
+//
+// Megacity districts (docs/MEGACITY.md §3.3, §3.7), per district of each kind:
+// ruins (zoned, abandoned, ground Rubble) never collapse and recover at
+// RECOVER_CHANCE × recoverMul, turning Plain, counting districts.ruinsRestored
+// and paying restorePay (capped at RUINS.payCapMonth a month); floodplain
+// tiles (land within 1 of water where floodplainMaxLevel is set) stop below
+// level 3 while resilience is 0; brownfield clears (ground Plain) on a sampled
+// tile developed for clearDays, or with park ≥ 0.3 or filter > 0 for
+// parkClearDays. Every rule is a no-op (no extra rng draw) on plain ground.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { WEALTH, ZONES } from '../config';
-import { ZoneType, type Demand, type WealthTier } from '../types';
+import { DISTRICTS, RUINS, WEALTH, ZONES } from '../config';
+import { DAYS_PER_MONTH, Ground, ZoneType, type Demand, type WealthTier } from '../types';
 import * as Wealth from '../wealth';
 import type { World } from '../world';
 import type { SimGrid } from './grid';
@@ -32,6 +41,10 @@ const W = { ...Wealth };
 const STREAK = WEALTH.streak;
 const RES = ZoneType.Residential;
 const COM = ZoneType.Commercial;
+const RUBBLE = Ground.Rubble;
+const BROWNFIELD = Ground.Brownfield;
+/** Park coverage that clears brownfield early (MEGACITY §3.3). */
+const BROWNFIELD_PARK = 0.3;
 
 /** Land value needed for level 2 and 3, index = ZoneType. */
 const LEVEL_LV: readonly (readonly [number, number])[] = [
@@ -53,9 +66,18 @@ export class GrowthSystem {
   /** Level changes during the last run (for debugging / tests). */
   changes = 0;
 
+  /** Per slot: the tick a level last changed there (O8: a slot may sleep after SLEEP.quietDays without one). */
+  readonly levelTick: Int32Array;
+  /** Ruin pay this month (MEGACITY §3.7) and the month it counts for. */
+  private ruinPay = 0;
+  private ruinPayMonth = -1;
+  private readonly R: number;
+
   /** The per-world frame (MEGACITY §3.1): one counter per tile of `world`. */
-  constructor(world: Pick<World, 'area'>) {
+  constructor(world: Pick<World, 'area'> & Partial<Pick<World, 'region'>>) {
     this.unpoweredDays = new Uint16Array(world.area);
+    this.R = world.region ?? 1;
+    this.levelTick = new Int32Array(this.R * this.R);
   }
 
   /** Advance per-tile counters. Call once per tick after the power pass. */
@@ -81,6 +103,9 @@ export class GrowthSystem {
     const score = f.wealth;
     const streak = world.wealthStreak;
     const gw = g.wealth;
+    const ground = g.ground;
+    const floodCap = g.floodCap;
+    const N = world.N;
     this.reached.fill(0);
     this.reachedWealth.fill(0);
     this.changes = 0;
@@ -98,19 +123,23 @@ export class GrowthSystem {
       const pol = f.pollution[i];
       const isRes = z === RES;
 
-      // Abandoned shells: recover when the neighbourhood is livable again, or collapse.
+      // Abandoned shells: recover when the neighbourhood is livable again, or collapse. A ruin (ground Rubble)
+      // recovers at its district's recoverMul and never collapses.
       if (abandoned[i]) {
+        const ruin = ground[i] === RUBBLE;
+        const mods = ruin ? DISTRICTS[world.kindAt(i % N, (i / N) | 0)]?.mods : undefined;
         if (
           road &&
           power.powered[i] &&
           d > T.RECOVER_MIN_DEMAND &&
           crime < T.RECOVER_MAX_CRIME &&
           (!isRes || pol < T.RECOVER_MAX_RES_POLLUTION) &&
-          rng.chance(T.RECOVER_CHANCE) &&
+          rng.chance(ruin ? T.RECOVER_CHANCE * (mods?.recoverMul ?? 1) : T.RECOVER_CHANCE) &&
           power.tryReserve(i, zoneDraw(z, l, 0, g.wealth[i]))
         ) {
           this.set(world, g, i, l, false);
-        } else if (t.age > T.COLLAPSE_AGE && rng.chance(T.COLLAPSE_CHANCE)) {
+          if (ruin) this.restoreRuin(world, g, i, mods?.restorePay ?? 0);
+        } else if (!ruin && t.age > T.COLLAPSE_AGE && rng.chance(T.COLLAPSE_CHANCE)) {
           this.set(world, g, i, 0, false);
         }
         continue;
@@ -120,6 +149,7 @@ export class GrowthSystem {
       // tier, reserving that tier's draw and falling back to lower tiers if the grid can't.
       if (l === 0) {
         streak[i] = 0;
+        if (ground[i] === BROWNFIELD) this.clearBrownfield(world, i, -1, f.park[i], f.filter[i]);
         if (road && d > 0.02 && power.canFeed(i) && rng.chance((T.GROW_BASE + T.GROW_SLOPE * d) * growMul)) {
           const pot = W.potentialTier(z, score[i], W.tierCap(z, crime, f.noise[i], pol, f.alleyNear[i]));
           for (let tier = pot; tier >= 0; tier--) {
@@ -156,6 +186,9 @@ export class GrowthSystem {
         }
       }
 
+      // Brownfield clears under development or parks (MEGACITY §3.3): no rng draw.
+      if (ground[i] === BROWNFIELD) this.clearBrownfield(world, i, t.age, f.park[i], f.filter[i]);
+
       // Developed: decline first, then try to upgrade.
       const am = abandonMul * abandonLayer[i];
       if (!road) {
@@ -182,6 +215,8 @@ export class GrowthSystem {
         continue;
       }
       if (l >= 3) continue;
+      // Floodplain (Reedmere): level 2 at most while no Floodwatch covers the tile.
+      if (l >= floodCap[i] && f.resilience[i] <= 0) continue;
       if (
         t.age >= T.UPGRADE_MIN_AGE[l] &&
         d > T.UPGRADE_MIN_DEMAND[l] &&
@@ -193,7 +228,8 @@ export class GrowthSystem {
       ) {
         const p = T.UPGRADE_BASE[l] + T.UPGRADE_SLOPE[l] * d + (isRes ? f.health[i] * T.HEALTH_GROWTH_BONUS : 0);
         const tl = gw[i];
-        if (rng.chance(p * growMul) && power.tryReserve(i, zoneDraw(z, l + 1, 0, tl) - zoneDraw(z, l, 0, tl))) this.set(world, g, i, l + 1, false);
+        if (rng.chance(p * growMul) && power.tryReserve(i, zoneDraw(z, l + 1, 0, tl) - zoneDraw(z, l, 0, tl)))
+          this.set(world, g, i, l + 1, false);
       }
     }
   }
@@ -228,7 +264,43 @@ export class GrowthSystem {
     return steps;
   }
 
+  /** A ruin came back (MEGACITY §3.7): ground Plain, one more restored, the district's pay up to the monthly cap. */
+  private restoreRuin(world: World, g: SimGrid, i: number, pay: number): void {
+    const N = world.N;
+    world.setGround(i % N, (i / N) | 0, Ground.Plain);
+    g.ground[i] = Ground.Plain;
+    g.blightW[i] = 0;
+    world.districts.ruinsRestored = (world.districts.ruinsRestored ?? 0) + 1;
+    if (pay <= 0) return;
+    const month = Math.floor(world.tick / DAYS_PER_MONTH);
+    if (month !== this.ruinPayMonth) {
+      this.ruinPayMonth = month;
+      this.ruinPay = 0;
+    }
+    const p = Math.min(pay, RUINS.payCapMonth - this.ruinPay);
+    if (p <= 0) return;
+    this.ruinPay += p;
+    world.funds += p;
+  }
+
+  /**
+   * Brownfield on a sampled tile clears when its district's rule says so: developed for clearDays (`age` −1 for a
+   * lot), or park ≥ 0.3 or filter > 0 for parkClearDays.
+   */
+  private clearBrownfield(world: World, i: number, age: number, park: number, filter: number): void {
+    const N = world.N;
+    const x = i % N;
+    const y = (i / N) | 0;
+    const bf = DISTRICTS[world.kindAt(x, y)]?.mods.brownfield;
+    if (!bf) return;
+    const tAge = world.tiles[i].age;
+    const clear = (age >= 0 && age >= bf.clearDays) || ((park >= BROWNFIELD_PARK || filter > 0) && tAge >= bf.parkClearDays);
+    if (clear) world.setGround(x, y, Ground.Plain);
+  }
+
   private set(world: World, g: SimGrid, i: number, level: number, abandoned: boolean, tier?: WealthTier): void {
+    const N = world.N;
+    this.levelTick[(((i / N) | 0) >> 6) * this.R + ((i % N) >> 6)] = world.tick;
     world.setLevel(i % world.N, (i / world.N) | 0, level, abandoned, tier);
     g.level[i] = level;
     g.abandoned[i] = abandoned && level > 0 ? 1 : 0;

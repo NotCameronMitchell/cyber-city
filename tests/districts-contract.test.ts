@@ -4,10 +4,10 @@ import { describe, expect, it } from 'vitest';
 import './canvas-mock';
 import { applyAction } from '../src/game/actions';
 import { DISTRICTS, MILESTONES, milestonesFor, REGION } from '../src/game/config';
-import { assignKinds, REGION5_QUOTA, seedLayout } from '../src/game/districts/layout';
+import { assignKinds, presetOf, REGION5_QUOTA, seedLayout } from '../src/game/districts/layout';
 import { NOT_SPATIAL_FIELDS, TILE_INDEX_FIELDS, TILE_XY_FIELDS, encodeBlock } from '../src/game/districts/migrate';
 import { adjacentLocked, ringKey, ringOf, slotAtRingKey, slotNeighbours, slotRect } from '../src/game/districts/slots';
-import { KIND_WATER, startParams } from '../src/game/districts/terrain';
+import { startParams, waterRange } from '../src/game/districts/terrain';
 import { Game } from '../src/game/game';
 import { Rng } from '../src/game/rng';
 import { Simulation } from '../src/game/sim';
@@ -170,7 +170,10 @@ describe('layout (§3.6.2, §11.2 item 8)', () => {
     }
   });
 
-  it.each(REGIONS)('%i×%i: every slot\'s land share is in its kind\'s range and ≥ 35% of it is one 4-connected piece', (R) => {
+  // WP-2: the real generators. Variants are held to their preset's range; "buildable" is read as ≥ 35% of the slot's
+  // land in one 4-connected piece (islands, canals and braided marsh cannot put 35% of the whole slot in one piece at
+  // 55–65% water; MEGACITY §3.6.2, recorded as a spec gap in WP-2's report). Land kinds keep ≥ 35% of the slot too.
+  it.each(REGIONS)('%i×%i: every slot\'s land share is in its kind\'s (preset\'s) range and ≥ 35% of its land is one 4-connected piece', (R) => {
     for (let k = 0; k < 6; k++) {
       const w = World.generate((k * 104729 + 5) >>> 0, 'Land', undefined, R);
       for (let s = 0; s < R * R; s++) {
@@ -187,7 +190,7 @@ describe('layout (§3.6.2, §11.2 item 8)', () => {
         const share = water / (SLOT * SLOT);
         const kind = w.districts.kinds[s];
         const v = w.variantOf(s);
-        const [lo, hi] = v > 0 ? [0, 1] : KIND_WATER[kind];
+        const [lo, hi] = waterRange(kind, v, presetOf(DISTRICTS[kind].variants, v));
         expect(share, `${kind} ${s}`).toBeGreaterThanOrEqual(lo - 0.01);
         expect(share, `${kind} ${s}`).toBeLessThanOrEqual(hi + 0.01);
         // Largest 4-connected land component.
@@ -210,7 +213,9 @@ describe('layout (§3.6.2, §11.2 item 8)', () => {
           }
           best = Math.max(best, n);
         }
-        expect(best / land.length, `${kind} ${s}`).toBeGreaterThanOrEqual(0.35);
+        const landTiles = SLOT * SLOT - water;
+        expect(best / landTiles, `${kind} ${s}`).toBeGreaterThanOrEqual(0.35);
+        if (hi <= 0.25) expect(best / (SLOT * SLOT), `${kind} ${s}`).toBeGreaterThanOrEqual(0.35);
       }
     }
   });

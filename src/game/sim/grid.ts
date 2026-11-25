@@ -13,11 +13,12 @@
 // the sky caches when world.skyVersion or the road signature changes.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { BUILDINGS, EDGE_LINKS, NOISE, ROAD_ACCESS_RANGE, ROAD_EFFECTS, ROAD_FLOW, ROAD_KINDS, SKYWAY } from '../config';
+import { BUILDINGS, DISTRICTS, EDGE_LINKS, NOISE, ROAD_ACCESS_RANGE, ROAD_EFFECTS, ROAD_FLOW, ROAD_KINDS, RUINS, SKYWAY } from '../config';
 import { fbm } from '../rng';
-import { computeAccess, KIND_NONE } from '../roads';
-import { RoadKind, Terrain, ZoneType, type Building } from '../types';
+import { KIND_NONE } from '../roads';
+import { Ground, RoadKind, Terrain, ZoneType, type Building } from '../types';
 import type { World } from '../world';
+import { OwnedLayout } from './owned';
 import { LV_NOISE, LV_WATER, WATER_VIEW_RANGE } from './tuning';
 
 // Imported bindings are copied into module locals: under Vite's SSR/test
@@ -51,6 +52,8 @@ const SKY_LINKS = 15;
 const SKY_RAMP = 16;
 /** roadDist value for tiles with no road access (computeAccess's "none"). */
 export const NO_ROAD = 255;
+/** Access seeds in order (roads.computeAccess): every Avenue, then every Ramp, then every Street. */
+const SEED_KINDS = [RoadKind.Avenue, RoadKind.Ramp, RoadKind.Street];
 
 export const clamp01 = (v: number): number => (v < 0 ? 0 : v > 1 ? 1 : v);
 
@@ -99,6 +102,34 @@ export class SimGrid {
   readonly terrainValue: Float32Array;
   /** Snapshot of world.buildings (array reused between ticks). */
   readonly buildings: Building[] = [];
+  // ── Megacity (MEGACITY §3.3) ──────────────────────────────────────────────
+  /** Ground per tile (Ground: Plain, Reed, Brownfield, Rubble), owned land only. */
+  readonly ground: Uint8Array;
+  /**
+   * Blight weight of an abandoned tile (1; a ruin, ground Rubble, RUINS.blightWeight), 0 elsewhere. The
+   * neighbourhood pass reads it, so an all-Plain city is unchanged.
+   */
+  readonly blightW: Float32Array;
+  /**
+   * Highest level a zone tile may reach (MEGACITY §3.3 floodplain): a district kind's floodplainMaxLevel on land
+   * within 1 of water (Reedmere), 3 elsewhere. Growth caps it only while resilience is 0.
+   */
+  readonly floodCap: Uint8Array;
+  /** The owned frame every loop and stencil here walks (O1). The Simulation shares it with its other systems. */
+  readonly layout: OwnedLayout;
+  /** The static noise term of terrainValue (art coordinates), per owned slot once (−1 slots not yet computed). */
+  private readonly lvNoise: Float64Array;
+  private readonly noiseDone: Uint8Array;
+  /** slotsVersion / terrainVersion terrainValue was computed for. */
+  private terrainSeen = -1;
+  private terrainSlots = -1;
+  /** world.conductorVersion as of the last scanBegin: the power labels are cached on it (O2). */
+  conductorSeen = -1;
+  /** Scan accumulators (banded scans run over several calls). */
+  private scanSig = 0;
+  private scanRoads = 0;
+  private scanBridges = 0;
+  private scanZc = 0;
 
   // ── Road caches (rebuilt when the road signature changes) ─────────────────
   /** Linked 4-neighbours of each ground road tile (N1 E2 S4 W8, roadLinks), 0 elsewhere. */
@@ -204,59 +235,135 @@ export class SimGrid {
     this.skyDocks = new Int32Array(maxComp);
     this.queue = new Int32Array(area);
     this.mark = new Uint8Array(area);
-    this.computeTerrainValue(world);
+    this.ground = new Uint8Array(area);
+    this.blightW = new Float32Array(area);
+    this.floodCap = new Uint8Array(area).fill(3);
+    this.lvNoise = new Float64Array(area);
+    this.noiseDone = new Uint8Array(world.region * world.region);
+    // Locked land is never scanned (O1): it reads as no road, no building, no access, no component.
+    this.kind.fill(K_NONE);
+    this.bld.fill(-1);
+    this.nearestRoad.fill(-1);
+    this.roadDist.fill(NO_ROAD);
+    this.hwComp.fill(-1);
+    this.hwReach.fill(-1);
+    this.skyComp.fill(-1);
+    this.skyReach.fill(-1);
+    this.layout = new OwnedLayout(world);
+    this.layout.sync(world);
+    this.syncTerrain(world);
   }
 
-  /** Mirror world tiles into the typed arrays. `forceRoads` rebuilds the road and sky caches even if they look unchanged. */
+  /**
+   * Mirror world tiles into the typed arrays (owned land only, O1). `forceRoads` rebuilds the road and sky caches
+   * even if they look unchanged. The whole scan; the Simulation's day runs it in row bands (scanBegin, scanRows,
+   * scanEnd), which compute exactly the same.
+   */
   scan(world: World, forceRoads = false): void {
+    this.scanBegin(world);
+    this.scanRows(world, this.layout.y0, this.layout.y1, false);
+    this.scanEnd(world, forceRoads);
+  }
+
+  /** Start a scan: the owned frame and terrain value follow annexes and terrain changes; the accumulators reset. */
+  scanBegin(world: World): void {
+    if (this.layout.sync(world)) this.slotsSeen = -1;
+    this.conductorSeen = world.conductorVersion;
+    this.syncTerrain(world);
+    this.scanSig = 0;
+    this.scanRoads = 0;
+    this.scanBridges = 0;
+    this.scanZc = 0;
+    this.kindCount.fill(0);
+  }
+
+  /**
+   * Mirror owned rows y0..y1 (inclusive; call in ascending row order after scanBegin). `ages`: count the day's
+   * tile ages here (zoned, road and building tiles, MEGACITY §3.3), so the day reads each Tile once.
+   */
+  scanRows(world: World, y0: number, y1: number, ages: boolean): void {
     const tiles = world.tiles;
-    const { zone, level, abandoned, road, kind, wealth, water, bld, zoned, kindCount, area } = this;
+    const { zone, level, abandoned, road, kind, wealth, water, bld, zoned, kindCount, ground, blightW, area } = this;
+    const { ck, rowAt } = this.layout.all;
+    if (y1 < y0) return;
     // Road fingerprint stride: kind × 2·area keeps (index, kind) → value one-to-one at any size.
     const kStride = area * 2;
-    let sig = 0;
-    let roads = 0;
-    let bridges = 0;
-    let zc = 0;
-    kindCount.fill(0);
-    for (let i = 0; i < area; i++) {
-      const t = tiles[i];
-      const z = t.zone;
-      zone[i] = z;
-      level[i] = t.level;
-      abandoned[i] = t.abandoned ? 1 : 0;
-      wealth[i] = t.wealth;
-      const w = t.terrain === WATER ? 1 : 0;
-      water[i] = w;
-      bld[i] = t.buildingId;
-      if (t.road) {
-        const k = t.roadKind;
-        road[i] = 1;
-        kind[i] = k;
-        kindCount[k * 2 + w]++;
-        roads++;
-        if (w) bridges++;
-        // Order-independent fingerprint of the road set and kinds.
-        sig = (sig + Math.imul(i + 1 + k * kStride, 0x9e3779b1)) | 0;
-      } else {
-        road[i] = 0;
-        kind[i] = K_NONE;
+    const ruinW = RUINS.blightWeight;
+    let sig = this.scanSig;
+    let roads = this.scanRoads;
+    let bridges = this.scanBridges;
+    let zc = this.scanZc;
+    for (let c = rowAt[y0]; c < rowAt[y1 + 1]; c += 3)
+      for (let i = ck[c], e = ck[c + 1]; i < e; i++) {
+        const t = tiles[i];
+        const z = t.zone;
+        zone[i] = z;
+        level[i] = t.level;
+        const ab = t.abandoned ? 1 : 0;
+        abandoned[i] = ab;
+        wealth[i] = t.wealth;
+        const w = t.terrain === WATER ? 1 : 0;
+        water[i] = w;
+        const id = t.buildingId;
+        bld[i] = id;
+        const gr = t.ground;
+        ground[i] = gr;
+        blightW[i] = ab ? (gr === Ground.Rubble ? ruinW : 1) : 0;
+        if (t.road) {
+          const k = t.roadKind;
+          road[i] = 1;
+          kind[i] = k;
+          kindCount[k * 2 + w]++;
+          roads++;
+          if (w) bridges++;
+          // Order-independent fingerprint of the road set and kinds.
+          sig = (sig + Math.imul(i + 1 + k * kStride, 0x9e3779b1)) | 0;
+          if (ages && t.age < 9999) t.age++;
+        } else {
+          road[i] = 0;
+          kind[i] = K_NONE;
+          if (ages && (z !== NONE || id >= 0) && t.age < 9999) t.age++;
+        }
+        if (z !== NONE) zoned[zc++] = i;
       }
-      if (z !== NONE) zoned[zc++] = i;
-    }
-    this.zonedCount = zc;
-    this.roadCount = roads;
-    this.bridgeCount = bridges;
-    sig = (sig ^ Math.imul(roads, 0x85ebca6b)) | 0;
+    this.scanSig = sig;
+    this.scanRoads = roads;
+    this.scanBridges = bridges;
+    this.scanZc = zc;
+  }
 
+  /** Finish a scan: counts, the building snapshot, and the road / sky caches when they changed. */
+  scanEnd(world: World, forceRoads = false): void {
+    if (this.scanFinish(world, forceRoads)) this.scanCaches(world, forceRoads);
+  }
+
+  /**
+   * The cheap half of scanEnd (counts, the building snapshot, the road signature, docks when nothing changed).
+   * Returns true when the road or sky caches must rebuild: then call scanCaches (the day runs it as its own step).
+   */
+  scanFinish(world: World, forceRoads: boolean): boolean {
+    this.zonedCount = this.scanZc;
+    this.roadCount = this.scanRoads;
+    this.bridgeCount = this.scanBridges;
+    const sig = (this.scanSig ^ Math.imul(this.scanRoads, 0x85ebca6b)) | 0;
+    this.scanSig = sig;
     const list = this.buildings;
     list.length = 0;
     for (const b of world.buildings.values()) list.push(b);
+    const roadsChanged = forceRoads || sig !== this.roadSig;
+    const pending = roadsChanged || world.slotsVersion !== this.slotsSeen || world.skyVersion !== this.skySeen;
+    if (!pending) this.findDocks(world);
+    return pending;
+  }
 
+  /** The heavy half of scanEnd: access, road caches, edge links, sky caches, docks (only when something changed). */
+  scanCaches(world: World, forceRoads: boolean): void {
+    const sig = this.scanSig;
     let roadsChanged = false;
     if (forceRoads || sig !== this.roadSig) {
       this.roadSig = sig;
       roadsChanged = true;
-      computeAccess(kind, this.roadDist, this.nearestRoad, this.queue, this.N);
+      this.computeAccessOwned();
       this.buildRoadCaches();
     }
     if (roadsChanged || world.slotsVersion !== this.slotsSeen) this.computeEdgePoints(world);
@@ -268,6 +375,75 @@ export class SimGrid {
     this.findDocks(world);
     // The affordable-quarter flag is a world field so wealth.ts and the inspect panel can read it.
     if (roadsChanged) world.fields.alleyNear.set(this.alleyNear);
+  }
+
+  /**
+   * The access rule (EXPANSION §3.3, roads.computeAccess) on owned land: a locked tile is off the map (MEGACITY
+   * §3.3, O1), so the BFS never steps through a locked district. On one district (or any convex owned land with
+   * no locked corner) it equals roads.computeAccess exactly.
+   */
+  private computeAccessOwned(): void {
+    const { kind, roadDist: dist, nearestRoad: near, queue, N, layout } = this;
+    const mask = layout.mask;
+    const { ck, rowAt } = layout.all;
+    const end = rowAt[N];
+    dist.fill(NO_ROAD);
+    near.fill(-1);
+    let head = 0;
+    let tail = 0;
+    for (const k of SEED_KINDS)
+      for (let c = 0; c < end; c += 3)
+        for (let i = ck[c], e = ck[c + 1]; i < e; i++)
+          if (kind[i] === k) {
+            dist[i] = 0;
+            near[i] = i;
+            queue[tail++] = i;
+          }
+    while (head < tail) {
+      const i = queue[head++];
+      const d = dist[i];
+      if (d >= RANGE) continue;
+      const x = i % N;
+      const y = (i / N) | 0;
+      const src = near[i];
+      for (let dy = -1; dy <= 1; dy++) {
+        const ny = y + dy;
+        if (ny < 0 || ny >= N) continue;
+        for (let dx = -1; dx <= 1; dx++) {
+          const nx = x + dx;
+          if (nx < 0 || nx >= N || (dx === 0 && dy === 0)) continue;
+          const j = ny * N + nx;
+          if (dist[j] !== NO_ROAD || !mask[j]) continue;
+          dist[j] = d + 1;
+          near[j] = src;
+          queue[tail++] = j;
+        }
+      }
+    }
+    // Pass B: alleys reach 1 tile and only where nothing else does.
+    for (let c = 0; c < end; c += 3)
+      for (let a = ck[c], e = ck[c + 1]; a < e; a++) {
+        if (kind[a] !== ALLEY) continue;
+        if (dist[a] === NO_ROAD) {
+          dist[a] = 0;
+          near[a] = a;
+        }
+        const x = a % N;
+        const y = (a / N) | 0;
+        for (let dy = -1; dy <= 1; dy++) {
+          const ny = y + dy;
+          if (ny < 0 || ny >= N) continue;
+          for (let dx = -1; dx <= 1; dx++) {
+            const nx = x + dx;
+            if (nx < 0 || nx >= N || (dx === 0 && dy === 0)) continue;
+            const j = ny * N + nx;
+            if (dist[j] === NO_ROAD && mask[j]) {
+              dist[j] = 1;
+              near[j] = a;
+            }
+          }
+        }
+      }
   }
 
   /** Developed (level ≥ 1) and occupied zone tile? */
@@ -322,59 +498,65 @@ export class SimGrid {
   /** Link masks, alley flags, highway components and ramp reach, edge points (§3.2, §3.8, §3.10). */
   private buildRoadCaches(): void {
     const { kind, linkMask, alleyNear, hwComp, hwTiles, hwRamps, hwList, hwReach, hwDepth, hwReachList, queue, N, area } = this;
+    // Owned land only (O1): locked tiles hold no road, so their link mask stays 0 and they seed nothing.
+    const { ck, rowAt } = this.layout.all;
+    const end = rowAt[N];
 
     // Link masks (roadLinks).
-    for (let i = 0; i < area; i++) {
-      const k = kind[i];
-      if (k === K_NONE) {
-        linkMask[i] = 0;
-        continue;
+    for (let c = 0; c < end; c += 3)
+      for (let i = ck[c], e = ck[c + 1]; i < e; i++) {
+        const k = kind[i];
+        if (k === K_NONE) {
+          linkMask[i] = 0;
+          continue;
+        }
+        const x = i % N;
+        let m = 0;
+        if (i >= N && links(k, kind[i - N])) m |= 1;
+        if (x < N - 1 && links(k, kind[i + 1])) m |= 2;
+        if (i < area - N && links(k, kind[i + N])) m |= 4;
+        if (x > 0 && links(k, kind[i - 1])) m |= 8;
+        linkMask[i] = m;
       }
-      const x = i % N;
-      let m = 0;
-      if (i >= N && links(k, kind[i - N])) m |= 1;
-      if (x < N - 1 && links(k, kind[i + 1])) m |= 2;
-      if (i < area - N && links(k, kind[i + N])) m |= 4;
-      if (x > 0 && links(k, kind[i - 1])) m |= 8;
-      linkMask[i] = m;
-    }
 
     // Alley within ROAD_EFFECTS.radius.
     alleyNear.fill(0);
     const R = FX.radius;
-    for (let a = 0; a < area; a++) {
-      if (kind[a] !== ALLEY) continue;
-      const ax = a % N;
-      const ay = (a / N) | 0;
-      for (let y = Math.max(0, ay - R); y <= Math.min(N - 1, ay + R); y++)
-        for (let x = Math.max(0, ax - R); x <= Math.min(N - 1, ax + R); x++) alleyNear[y * N + x] = 1;
-    }
+    for (let c = 0; c < end; c += 3)
+      for (let a = ck[c], e = ck[c + 1]; a < e; a++) {
+        if (kind[a] !== ALLEY) continue;
+        const ax = a % N;
+        const ay = (a / N) | 0;
+        for (let y = Math.max(0, ay - R); y <= Math.min(N - 1, ay + R); y++)
+          for (let x = Math.max(0, ax - R); x <= Math.min(N - 1, ax + R); x++) alleyNear[y * N + x] = 1;
+      }
 
     // Highway components (4-neighbour over Highway tiles only).
     hwComp.fill(-1);
     let comps = 0;
     let hl = 0;
-    for (let s = 0; s < area; s++) {
-      if (kind[s] !== HIGHWAY) continue;
-      hwList[hl++] = s;
-      if (hwComp[s] !== -1) continue;
-      const c = comps++;
-      hwTiles[c] = 0;
-      hwRamps[c] = 0;
-      let head = 0;
-      let tail = 0;
-      queue[tail++] = s;
-      hwComp[s] = c;
-      while (head < tail) {
-        const i = queue[head++];
-        hwTiles[c]++;
-        const x = i % N;
-        if (i >= N) tail = this.joinHw(i - N, c, tail);
-        if (x < N - 1) tail = this.joinHw(i + 1, c, tail);
-        if (i < area - N) tail = this.joinHw(i + N, c, tail);
-        if (x > 0) tail = this.joinHw(i - 1, c, tail);
+    for (let c0 = 0; c0 < end; c0 += 3)
+      for (let s = ck[c0], e = ck[c0 + 1]; s < e; s++) {
+        if (kind[s] !== HIGHWAY) continue;
+        hwList[hl++] = s;
+        if (hwComp[s] !== -1) continue;
+        const c = comps++;
+        hwTiles[c] = 0;
+        hwRamps[c] = 0;
+        let head = 0;
+        let tail = 0;
+        queue[tail++] = s;
+        hwComp[s] = c;
+        while (head < tail) {
+          const i = queue[head++];
+          hwTiles[c]++;
+          const x = i % N;
+          if (i >= N) tail = this.joinHw(i - N, c, tail);
+          if (x < N - 1) tail = this.joinHw(i + 1, c, tail);
+          if (i < area - N) tail = this.joinHw(i + N, c, tail);
+          if (x > 0) tail = this.joinHw(i - 1, c, tail);
+        }
       }
-    }
     this.hwCompCount = comps;
     this.hwListLen = hl;
 
@@ -384,32 +566,34 @@ export class SimGrid {
     hwDepth.fill(255);
     let head = 0;
     let tail = 0;
-    for (let i = 0; i < area; i++) {
-      if (kind[i] !== RAMP) continue;
-      const x = i % N;
-      let c = NO_COMP;
-      if (i >= N && hwComp[i - N] >= 0 && hwComp[i - N] < c) c = hwComp[i - N];
-      if (x < N - 1 && hwComp[i + 1] >= 0 && hwComp[i + 1] < c) c = hwComp[i + 1];
-      if (i < area - N && hwComp[i + N] >= 0 && hwComp[i + N] < c) c = hwComp[i + N];
-      if (x > 0 && hwComp[i - 1] >= 0 && hwComp[i - 1] < c) c = hwComp[i - 1];
-      if (c === NO_COMP) continue;
-      hwReach[i] = c;
-      hwDepth[i] = 0;
-      queue[tail++] = i;
-    }
+    for (let c0 = 0; c0 < end; c0 += 3)
+      for (let i = ck[c0], e = ck[c0 + 1]; i < e; i++) {
+        if (kind[i] !== RAMP) continue;
+        const x = i % N;
+        let c = NO_COMP;
+        if (i >= N && hwComp[i - N] >= 0 && hwComp[i - N] < c) c = hwComp[i - N];
+        if (x < N - 1 && hwComp[i + 1] >= 0 && hwComp[i + 1] < c) c = hwComp[i + 1];
+        if (i < area - N && hwComp[i + N] >= 0 && hwComp[i + N] < c) c = hwComp[i + N];
+        if (x > 0 && hwComp[i - 1] >= 0 && hwComp[i - 1] < c) c = hwComp[i - 1];
+        if (c === NO_COMP) continue;
+        hwReach[i] = c;
+        hwDepth[i] = 0;
+        queue[tail++] = i;
+      }
     // Ramps per highway component (every ramp touching it counts once for each component it touches).
-    for (let i = 0; i < area; i++) {
-      if (kind[i] !== RAMP) continue;
-      const x = i % N;
-      const a = i >= N ? hwComp[i - N] : -1;
-      const b = x < N - 1 ? hwComp[i + 1] : -1;
-      const cc = i < area - N ? hwComp[i + N] : -1;
-      const d = x > 0 ? hwComp[i - 1] : -1;
-      if (a >= 0) hwRamps[a]++;
-      if (b >= 0 && b !== a) hwRamps[b]++;
-      if (cc >= 0 && cc !== a && cc !== b) hwRamps[cc]++;
-      if (d >= 0 && d !== a && d !== b && d !== cc) hwRamps[d]++;
-    }
+    for (let c0 = 0; c0 < end; c0 += 3)
+      for (let i = ck[c0], e = ck[c0 + 1]; i < e; i++) {
+        if (kind[i] !== RAMP) continue;
+        const x = i % N;
+        const a = i >= N ? hwComp[i - N] : -1;
+        const b = x < N - 1 ? hwComp[i + 1] : -1;
+        const cc = i < area - N ? hwComp[i + N] : -1;
+        const d = x > 0 ? hwComp[i - 1] : -1;
+        if (a >= 0) hwRamps[a]++;
+        if (b >= 0 && b !== a) hwRamps[b]++;
+        if (cc >= 0 && cc !== a && cc !== b) hwRamps[cc]++;
+        if (d >= 0 && d !== a && d !== b && d !== cc) hwRamps[d]++;
+      }
     this.hwReachLen = this.reachBfs(hwReach, hwDepth, hwReachList, head, tail, HW_REACH);
   }
 
@@ -500,41 +684,44 @@ export class SimGrid {
     skyComp.fill(-1);
     let comps = 0;
     let n = 0;
-    for (let s = 0; s < area; s++) {
-      if ((sky[s] & SKY_LINKS) === 0) continue;
-      skyList[n++] = s;
-      if (skyComp[s] !== -1) continue;
-      const c = comps++;
-      skyTiles[c] = 0;
-      skyRamps[c] = 0;
-      let head = 0;
-      let tail = 0;
-      queue[tail++] = s;
-      skyComp[s] = c;
-      while (head < tail) {
-        const i = queue[head++];
-        skyTiles[c]++;
-        const m = sky[i];
-        if ((m & SKY_RAMP) !== 0 && rampGround(kind[i])) skyRamps[c]++;
-        const x = i % N;
-        if (m & 1 && i >= N && sky[i - N] & 4 && skyComp[i - N] === -1) {
-          skyComp[i - N] = c;
-          queue[tail++] = i - N;
-        }
-        if (m & 2 && x < N - 1 && sky[i + 1] & 8 && skyComp[i + 1] === -1) {
-          skyComp[i + 1] = c;
-          queue[tail++] = i + 1;
-        }
-        if (m & 4 && i < area - N && sky[i + N] & 1 && skyComp[i + N] === -1) {
-          skyComp[i + N] = c;
-          queue[tail++] = i + N;
-        }
-        if (m & 8 && x > 0 && sky[i - 1] & 2 && skyComp[i - 1] === -1) {
-          skyComp[i - 1] = c;
-          queue[tail++] = i - 1;
+    const { ck, rowAt } = this.layout.all;
+    const end = rowAt[N];
+    for (let c0 = 0; c0 < end; c0 += 3)
+      for (let s = ck[c0], e = ck[c0 + 1]; s < e; s++) {
+        if ((sky[s] & SKY_LINKS) === 0) continue;
+        skyList[n++] = s;
+        if (skyComp[s] !== -1) continue;
+        const c = comps++;
+        skyTiles[c] = 0;
+        skyRamps[c] = 0;
+        let head = 0;
+        let tail = 0;
+        queue[tail++] = s;
+        skyComp[s] = c;
+        while (head < tail) {
+          const i = queue[head++];
+          skyTiles[c]++;
+          const m = sky[i];
+          if ((m & SKY_RAMP) !== 0 && rampGround(kind[i])) skyRamps[c]++;
+          const x = i % N;
+          if (m & 1 && i >= N && sky[i - N] & 4 && skyComp[i - N] === -1) {
+            skyComp[i - N] = c;
+            queue[tail++] = i - N;
+          }
+          if (m & 2 && x < N - 1 && sky[i + 1] & 8 && skyComp[i + 1] === -1) {
+            skyComp[i + 1] = c;
+            queue[tail++] = i + 1;
+          }
+          if (m & 4 && i < area - N && sky[i + N] & 1 && skyComp[i + N] === -1) {
+            skyComp[i + N] = c;
+            queue[tail++] = i + N;
+          }
+          if (m & 8 && x > 0 && sky[i - 1] & 2 && skyComp[i - 1] === -1) {
+            skyComp[i - 1] = c;
+            queue[tail++] = i - 1;
+          }
         }
       }
-    }
     this.skyCompCount = comps;
     this.skyCount = n;
 
@@ -554,24 +741,28 @@ export class SimGrid {
 
   /** roadLv, roadCrime and the static road / skyway noise (§3.8, §3.9). */
   private buildStaticTerms(world: World): void {
-    const { kind, roadLv, roadCrime, roadNoise, alleyNear, mark, skyList, skyCount, N, area } = this;
+    const { kind, roadLv, roadCrime, roadNoise, alleyNear, mark, skyList, skyCount, N } = this;
     const sky = world.sky;
+    const { ck, rowAt } = this.layout.all;
+    const end = rowAt[N];
     // Avenue within the effect radius (mark = 1).
     mark.fill(0);
     const R = FX.radius;
-    for (let a = 0; a < area; a++) {
-      if (kind[a] !== AVENUE) continue;
-      const ax = a % N;
-      const ay = (a / N) | 0;
-      for (let y = Math.max(0, ay - R); y <= Math.min(N - 1, ay + R); y++)
-        for (let x = Math.max(0, ax - R); x <= Math.min(N - 1, ax + R); x++) mark[y * N + x] = 1;
-    }
-    for (let i = 0; i < area; i++) {
-      const av = mark[i];
-      const al = alleyNear[i];
-      roadLv[i] = (av ? FX.avenueLv : 0) + (al ? FX.alleyLv : 0) + (sky[i] & SKY_LINKS ? SKY.lvUnder : 0);
-      roadCrime[i] = (av ? FX.avenueCrime : 0) + (al ? FX.alleyCrime : 0);
-    }
+    for (let c = 0; c < end; c += 3)
+      for (let a = ck[c], e = ck[c + 1]; a < e; a++) {
+        if (kind[a] !== AVENUE) continue;
+        const ax = a % N;
+        const ay = (a / N) | 0;
+        for (let y = Math.max(0, ay - R); y <= Math.min(N - 1, ay + R); y++)
+          for (let x = Math.max(0, ax - R); x <= Math.min(N - 1, ax + R); x++) mark[y * N + x] = 1;
+      }
+    for (let c = 0; c < end; c += 3)
+      for (let i = ck[c], e = ck[c + 1]; i < e; i++) {
+        const av = mark[i];
+        const al = alleyNear[i];
+        roadLv[i] = (av ? FX.avenueLv : 0) + (al ? FX.alleyLv : 0) + (sky[i] & SKY_LINKS ? SKY.lvUnder : 0);
+        roadCrime[i] = (av ? FX.avenueCrime : 0) + (al ? FX.alleyCrime : 0);
+      }
     // Active sky ramps lift land value within lvRampRadius (once per tile).
     mark.fill(0);
     const RR = SKY.lvRampRadius;
@@ -583,7 +774,7 @@ export class SimGrid {
       for (let y = Math.max(0, ry - RR); y <= Math.min(N - 1, ry + RR); y++)
         for (let x = Math.max(0, rx - RR); x <= Math.min(N - 1, rx + RR); x++) mark[y * N + x] = 1;
     }
-    for (let i = 0; i < area; i++) if (mark[i]) roadLv[i] += SKY.lvRamp;
+    for (let c = 0; c < end; c += 3) for (let i = ck[c], e = ck[c + 1]; i < e; i++) if (mark[i]) roadLv[i] += SKY.lvRamp;
 
     // Noise: highways v·(1 − d/(r+1)) for d ≤ r, skyways likewise; max-combined.
     roadNoise.fill(0);
@@ -637,19 +828,37 @@ export class SimGrid {
     return c >= 0 && c < this.skyCompCount && (this.skyRamps[c] > 0 || this.skyDocks[c] > 0);
   }
 
-  /** Terrain never changes after generation, so its land-value term is computed once. */
+  /**
+   * The static terrain term of land value (water views + gentle noise), on owned land (O1): only owned water gives a
+   * view and the view's BFS never crosses a locked tile, so the start slot reads exactly what the 64 map did.
+   * Recomputed when the owned land grows (annex) or terrain changes (Pump House reclamation, MEGACITY §3.3); the
+   * noise term is computed once per slot. Public for tests; scanBegin calls it.
+   */
+  syncTerrain(world: World): void {
+    if (world.slotsVersion === this.terrainSlots && world.terrainVersion === this.terrainSeen) return;
+    this.terrainSlots = world.slotsVersion;
+    this.terrainSeen = world.terrainVersion;
+    this.computeTerrainValue(world);
+  }
+
   private computeTerrainValue(world: World): void {
-    const { N, area } = this;
+    const { N, layout } = this;
+    const R = layout.R;
+    const mask = layout.mask;
+    const { ck, rowAt } = layout.all;
+    const end = rowAt[N];
     const q = this.queue;
-    const dist = new Uint8Array(area).fill(NO_ROAD);
+    const dist = this.mark;
+    dist.fill(NO_ROAD);
     let head = 0;
     let tail = 0;
-    for (let i = 0; i < area; i++) {
-      if (world.tiles[i].terrain === Terrain.Water) {
-        dist[i] = 0;
-        q[tail++] = i;
-      }
-    }
+    const tiles = world.tiles;
+    for (let c = 0; c < end; c += 3)
+      for (let i = ck[c], e = ck[c + 1]; i < e; i++)
+        if (tiles[i].terrain === Terrain.Water) {
+          dist[i] = 0;
+          q[tail++] = i;
+        }
     while (head < tail) {
       const i = q[head++];
       const d = dist[i];
@@ -663,23 +872,48 @@ export class SimGrid {
           const nx = x + dx;
           if (nx < 0 || nx >= N) continue;
           const j = ny * N + nx;
-          if (dist[j] !== NO_ROAD) continue;
+          if (dist[j] !== NO_ROAD || !mask[j]) continue;
           dist[j] = d + 1;
           q[tail++] = j;
         }
       }
     }
+    // The noise term, once per owned slot. Art coordinates (MEGACITY §3.2 artXY): the same on the start slot of
+    // either region as on the 64 map.
     const seed = (world.seed % 10007) + 77;
-    // Art coordinates (MEGACITY §3.2 artXY): the noise is the same on the start slot of either region as on the 64 map.
     const o = 64 * ((world.region - 1) >> 1);
-    for (let i = 0; i < area; i++) {
-      const d = dist[i];
-      let v = 0;
-      if (d > 0 && d <= WATER_VIEW_RANGE) v += LV_WATER * (1 - (d - 1) / WATER_VIEW_RANGE);
-      const x = i % N;
-      const y = (i / N) | 0;
-      v += (fbm((x - o) * 0.11, (y - o) * 0.11, seed, 3) - 0.5) * 2 * LV_NOISE;
-      this.terrainValue[i] = v;
+    const nz = this.lvNoise;
+    for (let s = 0; s < R * R; s++) {
+      if (!layout.own[s] || this.noiseDone[s]) continue;
+      this.noiseDone[s] = 1;
+      const sx = (s % R) << 6;
+      const sy = ((s / R) | 0) << 6;
+      for (let y = sy; y < sy + 64; y++)
+        for (let x = sx; x < sx + 64; x++) nz[y * N + x] = (fbm((x - o) * 0.11, (y - o) * 0.11, seed, 3) - 0.5) * 2 * LV_NOISE;
+    }
+    const tv = this.terrainValue;
+    for (let c = 0; c < end; c += 3)
+      for (let i = ck[c], e = ck[c + 1]; i < e; i++) {
+        const d = dist[i];
+        let v = 0;
+        if (d > 0 && d <= WATER_VIEW_RANGE) v += LV_WATER * (1 - (d - 1) / WATER_VIEW_RANGE);
+        v += nz[i];
+        tv[i] = v;
+      }
+    // Floodplain caps (land within 1 of owned water in a district with floodplainMaxLevel).
+    const fc = this.floodCap;
+    fc.fill(3);
+    for (let s = 0; s < R * R; s++) {
+      if (!layout.own[s]) continue;
+      const cap = DISTRICTS[world.districts.kinds[s]]?.mods.floodplainMaxLevel;
+      if (cap === undefined) continue;
+      const sx = (s % R) << 6;
+      const sy = ((s / R) | 0) << 6;
+      for (let y = sy; y < sy + 64; y++)
+        for (let x = sx; x < sx + 64; x++) {
+          const i = y * N + x;
+          if (dist[i] === 1) fc[i] = cap;
+        }
     }
   }
 }

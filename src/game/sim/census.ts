@@ -11,7 +11,7 @@
 
 import { blankStats, buildingStats } from '../buildingStats';
 import { NOISE, POP_SCALE, WEALTH } from '../config';
-import { ZoneType, type CityStats, type Demand } from '../types';
+import { Ground, ZoneType, type CityStats, type Demand, type DistrictKind, type SlotId } from '../types';
 import type { World } from '../world';
 import type { SimGrid } from './grid';
 import type { FieldSystem } from './fields';
@@ -32,6 +32,24 @@ const PROSPERITY = WEALTH.approval.prosperity;
 const NOISE_APPROVAL = NOISE.approval;
 
 const clampDemand = (v: number): number => (v < -1 ? -1 : v > 1 ? 1 : v);
+const RUBBLE = Ground.Rubble;
+const IND = ZoneType.Industrial;
+
+/** One owned district's tallies (MEGACITY §3.3): the census per slot, plus the demand rules' tile counts. */
+export interface DistrictTally {
+  slot: SlotId;
+  kind: DistrictKind;
+  residents: number;
+  jobs: number;
+  /** Developed (occupied) zone tiles. */
+  developed: number;
+  ruins: number;
+  /** Developed Fab tiles (the Flats demand add) and Market tiles (Bazaar visitors). */
+  fabTiles: number;
+  marketTiles: number;
+  /** Σ land value over developed tiles (averages()). */
+  lvSum: number;
+}
 /** Scratch stats object reused for every building (no per-tick allocation). */
 const STATS = blankStats();
 
@@ -76,9 +94,24 @@ export class Census {
   /** Demand-target adds set by the simulation before demandTarget(): ports, regional links, visitors (§5, §6). */
   tradeInd = 0;
   tradeCom = 0;
+  /** Ruins standing (MEGACITY §3.7: zoned, abandoned, ground Rubble), counted apart from `abandoned`. */
+  ruins = 0;
+  /** Per owned district, in `districts.owned` order (count() with a world). */
+  readonly byDistrict: DistrictTally[] = [];
+  /** Slot → index in byDistrict (−1 unowned). */
+  private slotIndex = new Int32Array(0);
 
-  /** Count heads, jobs and development from the grid (no field reads). */
-  count(g: SimGrid): void {
+  /**
+   * Count heads, jobs and development from the grid (no field reads). With `world`, also the per-district tallies
+   * (MEGACITY §3.3). Ruins (ground Rubble) count in `ruins`, never in `abandoned`.
+   */
+  count(g: SimGrid, world?: World): void {
+    const tally = world ? this.prepareDistricts(world) : null;
+    const N = g.N;
+    const R = world ? world.region : 1;
+    const si = this.slotIndex;
+    const ground = g.ground;
+    let ruins = 0;
     const { zone, level, abandoned } = g;
     const dev = this.developed;
     const lots = this.lots;
@@ -103,8 +136,12 @@ export class Census {
       const l = level[i];
       const road = g.hasRoad(i);
       if (!road) noRoad++;
+      const d = tally ? tally[si[(((i / N) | 0) >> 6) * R + ((i % N) >> 6)]] : undefined;
       if (abandoned[i]) {
-        aband++;
+        if (ground[i] === RUBBLE) {
+          ruins++;
+          if (d) d.ruins++;
+        } else aband++;
         continue;
       }
       if (l === 0) {
@@ -122,6 +159,15 @@ export class Census {
         tierRes += cap - CAP_T[z * 12 + l * 3];
       } else if (z === COM) jobsCom += cap;
       else jobsInd += cap;
+      if (d) {
+        d.developed++;
+        if (z === RES) d.residents += cap;
+        else {
+          d.jobs += cap;
+          if (z === IND) d.fabTiles++;
+          else d.marketTiles++;
+        }
+      }
     }
     // Stage-aware (Stratablocks count complete, powered stages only; §4.2).
     const st = STATS;
@@ -130,7 +176,15 @@ export class Census {
       pop += st.residents;
       jobsCom += st.jobsCom;
       jobsInd += st.jobsInd;
+      if (tally) {
+        const d = tally[si[(b.y >> 6) * R + (b.x >> 6)]];
+        if (d) {
+          d.residents += st.residents;
+          d.jobs += st.jobsCom + st.jobsInd;
+        }
+      }
     }
+    this.ruins = ruins;
     this.tierResidents = tierRes;
     const r = this.roads;
     r.street = g.kindTiles(0);
@@ -169,11 +223,20 @@ export class Census {
     let noRes = 0;
     let nRes = 0;
     const noise = f.noise;
+    const tally = this.byDistrict.length ? this.byDistrict : null;
+    if (tally) for (const d of tally) d.lvSum = 0;
+    const N = g.N;
+    const R = world.region;
+    const si = this.slotIndex;
     for (let k = 0; k < g.zonedCount; k++) {
       const i = g.zoned[k];
       if (!g.developed(i)) continue;
       n++;
       lv += f.landValue[i];
+      if (tally) {
+        const d = tally[si[(((i / N) | 0) >> 6) * R + ((i % N) >> 6)]];
+        if (d) d.lvSum += f.landValue[i];
+      }
       cr += f.crime[i];
       po += f.pollution[i];
       tr += fields.localTraffic[i];
@@ -259,6 +322,56 @@ export class Census {
     return out;
   }
 
+  /** Reset the per-district tallies for the world's owned slots (in annex order); returns the slot-indexed lookup. */
+  private prepareDistricts(world: World): DistrictTally[] {
+    const R = world.region;
+    if (this.slotIndex.length !== R * R) this.slotIndex = new Int32Array(R * R);
+    this.slotIndex.fill(-1);
+    const owned = world.districts.owned;
+    const list = this.byDistrict;
+    list.length = owned.length;
+    for (let k = 0; k < owned.length; k++) {
+      const s = owned[k];
+      let d = list[k];
+      if (!d)
+        d = list[k] = { slot: s, kind: 'shore', residents: 0, jobs: 0, developed: 0, ruins: 0, fabTiles: 0, marketTiles: 0, lvSum: 0 };
+      d.slot = s;
+      d.kind = world.districts.kinds[s] ?? 'shore';
+      d.residents = 0;
+      d.jobs = 0;
+      d.developed = 0;
+      d.ruins = 0;
+      d.fabTiles = 0;
+      d.marketTiles = 0;
+      d.lvSum = 0;
+      if (s >= 0 && s < R * R) this.slotIndex[s] = k;
+    }
+    return list;
+  }
+
+  /** world.stats.districts (one row per owned district, reused), ruins and ruinsRestored (MEGACITY §3.3). */
+  writeDistricts(world: World): void {
+    const stats = world.stats;
+    const out = stats.districts;
+    const list = this.byDistrict;
+    out.length = list.length;
+    for (let k = 0; k < list.length; k++) {
+      const d = list[k];
+      let o = out[k];
+      if (!o) o = out[k] = { slot: d.slot, kind: d.kind, variant: 0, residents: 0, jobs: 0, developed: 0, avgLandValue: 0, ruins: 0 };
+      o.slot = d.slot;
+      o.kind = d.kind;
+      o.variant = world.variantOf(d.slot);
+      o.residents = d.residents;
+      o.jobs = d.jobs;
+      o.developed = d.developed;
+      o.avgLandValue = d.developed > 0 ? d.lvSum / d.developed : 0;
+      o.ruins = d.ruins;
+    }
+    stats.ruins = this.ruins;
+    stats.ruinsRestored = world.districts.ruinsRestored ?? 0;
+  }
+
   /** Copy into the shared CityStats object (mutated in place so UI references stay valid). */
   writeStats(stats: CityStats, power: PowerGrid, demand: Demand, approval: number): void {
     stats.population = this.population;
@@ -297,4 +410,3 @@ export class Census {
     stats.edgeLinks = this.edgeLinks;
   }
 }
-

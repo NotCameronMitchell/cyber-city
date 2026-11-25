@@ -190,6 +190,14 @@ export function clampMods(m: SimMods): void {
 
 // ── Layers ──────────────────────────────────────────────────────────────────
 
+/** Compose counter per composed layer set (MEGACITY §3.3, O3: the sim's coverage cache keys on it). */
+const layerVersions = new WeakMap<SimLayers, number>();
+
+/** How many times `l` (world.layers) has been composed: coverage reads transitAdd and parkAdd, so it re-runs when this moves. */
+export function layersVersion(l: SimLayers): number {
+  return layerVersions.get(l) ?? 0;
+}
+
 /** A layer set at identities (additive layers 0, multiplicative layers 1) for a world of `area` tiles. */
 export function makeLayers(area: number): SimLayers {
   return {
@@ -231,6 +239,7 @@ export function makeLayerParts(area: number): LayerParts {
  */
 export function composeLayers(world: Pick<World, 'layers' | 'layerParts'>): void {
   const out = world.layers;
+  layerVersions.set(out, layersVersion(out) + 1);
   const { turf: a, vertical: b, local: c, district: d } = world.layerParts;
   const n = out.crimeAdd.length;
   const oc = out.crimeAdd;

@@ -25,11 +25,11 @@ export function terrainHash(seed: number, region: 3 | 5): string {
 
 export const SEEDS = [1, 2091, 7, 31, 0xdeadbeef];
 
-/** Pinned by Step 0b in Node 22 (seeds as SEEDS; [3×3, 5×5]). WP-2's generators re-pin. */
+/** Pinned in Node 22 (seeds as SEEDS; [3×3, 5×5]): WP-2's district generators, presets and border blending. */
 export const PINNED: string[][] = [
-  ['d6fe55a6', 'e30a2323'],
-  ['ea6b1a8c', 'd9548a43'],
-  ['5f9788f9', '7b58f513'],
-  ['d5ffedda', '86b36877'],
-  ['8ca0f38f', '0671fd8c'],
+  ['8051fcab', 'd5d79aba'],
+  ['ae09a3f9', 'fb0b166c'],
+  ['12c89bd6', 'c3322520'],
+  ['6c7d2111', 'ca7f4ecb'],
+  ['85f01d8a', 'b0a431b5'],
 ];

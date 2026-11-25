@@ -13,8 +13,11 @@ import { RoadKind } from '../types';
 // ── Scheduling ───────────────────────────────────────────────────────────────
 /** Fraction of zoned tiles evaluated for growth each tick. */
 export const GROWTH_SAMPLE = 1 / 6;
-/** Heavy field passes are spread over this many ticks inside step(). */
-export const FIELD_STAGGER = 2;
+/**
+ * Heavy field passes are spread over this many ticks inside step() (MEGACITY §3.3, O4): 0 traffic; 1 pollution +
+ * noise; 2 neighbourhood + land value; 3 crime + wealth score. Field latency 4 days (2 s at speed 1).
+ */
+export const FIELD_STAGGER = 4;
 
 // ── Traffic ──────────────────────────────────────────────────────────────────
 /** Trips emitted per resident / job by zone (index = ZoneType). */
