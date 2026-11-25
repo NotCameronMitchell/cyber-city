@@ -34,6 +34,7 @@ import { serviceBuildingHeight, zoneBuildingHeight, LOD_ZOOM, type ArtEnv } from
 import { HALF_H, HALF_W } from './camera';
 import type { Rect } from './ground';
 import { css, glowSprite, type RGB } from './palette';
+import { countPass } from './passes';
 
 const LIME: RGB = [182, 255, 46];
 const LILAC: RGB = [201, 162, 255];
@@ -555,6 +556,7 @@ export class StoryRender {
       // The owned box (locked land holds no tower), once; afterwards only the rects 'tiles' events touched.
       this.tallDirty = false;
       this.tallRect = null;
+      countPass('owned:tall');
       this.tall.fill(0);
       const ob = world.ownedBox;
       for (let y = ob.y0; y <= ob.y1; y++) for (let x = ob.x0; x <= ob.x1; x++) this.tall[y * N + x] = tallAt(world, x, y) ? 1 : 0;

@@ -27,6 +27,7 @@
 //    where a deck enters a docked megastructure's visible face.
 // ─────────────────────────────────────────────────────────────────────────────
 
+import { countPass } from '../passes';
 import { BUILDINGS, SKYWAY } from '../../game/config';
 import { skyRampGround } from '../../game/skyway';
 import { scratchFor } from '../../game/frame';
@@ -581,6 +582,7 @@ export class SkywayLayer {
     this.builtSky = world.skyVersion;
     this.dirty = false;
     this.stamp++;
+    countPass('owned:skyway');
     const sky = world.sky;
     const list = this.list;
     if (this.shapes.length !== world.area) {

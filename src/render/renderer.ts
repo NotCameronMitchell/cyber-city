@@ -44,6 +44,7 @@ import {
   type SpriteLimits,
 } from './districts';
 import { css } from './palette';
+import { countPass } from './passes';
 import { shipReach } from './art/ports';
 import { SkywayLayer, resetSkywayFrame } from './art/skyway';
 import { Effects } from './effects';
@@ -92,6 +93,7 @@ export class ParcelCache {
     if (world !== this.world || this.map.length !== world.area) {
       this.world = world;
       this.map = new Uint8Array(world.area);
+      countPass('region:parcels');
       fillParcelMap(world, this.map);
     }
     return this.map;
@@ -254,7 +256,7 @@ export class Renderer {
         const w = this.game.world;
         this.ground.invalidate(r);
         this.overlay.invalidate();
-        this.access.invalidate(r);
+        this.access.invalidate(r, w);
         this.parcels.touch(w, r);
         this.atlas.invalidate(w, r);
         this.skyway.invalidate(w, r);
@@ -312,6 +314,7 @@ export class Renderer {
     const seen = this.turfSeen;
     const N = w.N;
     const R = w.region;
+    countPass('owned:turf');
     const box = new Int32Array(R * R * 4).fill(-1);
     for (let s = 0; s < w.segCount; s += 2)
       for (let i = w.segs[s]; i < w.segs[s + 1]; i++) {
@@ -466,7 +469,7 @@ export class Renderer {
       const w = this.canvas.clientWidth;
       const h = this.canvas.clientHeight;
       const cap = this.quality === 'low' ? 1.5 : 2;
-      const dpr = Math.max(1, Math.min(cap, window.devicePixelRatio || 1));
+      const dpr = Math.max(1, Math.min(cap, (typeof window !== 'undefined' && window.devicePixelRatio) || 1));
       const sized = w > 1 && h > 1 && (Math.abs(w - this.cssW) > 0.5 || Math.abs(h - this.cssH) > 0.5);
       if (sized || Math.abs(dpr - this.dpr) > 0.05) this.resize();
     }

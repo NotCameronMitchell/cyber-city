@@ -43,6 +43,7 @@ import type { World } from '../game/world';
 import type { ArtEnv } from './buildings';
 import { HALF_H, HALF_W } from './camera';
 import { MATERIAL, NEON, css, glowSprite, hexToRgb, lit, mix, shade, type RGB } from './palette';
+import { countPass } from './passes';
 
 const TAU = Math.PI * 2;
 const HP = Math.PI / 2;
@@ -298,6 +299,7 @@ export class TerrainInfo {
   readonly deco: Uint8Array;
 
   constructor(world: World) {
+    countPass('region:terrainInfo');
     const N = world.N;
     const o = (this.o = 64 * ((world.region - 1) >> 1));
     this.tone = new Uint8Array(world.area);
@@ -2779,6 +2781,7 @@ export class GroundCache {
   reset() {
     for (const c of this.chunks.values()) this.release(c);
     this.chunks.clear();
+    this.buckets.clear();
     this.info = null;
   }
 
@@ -2792,17 +2795,30 @@ export class GroundCache {
     this.invalidate({ x0: r.x0 - m, y0: r.y0 - m, x1: r.x1 + m, y1: r.y1 + m });
   }
 
-  /** Tiles changed: mark the affected world rect dirty on every rendered chunk. */
+  /**
+   * Tiles changed: mark the affected world rect dirty on the rendered chunks it touches. MEGACITY §3.9 R0: the chunks
+   * are looked up by index range in each bucket in use (a growth event touches one to four per bucket), not by a walk
+   * over every chunk, so dozens of 'tiles' events a frame at speed 3 stay cheap.
+   */
   invalidate(tiles: Rect) {
+    if (!this.N) return;
     const r = tileRectToWorld(tiles);
-    for (const c of this.chunks.values()) {
-      if (!c.rendered || c.empty) continue;
-      if (!intersects(r, this.chunkRect(c))) continue;
-      c.dirty = c.dirty
-        ? { x0: Math.min(c.dirty.x0, r.x0), y0: Math.min(c.dirty.y0, r.y0), x1: Math.max(c.dirty.x1, r.x1), y1: Math.max(c.dirty.y1, r.y1) }
-        : r;
+    for (const b of this.buckets.values()) {
+      const rg = this.range(b.k, r);
+      for (let j = rg.j0; j <= rg.j1; j++)
+        for (let i = rg.i0; i <= rg.i1; i++) {
+          const c = this.chunks.get(chunkKey(b.k, b.sky, i, j));
+          if (!c || !c.rendered || c.empty) continue;
+          if (!intersects(r, this.chunkRect(c))) continue;
+          c.dirty = c.dirty
+            ? { x0: Math.min(c.dirty.x0, r.x0), y0: Math.min(c.dirty.y0, r.y0), x1: Math.max(c.dirty.x1, r.x1), y1: Math.max(c.dirty.y1, r.y1) }
+            : r;
+        }
     }
   }
+
+  /** The (bucket, view band) pairs that hold chunks: invalidate looks only there. */
+  private buckets = new Map<string, { k: number; sky: boolean }>();
 
   terrain(world: World): TerrainInfo {
     if (!this.info) this.info = new TerrainInfo(world);
@@ -2872,6 +2888,8 @@ export class GroundCache {
     const key = chunkKey(k, sky, i, j);
     let c = this.chunks.get(key);
     if (!c) {
+      const bk = `${k}:${sky ? 1 : 0}`;
+      if (!this.buckets.has(bk)) this.buckets.set(bk, { k, sky });
       c = { k, sky, i, j, canvas: null, ctx: null, empty: false, rendered: false, night: -1, dirty: null, used: 0 };
       c.empty = this.collectTiles(this.chunkRect(c)) === 0;
       this.chunks.set(key, c);
@@ -3230,6 +3248,8 @@ export class GroundCache {
     const pulse = glowSprite(mix(NEON.amber, NEON.magenta, 0.35), 64);
     const flicker = n > 0.2 && !low && env.zoom >= 0.45;
     const violet = glowSprite(ALLEY_RGB, 32);
+    const lanterns = n > 0.25 && env.zoom >= 0.4;
+    const lantern = glowSprite([255, 150, 70], 32);
     // Stepped by 1/32 of the night value: a bounded set of cached glow sprites at dusk and dawn.
     const tint = mix([255, 255, 255], [120, 220, 255], Math.round(n * 32) / 32);
     const sparkTint = glowSprite(tint as RGB, 32);
@@ -3259,6 +3279,12 @@ export class GroundCache {
             ctx.drawImage(sparkTint, cx - w * 0.6, cy - 4, w * 1.2, 8);
           }
         } else if (t.road) {
+          if (lanterns && t.roadKind === RoadKind.Alley && world.kindAt(x, y) === 'bazaar') {
+            // Verdigris Bazaar's paper lanterns over the alleys (§3.9 district ground character), swaying warm.
+            const h = hash2(x - o, y - o, info.seed + 31);
+            ctx.globalAlpha = Math.min(1, n * (0.45 + 0.2 * Math.sin(time * (1.3 + h) + h * 20)));
+            ctx.drawImage(lantern, wx - 14, wy + 6, 28, 18);
+          }
           if (flicker && t.roadKind === RoadKind.Alley && hash2(x - o, y - o, info.seed + 23) < 0.26) {
             // A violet sign over the alley, buzzing on and off.
             const h = hash2(x - o, y - o, info.seed + 29);

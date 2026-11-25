@@ -412,8 +412,8 @@ function atlasPal(nb: number): AtlasPal {
     pad: css(mix([92, 94, 108], [30, 28, 48], n)),
     lot: ZONE_RGB.map((c) => css(mix(mix(land, c, 0.3), [0, 0, 0], 0.1))),
     land: [0, 1, 2, 3].map((e) => css(mix(land, [255, 244, 220], 0.06 * e))),
-    fogLand: [0, 1, 2, 3].map((e) => css(mix(shade(mix(land, [255, 244, 220], 0.07 * e), 0.45), fog, 0.3))),
-    fogWater: css(mix(shade(mix([30, 70, 96], [8, 22, 44], n), 0.45), fog, 0.3)),
+    fogLand: [0, 1, 2, 3].map((e) => css(mix(shade(mix(land, [255, 244, 220], 0.09 * e), 0.75), fog, 0.3))),
+    fogWater: css(mix(shade(mix([30, 70, 96], [8, 22, 44], n), 0.6), [20, 14, 44], 0.3)),
     win: css([255, 220, 150], nb === 2 ? 0.95 : 0.6),
   };
   pals.set(nb, p);

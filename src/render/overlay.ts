@@ -13,7 +13,7 @@ import { BUILDINGS, CURRENCY, ROAD_ACCESS_RANGE, SKYBRIDGE, WEALTH, isBuildingTo
 import type { Game } from '../game/game';
 import { heightOf, roofOf } from '../game/heights';
 import { berthTiles, noiseDef, shoreFacing, shoreSites } from '../game/ports';
-import { computeAccess, fillKinds, isRoadTool, roadLinks } from '../game/roads';
+import { KIND_NONE, computeAccess, fillKinds, isRoadTool, roadLinks } from '../game/roads';
 import { RoadKind, ZoneType, type ActionPlan, type BuildingType, type OverlayId, type ServiceEffect, type Tile } from '../game/types';
 import { potentialTier, stepTarget, tierCapAt } from '../game/wealth';
 import type { World } from '../game/world';
@@ -24,6 +24,7 @@ import { HALF_H, HALF_W, type Camera } from './camera';
 import { chevronPath, kindHalf, roadOutlinePath, roadShapePath, type Rect } from './ground';
 import { highlight } from './highlight';
 import { NEON, css, glowSprite, heat, hexToRgb, type RGB } from './palette';
+import { countPass } from './passes';
 
 const PERP = (2 * HALF_W * HALF_H) / Math.hypot(HALF_W, HALF_H);
 const SQRT2 = Math.SQRT2;
@@ -115,6 +116,7 @@ export class OverlayLayer {
     const lut = this.lut;
     const pips = this.pips;
     if (overlay === 'wealth') this.pipsFor = world;
+    countPass('owned:overlay');
     // Owned segments only (MEGACITY §3.9 R0): locked land carries no data and stays clear.
     void N;
     for (let sg = 0; sg < world.segCount; sg += 2)
@@ -710,6 +712,7 @@ export function drawToolHints(ctx: CanvasRenderingContext2D, game: Game, time: n
     shore.world = world;
     shore.version = world.version;
     shore.at = now();
+    countPass('region:shoreSites');
     shore.count = shoreSites(world, shore.marks);
     const cover = shore.cover;
     cover.fill(0);
@@ -1361,6 +1364,7 @@ function darkState(world: World): DarkState {
   if (dark.tick >= 0 && t0 - dark.at < FULL_PASS_MS) return dark;
   dark.at = t0;
   dark.tick = world.tick;
+  countPass('owned:dark');
   void N;
   const since = dark.since;
   const tiles = world.tiles;
@@ -1524,20 +1528,44 @@ export class RoadAccessMap {
   private queue = new Int32Array(0);
   private dirty = true;
   private world: World | null = null;
-  /** Union of the rects changed since the last get(), or null. */
-  private rect: { x0: number; y0: number; x1: number; y1: number } | null = null;
+  /** Rects whose roads changed since the last get() (growth's level and tier changes never touch a road). */
+  private rects: { x0: number; y0: number; x1: number; y1: number }[] = [];
   /** Whole builds and local patches since construction (tests: R0). */
   full = 0;
   patches = 0;
 
-  /** Tiles changed in `r` (incremental), or everything (no rect: a world swap or an annex). */
-  invalidate(r?: { x0: number; y0: number; x1: number; y1: number }) {
-    if (!r) {
-      this.dirty = true;
+  /**
+   * Tiles changed in `r`: only a road change matters (the kinds snapshot tells), so a growth event costs a look at
+   * its own tiles; or everything (no rect: a world swap or an annex).
+   */
+  invalidate(r?: { x0: number; y0: number; x1: number; y1: number }, world?: World) {
+    if (!r || this.dirty) {
+      if (!r) this.dirty = true;
       return;
     }
-    const q = this.rect;
-    this.rect = q ? { x0: Math.min(q.x0, r.x0), y0: Math.min(q.y0, r.y0), x1: Math.max(q.x1, r.x1), y1: Math.max(q.y1, r.y1) } : { ...r };
+    if (world && world === this.world && this.kinds.length === world.area) {
+      const N = world.N;
+      const kinds = this.kinds;
+      let changed = false;
+      for (let y = Math.max(0, r.y0); y <= Math.min(N - 1, r.y1) && !changed; y++)
+        for (let x = Math.max(0, r.x0); x <= Math.min(N - 1, r.x1); x++) {
+          const i = y * N + x;
+          const t = world.tiles[i];
+          const k = t.road ? t.roadKind : KIND_NONE;
+          if (k !== kinds[i]) {
+            changed = true;
+            break;
+          }
+        }
+      if (!changed) return;
+    }
+    if (this.rects.length >= 32) {
+      // Many scattered edits: one whole build is cheaper than patching each.
+      this.dirty = true;
+      this.rects.length = 0;
+      return;
+    }
+    this.rects.push({ ...r });
   }
 
   get(world: World): Uint8Array {
@@ -1554,8 +1582,9 @@ export class RoadAccessMap {
     }
     if (this.dirty) {
       this.dirty = false;
-      this.rect = null;
+      this.rects.length = 0;
       this.full++;
+      countPass('region:access');
       fillKinds(world, this.kinds);
       computeAccess(this.kinds, this.dist, this.near, this.queue, world.N);
       const dist = this.dist;
@@ -1563,17 +1592,29 @@ export class RoadAccessMap {
       for (let i = 0; i < N * N; i++) out[i] = dist[i] !== 255 ? 1 : 0;
       return out;
     }
-    const r = this.rect;
-    if (!r) return this.data;
-    this.rect = null;
-    this.patches++;
+    if (!this.rects.length) return this.data;
+    const out = this.data;
     const R = ROAD_ACCESS_RANGE;
     const tiles = world.tiles;
-    const x0 = Math.max(0, r.x0 - R);
-    const y0 = Math.max(0, r.y0 - R);
-    const x1 = Math.min(N - 1, r.x1 + R);
-    const y1 = Math.min(N - 1, r.y1 + R);
-    const out = this.data;
+    for (const r of this.rects) {
+      this.patches++;
+      // Refresh the kinds snapshot inside the rect, then the access within ROAD_ACCESS_RANGE of it.
+      for (let y = Math.max(0, r.y0); y <= Math.min(N - 1, r.y1); y++)
+        for (let x = Math.max(0, r.x0); x <= Math.min(N - 1, r.x1); x++) {
+          const t = tiles[y * N + x];
+          this.kinds[y * N + x] = t.road ? t.roadKind : KIND_NONE;
+        }
+      this.patch(world, out, Math.max(0, r.x0 - R), Math.max(0, r.y0 - R), Math.min(N - 1, r.x1 + R), Math.min(N - 1, r.y1 + R));
+    }
+    this.rects.length = 0;
+    return out;
+  }
+
+  /** Recompute access for the tiles of a rect from their own neighbourhood (the BFS's exact answer). */
+  private patch(world: World, out: Uint8Array, x0: number, y0: number, x1: number, y1: number) {
+    const N = world.N;
+    const R = ROAD_ACCESS_RANGE;
+    const tiles = world.tiles;
     for (let y = y0; y <= y1; y++)
       for (let x = x0; x <= x1; x++) {
         let ok = 0;
@@ -1594,7 +1635,6 @@ export class RoadAccessMap {
         }
         out[y * N + x] = ok;
       }
-    return out;
   }
 }
 
