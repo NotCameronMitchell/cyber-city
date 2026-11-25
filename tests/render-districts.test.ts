@@ -277,6 +277,29 @@ describe('fog, boundary and pins (§3.9)', () => {
   });
 });
 
+describe('the City map atlas paints progressively (§3.9)', () => {
+  it('every slot gets its first picture even while growth keeps re-dirtying the slot under the view; churned slots wait', async () => {
+    const { Atlas } = await import('../src/render/atlas');
+    const w = megacityWorld(3, 9, 4);
+    const cam = camOn(w);
+    cam.snapToMap(0, 1, 0);
+    cam.update(1);
+    const atlas = new Atlas();
+    atlas.open(w, atlasScale(cam.mapZoom, 1, 3, 'handheld'));
+    const ctx = document.createElement('canvas').getContext('2d') as CanvasRenderingContext2D;
+    const centre = slotRect(w, 4);
+    let frames = 0;
+    while (atlas.shown < 9 && frames < 2000) {
+      // A growth event in the slot under the view every frame (speed 3 on a built city).
+      atlas.invalidate(w, { x0: centre.x0 + 5, y0: centre.y0 + 5, x1: centre.x0 + 7, y1: centre.y0 + 7 });
+      atlas.draw(ctx, w, cam, 1, 0, frames / 60);
+      frames++;
+    }
+    expect(atlas.shown).toBe(9);
+    expect(atlas.bytes).toBeLessThanOrEqual(atlasBudgetBytes('handheld'));
+  });
+});
+
 describe('the district label (§3.9)', () => {
   it('fades in when the view centre crosses into another owned district, at most once per 20 s, never while dragging', () => {
     const w = twoDistricts(3);

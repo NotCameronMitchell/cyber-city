@@ -969,7 +969,7 @@ function megacityPal(n: number, g0: RGB, g1: RGB, shallow: RGB, deep: RGB, wall:
     fogHall: css(mix([22, 20, 28], [6, 6, 12], n)),
     fogHallRoof: css(mix([46, 44, 54], [16, 18, 26], n)),
     kindWash,
-    elevLight: [0, 1, 2, 3].map((e) => css(mix([255, 240, 214], [150, 130, 230], n), (0.075 * day + 0.04 * n) * e)),
+    elevLight: [0, 1, 2, 3].map((e) => css(mix([255, 240, 214], [150, 130, 230], n), (0.095 * day + 0.05 * n) * e)),
     contour: css(mix([40, 34, 30], [6, 4, 12], n), 0.6),
     retWall: css(mix([98, 88, 76], [30, 26, 36], n)),
     retShadow: css([0, 0, 0], 0.18 + 0.1 * n),
@@ -1540,6 +1540,12 @@ export class GroundPainter {
         else if (d === 1) c.rect(x + 1 - th, y, th, 1);
         else if (d === 2) c.rect(x, y + 1 - th, 1, th);
         else c.rect(x, y, th, 1);
+        // The back edge of a higher step catches the light: a pale lip just inside the contour.
+        if (ne < e && (d === 0 || d === 3)) {
+          const lip = this.b3.f(P.retLip);
+          if (d === 0) lip.rect(x, y + th, 1, th);
+          else lip.rect(x + th, y, th, 1);
+        }
       }
       // A visible retaining wall: the face drops from this (higher) tile's +x / +y edge onto the lower neighbour.
       if (ne < e && (d === 1 || d === 2)) {
@@ -1603,7 +1609,7 @@ export class GroundPainter {
       const [lo, hi] = RUNWAY_DIGITS[alongX ? 'x' : 'y'];
       const text = deco === DECO_RUNWAY_NUM_LO ? lo : hi;
       const up = deco === DECO_RUNWAY_NUM_LO ? 1 : -1;
-      for (let k = 0; k < 2; k++) runwayDigit(p, x, y, alongX, up, text.charCodeAt(k) - 48, k === 0 ? -1 : 1, th * 0.9);
+      for (let k = 0; k < 2; k++) runwayDigit(p, x, y, alongX, up, text.charCodeAt(k) - 48, k === 0 ? -1 : 1, th * 1.6);
       return;
     }
     if (deco === DECO_RUNWAY_END) {
@@ -2756,16 +2762,16 @@ const SEG7 = [0x3f, 0x06, 0x5b, 0x4f, 0x66, 0x6d, 0x7d, 0x07, 0x7f, 0x6f];
  */
 function runwayDigit(p: CanvasPath, x: number, y: number, alongX: boolean, up: number, d: number, side: number, th: number) {
   const m = SEG7[d] ?? 0;
-  // Digit box: 0.22 wide (across), 0.5 tall (along), centred 0.14 either side of the centre line.
-  const w = 0.22;
-  const h = 0.5;
-  const c = 0.5 + side * 0.14 * -up;
+  // Digit box: 0.3 wide (across), 0.74 tall (along), centred 0.19 either side of the centre line.
+  const w = 0.3;
+  const h = 0.74;
+  const c = 0.5 + side * 0.19 * -up;
   // Local (u across, v along: 0 at the digit's foot) → tile space.
   const seg = (u0: number, v0: number, u1: number, v1: number) => {
     const ua = c - w / 2 + Math.min(u0, u1) * w;
     const ub = c - w / 2 + Math.max(u0, u1) * w;
-    const va = 0.25 + Math.min(v0, v1) * h;
-    const vb = 0.25 + Math.max(v0, v1) * h;
+    const va = 0.13 + Math.min(v0, v1) * h;
+    const vb = 0.13 + Math.max(v0, v1) * h;
     const wu = Math.max(th, ub - ua);
     const wv = Math.max(th, vb - va);
     // `up` flips both axes so the digit is upright for a reader rolling in from that threshold.
@@ -2850,6 +2856,18 @@ const now = () => (typeof performance !== 'undefined' ? performance.now() : Date
 const OVERVIEW_BUDGET = 4 * 1024 * 1024;
 /** Least time between two repaints of a chunk's edits (ms, §3.9 R0): a quiet chunk repaints an edit at once. */
 const CHURN_MS = 250;
+/**
+ * A chunk's least repaint interval: CHURN_MS at full scale, longer for the far buckets, whose chunks cover many more
+ * tiles (the overview's ≈ 18×) and so gather edits from all over the city while showing them a few device px wide.
+ */
+function churnMs(k: number): number {
+  return CHURN_MS / Math.min(1, scaleOf(k));
+}
+
+/** Least time between two night-bucket refreshes of a visible chunk (ms). */
+const NIGHT_REFRESH_MS = 120;
+/** Dirty rects repainted per frame at most (their rasterisation is deferred to the blit, outside any timer). */
+const RECT_CAP = 16;
 /** Dirty rects kept per chunk; past it, a new rect merges into the one it grows least. */
 const DIRTY_MAX = 12;
 
@@ -2911,6 +2929,8 @@ export class GroundCache {
   private lastZoom = 0;
   private zoomMovedAt = -1e9;
   private overviewNightAt = -1e9;
+  /** When a night-stale chunk last re-rendered (ms). */
+  private nightRefreshAt = -1e9;
   /** Rough cost of the last full chunk render (ms), for diagnostics / budgeting. */
   lastChunkMs = 0;
 
@@ -3163,13 +3183,14 @@ export class GroundCache {
    * zone or building) at once, a chunk under sim churn (abandonment, cleared brownfield all over the map at speed 3)
    * gathers its edits for a few frames and repaints them together.
    */
-  private repaintDirty(c: Chunk, world: World, t: number) {
+  private repaintDirty(c: Chunk, world: World, t: number): number {
     const list = c.dirty;
-    if (!list) return;
-    if (t - c.paintedAt < CHURN_MS) return;
+    if (!list) return 0;
+    if (t - c.paintedAt < churnMs(c.k)) return 0;
     c.dirty = null;
     c.paintedAt = t;
     for (const r of list) this.renderChunk(c, world, c.night, r);
+    return list.length;
   }
 
   /** Visible chunk index range of bucket k for a world rect. */
@@ -3272,10 +3293,17 @@ export class GroundCache {
       ovDid++;
     }
     const fallbackReady = k === OVERVIEW || ovView.every((c) => c.rendered);
-    // 1) partial redraws of visible chunks (edits must show immediately)
-    //    (in the chunk's own night bucket so a stale chunk stays self-consistent)
+    // 1) partial redraws of visible chunks, the longest-waiting first, within a share of the budget and at most
+    //    RECT_CAP rects a frame (their rasterisation lands in the blit, outside the timer): a 25-district city at
+    //    speed 3 dirties every visible chunk all the time.
     const tNow = now();
-    for (const c of vis) if (c.rendered && c.dirty) this.repaintDirty(c, world, tNow);
+    let rects = 0;
+    const dirtyVis = vis.filter((c) => c.rendered && c.dirty && tNow - c.paintedAt >= churnMs(c.k));
+    if (dirtyVis.length > 1) dirtyVis.sort((a, b) => a.paintedAt - b.paintedAt);
+    for (const c of dirtyVis) {
+      if (rects > 0 && (rects >= RECT_CAP || spent() > budgetMs * 0.5)) break;
+      rects += this.repaintDirty(c, world, tNow);
+    }
     let did = 0;
     // Most of a chunk's cost is rasterisation, which the browser defers to the
     // blit, so besides the time budget the number of full renders per frame is
@@ -3287,17 +3315,22 @@ export class GroundCache {
     const dist = (c: Chunk) => Math.abs(this.OX + (c.i + 0.5) * W - ccx) + Math.abs(OY + (c.j + 0.5) * W - ccy);
     const pending = vis.filter((c) => !c.rendered || c.night !== nightBucket);
     if (pending.length > 1) pending.sort((a, b) => (a.rendered ? 1 : 0) - (b.rendered ? 1 : 0) || dist(a) - dist(b));
-    // 2) missing chunks, then 3) night-stale chunks (the stale copy keeps drawing meanwhile)
+    // 2) missing chunks, then 3) night-stale chunks (the stale copy keeps drawing meanwhile; at speed 3 the night
+    //    bucket moves every few seconds, so stale chunks refresh one at a time, at most every NIGHT_REFRESH_MS)
     for (const c of pending) {
       const mustRender = !c.rendered && !fallbackReady;
       if (!mustRender && did > 0 && (did >= cap || spent() > budgetMs)) break;
+      if (c.rendered) {
+        if (did > 0 || tNow - this.nightRefreshAt < NIGHT_REFRESH_MS) break;
+        this.nightRefreshAt = tNow;
+      }
       this.renderChunk(c, world, nightBucket, null);
       did++;
     }
     // 4) keep the fallback overview reasonably fresh: edits whenever there is
     //    time; night changes only on otherwise idle frames, at most every 1.5 s.
     for (const c of ov) {
-      if (c.rendered && c.dirty && spent() < budgetMs * 0.5) this.repaintDirty(c, world, tNow);
+      if (c.rendered && c.dirty && rects < RECT_CAP && spent() < budgetMs * 0.5) rects += this.repaintDirty(c, world, tNow);
       if (c.night !== nightBucket && did === 0 && spent() < 1 && now() - this.overviewNightAt > 1500) {
         this.renderChunk(c, world, nightBucket, null);
         this.overviewNightAt = now();
@@ -3328,7 +3361,7 @@ export class GroundCache {
     }
     this.blit(ctx, vis, view);
     for (const c of ov) c.used = frame;
-    this.evict(vis.length + ov.length, ov.length);
+    this.evict(vis.length + ov.length, ov.length, k === OVERVIEW);
   }
 
   private blit(ctx: CanvasRenderingContext2D, list: Chunk[], view: GroundView) {
@@ -3349,11 +3382,18 @@ export class GroundCache {
 
   /**
    * LRU eviction down to the memory budget (never below what this frame needs): the overview's chunks within
-   * OVERVIEW_BUDGET (or what the view needs of them), the rest within MEMORY_BUDGET.
+   * OVERVIEW_BUDGET (or what the view needs of them), the rest within MEMORY_BUDGET; the other way round while the
+   * overview is the live bucket.
    */
-  private evict(needed: number, ovNeeded = 0) {
-    const maxChunks = Math.max(Math.floor(MEMORY_BUDGET / CHUNK_BYTES), needed + 4);
-    const maxOv = Math.max(Math.floor(OVERVIEW_BUDGET / CHUNK_BYTES), ovNeeded);
+  private evict(needed: number, ovNeeded = 0, overviewIsLive = false) {
+    let maxChunks = Math.max(Math.floor(MEMORY_BUDGET / CHUNK_BYTES), needed + 4);
+    let maxOv = Math.max(Math.floor(OVERVIEW_BUDGET / CHUNK_BYTES), ovNeeded);
+    if (overviewIsLive) {
+      // Zoomed out to the overview's own scale (the skyline view at ≤ 0.27): its chunks are the picture, so they keep
+      // the main budget (a pan back does not repaint them) and the street buckets keep the fallback's share.
+      maxOv = maxChunks;
+      maxChunks = Math.floor(OVERVIEW_BUDGET / CHUNK_BYTES);
+    }
     let live = 0;
     let liveOv = 0;
     for (const [key, c] of this.chunks) {

@@ -34,6 +34,8 @@ const HEAD = 300;
 const BAND = 12;
 /** Repaint budget per frame (§3.9: ≤ 2 ms). */
 const PAINT_MS = 2;
+/** Least time between two repaints of a slot that already shows a picture (ms): growth churns every slot at speed 3. */
+const STALE_MS = 4000;
 const now = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
 
 const ZONE_RGB: RGB[] = [[120, 120, 130], hexToRgb(ZONES.res.color), hexToRgb(ZONES.com.color), hexToRgb(ZONES.ind.color)];
@@ -49,6 +51,8 @@ interface Impostor {
   night: number;
   owned: boolean;
   dirty: boolean;
+  /** When its last repaint started (ms): a slot under sim churn repaints at most every STALE_MS. */
+  paintedAt: number;
 }
 
 /** The atlas night bucket (3: day, dusk, night). */
@@ -85,7 +89,7 @@ export class Atlas {
       this.scale = scale;
       for (const s of this.slots) s.dirty = true;
     }
-    while (this.slots.length < R * R) this.slots.push({ canvas: null, back: null, band: 0, scale: 0, night: -1, owned: false, dirty: true });
+    while (this.slots.length < R * R) this.slots.push({ canvas: null, back: null, band: 0, scale: 0, night: -1, owned: false, dirty: true, paintedAt: -1e9 });
   }
 
   /** Tiles changed in `r` (or an annex): the slots it touches repaint the next time the map is open. */
@@ -101,6 +105,13 @@ export class Atlas {
 
   get atlasScale(): number {
     return this.scale;
+  }
+
+  /** Slots showing a picture at the current scale, stale or not (tests, the browser checks). */
+  get shown(): number {
+    let n = 0;
+    for (const s of this.slots) if (s.canvas && s.scale === this.scale) n++;
+    return n;
   }
 
   /** Slots fully painted at the current scale (tests). */
@@ -121,22 +132,31 @@ export class Atlas {
     return { w: Math.ceil(64 * 64 * s) + 2, h: Math.ceil((64 * 32 + HEAD) * s) + 2 };
   }
 
-  /** Paint dirty slots, nearest the view centre first, within PAINT_MS. */
+  /**
+   * Paint slots within PAINT_MS: one already being painted first, then every slot without a picture at this scale
+   * (nearest the view centre first), then slots whose picture went stale (an annex, a night bucket, or tiles that
+   * changed: at most every STALE_MS, so a city growing at speed 3 never starves the far slots of their first picture).
+   */
   private paint(world: World, cam: Camera, night: number) {
     const nb = atlasNight(night);
     const t0 = now();
     this.painted = 0;
     const centre = cam.screenToWorld(cam.width / 2, cam.height / 2);
+    const rank = (k: number): number => {
+      const s = this.slots[k];
+      const owned = world.slotOwned[k] === 1;
+      // Ownership or the night bucket changed: the picture is wrong, not just old.
+      if (s.owned !== owned || (s.night !== nb && owned)) return 1;
+      if (s.back !== null) return 0;
+      if (!s.canvas || s.scale !== this.scale) return 1;
+      if (s.dirty && t0 - s.paintedAt >= STALE_MS) return 2;
+      return -1;
+    };
+    const ranks = this.slots.map((_, k) => rank(k));
     const order = this.slots
       .map((_, k) => k)
-      .filter((k) => {
-        const s = this.slots[k];
-        const owned = world.slotOwned[k] === 1;
-        if (s.owned !== owned) s.dirty = true;
-        if (s.night !== nb && owned) s.dirty = true;
-        return s.dirty || s.back !== null || !s.canvas || s.scale !== this.scale;
-      })
-      .sort((a, b) => dist(world, a, centre) - dist(world, b, centre));
+      .filter((k) => ranks[k] >= 0)
+      .sort((a, b) => ranks[a] - ranks[b] || dist(world, a, centre) - dist(world, b, centre));
     for (const k of order) {
       const s = this.slots[k];
       while (now() - t0 < PAINT_MS) {
@@ -158,6 +178,7 @@ export class Atlas {
       s.owned = world.slotOwned[k] === 1;
       s.night = nb;
       s.dirty = false;
+      s.paintedAt = now();
       this.bytes += w * h * 4;
     }
     const g = s.back.getContext('2d');
