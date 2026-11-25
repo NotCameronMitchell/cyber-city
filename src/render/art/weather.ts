@@ -88,10 +88,11 @@ function fogBand(salt: number): HTMLCanvasElement {
   c.width = 512;
   c.height = 256;
   const g = c.getContext('2d')!;
-  for (let i = 0; i < 26; i++) {
+  // Blobs stay inside the band's height (no hard top or bottom edge); they wrap left to right.
+  for (let i = 0; i < 30; i++) {
     const x = hash2(i, 1, salt) * 512;
-    const y = 128 + (hash2(i, 2, salt) - 0.5) * 120;
-    const r = 50 + hash2(i, 3, salt) * 90;
+    const y = 128 + (hash2(i, 2, salt) - 0.5) * 70;
+    const r = 40 + hash2(i, 3, salt) * (126 - 40 - Math.abs(y - 128));
     // Wrapped copies so the band tiles seamlessly left to right.
     for (const ox of [-512, 0, 512]) {
       const grad = g.createRadialGradient(x + ox, y, 0, x + ox, y, r);
@@ -240,7 +241,7 @@ export class ScreenFx {
         const speed = k ? 9 : 5;
         const off = ((t * speed + k * 311) % bw) - bw;
         const y = k ? h * 0.42 : h * 0.08;
-        ctx.globalAlpha = Math.min(1, fa * (1 - 0.35 * night) * 3.2);
+        ctx.globalAlpha = Math.min(1, fa * (1 - 0.3 * night) * 2);
         for (let x = off; x < w; x += bw) ctx.drawImage(band, x, y, bw, bh);
       }
     }

@@ -233,7 +233,7 @@ export class Effects {
     gf.reflections = lv.reflections;
     gf.view = this.viewRect;
     this.groundFx.update(dt, world, b, this.streets, gf);
-    this.festival.update(dt, world, ev, b, this.streets, lv.cityLife);
+    this.festival.update(dt, world, ev, b, this.streets, lv.cityLife, this.viewRect);
     this.ports.update(dt, game.clockRate, world);
     // The Seaport placement ghost shows the side that would face the water.
     const plan = game.preview;
