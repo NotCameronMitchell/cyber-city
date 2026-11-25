@@ -108,11 +108,16 @@ export function slotCensus(world: World, slot: SlotId): SlotCensus {
   return out;
 }
 
+/** The smallest land piece that counts as an island (tiles). */
+export const ISLAND_MIN = 4;
+
 /**
- * Islands of a slot bridged to the city (§3.7, Shoals): land components of the slot that touch no border shared with
- * another owned slot, at least 9 tiles, holding a road tile joined to the start slot's road network (bridges count).
+ * Islands of a district (§3.7, Shoals): its land pieces of at least ISLAND_MIN (4) tiles, 4-connected inside the slot, other than a
+ * piece that runs on into the start slot's land (the city's own shore). A piece that runs on into another district
+ * counts: it reads the terrain only, so annexing a neighbour never takes an island away. `linked`: it holds a road joined to the start
+ * slot's road network (bridges count).
  */
-export function bridgedIslands(world: World, slot: SlotId): number {
+export function shoalsIslands(world: World, slot: SlotId): { x: number; y: number; size: number; linked: boolean }[] {
   const r = slotRect(world, slot);
   const N = world.N;
   // Road network reachable from roads in the start slot (BFS over road tiles, bridges included).
@@ -142,9 +147,8 @@ export function bridgedIslands(world: World, slot: SlotId): number {
       q.push(j);
     }
   }
-  // Land components inside the slot.
   const comp = new Int32Array(SLOT * SLOT).fill(-1);
-  let islands = 0;
+  const out: { x: number; y: number; size: number; linked: boolean }[] = [];
   for (let ly = 0; ly < SLOT; ly++)
     for (let lx = 0; lx < SLOT; lx++) {
       const k0 = ly * SLOT + lx;
@@ -165,9 +169,11 @@ export function bridgedIslands(world: World, slot: SlotId): number {
           const nx = kx + dx;
           const ny = ky + dy;
           if (nx < 0 || ny < 0 || nx >= SLOT || ny >= SLOT) {
-            // Land running on into another owned slot is mainland, not an island.
-            const t = world.tileAt(r.x0 + nx, r.y0 + ny);
-            if (t && t.terrain === Terrain.Land && world.isOwned(r.x0 + nx, r.y0 + ny)) mainland = true;
+            const wx = r.x0 + nx;
+            const wy = r.y0 + ny;
+            const t = world.tileAt(wx, wy);
+            // Land running on into the start slot is the city's own shore, not an island.
+            if (t && t.terrain === Terrain.Land && world.slotAt(wx, wy) === start) mainland = true;
             continue;
           }
           const nk = ny * SLOT + nx;
@@ -176,9 +182,14 @@ export function bridgedIslands(world: World, slot: SlotId): number {
           stack.push(nk);
         }
       }
-      if (!mainland && size >= 9 && linked) islands++;
+      if (!mainland && size >= ISLAND_MIN) out.push({ x: r.x0 + lx, y: r.y0 + ly, size, linked });
     }
-  return islands;
+  return out;
+}
+
+/** Islands of a district bridged to the city (the Shoals' "Bridge 3 islands to the city"). */
+export function bridgedIslands(world: World, slot: SlotId): number {
+  return shoalsIslands(world, slot).filter((i) => i.linked).length;
 }
 
 const NB4: readonly (readonly [number, number])[] = [
@@ -209,8 +220,11 @@ export function lobbyIn(world: World, slot: SlotId): boolean {
 export function goalMet(world: World, slot: SlotId, id: string): boolean {
   const c = () => slotCensus(world, slot);
   switch (id) {
-    case 'shoals.islands':
-      return bridgedIslands(world, slot) >= 3;
+    case 'shoals.islands': {
+      // Three islands, or every island a district has when its terrain holds fewer (a rare seed): always reachable.
+      const isl = shoalsIslands(world, slot);
+      return isl.length > 0 && isl.filter((i) => i.linked).length >= Math.min(3, isl.length);
+    }
     case 'shoals.beacon':
       return countIn(world, slot, 'beacon') >= 1;
     case 'shoals.residents':
