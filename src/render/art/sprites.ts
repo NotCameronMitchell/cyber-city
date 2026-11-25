@@ -78,6 +78,11 @@ export class SpriteCache {
     this.fallbacks = 0;
   }
 
+  /** Ms spent painting sprites this frame (stats: paint p95, V1). */
+  get spentMs(): number {
+    return this.spent;
+  }
+
   /** True if painting more sprites this frame is still within budget. */
   canBuild(): boolean {
     return this.spent < this.budgetMs;

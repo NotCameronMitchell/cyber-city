@@ -534,3 +534,212 @@ describe('the cross-family fallback (§6.1, sprites.ts)', () => {
     expect(painted).toBe(1);
   });
 });
+
+describe('V1 in a scripted pan over the megacity fixture (§6.1 targets, §11.4 M7)', () => {
+  type Row = { maxBodies: number; maxMB: number; viewMB: number; tiles: number; fallbackFramesAfterStop: number; paintP95: number; capMB: number; budgetMs: number; adjIdentical: number; maxCellShare: number };
+
+  /**
+   * Render a scripted pan with the real Renderer on the canvas mock: `frames` frames moving across the fixture, then 40
+   * still frames. Returns the per-frame maxima, the frames still showing a cross-family fallback body after the stop, the
+   * paint ms p95 (Node with the mock: a proxy, the browser numbers are Step 9's), and the on-screen identity numbers.
+   */
+  async function pan(o: { region: 3 | 5; slots: number; w: number; h: number; dpr: number; pc: boolean; zoom: number; frames?: number }): Promise<Row> {
+    const g0 = globalThis as Record<string, unknown>;
+    const hadWindow = 'window' in g0;
+    const prevWindow = g0.window;
+    g0.window = { devicePixelRatio: o.dpr, innerWidth: o.w, innerHeight: o.h };
+    const dev = await import('../src/game/device');
+    dev.resetDeviceProfile({ finePointer: o.pc, mobileOS: !o.pc, shortSide: o.pc ? 1080 : 390, cores: 8, memoryGB: 8, benchFactor: 1 } as Parameters<typeof dev.resetDeviceProfile>[0]);
+    try {
+      const { Game } = await import('../src/game/game');
+      const { Renderer } = await import('../src/render/renderer');
+      const { Camera } = await import('../src/render/camera');
+      const { megacityWorld } = await import('./megacity-fixture');
+      const { parcelAt } = await import('../src/game/parcels');
+      const g = new Game();
+      g.restore(megacityWorld(o.region, o.slots, 7).serialize());
+      g.setSpeed(0);
+      const canvas = document.createElement('canvas') as HTMLCanvasElement;
+      canvas.width = o.w;
+      canvas.height = o.h;
+      const cam = new Camera(g.world.N);
+      const r = new Renderer(canvas, g, cam);
+      art.clearBuildingCache();
+      art.setArtStats(true);
+      const c0 = Math.floor(g.world.N / 2);
+      let t = 10;
+      let maxBodies = 0;
+      let maxBytes = 0;
+      let viewBytes = 0;
+      const paint: number[] = [];
+      const frames = o.frames ?? 60;
+      cam.zoom = o.zoom;
+      for (let f = 0; f < frames; f++) {
+        cam.zoom = o.zoom;
+        cam.centerOnTile(c0 - 12 + f * 0.4, c0 - 8 + f * 0.25);
+        r.render(1 / 60, (t += 1 / 60));
+        const s = art.artFrameStats();
+        maxBodies = Math.max(maxBodies, s.bodies);
+        maxBytes = Math.max(maxBytes, s.bytes);
+        viewBytes = Math.max(viewBytes, s.viewBytes);
+        paint.push(s.paintMs);
+      }
+      let fallbackFrames = 0;
+      for (let f = 0; f < 40; f++) {
+        r.render(1 / 60, (t += 1 / 60));
+        const s = art.artFrameStats();
+        if (s.fallbacks > 0) fallbackFrames = f + 1;
+        maxBytes = Math.max(maxBytes, s.bytes);
+        viewBytes = Math.max(viewBytes, s.viewBytes);
+        paint.push(s.paintMs);
+      }
+      const last = art.artFrameStats();
+      paint.sort((a, b) => a - b);
+      // On-screen identity: every developed zone tile of a 24 × 24 window at the stop maps to the body it draws (a parcel
+      // member to its head's); 8-neighbour pairs in different lots drawing the same body, and the largest body share per cell
+      // (a 40 × 40 window: about what a phone shows at zoom 0.55).
+      const w = g.world;
+      const ids = new Map<number, { id: number; lot: number; cell: string }>();
+      const cx = Math.round(c0 - 12 + (frames - 1) * 0.4);
+      const cy = Math.round(c0 - 8 + (frames - 1) * 0.25);
+      const envA = { artOffset: 64 * ((w.region - 1) >> 1), world: w, zoom: o.zoom };
+      for (let y = cy - 20; y < cy + 20; y++)
+        for (let x = cx - 20; x < cx + 20; x++) {
+          const tl = w.tileAt(x, y);
+          if (!tl || tl.zone === ZoneType.None || tl.level < 1 || tl.buildingId >= 0) continue;
+          const p = parcelAt(w, x, y);
+          const hx = p ? p.hx : x;
+          const hy = p ? p.hy : y;
+          const head = w.tileAt(hx, hy)!;
+          const b = art.zoneBodyAt(head, hx, hy, p, envA);
+          ids.set(y * w.N + x, { id: b.id, lot: hy * w.N + hx, cell: `${tl.zone}.${p ? p.level : tl.level}.${p ? (p.w * p.h > 2 ? 2 : 1) : 0}` });
+        }
+      let pairs = 0;
+      let same = 0;
+      for (const [i, a] of ids) {
+        const x = i % w.N;
+        const y = Math.floor(i / w.N);
+        for (const [dx, dy] of [[1, 0], [0, 1], [1, 1], [1, -1]]) {
+          const b = ids.get((y + dy) * w.N + x + dx);
+          if (!b || b.lot === a.lot) continue;
+          pairs++;
+          if (b.id === a.id) same++;
+        }
+      }
+      const byCell = new Map<string, Map<number, Set<number>>>();
+      for (const a of ids.values()) {
+        const m = byCell.get(a.cell) ?? new Map<number, Set<number>>();
+        const lots = m.get(a.id) ?? new Set<number>();
+        lots.add(a.lot);
+        m.set(a.id, lots);
+        byCell.set(a.cell, m);
+      }
+      let maxCellShare = 0;
+      for (const m of byCell.values()) {
+        const total = [...m.values()].reduce((s, l) => s + l.size, 0);
+        if (total < 24) continue;
+        maxCellShare = Math.max(maxCellShare, Math.max(...[...m.values()].map((l) => l.size)) / total);
+      }
+      return {
+        maxBodies,
+        maxMB: maxBytes / 2 ** 20,
+        viewMB: viewBytes / 2 ** 20,
+        tiles: ids.size,
+        fallbackFramesAfterStop: fallbackFrames,
+        paintP95: paint[Math.floor(paint.length * 0.95)] ?? 0,
+        capMB: last.capBytes / 2 ** 20,
+        budgetMs: last.budgetMs,
+        adjIdentical: pairs ? same / pairs : 0,
+        maxCellShare,
+      };
+    } finally {
+      art.setArtStats(false);
+      art.setSpriteLimits(null);
+      dev.resetDeviceProfile(null);
+      if (hadWindow) g0.window = prevWindow;
+      else delete g0.window;
+    }
+  }
+
+  it('phone 390×844: zoom 1 at DPR 2 ≤ 260 distinct bodies and ≤ 26 MB; zoom 0.55 and 0.4 within the cache; fallback bodies gone ≤ 30 frames after the pan; adjacent-identical ≤ 3%, no body over 15% of its cell on screen', async () => {
+    const out: Record<string, Row> = {};
+    for (const zoom of [1, 0.55, 0.4]) {
+      const row = await pan({ region: 3, slots: 9, w: 390, h: 844, dpr: 2, pc: false, zoom });
+      out[`phone z${zoom}`] = row;
+      expect(row.maxMB, `z${zoom}`).toBeLessThanOrEqual(row.capMB);
+      expect(row.tiles, `z${zoom}`).toBeGreaterThan(400);
+      expect(row.maxCellShare, `z${zoom}`).toBeGreaterThan(0);
+      expect(row.fallbackFramesAfterStop, `z${zoom}`).toBeLessThanOrEqual(30);
+      expect(row.adjIdentical, `z${zoom}`).toBeLessThanOrEqual(0.03);
+      expect(row.maxCellShare, `z${zoom}`).toBeLessThanOrEqual(0.15);
+      if (zoom === 1) {
+        expect(row.maxBodies).toBeLessThanOrEqual(260);
+        // The sprites the view itself needs (the cache may hold more, up to its cap, for panning back).
+        expect(row.viewMB).toBeLessThanOrEqual(26);
+      }
+    }
+    console.log('[V1 phone]', JSON.stringify(out));
+  }, 120_000);
+
+  it('desktop rows: 1920×1080 DPR 1 and 1440×900 DPR 2 at their streetMinZoom and at 0.3: sprite MB within the PC cache, ≤ 30 fallback frames after the pan', async () => {
+    const out: Record<string, Row> = {};
+    for (const [w, h, dpr, smz] of [
+      [1920, 1080, 1, 0.58],
+      [1440, 900, 2, 0.46],
+    ] as const)
+      for (const zoom of [smz, 0.3]) {
+        const row = await pan({ region: 5, slots: 9, w, h, dpr, pc: true, zoom, frames: 40 });
+        out[`${w}x${h}@${dpr} z${zoom}`] = row;
+        expect(row.capMB, `${w}x${h}`).toBeGreaterThanOrEqual(64);
+        expect(row.maxMB, `${w}x${h} z${zoom}`).toBeLessThanOrEqual(row.capMB);
+        expect(row.fallbackFramesAfterStop, `${w}x${h} z${zoom}`).toBeLessThanOrEqual(30);
+      }
+    console.log('[V1 desktop]', JSON.stringify(out));
+  }, 240_000);
+});
+
+describe('ending street look on the buildings and placement ghosts with a look (§9.2, §6.2 pickers)', () => {
+  it('each ending dresses its facades (Fab quota boards, Market smile screens and tickers, crews\' banners) without raising the height truth; the Quiet Hand dresses nothing', () => {
+    const ctx = mockContext();
+    for (const ending of ['ironwork', 'pearl', 'lowcrown', 'ledger', 'quiet'] as const)
+      for (const zone of [1, 2, 3])
+        for (const level of [1, 2, 3])
+          for (const kind of ['shore', 'bazaar', 'flats'] as DistrictKind[]) {
+            const v = (level * 3 + zone) & 15;
+            const body = { form: v & 7, seed: 1 };
+            const plain = art.zoneBodyInfo(zone, level, v, 0, body, { kind });
+            const dressed = art.zoneBodyInfo(zone, level, v, 0, body, { kind, ending });
+            expect(dressed.top, `${ending} z${zone} L${level} ${kind}`).toBe(plain.top);
+            if (ending === 'quiet') expect(dressed.id).toBe(plain.id);
+            else expect(dressed.id, `${ending} z${zone} L${level}`).not.toBe(plain.id);
+            for (const night of [0, 1]) {
+              resetMockStats();
+              art.drawZoneBody(ctx, 0, 0, tile(zone, level, v, 0), body, env(night, 1), { kind, ending });
+              expect(mockStats.errors, `${ending} z${zone} L${level} ${kind}`).toEqual([]);
+              expect(mockStats.draws).toBeGreaterThan(0);
+            }
+          }
+  });
+
+  it('a placement ghost shows the chosen Spire sponsor and look, a crown look, and paints cleanly', () => {
+    const ctx = mockContext();
+    const picks: [BuildingType, Parameters<Art['drawBuildingGhost']>[6]][] = [
+      ['spire', undefined],
+      ...([0, 1, 2, 3] as const).map((look) => ['spire', { sponsor: 'nacre', look }] as [BuildingType, { sponsor: 'nacre'; look: 0 | 1 | 2 | 3 }]),
+      ...([0, 1, 2] as const).map((look) => ['spire', { sponsor: 'basalt', look }] as [BuildingType, { sponsor: 'basalt'; look: 0 | 1 | 2 }]),
+      ...([0, 1, 2] as const).map((look) => ['stack', { crown: 'salvage', look }] as [BuildingType, { crown: 'salvage'; look: 0 | 1 | 2 }]),
+      ['clinic', { x: 70, y: 70 }],
+    ];
+    for (const [type, pick] of picks)
+      for (const ok of [true, false]) {
+        resetMockStats();
+        art.drawBuildingGhost(ctx, 0, 0, type, ok, { ...env(1, 1), ghost: true }, pick);
+        expect(mockStats.errors, `${type} ${JSON.stringify(pick)}`).toEqual([]);
+        expect(mockStats.draws, `${type} ${JSON.stringify(pick)}`).toBeGreaterThan(0);
+      }
+    // The ghost's model is the placed building's: a Basalt look-1 Spire ghost is the Crucible, not today's Facet.
+    const a = art.serviceModelInfo('spire', { sponsor: 'basalt', look: 1 } as Partial<Building>);
+    const b = art.serviceModelInfo('spire', {} as Partial<Building>);
+    expect(a.id).not.toBe(b.id);
+  });
+});

@@ -343,3 +343,105 @@ export const STREET_LIGHT: Record<EndingId, RGB> = {
   ledger: [150, 220, 255],
   quiet: [255, 230, 180],
 };
+
+// ── Ending street look on the buildings (§9.2 "Street look"): facade dressing while an ending is current ──
+
+/** Ending ids in the order zone models key them (0 = none). */
+export const ENDING_DRESS: readonly (EndingId | null)[] = [null, 'ironwork', 'pearl', 'lowcrown', 'ledger', 'quiet'];
+
+/** A zone model's ending-dress key: 0 when no ending or the Quiet Hand (which dresses nothing). */
+export function endingIndex(e: EndingId | null | undefined): number {
+  return e && e !== 'quiet' ? Math.max(0, ENDING_DRESS.indexOf(e)) : 0;
+}
+
+const QUOTA: RGB = [255, 150, 56];
+const SMILE_C: RGB = [255, 214, 246];
+const TICKER: RGB = [140, 255, 200];
+
+/** A round smile screen (MOTH's smile: a pearl disc, two dots and an arc) on the right (+u) face at (u, vc, zc). */
+function smileScreen(p: Painter, u: number, vc: number, zc: number, r: number) {
+  const g = p.g;
+  if (!g) {
+    p.m(u, vc - r, zc - r * 14);
+    p.l(u, vc + r, zc + r * 14);
+    return;
+  }
+  const rz = r * 28;
+  p.begin_();
+  for (let i = 0; i <= 16; i++) {
+    const t = (i / 16) * Math.PI * 2;
+    if (i === 0) p.m(u + 0.01, vc + Math.cos(t) * r, zc + Math.sin(t) * rz);
+    else p.l(u + 0.01, vc + Math.cos(t) * r, zc + Math.sin(t) * rz);
+  }
+  g.closePath();
+  const lit = 0.55 + 0.45 * p.n;
+  p.fill(css([232 * lit + 20, 226 * lit + 20, 236 * lit + 18].map((v) => Math.min(255, v)) as RGB, 0.95));
+  if (p.n > 0.2) p.glow(u, vc, zc, SMILE_C, 30 * r * 4, p.glowA() * 0.5);
+  if (p.lod) return;
+  // Two dots and the arc.
+  p.begin_();
+  for (const dv of [-0.35, 0.35]) {
+    p.m(u + 0.012, vc + dv * r, zc + rz * 0.3);
+    p.l(u + 0.012, vc + dv * r, zc + rz * 0.12);
+  }
+  for (let i = 0; i <= 8; i++) {
+    const t = Math.PI * (1.15 + (i / 8) * 0.7);
+    const fn = i === 0 ? p.m.bind(p) : p.l.bind(p);
+    fn(u + 0.012, vc + Math.cos(t) * r * 0.6, zc + Math.sin(t) * rz * 0.6);
+  }
+  p.stroke(css([60, 40, 70], 0.9), 0.7);
+}
+
+/**
+ * The current ending's facade dressing on a zone body (after the recipe; the recorded top excludes it): Ironwork quota
+ * boards on Fab L2+ and a tower crane on 1 in 8 L3 roofs; Pearlescence smile screens on Market L2+ and a pearl halo over
+ * every tall tower; Open Ledger tickers scrolling budget lines on Market facades and open glass ground floors; the Low
+ * Crown both crews' banners on the corner; the Quiet Hand nothing (the district styles stay pure).
+ */
+export function endingDress(p: Painter, ending: EndingId | null, zone: number, level: number, W: number, H: number, h: number): void {
+  if (!ending || ending === 'quiet' || level < 1) return;
+  let top: Roof | null = null;
+  for (const r of p.roofs) {
+    if (r.round || r.area < 0.02) continue;
+    if (!top || r.z > top.z + 0.5) top = r;
+  }
+  if (!top) return;
+  const fu = W - 0.04;
+  const fv = H - 0.04;
+  const zTop = top.z;
+  switch (ending) {
+    case 'ironwork':
+      if (zone === 3 && level >= 2) {
+        // The quota board: a dark board with orange tallies on the left face.
+        const z1 = Math.min(zTop - 3, 26);
+        if (z1 > 10) p.wallSign(0.1, fv, fu - 0.1, fv, 0.15, 0.85, z1 - 8, z1, QUOTA, true);
+      }
+      if (level === 3 && h % 8 === 0 && !p.lod) crane(p, top.u0 + (top.u1 - top.u0) * 0.3, top.v0 + (top.v1 - top.v0) * 0.4, zTop, 16, 0.7, mat([230, 190, 40], [60, 46, 14]));
+      break;
+    case 'pearl':
+      if (zone === 2 && level >= 2) {
+        const r = Math.min(0.22, (top.v1 - top.v0) * 0.3);
+        const zc = Math.min(zTop - 10, 30);
+        if (zc > 10 && r > 0.08) smileScreen(p, top.u1, (top.v0 + top.v1) / 2, zc, r);
+      }
+      if (level === 3) p.neonRing((top.u0 + top.u1) / 2, (top.v0 + top.v1) / 2, Math.min(top.u1 - top.u0, top.v1 - top.v0) * 0.55, zTop + 6, SMILE_C, 1.1);
+      break;
+    case 'ledger':
+      if (zone === 2) {
+        const z1 = Math.min(zTop - 2, level >= 2 ? 22 : 12);
+        if (z1 > 7) p.ticker(0.08, fv, fu - 0.08, fv, 0.05, 0.95, z1 - 4, z1, TICKER);
+      }
+      if (level >= 2 && zone !== 3) {
+        // The open glass ground floor.
+        p.box(0.1, fv - 0.02, fu - 0.1, fv + 0.01, 0.5, 6, mat([150, 200, 220], [60, 90, 110]), { uplight: false });
+      }
+      break;
+    case 'lowcrown':
+      if (!p.lod && level >= 2) {
+        // Both crews' banners on the corner: an Undertow green and a Kites lilac.
+        p.neon([fu, fv, Math.min(zTop - 2, 20), fu, fv, Math.min(zTop - 2, 20) - 8], [182, 255, 46], 1.4);
+        p.neon([fu - 0.12, fv, Math.min(zTop - 2, 20), fu - 0.12, fv, Math.min(zTop - 2, 20) - 8], [201, 162, 255], 1.4);
+      }
+      break;
+  }
+}

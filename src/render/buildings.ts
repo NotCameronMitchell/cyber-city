@@ -42,7 +42,7 @@ import { BANNERS, CROWN_FACTION, DESIGNS, FACTION_BUILDING_LOOKS, FACTION_PALS, 
 import { drawFx, drawAbandonedLight, type Fx, type FxState } from './art/fx';
 import { KIT_FIRST, classicDress, drawKit, lodBody, pickForm, type Body, type KitCtx } from './art/kit';
 import { LANDMARK_PALS, PUMP_GARDEN, pumphallRecipe } from './art/landmarks';
-import { ENDING_PALS, LANDMARK_ENDING, LEGACY_LANGS, drawLegacy, endingLandmarkRecipe, lanternDress, legacyLang, legacyPal, type LegacyLang } from './art/legacy';
+import { ENDING_DRESS, ENDING_PALS, LANDMARK_ENDING, LEGACY_LANGS, drawLegacy, endingDress, endingIndex, endingLandmarkRecipe, lanternDress, legacyLang, legacyPal, type LegacyLang } from './art/legacy';
 import { Painter, mat, type ArtPal, type Sig } from './art/painter';
 import { PORT_PALS, drawPortLive, portRecipe, portVariant, seaportGhostFacing } from './art/ports';
 import { SERVICE_PALS, SERVICE_RECIPES, STYLED_SERVICES, arcologyRecipe, serviceStyleRecipe } from './art/services';
@@ -336,6 +336,8 @@ interface ZoneSpec {
   lang: LegacyLang | null;
   /** Lamplight's lantern roof. */
   lantern: boolean;
+  /** The current ending's facade dressing (§9.2 street look): ENDING_DRESS index, 0 none. */
+  ending: number;
 }
 
 /** Height truth of a body: the classic top of the tile's form at the drawn level (heights.ts heightOf). */
@@ -344,14 +346,14 @@ function truthTop(zone: number, level: number, variant: number, tier: number): n
 }
 
 function kitModel(sp: ZoneSpec): Model {
-  const { zone, level, tier, shape, W, H, variant, kind, dvar, body, lang, lantern } = sp;
+  const { zone, level, tier, shape, W, H, variant, kind, dvar, body, lang, lantern, ending } = sp;
   const palBit = (variant >> 3) & 1;
   const hc = variant & 7;
   const st = STYLES[kind];
   const styleKey = lang ? 9 + LEGACY_LANGS.indexOf(lang) : st.index;
   // Charter Shore, a today's form, parameter set 0, no lantern: exactly today's model.
-  if (!lang && !lantern && body.form < KIT_FIRST && body.form === hc && body.seed === 0 && kind === 'shore') return zoneModel(zone, level, variant, tier);
-  const key = ((((((((((zone * 4 + level) * 3 + tier) * 16 + styleKey) * 4 + (dvar & 3)) * 32 + body.form) * 3 + shape) * 2 + palBit) * 4 + body.seed) * 8 + hc) * 2 + (lantern ? 1 : 0));
+  if (!lang && !lantern && !ending && body.form < KIT_FIRST && body.form === hc && body.seed === 0 && kind === 'shore') return zoneModel(zone, level, variant, tier);
+  const key = ((((((((((zone * 4 + level) * 3 + tier) * 16 + styleKey) * 4 + (dvar & 3)) * 32 + body.form) * 3 + shape) * 2 + palBit) * 4 + body.seed) * 8 + hc) * 2 + (lantern ? 1 : 0)) * 6 + ending;
   let id = kitIds.get(key);
   if (id !== undefined) {
     const hit = models.get(id);
@@ -385,6 +387,7 @@ function kitModel(sp: ZoneSpec): Model {
     if (!lang) styleDress(p, st, acc, zone, level, W, H, accBody);
     if (classic && !lang) styleCap(p, st, body.seed + hc, level);
     if (lantern) lanternDress(p, topOf(p));
+    if (ending) endingDress(p, ENDING_DRESS[ending], zone, level, W, H, Math.floor(pick * 1024));
   };
   return buildModel(id, recipe, pal, classic ? classicSeed(zone, level, body.form, palBit) : seed, Math.max(W, H), zone, level, tier, { W, H, sty, post, fallback: classic && kind === 'shore' ? -1 : fallback });
 }
@@ -418,7 +421,8 @@ function zoneSpec(tile: Tile, x: number, y: number, parcel: Parcel | null, env: 
     body = pickForm(zone, level, shape, tier, kind, ax, ay, tile.variant, tile.variant & 7, (tile.variant >> 3) & 1);
     if (lodPick) body = lodBody(zone, level, shape, tier, kind, body);
   }
-  return { zone, level, tier, shape, W, H, variant: tile.variant, kind, dvar, body, lang, lantern };
+  const ending = endingIndex(art.ending);
+  return { zone, level, tier, shape, W, H, variant: tile.variant, kind, dvar, body, lang, lantern, ending };
 }
 
 /** The body a zone tile draws (tests, contact sheets, inspect): its spec's form and parameter set. */
@@ -709,6 +713,26 @@ export function resetFrame(): void {
 }
 
 /** Detect a new frame (time advanced or a different target) and refresh frame constants. */
+// ── Frame stats (V1, §6.1 targets; off unless a test or a probe turns them on) ──
+let statsOn = false;
+const frameBodies = new Set<number>();
+const frameSprites = new Set<Sprite>();
+let frameSpriteBytes = 0;
+/** Count the distinct bodies drawn each frame (artFrameStats().bodies); off by default (a Set add per body). */
+export function setArtStats(on: boolean): void {
+  statsOn = on;
+  frameBodies.clear();
+  frameSprites.clear();
+  frameSpriteBytes = 0;
+}
+/**
+ * The current frame's art numbers (§6.1 targets, V1): distinct zone and service bodies drawn (with setArtStats on),
+ * cross-family fallback draws, sprites painted and the ms spent painting them, and the sprite cache's bytes.
+ */
+export function artFrameStats(): { bodies: number; fallbacks: number; painted: number; paintMs: number; bytes: number; viewBytes: number; capBytes: number; budgetMs: number } {
+  return { bodies: frameBodies.size, fallbacks: cache.fallbacks, painted: cache.built, paintMs: cache.spentMs, bytes: cache.bytes, viewBytes: frameSpriteBytes, capBytes: cache.capBytes, budgetMs: cache.budgetMs };
+}
+
 function sync(ctx: CanvasRenderingContext2D, env: ArtEnv) {
   if (env.time === frameTime && ctx === frameCtx) {
     if ((env.world ?? null) !== art.world) bindWorld(env.world ?? null);
@@ -717,6 +741,11 @@ function sync(ctx: CanvasRenderingContext2D, env: ArtEnv) {
   frameTime = env.time;
   frameCtx = ctx;
   cache.newFrame();
+  if (statsOn) {
+    frameBodies.clear();
+    frameSprites.clear();
+    frameSpriteBytes = 0;
+  }
   const low = env.quality === 'low';
   cache.budgetMs = limits?.budgetMs ?? (low ? 2 : 3.5);
   cache.capBytes = limits?.capBytes ?? (low ? 20 : 32) * 1024 * 1024;
@@ -761,6 +790,10 @@ function sprite(m: Model, state: number, lod: boolean): Sprite | null {
 }
 
 function blit(ctx: CanvasRenderingContext2D, s: Sprite, wx: number, wy: number) {
+  if (statsOn && !frameSprites.has(s)) {
+    frameSprites.add(s);
+    frameSpriteBytes += s.bytes;
+  }
   if (Math.abs(s.scale - tA) < tA * 0.004) {
     // 1:1 device-pixel blit, no resampling.
     ctx.setTransform(1, 0, 0, 1, 0, 0);
@@ -995,6 +1028,7 @@ function drawZoneModel(ctx: CanvasRenderingContext2D, wx: number, wy: number, ti
 
   const building = !tile.abandoned && tile.age < BUILD_TICKS;
   const state = tile.abandoned ? ST_ABANDONED : building || !tile.powered ? ST_DARK : ST_ON;
+  if (statsOn) frameBodies.add(m.id);
   const s = sprite(m, state, lod);
   const ao = env.artOffset ?? 0;
   const phase = tilePhase(tx - ao, ty - ao);
@@ -1026,7 +1060,7 @@ export function drawZoneBody(
   tile: Tile,
   body: Body,
   env: ArtEnv,
-  o: { kind?: DistrictKind; variant?: number; shape?: number; W?: number; H?: number; lang?: LegacyLang | null; lantern?: boolean } = {},
+  o: { kind?: DistrictKind; variant?: number; shape?: number; W?: number; H?: number; lang?: LegacyLang | null; lantern?: boolean; ending?: EndingId | null } = {},
 ): void {
   sync(ctx, env);
   const lod = env.zoom < LOD_ZOOM;
@@ -1045,6 +1079,7 @@ export function drawZoneBody(
     body,
     lang: o.lang ?? null,
     lantern: !!o.lantern,
+    ending: endingIndex(o.ending),
   };
   const m = tile.level <= 0 ? zoneModel(tile.zone, 0, tile.variant, 0) : kitModel(sp);
   drawZoneModel(ctx, wx, wy, tile, 0, 0, m, env, lod);
@@ -1062,6 +1097,7 @@ export function drawServiceBuilding(ctx: CanvasRenderingContext2D, wx: number, w
   const m = serviceModel(b.type, b);
   const on = b.offline <= 0 && (b.powered || def.powerSupply > 0);
   const lod = env.zoom < LOD_ZOOM;
+  if (statsOn) frameBodies.add(m.id);
   const s = sprite(m, on ? ST_ON : ST_DARK, lod);
   if (s) blit(ctx, s, wx, wy);
   if (env.quality === 'high') {
@@ -1092,11 +1128,25 @@ export function drawServiceBuilding(ctx: CanvasRenderingContext2D, wx: number, w
 }
 
 /** Ghost for placement preview of a building type. */
-export function drawBuildingGhost(ctx: CanvasRenderingContext2D, wx: number, wy: number, type: BuildingType, ok: boolean, env: ArtEnv): void {
+/**
+ * What a placement ghost shows beyond its type (additive, MEGACITY §6.2 pickers, §6.1 service looks): the Spire's
+ * sponsor and look, a crown and its look on a complete Stratablock, and the footprint's top corner (x, y) so a service
+ * shows its district look. Omitted: look 0 in the Charter Shore style (today's ghost).
+ */
+export interface GhostPick {
+  look?: Building['look'];
+  sponsor?: Building['sponsor'];
+  crown?: Building['crown'];
+  x?: number;
+  y?: number;
+}
+
+export function drawBuildingGhost(ctx: CanvasRenderingContext2D, wx: number, wy: number, type: BuildingType, ok: boolean, env: ArtEnv, pick?: GhostPick): void {
   if (!BUILDINGS[type]) return;
   sync(ctx, env);
-  const variant = type === 'stack' ? stackVariant(1, false, undefined) : type === 'seaport' ? seaportGhostFacing() : portVariant({ type });
-  const m = serviceModel(type, null, variant);
+  const variant = type === 'stack' ? stackVariant(pick?.crown ? 3 : 1, false, pick?.crown) : type === 'seaport' ? seaportGhostFacing() : portVariant({ type });
+  const key: VariantKey | null = pick ? { type, stage: pick.crown ? 3 : 1, buildDays: 0, crown: pick.crown, look: pick.look, sponsor: pick.sponsor, x: pick.x, y: pick.y } : null;
+  const m = serviceModel(type, key, variant);
   const s = sprite(m, ok ? ST_GHOST_OK : ST_GHOST_BAD, env.zoom < LOD_ZOOM);
   if (!s) return;
   const a0 = ctx.globalAlpha;
@@ -1161,11 +1211,11 @@ export function zoneBodyInfo(
   variant: number,
   tier: number,
   body: Body,
-  o: { kind?: DistrictKind; variant?: number; shape?: number; lang?: LegacyLang | null; lantern?: boolean } = {},
+  o: { kind?: DistrictKind; variant?: number; shape?: number; lang?: LegacyLang | null; lantern?: boolean; ending?: EndingId | null } = {},
 ): { id: number; top: number; truth: number; fx: number; sig: number; fallback: number } {
   const shape = o.shape ?? 0;
   const t: 0 | 1 | 2 = tier === 1 || tier === 2 ? tier : 0;
-  const m = kitModel({ zone, level, tier: t, shape, W: shape === 0 ? 1 : 2, H: shape === 2 ? 2 : 1, variant, kind: o.kind ?? 'shore', dvar: o.variant ?? 0, body, lang: o.lang ?? null, lantern: !!o.lantern });
+  const m = kitModel({ zone, level, tier: t, shape, W: shape === 0 ? 1 : 2, H: shape === 2 ? 2 : 1, variant, kind: o.kind ?? 'shore', dvar: o.variant ?? 0, body, lang: o.lang ?? null, lantern: !!o.lantern, ending: endingIndex(o.ending) });
   return { id: m.id, top: m.top, truth: truthTop(zone, level, variant, t), fx: m.fx.length, sig: m.sig.length, fallback: m.fallback };
 }
 
