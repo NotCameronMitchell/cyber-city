@@ -97,6 +97,11 @@ describe('the partial scan after an action (§11.1: only rows a tile event touch
       const y = box.y0 + Math.floor(rng.next() * (box.y1 - box.y0 - 6));
       applyAction(w, tools[k % tools.length], { x, y }, { x: x + Math.floor(rng.next() * 5), y });
       if (k % 3 === 0) sim.step();
+      // An annex mid-way: the owned frame grows (the new slot's rows rescan, every other row keeps its shares).
+      if (k === 15) {
+        const s = [0, 1, 2, 3, 5, 6, 7, 8].find((q) => !w.slotOwned[q])!;
+        w.annex(s);
+      }
       const g = (sim as unknown as { grid: import('../src/game/sim/grid').SimGrid }).grid;
       g.scanChanged(w);
       const ref = new Simulation(w);

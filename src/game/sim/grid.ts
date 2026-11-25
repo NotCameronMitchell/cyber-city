@@ -299,15 +299,12 @@ export class SimGrid {
   /**
    * A scan after a player action (MEGACITY §3.3 O5, §11.1): re-mirror only the rows a 'tiles' event touched since their
    * last scan, then the totals from the per-row shares, the zoned list from the mirror, and scanEnd. The sim's own
-   * writes between scans keep the mirror (growth) or touch their tiles, so this equals a whole scan. Falls back to the
-   * whole scan when the owned frame changed.
+   * writes between scans keep the mirror (growth) or touch their tiles, so this equals a whole scan, an annex included.
    */
   scanChanged(world: World): void {
-    if (this.layout.sync(world)) {
-      this.slotsSeen = -1;
-      this.scan(world);
-      return;
-    }
+    // An annex grows the owned frame: the new slot's rows were touched by its one 'tiles' event, every other row keeps
+    // its chunks and shares (the road caches rebuild below on the new layout).
+    if (this.layout.sync(world)) this.slotsSeen = -1;
     this.conductorSeen = world.conductorVersion;
     this.syncTerrain(world);
     const L = this.layout;

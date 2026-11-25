@@ -691,7 +691,9 @@ export class Simulation {
     f.active = null;
     // The road caches rebuild when the road signature or the owned layout changed (an annex), and always on the first
     // recompute; forcing them every time cost ≈ 6.7 ms at 25 districts (MEGACITY §11.1's ≤ 30 ms).
-    g.scan(w, !this.primed);
+    // After the first: only the rows a tile event touched (an annex's slot; MEGACITY §11.1's ≤ 30 ms at 25 districts).
+    if (this.primed) g.scanChanged(w);
+    else g.scan(w, true);
     this.power.compute(w, g);
     // Coverage follows its cache key (O3), and always runs on the first recompute.
     if (!this.primed || this.coverageStale()) this.coverageNow();
