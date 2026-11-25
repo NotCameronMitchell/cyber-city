@@ -1126,28 +1126,32 @@ export class Renderer {
     for (let s = b.x0 + b.y0; s <= b.x1 + b.y1; s++) {
       const xa = Math.max(b.x0, s - b.y1);
       const xb = Math.min(b.x1, s - b.y0);
-      // Multi-tile heads first (parcels and buildings of size ≥ 2): a body drawn at its head spreads left over
-      // (hx − k, hy + k) and right over (hx + k, hy − k), the only tiles of this diagonal it touches, and every one of
-      // them stands in front of a member, so it must draw after the body (a 2×1 parcel would otherwise paint its
-      // left facade over the tower at (hx − 1, hy + 1)).
+      // Multi-tile heads first (buildings of size ≥ 2, then parcels): a body drawn at its head spreads left over
+      // (hx − 1, hy + 1) and right over (hx + 1, hy − 1), the only tiles of this diagonal it touches, and both stand in
+      // front of a member, so they must draw after the body (a 2×1 parcel would otherwise paint its left facade over
+      // the tower at (hx − 1, hy + 1)). Parcels sit on even-aligned blocks, so no parcel head stands in front of another
+      // on its diagonal; a building's front-left neighbour can be a 2×1 parcel head, so buildings go first.
       let heads = 0;
+      let parcelHeads = 0;
       for (let x = xa; x <= xb; x++) {
         const y = s - x;
         const i = y * N + x;
-        let h = (pmap[i] & PARCEL_HEAD) !== 0;
-        if (!h) {
+        let h = 0;
+        if (pmap[i] & PARCEL_HEAD) {
+          h = 2;
+          parcelHeads++;
+        } else {
           const id = tiles[i].buildingId;
           if (id >= 0) {
             const bd = world.buildings.get(id);
-            h = !!bd && bd.size > 1 && bd.x + bd.size - 1 === x && bd.y + bd.size - 1 === y;
+            if (bd && bd.size > 1 && bd.x + bd.size - 1 === x && bd.y + bd.size - 1 === y) h = 1;
           }
         }
-        done[x - xa] = h ? 1 : 0;
-        if (h) {
-          heads++;
-          visit(x, y);
-        }
+        done[x - xa] = h;
+        if (h) heads++;
+        if (h === 1) visit(x, y);
       }
+      if (parcelHeads) for (let x = xa; x <= xb; x++) if (done[x - xa] === 2) visit(x, s - x);
       for (let x = xa; x <= xb; x++) if (heads === 0 || done[x - xa] === 0) visit(x, s - x);
       story.drawSkybridges(ctx, s);
     }

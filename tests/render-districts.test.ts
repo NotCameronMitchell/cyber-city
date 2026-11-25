@@ -539,19 +539,28 @@ describe('the Renderer with districts on the canvas mock (§3.9)', () => {
     const visible = chunks().length;
     expect(visible).toBeGreaterThan(6);
     // The day/night switch: daylight 1 → 0 (12 buckets) under a still camera; frames run back to back (no 120 ms gap).
+    // Every frame renders at least one stale chunk (the throttle would leave most frames at 0), and the cap (2 a frame
+    // with a 5 ms budget) whenever the renders are quick enough; timing under load can only lower the second.
     let frames = 0;
+    let idle = 0;
     for (; frames < 60; frames++) {
       gc.draw(ctx, w, view, 1, 5, false);
+      if (gc.lastFullRenders === 0) idle++;
+      expect(gc.lastFullRenders).toBeLessThanOrEqual(2);
       if (chunks().every((c) => c.night === 12)) break;
     }
-    expect(frames + 1).toBeLessThanOrEqual(Math.ceil(visible / 2) + 1);
+    expect(idle).toBe(0);
+    expect(frames + 1).toBeLessThanOrEqual(visible);
     // A jump of 2+ buckets while the camera moves: also at the cap.
     let n = 0;
+    idle = 0;
     for (; n < 60; n++) {
       view.camX += n % 2 ? 1 : -1;
       gc.draw(ctx, w, view, 0.5, 5, false);
+      if (gc.lastFullRenders === 0) idle++;
       if (chunks().every((c) => c.night === 6)) break;
     }
-    expect(n + 1).toBeLessThanOrEqual(Math.ceil(visible / 2) + 2);
+    expect(idle).toBe(0);
+    expect(n + 1).toBeLessThanOrEqual(visible + 1);
   });
 });

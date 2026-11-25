@@ -32,6 +32,8 @@ const rec = vi.hoisted(() => ({
   pre: [] as { x: number; y: number }[],
   zone: [] as { x: number; y: number; p: Parcel | null; alpha: number }[],
   tube: [] as { wx: number; wy: number; z: number; kind: number }[],
+  /** Every body in draw order: zone tiles at their tile, service buildings at their head (front corner). */
+  seq: [] as { x: number; y: number; kind: 'zone' | 'building'; head: boolean }[],
 }));
 
 vi.mock('../src/render/buildings', async (orig) => {
@@ -44,8 +46,16 @@ vi.mock('../src/render/buildings', async (orig) => {
     },
     drawZone: (...a: Parameters<typeof m.drawZone>) => {
       const [ctx, , p, , at] = a;
-      if (rec.on) rec.zone.push({ x: at.x, y: at.y, p: p ? { ...p } : null, alpha: ctx.globalAlpha });
+      if (rec.on) {
+        rec.zone.push({ x: at.x, y: at.y, p: p ? { ...p } : null, alpha: ctx.globalAlpha });
+        rec.seq.push({ x: at.x, y: at.y, kind: 'zone', head: !!p && p.hx === at.x && p.hy === at.y });
+      }
       return m.drawZone(...a);
+    },
+    drawServiceBuilding: (...a: Parameters<typeof m.drawServiceBuilding>) => {
+      const b = a[3];
+      if (rec.on) rec.seq.push({ x: b.x + b.size - 1, y: b.y + b.size - 1, kind: 'building', head: true });
+      return m.drawServiceBuilding(...a);
     },
   };
 });
@@ -91,6 +101,7 @@ function renderer(g: Game, w = 390, h = 844) {
 
 function record(fn: () => void) {
   rec.pre.length = 0;
+  rec.seq.length = 0;
   rec.zone.length = 0;
   rec.tube.length = 0;
   rec.on = true;
@@ -186,6 +197,46 @@ describe('the sweep order and parcels (§6.1: WP-3 caches and sorts them, WP-4 d
       }
       expect(checked.left).toBeGreaterThan(5);
       expect(checked.right).toBeGreaterThan(5);
+    } finally {
+      r.destroy();
+    }
+  });
+});
+
+describe('a service building and the 2×1 parcel in front of it (§6.1 parcel draw order)', () => {
+  it('a building of size 2 draws before the 2×1 parcel head at its front-left on the same diagonal', async () => {
+    const w = startWorld(3, 911);
+    w.funds = 1e8;
+    // Solar farms (2×2) at (bx − 1..bx, by − 1..by) with a Market pair at (bx − 2, by + 1)–(bx − 1, by + 1): by + 1 odd,
+    // so the pair is the bottom row of the aligned block whose top-right tile is the building's (no quad can form).
+    const cases: { bx: number; by: number }[] = [];
+    for (let k = 0; k < 40 && cases.length < 4; k++) {
+      const bx = sx(8 + (k % 8) * 6);
+      const by = sy(8 + Math.floor(k / 8) * 8);
+      if (!w.addBuilding('solar', bx - 1, by - 1)) continue;
+      for (const x of [bx - 2, bx - 1]) {
+        w.setZone(x, by + 1, ZoneType.Commercial);
+        w.setLevel(x, by + 1, 3);
+        w.tiles[w.idx(x, by + 1)].powered = true;
+      }
+      const p = parcelAt(w, bx - 1, by + 1);
+      if (p && p.w === 2 && p.h === 1 && p.hx === bx - 1 && p.hy === by + 1) cases.push({ bx, by });
+    }
+    expect(cases.length).toBeGreaterThan(0);
+    const g = new Game();
+    g.restore(w.serialize());
+    const { r, cam } = await renderer(g, 1440, 900);
+    try {
+      for (const { bx, by } of cases) {
+        cam.zoom = 1;
+        cam.centerOnTile(bx, by);
+        r.render(1 / 60, 1);
+        record(() => r.render(1 / 60, 1.02));
+        const b = rec.seq.findIndex((c) => c.kind === 'building' && c.x === bx && c.y === by);
+        const ph = rec.seq.findIndex((c) => c.kind === 'zone' && c.head && c.x === bx - 1 && c.y === by + 1);
+        expect(b, `building at ${bx},${by}`).toBeGreaterThanOrEqual(0);
+        expect(ph, `parcel head at ${bx - 1},${by + 1}`).toBeGreaterThan(b);
+      }
     } finally {
       r.destroy();
     }

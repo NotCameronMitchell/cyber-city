@@ -91,6 +91,64 @@ describe('the height rule (§5.3 rules 4–5): anything lower than the bridge pa
   });
 });
 
+describe('a parcel blocks with the body it draws (§5.3 rule 4, §6.1 parcels)', () => {
+  it.each(REGIONS)('%i×%i: a lane over a short member of a taller 2×1 parcel is blocked; heightOf reads the head', (R) => {
+    const w = skyWorld(R);
+    const M = ZoneType.Commercial;
+    const top = (v: number) => CLASSIC_TOPS[classicId(M, 3, v, 0)];
+    // The tallest L3 Market form for the anchors and the parcel head; a member form under their tube.
+    let vt = 0;
+    for (let v = 0; v < 16; v++) if (top(v) > top(vt)) vt = v;
+    const clear = vertical.tubeOf(top(vt)).clear;
+    let vm = -1;
+    for (let v = 0; v < 16; v++) if (top(v) < clear && (vm < 0 || top(v) < top(vm))) vm = v;
+    expect(vm, 'an L3 Market form under the tube').toBeGreaterThanOrEqual(0);
+    const put = (x: number, y: number, v: number) => {
+      tower(w, x, y, M);
+      const t = w.tiles[w.idx(x, y)];
+      t.variant = v;
+      t.wealth = 0;
+    };
+    // An x-pair on the top row of an aligned block (the bottom row empty, so no quad), member (px, py), head (px + 1, py).
+    let found: { px: number; py: number } | null = null;
+    for (let k = 0; k < 64 && !found; k++) {
+      const px = sx(10 + (k % 8) * 6, R);
+      const py = sy(10 + Math.floor(k / 8) * 6, R);
+      put(px, py, vm);
+      put(px + 1, py, vt);
+      const p = parcelAt(w, px, py);
+      if (p && p.w === 2 && p.h === 1 && p.hx === px + 1) found = { px, py };
+      else for (const x of [px, px + 1]) w.clearTile(x, py, true);
+    }
+    expect(found, 'an x-pair parcel').not.toBeNull();
+    const { px, py } = found!;
+    // The member's own form is under the tube; the parcel draws one body at the head's top, which is not.
+    expect(top(vm)).toBeLessThan(clear);
+    expect(heightOf(w, px, py)).toBe(top(vt));
+    expect(heightOf(w, px + 1, py)).toBe(top(vt));
+    // Anchors 5 tiles north and south of the member: the only lane runs down column px, over the member.
+    put(px, py - 5, vt);
+    put(px, py + 5, vt);
+    const a = { x: px, y: py - 5 };
+    const b = { x: px, y: py + 5 };
+    const A = vertical.anchorAt(w, a.x, a.y)!;
+    const B = vertical.anchorAt(w, b.x, b.y)!;
+    expect(A.roof).toBe(top(vt));
+    const c = vertical.checkSpan(w, A, B);
+    expect(c.reason).toBe('A taller building is in the way');
+    expect(c.block).toEqual({ x: px, y: py });
+    const plan = planAction(w, 'skybridge', a, b);
+    expect(plan.valid).toBe(false);
+    expect(plan.reason).toBe('A taller building is in the way');
+    // Break the parcel (a road on the head): the member stands alone at its own top and the lane clears.
+    w.clearTile(px + 1, py, true);
+    w.setRoad(px + 1, py);
+    expect(parcelAt(w, px, py)).toBeNull();
+    expect(heightOf(w, px, py)).toBe(top(vm));
+    expect(planAction(w, 'skybridge', a, b).valid).toBe(true);
+  });
+});
+
 describe('placement rules (§5.3 rules 1–3, 6–9)', () => {
   it.each(REGIONS)('%i×%i: gap 1..10, lined up, tall ends; every reason fits 32 characters', (R) => {
     const w = skyWorld(R);
