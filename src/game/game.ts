@@ -948,6 +948,11 @@ export class Game {
     return this.lowerDetail ? Math.min(rate, LOW_DETAIL.maxDaysPerSec) : rate;
   }
 
+  /** The speed tooltip's line in lower detail (§3.11: "the speed tooltip and the warning say so"), else null. */
+  get speedCapNote(): string | null {
+    return this.lowerDetail ? `Lower detail: up to ${LOW_DETAIL.maxDaysPerSec} days a second` : null;
+  }
+
   /** Unpaused seconds between autosaves (§3.3, §3.11): REGION[R].autosaveMinSec, LOW_DETAIL.autosaveMinSec in lower detail. */
   get autosaveMinSec(): number {
     if (this.lowerDetail) return LOW_DETAIL.autosaveMinSec;

@@ -521,8 +521,10 @@ describe('the frame guard (§3.3, §3.11)', () => {
   it('lower detail caps every speed at LOW_DETAIL.maxDaysPerSec and autosaves at most every 120 s', () => {
     const { g } = city(5, 5);
     expect(g.autosaveMinSec).toBe(REGION[5].autosaveMinSec);
+    expect(g.speedCapNote).toBeNull();
     g.updateSettings({ lowerDetail: true });
     expect(g.lowerDetail).toBe(true);
+    expect(g.speedCapNote).toBe(`Lower detail: up to ${LOW_DETAIL.maxDaysPerSec} days a second`);
     for (const s of [1, 2, 3]) {
       g.setSpeed(s);
       expect(g.daysPerSec).toBeLessThanOrEqual(LOW_DETAIL.maxDaysPerSec);
