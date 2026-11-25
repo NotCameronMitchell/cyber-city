@@ -18,6 +18,9 @@ import { factionSigil } from './story/sigils';
 import {
   CATEGORIES,
   OVERLAYS,
+  cardCondition,
+  cardState,
+  traySections,
   SERVICE_SWATCHES,
   TIER_PIP_DOWN,
   TIER_PIP_UP,
@@ -108,6 +111,11 @@ export class Dock {
   private readonly tray: HTMLElement;
   private readonly trayTitle: HTMLElement;
   private readonly trayRow: HTMLElement;
+  /** Section chips (MEGACITY §7.1): 44 px pills at the top of the tray; the last one per category is remembered for the session. */
+  private readonly trayChips: HTMLElement;
+  private readonly lastChip = new Map<CategoryId, string>();
+  private chipIds: { id: string; cards: ToolId[]; el: HTMLButtonElement }[] = [];
+  private curChip = '';
   private cards: CardRefs[] = [];
   private openCat: CategoryId | null = null;
 
@@ -167,6 +175,7 @@ export class Dock {
     // ── Tray ───────────────────────────────────────────────────────────────
     this.trayTitle = h('span', { class: 'cc-tray-title' });
     this.trayRow = h('div', { class: 'cc-tray-row', role: 'listbox' });
+    this.trayChips = h('div', { class: 'cc-tray-chips', role: 'tablist', 'aria-label': 'Sections', hidden: true });
     // Trays that can scroll fade at the right edge so later cards are discoverable (§7.2).
     this.trayRow.addEventListener('scroll', () => this.syncFade(), { passive: true });
     this.tray = h(
@@ -178,7 +187,7 @@ export class Dock {
         this.trayTitle,
         h('button', { class: 'cc-iconbtn cc-tray-close', type: 'button', 'data-act': 'tray-close', 'aria-label': 'Close menu', html: icon('close') }),
       ),
-      this.trayRow,
+      h('div', { class: 'cc-tray-body' }, this.trayChips, this.trayRow),
     );
     this.tray.addEventListener('click', this.onTrayClick);
 
@@ -310,6 +319,9 @@ export class Dock {
   private buildCards(id: CategoryId): void {
     this.trayRow.textContent = '';
     this.cards = [];
+    this.trayChips.textContent = '';
+    this.chipIds = [];
+    setHidden(this.trayChips, true);
     if (id === 'data') {
       // MEGACITY §7.1: the first card is the City map (a region city only).
       if (this.ctx.game.world.region >= 3) {
@@ -341,14 +353,15 @@ export class Dock {
       return;
     }
     const cat = CATEGORIES.find((c) => c.id === id)!;
-    if (cat.items?.includes('seaport')) {
+    const items = this.sectionCards(id, cat.items ?? []);
+    if (items.includes('seaport')) {
       // Counted once per open (< 1 ms): a map with no straight shore says so on the card (§5.1).
       const w = this.ctx.game.world;
       if (!this.shoreMarks || this.shoreMarks.length !== w.area) this.shoreMarks = new Uint8Array(w.area);
       const sites = shoreSites(w, this.shoreMarks);
       this.shoreNote = seaportNote(sites, sites > 0 ? 0 : shoreGeometry(w));
     }
-    for (const tool of cat.items ?? []) {
+    for (const tool of items) {
       const m = toolMeta(tool);
       const cost = h('span', { class: 'cc-card-cost', text: costLabel(m) });
       const lockText = h('span', { class: 'cc-card-locktext' });
@@ -390,8 +403,54 @@ export class Dock {
     }
   }
 
+  /**
+   * The section chips of a tray (§7.1) and the cards of the chip on show: the remembered chip, else the one holding the
+   * active tool, else the first. Chips with no visible card are left out; a tray with one chip shows no chip row. Trays
+   * without sections show every item (minus hidden types).
+   */
+  private sectionCards(id: CategoryId, all: readonly ToolId[]): ToolId[] {
+    const w = this.ctx.game.world;
+    this.trayChips.textContent = '';
+    this.chipIds = [];
+    const secs = traySections(w, id);
+    if (!secs.length) {
+      setHidden(this.trayChips, true);
+      this.curChip = '';
+      return all.filter((t) => cardState(w, t) !== 'hidden');
+    }
+    const tool = this.ctx.game.tool;
+    const remembered = this.lastChip.get(id);
+    const pick = secs.find((x) => x.section.id === remembered) ?? secs.find((x) => x.cards.includes(tool)) ?? secs[0];
+    this.curChip = pick.section.id;
+    setHidden(this.trayChips, secs.length < 2);
+    if (secs.length >= 2) {
+      for (const x of secs) {
+        const on = x.section.id === this.curChip;
+        const el = h(
+          'button',
+          { class: `cc-tray-chip${on ? ' is-on' : ''}${x.section.legacy ? ' is-legacy' : ''}`, type: 'button', role: 'tab', 'aria-selected': on ? 'true' : 'false', 'data-chip': x.section.id },
+          h('span', { text: x.section.label }),
+          h('i', { class: 'cc-tray-chip-dot', 'aria-hidden': 'true' }),
+        );
+        this.trayChips.append(el);
+        this.chipIds.push({ id: x.section.id, cards: x.cards, el });
+      }
+    }
+    return pick.cards;
+  }
+
   private readonly onTrayClick = (e: MouseEvent) => {
     const { game } = this.ctx;
+    const chip = closestData(e.target, 'chip', this.tray);
+    if (chip && this.openCat) {
+      buzz(6);
+      this.lastChip.set(this.openCat, chip.dataset.chip ?? '');
+      this.buildCards(this.openCat);
+      this.trayRow.scrollLeft = 0;
+      this.refreshTray();
+      this.syncFade();
+      return;
+    }
     const act = closestData(e.target, 'act', this.tray)?.dataset.act;
     if (act === 'tray-close') {
       this.closeTray();
@@ -450,12 +509,15 @@ export class Dock {
       const m = toolMeta(tool);
       const reason = lockedReason(w, tool);
       const locked = !!reason;
+      // A rumoured landmark or district-bound card (§7.1): greyed, its condition instead of a progress bar.
+      const rumoured = locked && cardState(w, tool) === 'rumoured';
       setClass(c.el, 'is-locked', locked);
+      setClass(c.el, 'is-rumoured', rumoured);
       setAttr(c.el, 'aria-disabled', locked ? 'true' : 'false');
       if (locked) {
         const text = reason!.replace(/^Locked:\s*/, '');
-        const popGate = /residents/.test(text) && m.unlockPop > 0;
-        setText(c.lockText, popGate ? `Reach ${abbr(m.unlockPop)} pop` : text);
+        const popGate = !rumoured && /residents/.test(text) && m.unlockPop > 0;
+        setText(c.lockText, popGate ? `Reach ${abbr(m.unlockPop)} pop` : rumoured ? cardCondition(w, tool) : text);
         setHidden(c.lockFill.parentElement as HTMLElement, !popGate);
         if (popGate) {
           const p = Math.max(0, Math.min(1, w.maxPopulation / Math.max(1, m.unlockPop)));
@@ -477,6 +539,11 @@ export class Dock {
       const on = game.tool === tool;
       setClass(c.el, 'is-on', on);
       setAttr(c.el, 'aria-selected', on ? 'true' : 'false');
+    }
+    // The "new" dot also shows on the chip that holds the new card (§7.1).
+    for (const chip of this.chipIds) {
+      const fresh = chip.id !== this.curChip && chip.cards.some((t) => !this.seen.has(t) && !lockedReason(w, t));
+      setClass(chip.el, 'has-new', fresh);
     }
   }
 

@@ -67,31 +67,31 @@ const ALL_TOOLS: Record<ToolId, boolean> = {
   roost: true,
   commons: true,
   memorial: true,
-  floodwatch: false,
-  pumphouse: false,
-  canopypark: false,
-  medtower: false,
-  reclaim: false,
-  metro: false,
-  markethall: false,
-  tidal: false,
-  geothermal: false,
-  datavault: false,
-  charterhall: false,
-  hexworks: false,
-  pearlatrium: false,
-  hullhouse: false,
-  kitemast: false,
-  lampchoir: false,
-  beacon: false,
-  arena: false,
-  halolookout: false,
-  terminal: false,
-  gantry: false,
-  glasssmile: false,
-  breadpier: false,
-  recordtower: false,
-  stillsquare: false,
+  floodwatch: true,
+  pumphouse: true,
+  canopypark: true,
+  medtower: true,
+  reclaim: true,
+  metro: true,
+  markethall: true,
+  tidal: true,
+  geothermal: true,
+  datavault: true,
+  charterhall: true,
+  hexworks: true,
+  pearlatrium: true,
+  hullhouse: true,
+  kitemast: true,
+  lampchoir: true,
+  beacon: true,
+  arena: true,
+  halolookout: true,
+  terminal: true,
+  gantry: true,
+  glasssmile: true,
+  breadpier: true,
+  recordtower: true,
+  stillsquare: true,
   frame: false,
   pumphall: false,
 };
@@ -146,9 +146,10 @@ describe('tool catalogue', () => {
   it('trays hold the §7.1 items in unlock order', () => {
     const items = (id: string) => CATEGORIES.find((c) => c.id === id)!.items;
     expect(items('road')).toEqual(['road', 'alley', 'avenue', 'highway']);
-    expect(items('power')).toEqual(['solar', 'reactor', 'seaport', 'airport', 'spaceport']);
-    expect(items('services')).toEqual(['plaza', 'precinct', 'clinic', 'datahub', 'academy', 'maglev', 'memorial']);
-    expect(items('sky')).toEqual(['stack', 'skybridge', 'rail', 'skyway', 'spire', 'arcology']);
+    // MEGACITY §7.1: every section chip's cards, chip by chip.
+    expect(items('power')).toEqual(['solar', 'reactor', 'tidal', 'geothermal', 'seaport', 'airport', 'spaceport']);
+    expect(items('services')).toEqual(['precinct', 'floodwatch', 'clinic', 'medtower', 'plaza', 'canopypark', 'markethall', 'memorial', 'academy', 'datahub', 'datavault', 'maglev', 'metro', 'reclaim', 'pumphouse']);
+    expect(items('sky')).toEqual(['stack', 'spire', 'arcology', 'skybridge', 'rail', 'skyway', 'beacon', 'arena', 'halolookout', 'terminal']);
     expect(CATEGORIES.length).toBe(9); // still 9 buttons, nothing added
   });
 
@@ -167,13 +168,16 @@ describe('tool catalogue', () => {
     expect(card('alley')).toEqual(['Back Alley', '6 CR/tile', 'Cheap homes · crime']);
     expect(card('avenue')).toEqual(['Avenue', '40 CR/tile', '2× traffic · widens']);
     expect(card('highway')).toEqual(['Highway', '90 CR/tile', '5× traffic · no lots']);
-    expect(card('skyway')).toEqual(['Skyway', '160 CR/tile', 'Cars · ramps']);
+    expect(card('skyway')).toEqual(['Skyway', '160 CR/tile', 'Cars · drag']);
     expect(card('seaport')).toEqual(['Seaport', '18,000 CR', '4×4 · shore only']);
     expect(card('airport')).toEqual(['Airport', '45,000 CR', '6×6 · loud']);
     expect(card('spaceport')).toEqual(['Spaceport', '150,000 CR', '6×6 · slow build']);
     expect(card('academy')).toEqual(['Academy', '3,200 CR', '2×2 · schools']);
-    expect(toolMeta('skybridge').meta).toBe('Tower to tower');
-    expect(toolMeta('rail').meta).toBe('Stations');
+    // MEGACITY §5.2, §7.1: one job each for the three links.
+    expect(toolMeta('skybridge').meta).toBe('Walkway · tap 2 towers');
+    expect(toolMeta('rail').meta).toBe('Trains · drag');
+    expect(toolMeta('skyway').meta).toBe('Cars · drag');
+    expect(costLabel(toolMeta('skybridge'))).toBe('from 1,450 CR');
     for (const t of TOOLS) {
       const meta = toolMeta(t).meta;
       if (meta) expect(meta.length, t).toBeLessThanOrEqual(22);
@@ -275,10 +279,12 @@ describe('Infra relabel (§7.1)', () => {
     // ×10 units (MEGACITY §4.4).
     expect(trayName(BUILDINGS.academy, 15000)).toBe('Civic');
     expect(trayName(BUILDINGS.spire, 120_000)).toBe('Sky');
-    expect(bannerUnlocks(5000, 15000)).toEqual(expect.arrayContaining(['Academy (Civic)', 'Avenue (Road)', 'Back Alley (Road)']));
-    expect(bannerUnlocks(15000, 50000)).toEqual(expect.arrayContaining(['Seaport (Infra)', 'Highway (Road)']));
-    expect(bannerUnlocks(50000, 120_000)).toEqual(expect.arrayContaining(['Airport (Infra)', 'Skyway (Sky)']));
-    expect(bannerUnlocks(120_000, 300_000)).toContain('Spaceport (Infra)');
+    // MEGACITY §7.7 item 6: the tray and its chip.
+    expect(bannerUnlocks(5000, 15000)).toEqual(expect.arrayContaining(['Academy (Civic · Learning)', 'Avenue (Road)', 'Back Alley (Road)']));
+    expect(bannerUnlocks(15000, 50000)).toEqual(expect.arrayContaining(['Seaport (Infra · Ports)', 'Highway (Road)']));
+    expect(bannerUnlocks(50000, 120_000)).toEqual(expect.arrayContaining(['Airport (Infra · Ports)', 'Skyway (Sky · Links)']));
+    expect(bannerUnlocks(120_000, 300_000)).toContain('Spaceport (Infra · Ports)');
+    expect(bannerUnlocks(50000, 120_000)).toContain('Med Tower (Civic · Safety)');
     // No On-ramp line (it comes with the Highway) and no gated story buildings.
     for (const s of bannerUnlocks(0, 999_999)) expect(s.startsWith('On-ramp')).toBe(false);
     for (const t of BUILDING_ORDER) if (BUILDINGS[t].gate) expect(bannerUnlocks(0, 999_999).some((s) => s.startsWith(BUILDINGS[t].name + ' ('))).toBe(false);
@@ -442,3 +448,61 @@ function fakeDocument(): { createElement(tag: string): FakeEl } {
     },
   };
 }
+
+// ── Megacity trays (MEGACITY §7.1) ───────────────────────────────────────────
+import { SECTIONS, cardCondition, cardState, sectionOf, traySections } from '../src/ui/tools';
+import { adjacentLocked } from '../src/game/districts/slots';
+import { World as RegionWorld } from '../src/game/world';
+
+describe('tray section chips and rumoured cards (MEGACITY §7.1)', () => {
+  it('at most 4 chips a tray and 6 cards a chip; the chips hold exactly the tray items; still 9 buttons', () => {
+    expect(CATEGORIES.length).toBe(9);
+    for (const c of CATEGORIES) {
+      const secs = SECTIONS[c.id];
+      if (!secs) continue;
+      expect(secs.length, c.id).toBeLessThanOrEqual(4);
+      for (const sec of secs) expect(sec.items.length, `${c.id}/${sec.id}`).toBeLessThanOrEqual(6);
+      expect(secs.flatMap((x) => x.items).sort()).toEqual([...(c.items ?? [])].sort());
+      for (const sec of secs) for (const t of sec.items) expect(sectionOf(t)).toBe(sec.id);
+    }
+    expect(SECTIONS.services!.map((x) => x.label)).toEqual(['Safety', 'Parks', 'Learning', 'Transit & works']);
+    expect(SECTIONS.sky!.map((x) => x.label)).toEqual(['Towers', 'Links', 'Landmarks']);
+    expect(SECTIONS.deals!.map((x) => x.label)).toEqual(['Buildings', 'Landmarks', 'Legacy']);
+    expect(SECTIONS.power!.map((x) => x.label)).toEqual(['Power', 'Ports']);
+    expect(SECTIONS.sky![1].items).toEqual(['skybridge', 'rail', 'skyway']);
+  });
+
+  it('hidden types never reach a tray; the Legacy chip appears only after an ending, with that ending landmark only', () => {
+    const w = RegionWorld.generate(5, 'Trays', undefined, 3);
+    for (const t of ['frame', 'pumphall'] as const) expect(cardState(w, t)).toBe('hidden');
+    for (const t of BUILDING_ORDER) if (BUILDINGS[t].hidden) expect(cardState(w, t), t).toBe('hidden');
+    expect(traySections(w, 'deals').some((x) => x.section.id === 'legacy')).toBe(false);
+    w.story.ending = 'ironwork';
+    const legacy = traySections(w, 'deals').find((x) => x.section.id === 'legacy');
+    expect(legacy?.cards).toEqual(['gantry']);
+    for (const t of ['glasssmile', 'breadpier', 'recordtower', 'stillsquare'] as const) expect(cardState(w, t)).toBe('hidden');
+  });
+
+  it('a district-bound type stays hidden until its district is owned or next door, then shows greyed with its condition', () => {
+    for (let seed = 1; seed < 300; seed++) {
+      const w = RegionWorld.generate(seed, 'Rumour', undefined, 3);
+      const wet = new Set(['shoals', 'sunk', 'reedmere']);
+      const near = adjacentLocked(w).some((s) => wet.has(w.districts.kinds[s]));
+      expect(cardState(w, 'pumphouse')).toBe(near ? 'rumoured' : 'hidden');
+      if (near) {
+        expect(cardCondition(w, 'pumphouse')).toBe('Needs the Shoals, the Sunk or Reedmere');
+        return;
+      }
+    }
+    throw new Error('no seed with a wet district next to the start');
+  });
+
+  it('a population lock below half its unlock is hidden for landmarks, a plain locked card for services', () => {
+    const w = RegionWorld.generate(9, 'Rumour', undefined, 3);
+    w.maxPopulation = 0;
+    expect(cardState(w, 'reactor')).toBe('locked');
+    expect(cardState(w, 'arena')).toBe('hidden'); // hidden type, whatever the population
+    expect(['hidden', 'rumoured']).toContain(cardState(w, 'kitemast'));
+    expect(cardState(w, 'solar')).toBe('open');
+  });
+});

@@ -4,12 +4,16 @@
 // balance changes flow through automatically.
 // ─────────────────────────────────────────────────────────────────────────────
 
+import { chaptersDone, largestLobby, lockedReason } from '../game/actions';
 import { BUILDINGS, BULLDOZE_COST, RIBBON, ROAD_KINDS, SKYBRIDGE, SKYWAY, UNLOCK_FALLBACK_POP, WEALTH, ZONES, isBuildingTool, isZoneTool } from '../game/config';
+import { adjacentLocked } from '../game/districts/slots';
 import type { Game } from '../game/game';
+import { TIER_RANK, tier } from '../game/story/factions';
+import type { World } from '../game/world';
 import { ROAD_TOOL_KIND, ROAD_TOOLS, isRoadTool, type RoadTool } from '../game/roads';
 import { TIER_LABEL } from '../game/wealth';
 import type { FactionId } from '../game/story/types';
-import type { OverlayId, ToolId } from '../game/types';
+import type { BuildingType, DistrictKind, OverlayId, ToolId } from '../game/types';
 import { credits } from './format';
 import type { IconName } from './icons';
 
@@ -40,19 +44,52 @@ export const CATEGORIES: Category[] = [
   { id: 'road', label: 'Road', short: 'Road', icon: 'road', key: 'R', tool: 'road', items: ['road', 'alley', 'avenue', 'highway'], accent: '#c8d0f0' },
   { id: 'zones', label: 'Zones', short: 'Zone', icon: 'zones', key: 'Z X C', items: ['res', 'com', 'ind'], accent: '#ff2bd6' },
   // Relabels to "Infra" ("Power & Ports" on wide screens) once the Seaport unlocks (categoryChrome, §7.1).
-  { id: 'power', label: 'Power', short: 'Power', icon: 'power', items: ['solar', 'reactor', 'seaport', 'airport', 'spaceport'], accent: '#4dff9a' },
+  // Megacity (§7.1): the trays keep their 9 buttons and gain section chips (SECTIONS below); items = every chip's cards.
+  { id: 'power', label: 'Power', short: 'Power', icon: 'power', items: ['solar', 'reactor', 'tidal', 'geothermal', 'seaport', 'airport', 'spaceport'], accent: '#4dff9a' },
   {
     id: 'services',
     label: 'Services',
     short: 'Civic',
     icon: 'services',
-    items: ['plaza', 'precinct', 'clinic', 'datahub', 'academy', 'maglev', 'memorial'],
+    items: ['precinct', 'floodwatch', 'clinic', 'medtower', 'plaza', 'canopypark', 'markethall', 'memorial', 'academy', 'datahub', 'datavault', 'maglev', 'metro', 'reclaim', 'pumphouse'],
     accent: '#3d7bff',
   },
   // Sky (§8.9): the megastructures, skybridges and the ribbon share the old Landmarks slot,
   // so the phone toolbar stays at 8–9 thumb-sized buttons.
-  { id: 'sky', label: 'Sky', short: 'Sky', icon: 'sky', items: ['stack', 'skybridge', 'rail', 'skyway', 'spire', 'arcology'], accent: '#a9b8ff' },
-  { id: 'deals', label: 'Deals', short: 'Deals', icon: 'deals', items: ['commons', 'foundry', 'glarewall', 'tidemarket', 'roost'], accent: '#ffb02e', story: true },
+  {
+    id: 'sky',
+    label: 'Sky',
+    short: 'Sky',
+    icon: 'sky',
+    items: ['stack', 'spire', 'arcology', 'skybridge', 'rail', 'skyway', 'beacon', 'arena', 'halolookout', 'terminal'],
+    accent: '#a9b8ff',
+  },
+  {
+    id: 'deals',
+    label: 'Deals',
+    short: 'Deals',
+    icon: 'deals',
+    items: [
+      'commons',
+      'foundry',
+      'glarewall',
+      'tidemarket',
+      'roost',
+      'charterhall',
+      'hexworks',
+      'pearlatrium',
+      'hullhouse',
+      'kitemast',
+      'lampchoir',
+      'gantry',
+      'glasssmile',
+      'breadpier',
+      'recordtower',
+      'stillsquare',
+    ],
+    accent: '#ffb02e',
+    story: true,
+  },
   { id: 'data', label: 'Data', short: 'Data', icon: 'data', key: 'O', accent: '#22e5ff' },
 ];
 
@@ -62,6 +99,120 @@ export function categoryOf(tool: ToolId): CategoryId {
     if (c.items && c.items.includes(tool)) return c.id;
   }
   return 'inspect';
+}
+
+// ── Section chips (MEGACITY §7.1) ─────────────────────────────────────────
+
+/** A tray's section chip: at most 4 per tray, at most 6 cards each. `legacy`: shown only after an ending. */
+export interface TraySection {
+  id: string;
+  label: string;
+  items: ToolId[];
+  legacy?: boolean;
+}
+
+/** §7.1's chips, in order. Road, Zones and Data have none. */
+export const SECTIONS: Partial<Record<CategoryId, TraySection[]>> = {
+  power: [
+    { id: 'power', label: 'Power', items: ['solar', 'reactor', 'tidal', 'geothermal'] },
+    { id: 'ports', label: 'Ports', items: ['seaport', 'airport', 'spaceport'] },
+  ],
+  services: [
+    { id: 'safety', label: 'Safety', items: ['precinct', 'floodwatch', 'clinic', 'medtower'] },
+    { id: 'parks', label: 'Parks', items: ['plaza', 'canopypark', 'markethall', 'memorial'] },
+    { id: 'learning', label: 'Learning', items: ['academy', 'datahub', 'datavault'] },
+    { id: 'transit', label: 'Transit & works', items: ['maglev', 'metro', 'reclaim', 'pumphouse'] },
+  ],
+  sky: [
+    { id: 'towers', label: 'Towers', items: ['stack', 'spire', 'arcology'] },
+    { id: 'links', label: 'Links', items: ['skybridge', 'rail', 'skyway'] },
+    { id: 'landmarks', label: 'Landmarks', items: ['beacon', 'arena', 'halolookout', 'terminal'] },
+  ],
+  deals: [
+    { id: 'buildings', label: 'Buildings', items: ['commons', 'foundry', 'glarewall', 'tidemarket', 'roost'] },
+    { id: 'landmarks', label: 'Landmarks', items: ['charterhall', 'hexworks', 'pearlatrium', 'hullhouse', 'kitemast', 'lampchoir'] },
+    { id: 'legacy', label: 'Legacy', items: ['gantry', 'glasssmile', 'breadpier', 'recordtower', 'stillsquare'], legacy: true },
+  ],
+};
+
+/** The section chip a tool's card sits in ('' for trays without chips). */
+export function sectionOf(tool: ToolId): string {
+  for (const list of Object.values(SECTIONS)) for (const sec of list ?? []) if (sec.items.includes(tool)) return sec.id;
+  return '';
+}
+
+/**
+ * How a tray card shows (§7.1 rumoured cards): 'open' when it can be placed; 'locked' greyed with its condition (the
+ * classic population lock and its progress bar); 'rumoured' a locked landmark or district-bound type the player is one
+ * step away from, greyed with its condition ("Needs Basalt Allied", "Needs the Shoals"); 'hidden' otherwise (and
+ * always for hidden types and for the Legacy landmarks of other endings). Trays never fill with cards the player
+ * can't reach.
+ */
+export type CardState = 'open' | 'locked' | 'rumoured' | 'hidden';
+
+/** District-bound types: their card waits for the district (owned or a candidate). */
+const DISTRICT_BOUND: Partial<Record<BuildingType, DistrictKind[]>> = {
+  pumphouse: ['shoals', 'sunk', 'reedmere'],
+  tidal: ['shoals', 'sunk', 'reedmere'],
+  geothermal: ['terraces'],
+  beacon: ['shoals'],
+  hullhouse: ['sunk'],
+};
+
+export function cardState(world: World, tool: ToolId): CardState {
+  if (!isBuildingTool(tool)) return lockedReason(world, tool) ? 'locked' : 'open';
+  const def = BUILDINGS[tool];
+  if (def.hidden) return 'hidden';
+  if (def.gate?.ending) return world.story.ending === def.gate.ending ? (lockedReason(world, tool) ? 'locked' : 'open') : 'hidden';
+  if (!lockedReason(world, tool)) return 'open';
+  const bound = DISTRICT_BOUND[tool] ?? (def.gate?.district ? [def.gate.district] : null);
+  const landmark = def.category === 'landmarks';
+  if (!bound && !landmark) return 'locked';
+  return oneStepAway(world, tool, bound) ? 'rumoured' : 'hidden';
+}
+
+/** "One step away" (§7.1): each missing part of the gate is near (Friendly for Allied, half the population, the district owned or next door). */
+function oneStepAway(world: World, tool: BuildingType, bound: DistrictKind[] | null): boolean {
+  const def = BUILDINGS[tool];
+  const g = def.gate;
+  if (bound) {
+    const d = world.districts;
+    const cands = new Set(adjacentLocked(world));
+    const near = d.kinds.some((k, s) => bound.includes(k) && (world.slotOwned[s] === 1 || cands.has(s)));
+    if (!near) return false;
+  }
+  const half = (pop: number) => world.maxPopulation >= pop * 0.5;
+  if (g) {
+    if (g.faction || g.fallbackPop !== undefined || g.unlock !== undefined) {
+      const fac = g.faction ? TIER_RANK[tier(world, g.faction)] >= TIER_RANK[g.tier === 'allied' ? 'friendly' : 'neutral'] : false;
+      const pop = g.fallbackPop !== undefined ? half(g.fallbackPop) : false;
+      if (!fac && !pop && g.unlock === undefined) return false;
+    }
+    if (g.districts !== undefined && world.districts.owned.length < g.districts - 1) return false;
+    if (g.chapter !== undefined && chaptersDone(world) < g.chapter - 1) return false;
+    if (g.lobby !== undefined && largestLobby(world) < Math.max(3, g.lobby - 2)) return false;
+  } else if (def.unlockPop > 0 && !half(def.unlockPop)) return false;
+  return true;
+}
+
+/** A locked card's condition line: "Needs Basalt Allied", "Needs the Shoals", "Reach 300k pop". */
+export function cardCondition(world: World, tool: ToolId): string {
+  const r = lockedReason(world, tool);
+  if (!r) return '';
+  return r.replace(/^Locked: reach ([\d,]+) residents$/, 'Reach $1 pop').replace(/^Locked: (\w+) (Allied|Friendly)$/, 'Needs $1 $2').replace(/^Locked: /, '');
+}
+
+/** The chips of a tray that hold at least one visible card, with those cards (§7.1). */
+export function traySections(world: World, cat: CategoryId): { section: TraySection; cards: ToolId[] }[] {
+  const list = SECTIONS[cat];
+  if (!list) return [];
+  const out: { section: TraySection; cards: ToolId[] }[] = [];
+  for (const section of list) {
+    if (section.legacy && !world.story.ending) continue;
+    const cards = section.items.filter((t) => cardState(world, t) !== 'hidden');
+    if (cards.length) out.push({ section, cards });
+  }
+  return out;
 }
 
 /** A tool + tray category (Road): tapping it lays a street at once and opens the tray (§7.2). */
@@ -145,6 +296,32 @@ const BUILDING_ICON: Record<string, IconName> = {
   seaport: 'seaport',
   airport: 'airport',
   spaceport: 'spaceport',
+  // Megacity (§6.3, §9.2).
+  floodwatch: 'floodwatch',
+  pumphouse: 'pumphouse',
+  canopypark: 'canopypark',
+  medtower: 'medtower',
+  reclaim: 'reclaim',
+  metro: 'metro',
+  markethall: 'markethall',
+  tidal: 'tidal',
+  geothermal: 'geothermal',
+  datavault: 'datavault',
+  charterhall: 'charterhall',
+  hexworks: 'hexworks',
+  pearlatrium: 'pearlatrium',
+  hullhouse: 'hullhouse',
+  kitemast: 'kitemast',
+  lampchoir: 'lampchoir',
+  beacon: 'beacon',
+  arena: 'arena',
+  halolookout: 'halolookout',
+  terminal: 'terminal',
+  gantry: 'gantry',
+  glasssmile: 'glasssmile',
+  breadpier: 'breadpier',
+  recordtower: 'recordtower',
+  stillsquare: 'stillsquare',
 };
 
 const ROAD_ICON: Record<RoadTool, IconName> = { road: 'road', avenue: 'avenue', highway: 'highway', alley: 'alley' };
@@ -189,19 +366,21 @@ export function toolMeta(tool: ToolId): ToolMeta {
         cost: SKYWAY.perTile,
         perTile: true,
         unlockPop: SKYWAY.unlockPop,
-        meta: SKYWAY.meta,
+        // §5.2, §7.1: one job each for the three links.
+        meta: 'Cars · drag',
       };
     case 'skybridge':
       return {
         id: tool,
         name: 'Skybridge',
-        desc: 'Drag from one tall tower to another. Lit spans lift the blocks below.',
+        desc: 'A walkway for people. Tap a tall tower, then a glowing partner. Skyways carry cars.',
         icon: 'skybridge',
         color: '#8fe3ff',
-        cost: SKYBRIDGE.base + SKYBRIDGE.perTile * SKYBRIDGE.minGap,
+        // The v2 price of the shortest bridge (§5.3 rule 8: 1,200 + 250 per gap tile); the live price is Game.toolCost.
+        cost: SKYBRIDGE.base + SKYBRIDGE.v2.perTile * SKYBRIDGE.v2.minGap,
         perTile: false,
         unlockPop: UNLOCK_FALLBACK_POP.skybridge ?? 0,
-        meta: 'Tower to tower',
+        meta: 'Walkway · tap 2 towers',
       };
     case 'rail':
       return {
@@ -213,7 +392,7 @@ export function toolMeta(tool: ToolId): ToolMeta {
         cost: RIBBON.perTile,
         perTile: true,
         unlockPop: UNLOCK_FALLBACK_POP.rail ?? 0,
-        meta: 'Stations',
+        meta: 'Trains · drag',
       };
     case 'bulldoze':
       return {

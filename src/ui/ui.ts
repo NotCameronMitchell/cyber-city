@@ -39,7 +39,7 @@ import { StoryUI } from './story/storyUI';
 import './story/story.css';
 import { Ticker } from './ticker';
 import { Tips, newsTip } from './tips';
-import type { CategoryId } from './tools';
+import { traySections, type CategoryId } from './tools';
 
 /** HUD figures refresh interval (s). */
 const HUD_INTERVAL = 0.2;
@@ -548,6 +548,8 @@ export class UI {
       this.budget.refresh();
       this.report.refresh();
       this.cityMap.refresh();
+      // The first time the Legacy chip appears (§7.7): its tip, once per device.
+      if (this.game.world.story.ending && traySections(this.game.world, 'deals').some((x) => x.section.id === 'legacy')) this.tips.show('legacy');
       if (this.menu.isOpen) this.menu.refresh();
     }
   }

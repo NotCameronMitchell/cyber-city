@@ -27,6 +27,58 @@ const PATHS = {
   infra:
     '<path d="M9.6 2.5L5.2 9h3.2L7.6 13l4.5-6.2H8.9z"/><path d="M16.5 15.5V4.5M16.5 5.5h-3.5M13.4 5.5v3.4M16.5 9l3-3.5"/><path d="M2.5 15.5h19l-2.6 4.5H5.1z"/><path class="d" d="M9 15.5v-2h3.5v2"/>',
 
+  // ── Megacity types (MEGACITY §6.3, §9.2): one original glyph each ──────────
+  /** Floodwatch Station: a gauge post with wave lines. */
+  floodwatch: '<path d="M12 3v14"/><path d="M9.5 5.5h5M9.5 9h5M9.5 12.5h5"/><path d="M2.5 17.5c2 0 2-1.5 4-1.5s2 1.5 4 1.5 2-1.5 4-1.5 2 1.5 4 1.5 2-1.5 3-1.5"/><path class="d" d="M2.5 21c2 0 2-1.5 4-1.5s2 1.5 4 1.5 2-1.5 4-1.5 2 1.5 4 1.5"/>',
+  /** Pump House: a small hall with a pipe and a rising drop. */
+  pumphouse: '<path d="M4 20.5V11l6-4 6 4v9.5z"/><path d="M16 14h3.5v6.5"/><path class="d" d="M10 13.2c1.4 1.7 1.4 3 0 3.6-1.4-.6-1.4-1.9 0-3.6z"/><path d="M2.5 20.5h19"/>',
+  /** Canopy Park: three tree crowns under one roof line. */
+  canopypark: '<path d="M2.5 8.5L12 3l9.5 5.5"/><circle cx="7" cy="13" r="2.8"/><circle cx="12" cy="11.5" r="3.2"/><circle cx="17" cy="13" r="2.8"/><path d="M7 16v4.5M12 15v5.5M17 16v4.5"/>',
+  /** Med Tower: a tall slab with a cross. */
+  medtower: '<rect x="7" y="2.8" width="10" height="17.7"/><path d="M12 6.5v5M9.5 9h5"/><path class="d" d="M9.5 14.5h5M9.5 17h5"/><path d="M4 20.5h16"/>',
+  /** Reclaim Works: a chimney with a filter grid and clean air. */
+  reclaim: '<path d="M4 20.5V12h9v8.5"/><path d="M13 20.5V6h3.5v14.5"/><path class="d" d="M6 15h5M6 17.5h5"/><path d="M18 4.5c1.6-.6 2.4 0 3.5-.5"/><path d="M2.5 20.5h19"/>',
+  /** Metro Station: an arch over a track going underground. */
+  metro: '<path d="M4 20.5v-8a8 8 0 0 1 16 0v8"/><path d="M8.5 20.5l1.5-6h4l1.5 6"/><path class="d" d="M9.4 17h5.2"/><circle class="f" cx="12" cy="9" r="1.2"/>',
+  /** Market Hall: a hall with stall awnings. */
+  markethall: '<path d="M3 10l9-6 9 6"/><path d="M4.5 10v10.5h15V10"/><path d="M4.5 13.5h15"/><path class="d" d="M7.5 13.5v-.5M10.5 13.5v-.5M13.5 13.5v-.5M16.5 13.5v-.5"/><path d="M10 20.5v-4h4v4"/>',
+  /** Tidal Turbine: rotor blades over the water. */
+  tidal: '<circle cx="12" cy="9" r="1.5"/><path d="M12 7.5V3M13.3 9.8l3.9 2.2M10.7 9.8L6.8 12"/><path d="M12 10.5v6"/><path d="M2.5 17c2 0 2-1.4 4-1.4s2 1.4 4 1.4 2-1.4 4-1.4 2 1.4 4 1.4 2-1.4 3-1.4"/><path class="d" d="M2.5 20.5c2 0 2-1.4 4-1.4s2 1.4 4 1.4 2-1.4 4-1.4 2 1.4 4 1.4"/>',
+  /** Geothermal Bore: a derrick on a hill with heat waves. */
+  geothermal: '<path d="M2.5 20.5l6-6 4 3 3-2 6 5"/><path d="M12 17.5V7l-2.5 3.5M12 7l2.5 3.5"/><path class="d" d="M8 5c.8-1 .8-2 0-3M12 4.5c.8-1 .8-2 0-3M16 5c.8-1 .8-2 0-3"/>',
+  /** Data Vault: a buried hall with a data line. */
+  datavault: '<path d="M2.5 12h19"/><rect x="5.5" y="14" width="13" height="6.5"/><path class="d" d="M8 17.2h2M11 17.2h2M14 17.2h2"/><path d="M12 12V4.5M9.5 6.5L12 4l2.5 2.5"/>',
+  /** Charter Hall: a domed hall with flags. */
+  charterhall: '<path d="M3 20.5h18"/><path d="M5 20.5v-8h14v8"/><path d="M8 12.5a4 4 0 0 1 8 0"/><path class="d" d="M8 15v5.5M12 15v5.5M16 15v5.5"/><path d="M12 8.5V3l3 1.2-3 1.2"/>',
+  /** Hexworks: hex prisms and a flame stack. */
+  hexworks: '<path d="M7 9.5l3.5-2 3.5 2v4l-3.5 2-3.5-2z"/><path d="M5 20.5l1-5h9l1 5z"/><path d="M17 20.5V7h2.5v13.5"/><path class="d" d="M18.2 5.5c-.9-1-.4-2 .4-3 .5 1 1 1.8.2 3"/>',
+  /** Pearl Atrium: a glowing dome with a ring. */
+  pearlatrium: '<path d="M4 20.5a8 8 0 0 1 16 0"/><ellipse cx="12" cy="10" rx="8.5" ry="2.4"/><circle class="d" cx="12" cy="6" r="2"/><path d="M2.5 20.5h19"/>',
+  /** Hullhouse: an upturned hull over a hall. */
+  hullhouse: '<path d="M2.5 11c3-3.5 16-3.5 19 0"/><path d="M4 11v9.5M20 11v9.5"/><path class="d" d="M8 11v9.5M12 10v10.5M16 11v9.5"/><path d="M2.5 20.5h19"/>',
+  /** Kite Mast: a mast with kites on lines. */
+  kitemast: '<path d="M12 21V3"/><path d="M9 21h6"/><path d="M12 5l5 2.5-3 3z"/><path class="d" d="M12 9l-5.5 2 2.5 2.8z"/><path class="d" d="M14 10.5L18 16"/>',
+  /** Lamp Choir: a pointed roof over a row of lamps. */
+  lampchoir: '<path d="M5 20.5v-9L12 4l7 7.5v9"/><circle class="f" cx="9" cy="15" r="1.1"/><circle class="f" cx="12" cy="15" r="1.1"/><circle class="f" cx="15" cy="15" r="1.1"/><path d="M3 20.5h18"/>',
+  /** Harbour Beacon: a lighthouse throwing a beam. */
+  beacon: '<path d="M9.5 20.5l1-12h3l1 12z"/><path d="M10 8.5l2-3 2 3"/><path class="d" d="M14.5 6.5l7-2.5M14.5 7.5l7 1.5"/><path d="M5 20.5h14"/>',
+  /** Arc Arena: an oval bowl with floodlights. */
+  arena: '<ellipse cx="12" cy="15" rx="9" ry="4"/><ellipse class="d" cx="12" cy="14.5" rx="5" ry="1.8"/><path d="M4 13V6M20 13V6"/><path d="M3 6h2M19 6h2"/>',
+  /** Halo Lookout: a ring of glass on a tower. */
+  halolookout: '<ellipse cx="12" cy="7" rx="7" ry="2.6"/><path d="M10 9.5v11h4v-11"/><path class="d" d="M5 7v1.5M19 7v1.5"/><path d="M6 20.5h12"/>',
+  /** Grand Terminal: a vaulted station with lines meeting. */
+  terminal: '<path d="M3 20.5V12a9 6 0 0 1 18 0v8.5"/><path d="M3 20.5h18"/><path class="d" d="M7 20.5l3-6M17 20.5l-3-6M12 20.5v-6"/><path d="M8.5 9.5h7"/>',
+  /** Foreman's Gantry: a gantry crane over a yard. */
+  gantry: '<path d="M4 20.5V6h16v14.5"/><path d="M4 6l4-3h8l4 3"/><path class="d" d="M14 6v6"/><rect x="12" y="12" width="4" height="3"/><path d="M2.5 20.5h19"/>',
+  /** The Glass Smile: a sphere on a stem, smiling. */
+  glasssmile: '<circle cx="12" cy="8" r="5.5"/><path d="M9.3 9.2c1.4 1.8 4 1.8 5.4 0"/><path d="M12 13.5v7M8.5 20.5h7"/>',
+  /** Bread Pier: a long canopy over a pier. */
+  breadpier: '<path d="M2.5 9.5L12 5l9.5 4.5"/><path d="M4 9.5v6M20 9.5v6"/><path d="M2.5 15.5h19"/><path class="d" d="M6 15.5v5M10 15.5v5M14 15.5v5M18 15.5v5"/>',
+  /** Record Tower: a stone tower with scrolling lines. */
+  recordtower: '<path d="M7 20.5V5l5-2.5L17 5v15.5"/><path class="d" d="M9.5 8h5M9.5 11h5M9.5 14h5M9.5 17h3"/><path d="M4 20.5h16"/>',
+  /** The Still Square: a balance with level pans. */
+  stillsquare: '<path d="M12 4v15"/><path d="M5 7h14"/><path d="M5 7l-2.5 5h5zM19 7l-2.5 5h5z"/><path d="M7.5 20.5h9"/>',
+
   // ── Road kinds and the Skyway (EXPANSION §7.2) ───────────────────────────
   /** Avenue: a wide boulevard with a planted median. */
   avenue:

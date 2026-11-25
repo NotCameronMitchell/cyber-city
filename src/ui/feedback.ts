@@ -13,7 +13,7 @@ import { h, prefersReducedMotion, replayClass, setAttr, setClass, setHidden, set
 import { credits, groupInt, MINUS } from './format';
 import { footprintTouchesGrid } from './grid';
 import { icon, type IconName } from './icons';
-import { INFRA_POP, toolMeta } from './tools';
+import { INFRA_POP, SECTIONS, toolMeta } from './tools';
 
 // ── Toasts ─────────────────────────────────────────────────────────────────
 
@@ -334,17 +334,24 @@ export function trayName(def: BuildingDef, pop: number): string {
   }
 }
 
-/** "Seaport (Infra)", "Highway (Road)": what opens between two populations (gated buildings excluded). */
+/** "Civic · Parks": the tray and its section chip (MEGACITY §7.7 item 6); the tray alone where it has no chips. */
+export function traySpot(def: BuildingDef, pop: number): string {
+  const tray = trayName(def, pop);
+  for (const list of Object.values(SECTIONS)) for (const sec of list ?? []) if (sec.items.includes(def.type)) return `${tray} · ${sec.label}`;
+  return tray;
+}
+
+/** "Seaport (Infra · Ports)", "Highway (Road)": what opens between two populations (gated buildings excluded). */
 export function bannerUnlocks(prevPop: number, pop: number): string[] {
   const opens = (p: number) => p > prevPop && p <= pop;
   const out: string[] = [];
   for (const t of BUILDING_ORDER) {
     const def = BUILDINGS[t];
     if (def.gate || def.hidden) continue;
-    if (opens(def.unlockPop)) out.push(`${def.name} (${trayName(def, pop)})`);
+    if (opens(def.unlockPop)) out.push(`${def.name} (${traySpot(def, pop)})`);
   }
   for (const k of ROAD_KINDS) if (k.tool && opens(k.unlockPop)) out.push(`${k.name} (Road)`);
-  if (opens(SKYWAY.unlockPop)) out.push('Skyway (Sky)');
+  if (opens(SKYWAY.unlockPop)) out.push('Skyway (Sky · Links)');
   return out;
 }
 

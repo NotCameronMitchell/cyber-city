@@ -4773,3 +4773,95 @@ body {
     display: none;
   }
 }
+
+/* ── Tray section chips and rumoured cards (MEGACITY §7.1) ─────────────────── */
+
+.cc-tray-chips {
+  display: flex;
+  gap: 6px;
+  padding: 0 12px 8px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.cc-tray-chips::-webkit-scrollbar {
+  display: none;
+}
+
+.cc-tray-chip {
+  position: relative;
+  flex: none;
+  display: flex;
+  align-items: center;
+  min-height: 44px;
+  min-width: 44px;
+  padding: 0 14px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  color: var(--cc-ink-2);
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 22px;
+}
+
+.cc-tray-chip.is-on {
+  color: #07060d;
+  background: var(--accent);
+}
+
+.cc-tray-chip.is-legacy:not(.is-on) {
+  color: var(--cc-gold);
+}
+
+.cc-tray-chip-dot {
+  display: none;
+  position: absolute;
+  top: 7px;
+  right: 7px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--cc-magenta);
+  box-shadow: 0 0 6px var(--cc-magenta);
+}
+
+.cc-tray-chip.has-new .cc-tray-chip-dot {
+  display: block;
+}
+
+/* A rumoured card: greyed, its condition in place of the price and progress (§7.1). */
+.cc-card.is-rumoured {
+  opacity: 0.62;
+}
+
+.cc-card.is-rumoured .cc-card-ico {
+  filter: grayscale(1);
+}
+
+/* Landscape phones: the chips are the first items of the tray's single row. */
+@media (orientation: landscape) and (max-height: 520px) {
+  .cc-tray-body {
+    display: flex;
+    align-items: stretch;
+  }
+  .cc-tray-chips {
+    flex: none;
+    display: grid;
+    grid-template-columns: auto auto;
+    grid-auto-rows: 44px;
+    align-content: start;
+    gap: 4px;
+    padding: 2px 0 2px 12px;
+    overflow: visible;
+  }
+  .cc-tray-chip {
+    padding: 0 10px;
+    font-size: 11px;
+  }
+  .cc-tray-body .cc-tray-row {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+}
