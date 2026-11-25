@@ -259,6 +259,7 @@ export class SimGrid {
     this.layout = new OwnedLayout(world);
     this.layout.sync(world);
     this.syncTerrain(world);
+    world.events?.on('terrain', (r) => this.noteTerrain(r));
   }
 
   /**
@@ -843,10 +844,116 @@ export class SimGrid {
    * noise term is computed once per slot. Public for tests; scanBegin calls it.
    */
   syncTerrain(world: World): void {
-    if (world.slotsVersion === this.terrainSlots && world.terrainVersion === this.terrainSeen) return;
+    if (world.slotsVersion === this.terrainSlots && world.terrainVersion === this.terrainSeen) {
+      this.tCount = 0;
+      this.tRect.x1 = -1;
+      return;
+    }
+    // A terrain change (a Pump House ring, MEGACITY §3.3) recomputes the terrain value within WATER_VIEW_RANGE of what
+    // changed, when every change since the last sync came as a 'terrain' event; an annex or anything else, all of it.
+    const r = this.tRect;
+    const local =
+      world.slotsVersion === this.terrainSlots &&
+      this.tCount > 0 &&
+      this.tCount === world.terrainVersion - this.terrainSeen &&
+      r.x1 >= r.x0 &&
+      (r.x1 - r.x0 + 1) * (r.y1 - r.y0 + 1) * 4 < this.area;
     this.terrainSlots = world.slotsVersion;
     this.terrainSeen = world.terrainVersion;
-    this.computeTerrainValue(world);
+    if (local) this.terrainValueAround(world, r.x0, r.y0, r.x1, r.y1);
+    else this.computeTerrainValue(world);
+    this.tCount = 0;
+    r.x1 = -1;
+  }
+
+  /** 'terrain' events since the last syncTerrain: how many, and the union of their rects (x1 < x0: none). */
+  private tCount = 0;
+  private readonly tRect = { x0: 0, y0: 0, x1: -1, y1: -1 };
+
+  private noteTerrain(e: { x0: number; y0: number; x1: number; y1: number }): void {
+    const r = this.tRect;
+    if (r.x1 < r.x0) {
+      r.x0 = e.x0;
+      r.y0 = e.y0;
+      r.x1 = e.x1;
+      r.y1 = e.y1;
+    } else {
+      if (e.x0 < r.x0) r.x0 = e.x0;
+      if (e.y0 < r.y0) r.y0 = e.y0;
+      if (e.x1 > r.x1) r.x1 = e.x1;
+      if (e.y1 > r.y1) r.y1 = e.y1;
+    }
+    this.tCount++;
+  }
+
+  /**
+   * computeTerrainValue on the tiles within WATER_VIEW_RANGE of a changed rect only: their water distance is a path of
+   * at most that many owned tiles from water, so seeds and paths lie within twice the range of the rect, and the BFS
+   * restricted to that box gives exactly the whole-map distances there. The noise term never changes.
+   */
+  private terrainValueAround(world: World, rx0: number, ry0: number, rx1: number, ry1: number): void {
+    const { N, layout } = this;
+    const R = layout.R;
+    const mask = layout.mask;
+    const V = WATER_VIEW_RANGE;
+    const ix0 = Math.max(0, rx0 - V);
+    const iy0 = Math.max(0, ry0 - V);
+    const ix1 = Math.min(N - 1, rx1 + V);
+    const iy1 = Math.min(N - 1, ry1 + V);
+    const ox0 = Math.max(0, ix0 - V);
+    const oy0 = Math.max(0, iy0 - V);
+    const ox1 = Math.min(N - 1, ix1 + V);
+    const oy1 = Math.min(N - 1, iy1 + V);
+    const q = this.queue;
+    const dist = this.mark;
+    const tiles = world.tiles;
+    let head = 0;
+    let tail = 0;
+    for (let y = oy0; y <= oy1; y++) {
+      const row = y * N;
+      dist.fill(NO_ROAD, row + ox0, row + ox1 + 1);
+      for (let x = ox0; x <= ox1; x++) {
+        const i = row + x;
+        if (mask[i] && tiles[i].terrain === Terrain.Water) {
+          dist[i] = 0;
+          q[tail++] = i;
+        }
+      }
+    }
+    while (head < tail) {
+      const i = q[head++];
+      const d = dist[i];
+      if (d >= V) continue;
+      const x = i % N;
+      const y = (i / N) | 0;
+      for (let dy = -1; dy <= 1; dy++) {
+        const ny = y + dy;
+        if (ny < oy0 || ny > oy1) continue;
+        for (let dx = -1; dx <= 1; dx++) {
+          const nx = x + dx;
+          if (nx < ox0 || nx > ox1) continue;
+          const j = ny * N + nx;
+          if (dist[j] !== NO_ROAD || !mask[j]) continue;
+          dist[j] = d + 1;
+          q[tail++] = j;
+        }
+      }
+    }
+    const tv = this.terrainValue;
+    const nz = this.lvNoise;
+    const fc = this.floodCap;
+    for (let y = iy0; y <= iy1; y++)
+      for (let x = ix0; x <= ix1; x++) {
+        const i = y * N + x;
+        if (!mask[i]) continue;
+        const d = dist[i];
+        let v = 0;
+        if (d > 0 && d <= V) v += LV_WATER * (1 - (d - 1) / V);
+        v += nz[i];
+        tv[i] = v;
+        const cap = DISTRICTS[world.districts.kinds[(y >> 6) * R + (x >> 6)]]?.mods.floodplainMaxLevel;
+        fc[i] = cap !== undefined && d === 1 ? cap : 3;
+      }
   }
 
   private computeTerrainValue(world: World): void {

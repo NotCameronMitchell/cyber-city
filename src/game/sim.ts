@@ -143,6 +143,10 @@ export class Simulation {
   private gen = 0;
   /** Steps run and the largest step (ms) of the last stepSlice call (tests, the frame guard). */
   lastSlice = { steps: 0, spent: 0, maxStep: 0, maxKind: K.Begin as K };
+  /** Sim ms of the sliced day in progress, and of the last 8 completed sliced days (dayEstimate). */
+  private dayMs = 0;
+  private readonly dayRing = new Float64Array(8);
+  private dayCount = 0;
   /** world.slotsVersion the layers were last composed for (recomputeAll re-composes after an annex). */
   private composedSlots = -1;
   /** A full field pass is due (recomputeAround saw traffic change outside its window): runs on the next days. */
@@ -194,6 +198,19 @@ export class Simulation {
   }
 
   /**
+   * The mean sim ms of the last 8 days run through stepSlice (0 before the first). A frame guard spreads the day over
+   * frames with it (MEGACITY §3.3): a budget of about dayEstimate × days per frame, capped, keeps the per-frame p95 near
+   * the average instead of at the cap.
+   */
+  get dayEstimate(): number {
+    const n = Math.min(this.dayCount, 8);
+    if (n === 0) return 0;
+    let s = 0;
+    for (let k = 0; k < n; k++) s += this.dayRing[k];
+    return s / n;
+  }
+
+  /**
    * Old saves settle their wealth tiers once (EXPANSION §4.3): Game calls this exactly once,
    * after the first recomputeAll of a world whose loadedVersion < 3, then recomputeAll again.
    * Returns the number of tier steps taken. Deterministic (no rng); never lowers a tier.
@@ -214,6 +231,7 @@ export class Simulation {
     if (!this.primed) this.recomputeAll();
     const d = this.day ?? this.dayUnit(false);
     this.day = null;
+    this.dayMs = 0;
     drain(d);
   }
 
@@ -251,9 +269,12 @@ export class Simulation {
         ls.maxStep = ms;
         ls.maxKind = k;
       }
+      this.dayMs += ms;
       if (r.done) {
         this.day = null;
         ls.spent = e - t0;
+        this.dayRing[this.dayCount++ & 7] = this.dayMs;
+        this.dayMs = 0;
         return true;
       }
       this.nextKind = r.value;

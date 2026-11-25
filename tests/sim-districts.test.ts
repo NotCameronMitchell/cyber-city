@@ -11,7 +11,7 @@ import { districtVisitors } from '../src/game/sim/ports';
 import { composeLayers } from '../src/game/story/mods';
 import * as turf from '../src/game/story/turf';
 import { turfPatch } from '../src/game/story/turf';
-import { ZoneType, type DistrictKind, type SlotId } from '../src/game/types';
+import { Terrain, ZoneType, type DistrictKind, type SlotId } from '../src/game/types';
 import { World } from '../src/game/world';
 
 /** A 3×3 world owning the start slot plus the slot of `kind` (the first one of that kind), its land flattened. */
@@ -79,6 +79,38 @@ describe('district rules (§3.3)', () => {
     // The start slot (Charter Shore) has no cap.
     const s4 = slotRect(w, 4);
     for (let y = s4.y0; y <= s4.y1; y++) for (let x = s4.x0; x <= s4.x1; x++) expect(cap[y * w.N + x]).toBe(3);
+  });
+
+  it('a terrain change (a Pump House ring) recomputes the terrain value and floodplain caps near it only, exactly as a whole pass', () => {
+    const { w, slot } = withKind('reedmere');
+    const s = sim(w);
+    const g = inner(s).grid as unknown as { terrainValue: Float32Array; floodCap: Uint8Array; computeTerrainValue: (w: World) => void };
+    let whole = 0;
+    const full = g.computeTerrainValue.bind(g);
+    g.computeTerrainValue = (x: World) => {
+      whole++;
+      full(x);
+    };
+    const r = slotRect(w, slot);
+    // Raise a few water tiles to land and sink a few land tiles, as reclamation and a test would.
+    let changed = 0;
+    for (let y = r.y0 + 10; y < r.y0 + 30 && changed < 24; y++)
+      for (let x = r.x0 + 10; x < r.x0 + 30 && changed < 24; x++) {
+        const t = w.tileAt(x, y)!;
+        if ((x + y) % 5 !== 0 || t.buildingId >= 0) continue;
+        w.setTerrain(x, y, t.terrain === Terrain.Water ? Terrain.Land : Terrain.Water);
+        changed++;
+      }
+    expect(changed).toBe(24);
+    s.step();
+    expect(whole).toBe(0);
+    const ref = inner(sim(w)).grid;
+    expect(Array.from(g.terrainValue)).toEqual(Array.from(ref.terrainValue));
+    expect(Array.from(g.floodCap)).toEqual(Array.from(ref.floodCap));
+    // An annex still recomputes everything.
+    w.annex(w.districts.kinds.findIndex((_, k) => !w.slotOwned[k]));
+    s.step();
+    expect(whole).toBe(1);
   });
 
   it('Kessel Flats adds 2,000 Fab jobs of demand while it has < 400 developed Fab tiles; the census has one row per owned district', () => {

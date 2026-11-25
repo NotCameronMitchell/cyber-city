@@ -193,7 +193,9 @@ describe('unit sizes (§3.3: SLICE.unitMaxNodeMs at 25 districts)', () => {
         const med = a[a.length >> 1];
         const p90 = a[Math.floor(a.length * 0.9)];
         const b = best.get(k);
-        if (!b || med < b.med) best.set(k, { med, p90: b ? Math.min(b.p90, p90) : p90, n: a.length });
+        // Each figure is its best round's (the p90 of a kind with 8 samples a month is its slowest one).
+        if (!b) best.set(k, { med, p90, n: a.length });
+        else best.set(k, { med: Math.min(b.med, med), p90: Math.min(b.p90, p90), n: a.length });
       }
     }
     // The suite runs files in parallel on a shared container: medians get 1.5× (CI 3×, EXPANSION's slack), the p90
