@@ -3,6 +3,9 @@ import { buildingStats } from './buildingStats';
 import {
   BUILDINGS,
   BULLDOZE_COST,
+  DISTRICTS,
+  PORT_LIMITS,
+  RUINS,
   CROWNS,
   CURRENCY,
   FACTION_LABELS,
@@ -41,7 +44,7 @@ import * as turf from './story/turf';
 import type { ActionResult, BuildingGate, CrownId, CrownOption, FactionId, GangId, Tier, Unlockable } from './story/types';
 import * as vertical from './story/vertical';
 import { scratchFor } from './frame';
-import { RoadKind, Terrain, ZoneType, type ActionPlan, type Building, type BuildingType, type ToolId } from './types';
+import { Ground, RoadKind, Terrain, ZoneType, type ActionPlan, type Building, type BuildingType, type DistrictKind, type SlotId, type ToolId } from './types';
 import type { World } from './world';
 
 
@@ -124,15 +127,92 @@ export function tierAtLeast(world: World, f: FactionId, need: 'friendly' | 'alli
  * Gate rule (§4.5): open when (unlock owned) OR (faction at tier or better) OR
  * (maxPop ≥ fallbackPop), counting only the parts the gate defines. The turf
  * part depends on the footprint and is checked by planAction (turfGateReason).
- * Returns the first missing part, e.g. "Locked: Basalt Friendly".
+ * Megacity (MEGACITY §6.3, §9.2): `district`, `lobby`, `districts`, `chapter` and
+ * `ending` are further AND terms (the footprint part of `district` is checked by
+ * planAction). Returns the first missing part, e.g. "Locked: Basalt Friendly",
+ * "Needs the Shoals", "Needs a Sky Lobby of 5 towers".
  */
-function gateReason(world: World, gate: BuildingGate): string | null {
-  if (gate.unlock && isUnlocked(world, gate.unlock)) return null;
-  if (gate.faction && tierAtLeast(world, gate.faction, gate.tier)) return null;
-  if (gate.fallbackPop !== undefined && world.maxPopulation >= gate.fallbackPop) return null;
-  if (gate.faction) return `Locked: ${FACTION_LABELS[gate.faction].short} ${gate.tier === 'allied' ? 'Allied' : 'Friendly'}`;
-  if (gate.fallbackPop !== undefined) return `Locked: reach ${num(gate.fallbackPop)} residents`;
-  return 'Locked: not yet';
+function gateReason(world: World, gate: BuildingGate, type?: BuildingType): string | null {
+  const orPart = gate.unlock !== undefined || gate.faction !== undefined || gate.fallbackPop !== undefined;
+  if (orPart) {
+    const open =
+      (gate.unlock && isUnlocked(world, gate.unlock)) ||
+      (gate.faction && tierAtLeast(world, gate.faction, gate.tier)) ||
+      (gate.fallbackPop !== undefined && world.maxPopulation >= gate.fallbackPop) ||
+      (type !== undefined && patronRoute(world, type));
+    if (!open) {
+      if (gate.faction) return `Locked: ${FACTION_LABELS[gate.faction].short} ${gate.tier === 'allied' ? 'Allied' : 'Friendly'}`;
+      if (gate.fallbackPop !== undefined) return `Locked: reach ${num(gate.fallbackPop)} residents`;
+      return 'Locked: not yet';
+    }
+  }
+  return gateAndReason(world, gate);
+}
+
+/** The Megacity AND terms of a gate (§6.3, §9.2), footprint aside. */
+function gateAndReason(world: World, gate: BuildingGate): string | null {
+  if (gate.district && !ownsKind(world, gate.district)) return `Needs ${districtLabel(gate.district)}`;
+  if (gate.districts !== undefined && world.districts.owned.length < gate.districts) return `Needs ${gate.districts} districts`;
+  if (gate.chapter !== undefined && chaptersDone(world) < gate.chapter) return `Needs Chapter ${ROMAN[gate.chapter] ?? gate.chapter} done`;
+  if (gate.lobby !== undefined && largestLobby(world) < gate.lobby) return `Needs a Sky Lobby of ${gate.lobby} towers`;
+  if (gate.ending !== undefined && world.story.ending !== gate.ending) return 'Opens with its ending';
+  return null;
+}
+
+const ROMAN = ['', 'I', 'II', 'III', 'IV', 'V', 'VI', 'VII'];
+
+/** Chapters the story has completed (the epilogue counts all six). */
+export function chaptersDone(world: World): number {
+  const st = world.story;
+  return st.ending ? 6 : Math.max(0, (st.chapter | 0) - 1);
+}
+
+/** The largest Sky Lobby's tower count (0 when none). */
+export function largestLobby(world: World): number {
+  let k = 0;
+  for (const l of world.vertical.lobbies ?? []) k = Math.max(k, l.anchors.length);
+  return k;
+}
+
+/** Does the city own a district of this kind (the kind's own or a 5×5 repeat)? */
+export function ownsKind(world: World, kind: DistrictKind): boolean {
+  const d = world.districts;
+  for (const s of d.owned) if (d.kinds[s] === kind) return true;
+  return false;
+}
+
+/** "the Shoals", "Kessel Flats" (§6.3 reasons: "Needs the Shoals"). */
+export function districtLabel(kind: DistrictKind): string {
+  const SHORT: Partial<Record<DistrictKind, string>> = { shoals: 'the Shoals', sunk: 'the Sunk', terraces: 'the Terraces', reedmere: 'Reedmere', bazaar: 'the Bazaar' };
+  return SHORT[kind] ?? DISTRICTS[kind]?.name ?? kind;
+}
+
+/** Hexworks and the Pearl Atrium also open for their corp as patron at 300,000 residents (§6.3). */
+function patronRoute(world: World, type: BuildingType): boolean {
+  const corp = type === 'hexworks' ? 'basalt' : type === 'pearlatrium' ? 'nacre' : null;
+  return corp !== null && world.story.flags.patron === corp && world.maxPopulation >= LANDMARK_PATRON_POP;
+}
+const LANDMARK_PATRON_POP = 300000;
+
+/**
+ * §6.3's unlocks that are an OR of districts (the rows carry their population part): Floodwatch at 15,000 residents
+ * or with the Shoals, the Sunk or Reedmere owned; Reclaim Works at 50,000 or with Kessel Flats; the Tidal Turbine
+ * and the Pump House with the Shoals, the Sunk or Reedmere; the Grand Terminal also needs a live ribbon of 4 stations.
+ * Null when the type has no such rule (the ordinary gate decides).
+ */
+function districtUnlock(world: World, type: BuildingType): string | null | undefined {
+  const wet = ownsKind(world, 'shoals') || ownsKind(world, 'sunk') || ownsKind(world, 'reedmere');
+  switch (type) {
+    case 'floodwatch':
+      return wet || world.maxPopulation >= BUILDINGS.floodwatch.unlockPop ? null : `Locked: reach ${num(BUILDINGS.floodwatch.unlockPop)} residents`;
+    case 'reclaim':
+      return ownsKind(world, 'flats') || world.maxPopulation >= BUILDINGS.reclaim.unlockPop ? null : `Locked: reach ${num(BUILDINGS.reclaim.unlockPop)} residents`;
+    case 'tidal':
+    case 'pumphouse':
+      return wet ? null : 'Needs the Shoals, the Sunk or Reedmere';
+    default:
+      return undefined;
+  }
 }
 
 /** Turf part of a gate (§4.5): enough footprint tiles on the gang's turf. Null when it holds. */
@@ -163,9 +243,16 @@ export function lockedReason(world: World, tool: ToolId): string | null {
   }
   if (!isBuildingTool(tool)) return null;
   const def = BUILDINGS[tool];
-  // Megacity types Step 0b added hidden (MEGACITY §6.3) stay locked until their package lifts `hidden`.
+  // Hidden types (frames, the pump hall, any dropped optional type) are never in a tray (MEGACITY §3.2, §6.3).
   if (def.hidden) return 'Locked: not yet';
-  if (def.gate) return gateReason(world, def.gate);
+  const special = districtUnlock(world, tool);
+  if (special !== undefined) return special;
+  if (def.gate) {
+    const g = gateReason(world, def.gate, tool);
+    if (g) return g;
+    if (tool === 'terminal' && world.vertical.liveStations.size < 4) return 'Needs a live ribbon of 4 stations';
+    return null;
+  }
   if (world.maxPopulation >= def.unlockPop) return null;
   return `Locked: reach ${num(def.unlockPop)} residents`;
 }
@@ -193,12 +280,212 @@ function stackCount(world: World): number {
   return n;
 }
 
-/** Current price of placing one building of this type, with every modifier. */
-export function buildingCost(world: World, type: BuildingType): number {
+/**
+ * Current price of placing one building of this type, with every modifier. With a footprint `at`, a district's
+ * `buildCostMul` applies when the whole footprint lies inside a district of that kind (MEGACITY §3.7).
+ */
+export function buildingCost(world: World, type: BuildingType, at?: { x: number; y: number; size: number }): number {
   const m = world.mods;
   let c = BUILDINGS[type].cost * m.buildCostMul * (m.costMul[type] ?? 1) * creditMul(world, type);
   if (type === 'stack') c *= Math.pow(STACK_COST_SCALE, stackCount(world));
+  if (at) c *= districtBuildMul(world, type, at.x, at.y, at.size);
   return Math.round(c);
+}
+
+// ── Districts (MEGACITY §3.4, §3.5, §3.7, §6.3) ─────────────────────────────
+
+/** The refusal on a locked tile (§3.4, §5.3). */
+export const NOT_ANNEXED = 'Not annexed yet';
+
+/** The slot of a locked in-bounds tile, else −1. */
+export function lockedSlotAt(world: World, x: number, y: number): SlotId {
+  if (!world.inBounds(x, y) || world.isOwned(x, y)) return -1;
+  return world.slotAt(x, y);
+}
+
+/** The district kind every tile of a footprint lies in, or null when it straddles kinds or locked land. */
+export function footprintKind(world: World, x: number, y: number, size: number): DistrictKind | null {
+  let kind: DistrictKind | null = null;
+  for (let dy = 0; dy < size; dy++)
+    for (let dx = 0; dx < size; dx++) {
+      if (!world.isOwned(x + dx, y + dy)) return null;
+      const k = world.kindAt(x + dx, y + dy);
+      if (kind === null) kind = k;
+      else if (k !== kind) return null;
+    }
+  return kind;
+}
+
+/** A district's buildCostMul for a type when the footprint lies inside one district of a kind (§3.7). */
+export function districtBuildMul(world: World, type: BuildingType, x: number, y: number, size: number): number {
+  const k = footprintKind(world, x, y, size);
+  return (k && DISTRICTS[k]?.mods.buildCostMul?.[type]) ?? 1;
+}
+
+/** A road tile next to a different terrace step (§3.7 Terraces: roads cost double on slopes). */
+export function onSlope(world: World, x: number, y: number): boolean {
+  const t = world.tileAt(x, y);
+  if (!t || t.terrain !== Terrain.Land) return false;
+  for (const [dx, dy] of [
+    [1, 0],
+    [-1, 0],
+    [0, 1],
+    [0, -1],
+  ]) {
+    const n = world.tileAt(x + dx, y + dy);
+    if (n && n.terrain === Terrain.Land && n.elev !== t.elev) return true;
+  }
+  return false;
+}
+
+/** The district multiplier on a road tile's price (§3.7): roads (land), bridges (water) and slopes. */
+export function districtRoadMul(world: World, x: number, y: number, water: boolean): number {
+  const mods = DISTRICTS[world.kindAt(x, y)]?.mods;
+  if (!mods) return 1;
+  if (water) return mods.bridgeCostMul ?? 1;
+  let m = mods.roadCostMul ?? 1;
+  if (mods.slopeRoadMul && onSlope(world, x, y)) m *= mods.slopeRoadMul;
+  return m;
+}
+
+/** A district's zoning price multiplier on a tile (§3.7: Kessel Flats Fab zoning half price). */
+export function districtZoneMul(world: World, x: number, y: number, tool: 'res' | 'com' | 'ind'): number {
+  return DISTRICTS[world.kindAt(x, y)]?.mods.zoneCostMul?.[tool] ?? 1;
+}
+
+/** How many of a port type the city may have at its district count (§3.5); undefined for other types. */
+export function portLimit(world: World, type: BuildingType): number | undefined {
+  const owned = world.districts.owned.length;
+  if (type === 'seaport') return PORT_LIMITS.seaport(owned);
+  if (type === 'airport') return PORT_LIMITS.airport(owned);
+  if (type === 'spaceport') return PORT_LIMITS.spaceport(owned);
+  return undefined;
+}
+
+const ORDINAL = ['first', 'second', 'third', 'fourth', 'fifth', 'sixth', 'seventh'];
+
+/** "A third Seaport needs 4 districts", or "Only 4 Seaports per city" when no district count lifts it (§3.5). */
+export function portLimitReason(world: World, type: BuildingType, have: number): string {
+  const def = BUILDINGS[type];
+  const R = world.region;
+  const cap = portLimit(world, type) ?? 0;
+  for (let o = world.districts.owned.length + 1; o <= R * R; o++) {
+    const next = type === 'seaport' ? PORT_LIMITS.seaport(o) : type === 'airport' ? PORT_LIMITS.airport(o) : PORT_LIMITS.spaceport(o);
+    if (next > cap) {
+      const word = ORDINAL[have] ?? `${have + 1}th`;
+      return `A ${word} ${def.name} needs ${o} districts`;
+    }
+  }
+  return cap === 1 ? `One ${def.name} per city` : `Only ${cap} ${def.plural ?? `${def.name}s`} per city`;
+}
+
+/** Open water a berth may use (§3.5): in the city, water, no bridge, no rail. */
+function ownedOpenWater(world: World, x: number, y: number): boolean {
+  if (!world.isOwned(x, y)) return false;
+  const i = y * world.N + x;
+  const t = world.tiles[i];
+  return t.terrain === Terrain.Water && !t.road && world.rail[i] === 0;
+}
+
+/**
+ * shoreFacing with the berth on owned water (§3.5: a Seaport's berth tiles must be owned open water; the ship's
+ * approach may cross locked water). Sides tested S, E, N, W as ports.shoreFacing.
+ */
+export function ownedShoreFacing(world: World, x: number, y: number, size: number): 0 | 1 | 2 | 3 | -1 {
+  for (const face of [2, 1, 0, 3] as const) {
+    let ok = true;
+    for (let k = 0; k < size && ok; k++)
+      for (let d = 1; d <= SEAPORT.berthDepth; d++) {
+        const bx = face === 1 ? x + size - 1 + d : face === 3 ? x - d : x + k;
+        const by = face === 0 ? y - d : face === 2 ? y + size - 1 + d : y + k;
+        if (!ownedOpenWater(world, bx, by)) {
+          ok = false;
+          break;
+        }
+      }
+    if (ok) return face;
+  }
+  return -1;
+}
+
+/** The Tidal Turbine's site (§6.3): every footprint tile owned open water, not a berth, and 2 sides facing water. */
+function waterSiteReason(world: World, x: number, y: number, size: number): string | null {
+  for (let dy = 0; dy < size; dy++)
+    for (let dx = 0; dx < size; dx++) {
+      if (!ownedOpenWater(world, x + dx, y + dy)) return 'Needs open water';
+      if (isBerthTile(world, x + dx, y + dy)) return 'Keep the berth clear';
+      if (world.tiles[(y + dy) * world.N + x + dx].buildingId >= 0) return 'Site is occupied';
+    }
+  let sides = 0;
+  for (const face of [0, 1, 2, 3]) {
+    let all = true;
+    for (let k = 0; k < size && all; k++) {
+      const bx = face === 1 ? x + size : face === 3 ? x - 1 : x + k;
+      const by = face === 0 ? y - 1 : face === 2 ? y + size : y + k;
+      const t = world.tileAt(bx, by);
+      all = !!t && t.terrain === Terrain.Water;
+    }
+    if (all) sides++;
+  }
+  return sides >= 2 ? null : 'Needs 2 sides on open water';
+}
+
+/** Pump Houses per district (§6.3) and their distance from the old pump hall. */
+export const PUMP_RULES = { maxPerDistrict: 16, hallRadius: 6, days: 90 } as const;
+
+/** Chebyshev gap between two footprints (0 when they touch or overlap). */
+function footprintGap(ax: number, ay: number, as: number, bx: number, by: number, bs: number): number {
+  const gx = Math.max(0, bx - (ax + as - 1), ax - (bx + bs - 1));
+  const gy = Math.max(0, by - (ay + as - 1), ay - (by + bs - 1));
+  return Math.max(gx, gy);
+}
+
+/** The district-specific site rules of a building (§6.3, §3.5, §3.7), or null when the site is fine. */
+function districtSiteReason(world: World, type: BuildingType, x: number, y: number, size: number): string | null {
+  const def = BUILDINGS[type];
+  // Every building footprint stands on one terrace step (§3.7: "Buildings need flat ground").
+  const e0 = world.tileAt(x, y)?.elev ?? 0;
+  for (let dy = 0; dy < size; dy++)
+    for (let dx = 0; dx < size; dx++) if ((world.tileAt(x + dx, y + dy)?.elev ?? 0) !== e0) return 'Needs flat ground';
+  const kind = footprintKind(world, x, y, size);
+  if (def.gate?.district && kind !== def.gate.district) return `Must stand in ${districtLabel(def.gate.district)}`;
+  if (type === 'geothermal' && e0 < 1) return 'Needs a terrace step';
+  if (type === 'pumphouse') {
+    if (kind !== 'sunk' && kind !== 'shoals' && kind !== 'reedmere') return 'Needs the Shoals, the Sunk or Reedmere';
+    for (const b of world.buildings.values())
+      if (b.type === 'pumphall' && footprintGap(x, y, size, b.x, b.y, b.size) <= PUMP_RULES.hallRadius) return 'Too close to the old pump hall';
+    const slot = world.slotAt(x, y);
+    let n = 0;
+    for (const b of world.buildings.values()) if (b.type === 'pumphouse' && world.slotAt(b.x, b.y) === slot) n++;
+    if (n >= PUMP_RULES.maxPerDistrict) return `This district has its ${PUMP_RULES.maxPerDistrict} Pump Houses`;
+  }
+  // A second (and third) Airport stands in a Tarmac district (§3.5).
+  if (type === 'airport' && countBuildings(world, 'airport') >= 1 && kind !== 'tarmac') return 'Another Airport needs Tarmac Reach';
+  return null;
+}
+
+/** Ruin pay this sim month (§3.7: RUINS.payCapMonth), per world. */
+const RUIN_PAY = new WeakMap<World, { month: number; paid: number }>();
+
+/**
+ * A ruin came back (§3.3, WP-1's growth calls this when a ruin recovers): its ground turns Plain, the city's
+ * `ruinsRestored` grows by one and, in a district with `restorePay` (the Sunk), the city is paid up to
+ * RUINS.payCapMonth a sim month. Returns the credits paid.
+ */
+export function ruinRestored(world: World, x: number, y: number): number {
+  const t = world.tileAt(x, y);
+  if (!t || !world.isOwned(x, y)) return 0;
+  world.setGround(x, y, Ground.Plain);
+  world.districts.ruinsRestored = (world.districts.ruinsRestored ?? 0) + 1;
+  const pay = DISTRICTS[world.kindAt(x, y)]?.mods.restorePay ?? 0;
+  if (!pay) return 0;
+  const month = Math.floor(world.tick / 30);
+  let s = RUIN_PAY.get(world);
+  if (!s || s.month !== month) RUIN_PAY.set(world, (s = { month, paid: 0 }));
+  const v = Math.max(0, Math.min(pay, RUINS.payCapMonth - s.paid));
+  s.paid += v;
+  world.funds += v;
+  return v;
 }
 
 /** Cost of raising a Stratablock to `stage` (no credit, no plinth scaling). */
@@ -267,6 +554,15 @@ function planRoad(world: World, tool: RoadTool, from: Point, to: Point, plan: Ac
     const p = path[k];
     const t = tiles[p.y * N + p.x];
     const water = t.terrain === Terrain.Water;
+    if (!world.isOwned(p.x, p.y)) {
+      // Locked land (MEGACITY §3.4): refused tile by tile, the pill names the district.
+      plan.tiles.push({ x: p.x, y: p.y, ok: false });
+      kinds.push(toolKind);
+      reason ??= NOT_ANNEXED;
+      if (plan.slot === undefined) plan.slot = world.slotAt(p.x, p.y);
+      continue;
+    }
+    const dmul = districtRoadMul(world, p.x, p.y, water);
     if (t.road && t.roadKind === RoadKind.Highway && toolKind !== RoadKind.Highway) {
       // The drag passes "through" the highway: this is what makes crossings work.
       plan.tiles.push({ x: p.x, y: p.y, ok: true });
@@ -295,7 +591,7 @@ function planRoad(world: World, tool: RoadTool, from: Point, to: Point, plan: Ac
       upgrades++;
       if (result === RoadKind.Ramp) ramps++;
       if (result === RoadKind.Highway) converted.push(p.y * N + p.x);
-      plan.cost += Math.max(0, price - (roadPrice(t.roadKind, water) ?? 0));
+      plan.cost += Math.max(0, price - (roadPrice(t.roadKind, water) ?? 0)) * dmul;
       continue;
     }
     let ok = t.buildingId < 0 && !(t.zone !== ZoneType.None && t.level > 0);
@@ -317,7 +613,7 @@ function planRoad(world: World, tool: RoadTool, from: Point, to: Point, plan: Ac
     }
     changes++;
     if (target === RoadKind.Ramp) ramps++;
-    plan.cost += price ?? 0;
+    plan.cost += (price ?? 0) * dmul;
   }
   plan.roadKinds = kinds;
   plan.upgrades = upgrades;
@@ -447,6 +743,24 @@ export interface PlanOpts {
   layer?: 'ground';
   /** Building ids whose demolition fee is waived (Game's full refund for buildings placed under SAFETY.refundSec ago). */
   waive?: ReadonlySet<number>;
+  /** Corp Spire: who pays for it (MEGACITY §6.2). Missing → Nacre (today's numbers). */
+  sponsor?: 'basalt' | 'nacre' | 'none';
+  /** Faction buildings and Spires: the design picked in the confirm pill (0 = today's art). Missing → a hash of the id. */
+  look?: 0 | 1 | 2 | 3;
+}
+
+/** Designs per family (§6.2): Spires by sponsor, the five faction buildings. Look 0 is today's art. */
+export function lookCount(b: Pick<Building, 'type' | 'sponsor'>): number {
+  if (b.type === 'spire') return b.sponsor === 'basalt' || b.sponsor === 'none' ? 3 : 4;
+  if (b.type === 'foundry' || b.type === 'glarewall' || b.type === 'tidemarket' || b.type === 'roost' || b.type === 'commons') return 3;
+  return 1;
+}
+
+/** A new placement that skipped the picker gets a hash of its id (§3.2). */
+export function lookHash(id: number, n: number): number {
+  let h = Math.imul(id | 0, 0x9e3779b1) >>> 0;
+  h ^= h >>> 15;
+  return n > 0 ? h % n : 0;
 }
 
 /**
@@ -482,10 +796,25 @@ export function planAction(world: World, tool: ToolId, from: Point, to: Point, o
       return plan;
     }
     changes = planSkyway(world, roadPath(from, to), plan);
+    const lockedTile = plan.tiles.find((p) => lockedSlotAt(world, p.x, p.y) >= 0);
+    if (lockedTile) {
+      // A skyway over locked land is refused whole, like a blocked tile (MEGACITY §3.4).
+      plan.slot = world.slotAt(lockedTile.x, lockedTile.y);
+      plan.reason = NOT_ANNEXED;
+      plan.tiles.forEach((p) => (p.ok = false));
+      changes = 0;
+    }
   } else if (isZoneTool(tool)) {
     const zone = ZONES[tool].zone;
+    let lockedTiles = 0;
     for (const p of rectTiles(world, from, to)) {
       const t = world.tileAt(p.x, p.y)!;
+      if (!world.isOwned(p.x, p.y)) {
+        plan.tiles.push({ ...p, ok: false });
+        lockedTiles++;
+        if (plan.slot === undefined) plan.slot = world.slotAt(p.x, p.y);
+        continue;
+      }
       if (t.zone === zone) {
         plan.tiles.push({ ...p, ok: true });
         continue;
@@ -498,10 +827,11 @@ export function planAction(world: World, tool: ToolId, from: Point, to: Point, o
       plan.tiles.push({ ...p, ok });
       if (ok) {
         changes++;
-        plan.cost += ZONES[tool].cost;
+        plan.cost += ZONES[tool].cost * districtZoneMul(world, p.x, p.y, tool);
       } else blocked++;
     }
-    if (blocked) plan.reason = 'Some tiles are occupied';
+    if (lockedTiles) plan.reason = NOT_ANNEXED;
+    else if (blocked) plan.reason = 'Some tiles are occupied';
   } else if (tool === 'bulldoze' && opts?.layer !== 'ground' && world.inBounds(from.x, from.y) && world.sky[world.idx(from.x, from.y)] !== 0) {
     // Sky drag (§3.6): the first tile carries a skyway, so this drag removes skyway segments only.
     plan.layer = 'sky';
@@ -518,9 +848,17 @@ export function planAction(world: World, tool: ToolId, from: Point, to: Point, o
     // Ground drag (§3.6): roads, zones, buildings and rail; skyway decks keep spanning the cleared site.
     plan.layer = 'ground';
     const seenBuildings = new Set<number>();
+    let fixedHit = false;
     for (const p of rectTiles(world, from, to)) {
       const t = world.tileAt(p.x, p.y)!;
       if (t.buildingId >= 0) {
+        const fb = world.buildings.get(t.buildingId);
+        if (fb && BUILDINGS[fb.type].fixed) {
+          // Frames and the old pump hall stay (MEGACITY §3.2): a frame is finished, never demolished.
+          plan.tiles.push({ ...p, ok: false });
+          fixedHit = true;
+          continue;
+        }
         plan.tiles.push({ ...p, ok: true });
         if (!seenBuildings.has(t.buildingId)) {
           seenBuildings.add(t.buildingId);
@@ -539,7 +877,7 @@ export function planAction(world: World, tool: ToolId, from: Point, to: Point, o
         plan.cost += bulldozeTileCost(world, p.x, p.y);
       }
     }
-    if (!changes) plan.reason = 'Nothing to demolish';
+    if (!changes) plan.reason = fixedHit ? "This stays: it can't be demolished" : 'Nothing to demolish';
   } else if (tool === 'skybridge' || tool === 'rail') {
     const locked = lockedReason(world, tool);
     if (locked) {
@@ -558,18 +896,24 @@ export function planAction(world: World, tool: ToolId, from: Point, to: Point, o
     let onRail = false;
     let onSky = false;
     let access = false;
+    const onWater = def.site === 'water';
+    let lockedSlot = -1;
     for (let dy = 0; dy < def.size; dy++)
       for (let dx = 0; dx < def.size; dx++) {
         const x = o.x + dx;
         const y = o.y + dy;
         const t = world.tileAt(x, y);
-        const ok =
-          !!t &&
-          t.terrain === Terrain.Land &&
-          !t.road &&
-          t.buildingId < 0 &&
-          (t.zone === ZoneType.None || t.level === 0);
-        if (t && t.terrain === Terrain.Water) water = true;
+        const owned = world.isOwned(x, y);
+        if (t && !owned && lockedSlot < 0) lockedSlot = world.slotAt(x, y);
+        const ok = onWater
+          ? !!t && owned && t.terrain === Terrain.Water && !t.road && t.buildingId < 0
+          : !!t &&
+            owned &&
+            t.terrain === Terrain.Land &&
+            !t.road &&
+            t.buildingId < 0 &&
+            (t.zone === ZoneType.None || t.level === 0);
+        if (t && t.terrain === Terrain.Water && !onWater) water = true;
         if (t && world.rail[world.idx(x, y)]) onRail = true;
         if (t && world.sky[world.idx(x, y)]) onSky = true;
         if (t && !access && world.hasRoadAccess(x, y)) access = true;
@@ -589,19 +933,31 @@ export function planAction(world: World, tool: ToolId, from: Point, to: Point, o
     };
     const locked = lockedReason(world, tool);
     if (locked) return bad(locked);
-    if (def.maxCount !== undefined && countBuildings(world, tool) >= def.maxCount) return bad(maxCountReason(tool));
+    if (lockedSlot >= 0) {
+      // Locked land (MEGACITY §3.4): the pill names the district; the toast offers the City map.
+      plan.slot = lockedSlot;
+      return bad(NOT_ANNEXED);
+    }
+    const ports = portLimit(world, tool);
+    if (ports !== undefined) {
+      const have = countBuildings(world, tool);
+      if (have >= ports) return bad(portLimitReason(world, tool, have));
+    } else if (def.maxCount !== undefined && countBuildings(world, tool) >= def.maxCount) return bad(maxCountReason(tool));
     if (!allOk) {
-      plan.reason = water ? "Can't build on water" : 'Site is occupied';
+      plan.reason = onWater ? 'Needs open water' : water ? "Can't build on water" : 'Site is occupied';
       return plan;
     }
     if (onRail && !def.station) return bad('Rail in the way');
     if (onSky && !def.skyAnchor) return bad('Skyway in the way');
     if (def.needsRoad && !access) return bad('Needs road access');
-    if (def.site === 'shore' && shoreFacing(world, o.x, o.y, def.size) < 0) return bad('Needs a straight shore');
+    const siteReason = onWater ? waterSiteReason(world, o.x, o.y, def.size) : districtSiteReason(world, tool, o.x, o.y, def.size);
+    if (siteReason) return bad(siteReason);
+    if (def.site === 'shore' && ownedShoreFacing(world, o.x, o.y, def.size) < 0)
+      return bad(shoreFacing(world, o.x, o.y, def.size) >= 0 ? 'The berth must be in the city' : 'Needs a straight shore');
     const turfReason = turfGateReason(world, def.gate, o.x, o.y, def.size);
     if (turfReason) return bad(turfReason);
     changes = 1;
-    plan.cost = buildingCost(world, tool);
+    plan.cost = buildingCost(world, tool, plan.footprint);
     // Costly placements wait for ✓ (§7.7); the note says what the player is buying into.
     if (plan.cost >= SAFETY.confirmCost) plan.confirm = true;
     const loud = plan.loudTiles?.length ?? 0;
@@ -671,6 +1027,9 @@ export function applyAction(world: World, tool: ToolId, from: Point, to: Point, 
   } else if (tool === 'skybridge' && plan.span) {
     const s = plan.span;
     world.addLink({ ax: s.ax, ay: s.ay, bx: s.bx, by: s.by });
+    // A two-bridge route builds both (MEGACITY §5.4; the plan confirmed first).
+    const r = plan.route?.second;
+    if (r) world.addLink({ ax: r.ax, ay: r.ay, bx: r.bx, by: r.by });
     vertical.refresh(world);
   } else if (tool === 'rail' && plan.railMasks) {
     const masks = plan.railMasks;
@@ -692,9 +1051,18 @@ export function applyAction(world: World, tool: ToolId, from: Point, to: Point, 
     if (tool === 'stack') world.setStage(b, 1, STACK_STAGES[0].days);
     const def = BUILDINGS[tool];
     if (def.site === 'shore') {
-      const f = shoreFacing(world, fp.x, fp.y, fp.size);
+      const f = ownedShoreFacing(world, fp.x, fp.y, fp.size);
       b.facing = f === -1 ? 2 : f;
     }
+    // Spire sponsor and faction looks (MEGACITY §6.2): the picker's choice, else Nacre and a hash of the id.
+    if (tool === 'spire') b.sponsor = opts?.sponsor ?? 'nacre';
+    const looks = lookCount(b);
+    if (looks > 1) {
+      const pick = opts?.look;
+      b.look = (pick !== undefined && pick < looks ? pick : lookHash(b.id, looks)) as 0 | 1 | 2 | 3;
+      if (b.look !== 0) world.coverageVersion++;
+    }
+    if (tool === 'pumphouse') b.reclaim = PUMP_RULES.days;
     // Spaceport (§5.3): the countdown in days; Game adds the real-time floor (waitSec).
     if (tool !== 'stack' && def.buildDays) b.buildDays = def.buildDays;
     consumeCredit(world, tool);
@@ -833,6 +1201,47 @@ export function raiseStage(world: World, id: number, crown?: CrownId): ActionRes
   }
   world.pushSignal({ t: 'action', tool: 'raise', x: b.x, y: b.y });
   vertical.refresh(world);
+  return { ok: true, cost: st.cost };
+}
+
+// ── Skeleton Row frames (MEGACITY §3.7) ─────────────────────────────────────
+
+/** Share of the Stratablock plinth a frame costs to finish (§3.7). */
+export const FRAME_FINISH_SHARE = 0.6;
+
+/**
+ * What finishing a frame costs and why it can't happen yet: 60% of the Stratablock plinth (STACK_STAGES[0].cost,
+ * with the city's cost modifiers but not the per-stack 1.15 scale), and the Stratablock must be unlocked.
+ */
+export function frameStatus(world: World, id: number): { cost: number; reason: string | null } {
+  const b = world.buildings.get(id);
+  const m = world.mods;
+  const cost = Math.round(STACK_STAGES[0].cost * FRAME_FINISH_SHARE * m.buildCostMul * (m.costMul.stack ?? 1));
+  if (!b || b.type !== 'frame') return { cost, reason: 'Not a frame' };
+  const locked = lockedReason(world, 'stack');
+  if (locked) return { cost, reason: locked };
+  if (world.funds < cost) return { cost, reason: `Not enough credits (need ${fmt(cost)})` };
+  return { cost, reason: null };
+}
+
+/**
+ * Finish a Skeleton Row frame (§3.7): the frame is replaced by a Stratablock at stage 1 complete (no plinth wait);
+ * later stages as normal. Turf on the footprint clears as for any building.
+ */
+export function finishFrame(world: World, id: number): ActionResult {
+  const st = frameStatus(world, id);
+  if (st.reason) return { ok: false, reason: st.reason, cost: 0 };
+  const f = world.buildings.get(id)!;
+  const { x, y } = f;
+  world.removeBuilding(id);
+  const b = world.addBuilding('stack', x, y);
+  if (!b) return { ok: false, reason: 'Site is occupied', cost: 0 };
+  world.setStage(b, 1, 0);
+  world.funds -= st.cost;
+  world.pushSignal({ t: 'built', type: 'stack', id: b.id });
+  world.pushSignal({ t: 'action', tool: 'raise', x, y });
+  vertical.refresh(world);
+  turf.refreshStats(world);
   return { ok: true, cost: st.cost };
 }
 

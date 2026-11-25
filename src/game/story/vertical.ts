@@ -16,9 +16,13 @@
 import { artOffset } from '../districts/slots';
 import { buildingStats, completeStage } from '../buildingStats';
 import { BUILDINGS, CROWNS, RIBBON, SKYBRIDGE, STACK_SHADESIDE, STACK_STAGES, TURF_OWNER } from '../config';
+import { heightOf, roofOf } from '../heights';
 import { districtName } from '../news';
+import { parcelAt } from '../parcels';
 import { scratchFor } from '../frame';
-import { Terrain, ZoneType, type ActionPlan, type Building, type Tile } from '../types';
+import { tierCapacity } from '../sim/tiers';
+import { TRIPS_PER_UNIT } from '../sim/tuning';
+import { Terrain, ZoneType, type ActionPlan, type BridgePayoff, type Building, type MomentId, type Tile } from '../types';
 import type { World } from '../world';
 import { composeLayers, resetLayers } from './mods';
 import type { BuildingStats, CrownId, GangId, ModPatch, SimLayers, SkyLink } from './types';
@@ -49,6 +53,8 @@ const scratch = scratchFor((area) => ({
   mark: new Uint8Array(area),
 }));
 const compStations: number[] = [];
+/** Lobby land value per tile (max-combined between lobbies), scratch for writeLayers. */
+const lobbyLvAt = new Map<number, number>();
 
 // ── Anchors ─────────────────────────────────────────────────────────────────
 
@@ -62,15 +68,97 @@ export function isTallBuilding(b: Building): boolean {
   return buildingStats(b, S).tall;
 }
 
-/** Is (x, y) a tall skybridge anchor right now? */
+/** Is (x, y) a tall skybridge anchor right now (MEGACITY §5.3: owned, and a tall tile, an L3 parcel or a tall building)? */
 export function isTallAt(world: World, x: number, y: number): boolean {
-  const t = world.tileAt(x, y);
-  if (!t) return false;
+  return anchorAt(world, x, y) !== null;
+}
+
+// ── Skybridge v2 anchors (MEGACITY §5.3, §6.1) ──────────────────────────────
+
+/** A skybridge anchor: a tall zone tile, an L3 parcel (one anchor, keyed on its head) or a tall building. */
+export interface Anchor {
+  /** anchorKey: the building id, else −(head tile index + 1). */
+  key: number;
+  /** The anchor tile index (Sky Lobby anchors): the parcel head, the zone tile, or a building's top-left. */
+  i: number;
+  /** Footprint, inclusive. */
+  x0: number;
+  y0: number;
+  x1: number;
+  y1: number;
+  building: Building | null;
+  parcel: boolean;
+  /** Bridges it takes (§5.3 rule 6). */
+  limit: number;
+  /** Facade top a tube attaches under (heights.ts roofOf). */
+  roof: number;
+}
+
+/** The anchor at (x, y), or null (not tall, or on locked land). */
+export function anchorAt(world: World, x: number, y: number): Anchor | null {
+  if (!world.isOwned(x, y)) return null;
+  const N = world.N;
+  const t = world.tiles[y * N + x];
   if (t.buildingId >= 0) {
     const b = world.buildings.get(t.buildingId);
-    return !!b && isTallBuilding(b);
+    if (!b || !isTallBuilding(b)) return null;
+    return {
+      key: b.id,
+      i: b.y * N + b.x,
+      x0: b.x,
+      y0: b.y,
+      x1: b.x + b.size - 1,
+      y1: b.y + b.size - 1,
+      building: b,
+      parcel: false,
+      limit: b.type === 'kitemast' ? SKYBRIDGE.maxPerMast : SKYBRIDGE.maxPerBuilding,
+      roof: roofOf(world, b.x, b.y),
+    };
   }
-  return isTallZoneTile(t);
+  if (t.abandoned || (t.zone !== RES && t.zone !== COM)) return null;
+  const p = parcelAt(world, x, y);
+  if (p) {
+    // A parcel is one anchor at its drawn (lowest) level: an L3 tile inside an L2 parcel is not tall.
+    if (p.level !== 3) return null;
+    return { key: -(p.hy * N + p.hx + 1), i: p.hy * N + p.hx, x0: p.x, y0: p.y, x1: p.x + p.w - 1, y1: p.y + p.h - 1, building: null, parcel: true, limit: SKYBRIDGE.maxPerParcel, roof: roofOf(world, p.hx, p.hy) };
+  }
+  if (!isTallZoneTile(t)) return null;
+  return { key: -(y * N + x + 1), i: y * N + x, x0: x, y0: y, x1: x, y1: y, building: null, parcel: false, limit: SKYBRIDGE.maxPerAnchor, roof: roofOf(world, x, y) };
+}
+
+/** Heads (residents + jobs) of an anchor: a parcel counts every member (§5.5). */
+export function anchorHeads(world: World, a: Anchor): number {
+  if (a.building) {
+    const st = buildingStats(a.building, S);
+    return st.residents + st.jobsCom + st.jobsInd;
+  }
+  let n = 0;
+  const N = world.N;
+  const alley = world.fields.alleyNear;
+  for (let y = a.y0; y <= a.y1; y++)
+    for (let x = a.x0; x <= a.x1; x++) {
+      const i = y * N + x;
+      const t = world.tiles[i];
+      if (t.zone === ZoneType.None || t.level < 1 || t.abandoned) continue;
+      n += tierCapacity(t.zone, t.level, t.wealth, alley[i]);
+    }
+  return n;
+}
+
+/** Car trips a day an anchor makes (the traffic pass's per-head rates; a building its own trips). */
+function anchorTrips(world: World, a: Anchor): number {
+  if (a.building) return buildingStats(a.building, S).trips;
+  let n = 0;
+  const N = world.N;
+  const alley = world.fields.alleyNear;
+  for (let y = a.y0; y <= a.y1; y++)
+    for (let x = a.x0; x <= a.x1; x++) {
+      const i = y * N + x;
+      const t = world.tiles[i];
+      if (t.zone === ZoneType.None || t.level < 1 || t.abandoned) continue;
+      n += tierCapacity(t.zone, t.level, t.wealth, alley[i]) * (TRIPS_PER_UNIT[t.zone] ?? 0);
+    }
+  return n;
 }
 
 /** Powered (and online) anchor at (x, y). */
@@ -93,7 +181,10 @@ export function anchorKey(world: World, x: number, y: number): number {
   const N = world.N;
   const t = world.tileAt(x, y);
   if (!t) return 0;
-  return t.buildingId >= 0 ? t.buildingId : -(y * N + x + 1);
+  if (t.buildingId >= 0) return t.buildingId;
+  // A parcel is one anchor keyed on its head (MEGACITY §6.1).
+  const p = parcelAt(world, x, y);
+  return p ? -(p.hy * N + p.hx + 1) : -(y * N + x + 1);
 }
 
 /** Tiles strictly between a link's anchors. */
@@ -114,7 +205,7 @@ export function forEachGapTile(l: SkyLink, fn: (x: number, y: number) => void): 
   }
 }
 
-/** Sealed: an anchor is no longer tall. Sealed bridges are dark, free and give nothing (§4.3). */
+/** Sealed ("dark" on screen, MEGACITY §5.3 rule 9): an anchor is no longer tall. Dark bridges are free and give nothing. */
 export function linkSealed(world: World, l: SkyLink): boolean {
   return !isTallAt(world, l.ax, l.ay) || !isTallAt(world, l.bx, l.by);
 }
@@ -429,7 +520,7 @@ export function refresh(world: World, opts?: { quiet?: boolean }): void {
     }
   }
 
-  // Skybridges: active = both anchors tall and powered.
+  // Skybridges: active = both anchors tall and powered; "dark" on screen when an end stops being tall (§5.3 rule 9).
   let sealedNews = false;
   const active = v.activeLinks;
   const wasActive = active.size ? [...active] : null;
@@ -439,10 +530,11 @@ export function refresh(world: World, opts?: { quiet?: boolean }): void {
     if (!sealed && anchorPowered(world, l.ax, l.ay) && anchorPowered(world, l.bx, l.by)) active.add(l.id);
     else if (sealed && !quiet && !sealedNews && wasActive?.includes(l.id)) {
       sealedNews = true;
-      world.addNews('Skybridge sealed: an anchor dropped below the skyline.', 'warn');
+      world.addNews('Skybridge dark: an anchor dropped below the skyline.', 'warn');
     }
   }
   m.skybridges = active.size;
+  refreshLobbies(world, quiet);
 
   // Rail: connected components, powered stations, live networks.
   prevLive.set(v.railLive);
@@ -517,6 +609,59 @@ export function refresh(world: World, opts?: { quiet?: boolean }): void {
   world.events.emit('vertical');
 }
 
+/** Number words for the lobby news line (§5.5, Appendix B). */
+const WORDS = ['', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight', 'Nine', 'Ten'];
+
+/** Lobby group keys and their anchors, as last refreshed (for "new lobby" detection), per world. */
+const LOBBY_STATE = new WeakMap<World, { keys: Set<number> }>();
+
+/**
+ * Sky Lobbies (§5.5): connected groups of k ≥ 3 anchors joined by active bridges (a parcel counts once). Writes
+ * world.vertical.lobbies (anchor tile indices, visitors) and lobbyVisitors (capped city-wide), world.stats.skyLobbies,
+ * and announces a new lobby: the city's first with the moment banner, later ones with one news line.
+ */
+function refreshLobbies(world: World, quiet: boolean): void {
+  const v = world.vertical;
+  const L = SKYBRIDGE.lobby;
+  const lobbies: { anchors: number[]; visitors: number }[] = [];
+  let total = 0;
+  let largest = 0;
+  const keys = new Set<number>();
+  const fresh: { anchors: number[]; k: number }[] = [];
+  const prev = LOBBY_STATE.get(world);
+  for (const g of anchorGroups(world).values()) {
+    if (g.length < L.min) continue;
+    const anchors = g.map((a) => a.i).sort((a, b) => a - b);
+    const visitors = lobbyVisitors(g.length);
+    lobbies.push({ anchors, visitors });
+    total += visitors;
+    largest = Math.max(largest, g.length);
+    keys.add(anchors[0]);
+    if (prev && !prev.keys.has(anchors[0]) && !anchors.some((a) => prev.keys.has(a))) fresh.push({ anchors, k: g.length });
+  }
+  const before = v.lobbies.length;
+  v.lobbies = lobbies;
+  v.lobbyVisitors = Math.min(L.cityCap, total);
+  world.stats.skyLobbies = { count: lobbies.length, largest, visitors: v.lobbyVisitors };
+  // Lobby membership feeds coverage (the Halo Lookout works only while bridged into one, O3).
+  if (lobbies.length !== before) world.coverageVersion++;
+  LOBBY_STATE.set(world, { keys: new Set(lobbies.flatMap((l) => l.anchors)) });
+  if (quiet || !prev) return;
+  const N = world.N;
+  for (const f of fresh) {
+    const name = lobbyName(world, f.anchors[0]);
+    if (!world.story.flags.firstSkyLobby) {
+      world.story.flags.firstSkyLobby = true;
+      // MomentId has no 'lobby' (frozen types.ts): the banner rides the 'moment' event under 'region'; it is not recorded.
+      world.events.emit('moment', { id: 'region' as MomentId, title: `SKY LOBBY · ${name.toUpperCase()}`, sub: `${f.k} towers linked: visitors and land value` });
+    } else {
+      const at = f.anchors[0];
+      const where = districtName(at % N, (at / N) | 0, world.seed, artOffset(world));
+      world.addNews(`${WORDS[f.k] ?? f.k} towers in ${where} are one Sky Lobby now: ${name}.`, 'good');
+    }
+  }
+}
+
 /** Rewrite world.layerParts.vertical from the caches refresh() just built. */
 function writeLayers(world: World, L: SimLayers): void {
   const N = world.N;
@@ -528,7 +673,9 @@ function writeLayers(world: World, L: SimLayers): void {
   const SB = SKYBRIDGE;
   const RB = RIBBON;
 
-  // 1. Active skybridges: lv near each end, trips × 0.8 on the anchor tiles (once per anchor).
+  // 1. Active skybridges: lv near each end, trips × 0.8 on the anchors' footprints (once per anchor; a parcel is one
+  //    anchor). In a Sky Lobby (§5.5) its towers' trips are × 0.75 instead, and land value on and within 2 of each of
+  //    them gains +0.02 × min(k, 4) on top.
   if (v.activeLinks.size) {
     mark.fill(0);
     for (const l of world.links) {
@@ -537,17 +684,36 @@ function writeLayers(world: World, L: SimLayers): void {
         const x = e ? l.bx : l.ax;
         const y = e ? l.by : l.ay;
         markDisc(mark, x + 0.5, y + 0.5, SB.lvRadius, 1, N);
-        const t = tiles[y * N + x];
-        const b = t.buildingId >= 0 ? world.buildings.get(t.buildingId) : undefined;
-        if (b) fillRect(mark, b.x, b.y, b.x + b.size - 1, b.y + b.size - 1, 2, N);
+        const a = anchorAt(world, x, y);
+        if (a) fillRect(mark, a.x0, a.y0, a.x1, a.y1, 2, N);
         else mark[y * N + x] |= 2;
       }
+    }
+    const LB = SB.lobby;
+    if (v.lobbies.length) {
+      for (const lob of v.lobbies) {
+        const k = lob.anchors.length;
+        for (const ai of lob.anchors) {
+          const a = anchorAt(world, ai % N, (ai / N) | 0);
+          if (!a) continue;
+          fillRect(mark, a.x0, a.y0, a.x1, a.y1, 4, N);
+          const lv = lobbyLv(k);
+          const x0 = Math.max(0, a.x0 - LB.lvRadius);
+          const y0 = Math.max(0, a.y0 - LB.lvRadius);
+          const x1 = Math.min(N - 1, a.x1 + LB.lvRadius);
+          const y1 = Math.min(N - 1, a.y1 + LB.lvRadius);
+          for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) if (world.ownedAt(y * N + x)) lobbyLvAt.set(y * N + x, Math.max(lobbyLvAt.get(y * N + x) ?? 0, lv));
+        }
+      }
+      for (const [i, lv] of lobbyLvAt) L.lvAdd[i] += lv;
+      lobbyLvAt.clear();
     }
     for (let i = 0; i < area; i++) {
       const k = mark[i];
       if (!k) continue;
       if (k & 1) L.lvAdd[i] += SB.lv;
-      if (k & 2) L.tripMul[i] *= SB.tripMul;
+      if (k & 4) L.tripMul[i] *= LB.tripMul;
+      else if (k & 2) L.tripMul[i] *= SB.tripMul;
     }
   }
 
@@ -650,8 +816,10 @@ export function onDay(world: World): boolean {
 /** Monthly ledger amounts (positive CR) for the "Skybridges" and "Ribbon Rail" expense lines. */
 export function upkeep(world: World): { skybridges: number; rail: number } {
   let sky = 0;
+  const active = world.vertical.activeLinks;
   for (const l of world.links) {
-    if (linkSealed(world, l)) continue; // sealed bridges cost nothing
+    // A dark bridge (an end no longer tall or without power) costs nothing (MEGACITY §5.3 rule 9).
+    if (!active.has(l.id)) continue;
     sky += SKYBRIDGE.upkeepBase + SKYBRIDGE.upkeepPerTile * linkGap(l);
   }
   let n = 0;
@@ -736,113 +904,440 @@ interface Pt {
   y: number;
 }
 
-/**
- * Normalise a drag end on a building to the footprint edge tile facing the
- * other end along the drag axis; a zone tile is its own anchor.
- */
-function edgeAnchor(world: World, at: Pt, toward: Pt, axisX: boolean): Pt {
-  const b = world.buildingAt(at.x, at.y);
-  if (!b) return { x: at.x, y: at.y };
-  if (axisX) {
-    const dir = Math.sign(toward.x - at.x);
-    return { x: dir > 0 ? b.x + b.size - 1 : b.x, y: at.y };
-  }
-  const dir = Math.sign(toward.y - at.y);
-  return { x: at.x, y: dir > 0 ? b.y + b.size - 1 : b.y };
-}
-
-/** Does any existing bridge use (x, y) as a gap tile? */
-function gapUsed(world: World, x: number, y: number): boolean {
+/** Does any existing bridge use (x, y) as a gap tile? Returns that link, else null. */
+function gapLinkAt(world: World, x: number, y: number): SkyLink | null {
   for (const l of world.links) {
     const minX = Math.min(l.ax, l.bx);
     const maxX = Math.max(l.ax, l.bx);
     const minY = Math.min(l.ay, l.by);
     const maxY = Math.max(l.ay, l.by);
     if (l.ay === l.by) {
-      if (y === l.ay && x > minX && x < maxX) return true;
-    } else if (x === l.ax && y > minY && y < maxY) return true;
+      if (y === l.ay && x > minX && x < maxX) return l;
+    } else if (x === l.ax && y > minY && y < maxY) return l;
   }
-  return false;
+  return null;
+}
+
+/** The roof a link's tube hangs under: the lower anchor's (§5.3 rule 4). */
+export function linkRoof(world: World, l: Pick<SkyLink, 'ax' | 'ay' | 'bx' | 'by'>): number {
+  return Math.min(roofOf(world, l.ax, l.ay), roofOf(world, l.bx, l.by));
+}
+
+/** A tube's top and bottom in world px for a roof R (§5.3 rule 4): top R − 6, bottom R − 23. */
+export function tubeOf(roof: number): { top: number; bottom: number; clear: number } {
+  const top = roof - SKYBRIDGE.tubeBelowRoof;
+  const bottom = top - SKYBRIDGE.tubeHeight;
+  return { top, bottom, clear: bottom - SKYBRIDGE.clearance };
+}
+
+/** v2 numbers (§5.3, §5.7): gap 1..10, 250 a gap tile. */
+export const SKY_V2 = SKYBRIDGE.v2;
+
+/** The price of a bridge over `gap` tiles (§5.3 rule 8). */
+export function bridgeCost(gap: number): number {
+  return SKYBRIDGE.base + SKY_V2.perTile * gap;
+}
+
+/** A candidate bridge between two anchors: where it runs, what it costs, and why it can't (null when it can). */
+export interface SpanCheck {
+  /** Lined up along a row (axis x) or a column (axis y); null when the footprints share no row or column. */
+  axis: 'x' | 'y' | null;
+  ax: number;
+  ay: number;
+  bx: number;
+  by: number;
+  gap: number;
+  roof: number;
+  cost: number;
+  reason: string | null;
+  /** The gap tile that blocked, when one did. */
+  block: { x: number; y: number } | null;
+}
+
+const NOT_ANNEXED = 'Not annexed yet';
+
+/** "This tower has its 2 bridges" / "This tower has its 3 bridges" / "This building has 4 bridges" (§5.3). */
+export function limitReason(a: Anchor): string {
+  return a.building ? `This building has ${a.limit} bridges` : `This tower has its ${a.limit} bridges`;
 }
 
 /**
- * Skybridge plan (§4.3): a straight drag from one tall anchor to another, 2..8
- * gap tiles, at most 2 bridges per anchor, no shared gap tiles and no gap tile under a
- * skyway deck ("Skyway in the way", EXPANSION §3.7). Fills `plan`
- * (tiles, span, base cost, reason) and returns the number of changes (0 or 1).
- * The caller applies cost multipliers and the funds check.
+ * Check a bridge between anchors A and B (§5.3): lined up (a row or column of one footprint meets the other's), gap
+ * 1..10 between the facing edges, every gap tile lower than the tube's clearance (anything lower passes under; the
+ * row tried first is the middle of the shared band, then outward), crossings ≥ 20 px apart, the anchors' limits, not
+ * already linked. Skyways, rail and roads pass under.
+ */
+export function checkSpan(world: World, A: Anchor, B: Anchor): SpanCheck {
+  const out: SpanCheck = { axis: null, ax: 0, ay: 0, bx: 0, by: 0, gap: 0, roof: Math.min(A.roof, B.roof), cost: 0, reason: null, block: null };
+  const rowsMeet = A.y0 <= B.y1 && B.y0 <= A.y1;
+  const colsMeet = A.x0 <= B.x1 && B.x0 <= A.x1;
+  let lo: number;
+  let hi: number;
+  if (rowsMeet && !colsMeet) {
+    out.axis = 'x';
+    lo = Math.max(A.y0, B.y0);
+    hi = Math.min(A.y1, B.y1);
+    out.gap = B.x0 > A.x1 ? B.x0 - A.x1 - 1 : A.x0 - B.x1 - 1;
+  } else if (colsMeet && !rowsMeet) {
+    out.axis = 'y';
+    lo = Math.max(A.x0, B.x0);
+    hi = Math.min(A.x1, B.x1);
+    out.gap = B.y0 > A.y1 ? B.y0 - A.y1 - 1 : A.y0 - B.y1 - 1;
+  } else {
+    out.reason = 'Not lined up with this tower';
+    return out;
+  }
+  out.cost = bridgeCost(out.gap);
+  if (out.gap < SKY_V2.minGap) {
+    out.reason = 'Towers touch: no gap';
+    return out;
+  }
+  if (out.gap > SKY_V2.maxGap) {
+    out.reason = `Too far: ${SKY_V2.maxGap} tiles at most`;
+    return out;
+  }
+  for (const l of world.links) {
+    const ka = anchorKey(world, l.ax, l.ay);
+    const kb = anchorKey(world, l.bx, l.by);
+    if ((ka === A.key && kb === B.key) || (ka === B.key && kb === A.key)) {
+      out.reason = 'Already linked';
+      return out;
+    }
+  }
+  if (linksOnAnchor(world, A.key) >= A.limit) {
+    out.reason = limitReason(A);
+    return out;
+  }
+  if (linksOnAnchor(world, B.key) >= B.limit) {
+    out.reason = limitReason(B);
+    return out;
+  }
+  const tube = tubeOf(out.roof);
+  // Rows (or columns) of the shared band, middle first.
+  const lanes: number[] = [];
+  const mid = (lo + hi) >> 1;
+  for (let d = 0; d <= hi - lo; d++) {
+    if (mid - d >= lo) lanes.push(mid - d);
+    if (d > 0 && mid + d <= hi) lanes.push(mid + d);
+  }
+  let first: { reason: string; block: { x: number; y: number } } | null = null;
+  for (const lane of lanes) {
+    const fwd = out.axis === 'x' ? B.x0 > A.x1 : B.y0 > A.y1;
+    const ax = out.axis === 'x' ? (fwd ? A.x1 : A.x0) : lane;
+    const ay = out.axis === 'x' ? lane : fwd ? A.y1 : A.y0;
+    const bx = out.axis === 'x' ? (fwd ? B.x0 : B.x1) : lane;
+    const by = out.axis === 'x' ? lane : fwd ? B.y0 : B.y1;
+    const dx = Math.sign(bx - ax);
+    const dy = Math.sign(by - ay);
+    let why: string | null = null;
+    let at: { x: number; y: number } | null = null;
+    for (let k = 1; k <= out.gap && !why; k++) {
+      const x = ax + dx * k;
+      const y = ay + dy * k;
+      if (!world.isOwned(x, y)) why = NOT_ANNEXED;
+      else if (heightOf(world, x, y) > tube.clear) why = 'A taller building is in the way';
+      else {
+        const other = gapLinkAt(world, x, y);
+        if (other && Math.abs(linkRoof(world, other) - out.roof) < SKYBRIDGE.crossGap) why = 'Another skybridge crosses here';
+      }
+      if (why) at = { x, y };
+    }
+    if (!why) {
+      out.ax = ax;
+      out.ay = ay;
+      out.bx = bx;
+      out.by = by;
+      return out;
+    }
+    first ??= { reason: why, block: at! };
+  }
+  out.reason = first?.reason ?? 'A taller building is in the way';
+  out.block = first?.block ?? null;
+  // Report the middle lane's ends so the pill can show where it would run.
+  const fwd = out.axis === 'x' ? B.x0 > A.x1 : B.y0 > A.y1;
+  out.ax = out.axis === 'x' ? (fwd ? A.x1 : A.x0) : mid;
+  out.ay = out.axis === 'x' ? mid : fwd ? A.y1 : A.y0;
+  out.bx = out.axis === 'x' ? (fwd ? B.x0 : B.x1) : mid;
+  out.by = out.axis === 'x' ? mid : fwd ? B.y0 : B.y1;
+  return out;
+}
+
+/** A partner badge (§5.4): the partner's anchor tile, whether it builds, why not, its price, and a two-bridge route. */
+export interface Partner {
+  x: number;
+  y: number;
+  ok: boolean;
+  reason?: string;
+  cost: number;
+  route?: { via: { x: number; y: number } };
+}
+
+/** Scan the lanes of an anchor (each footprint row and column, out to maxGap + 1 tiles) for other anchors. */
+function lanePartners(world: World, A: Anchor, out: Map<number, Anchor>): void {
+  const reach = SKY_V2.maxGap + 1;
+  const add = (x: number, y: number) => {
+    if (!world.inBounds(x, y)) return;
+    const t = world.tiles[y * world.N + x];
+    if (t.buildingId < 0 && t.zone === ZoneType.None) return;
+    const B = anchorAt(world, x, y);
+    if (B && B.key !== A.key && !out.has(B.key)) out.set(B.key, B);
+  };
+  for (let y = A.y0; y <= A.y1; y++)
+    for (let d = 1; d <= reach; d++) {
+      add(A.x1 + d, y);
+      add(A.x0 - d, y);
+    }
+  for (let x = A.x0; x <= A.x1; x++)
+    for (let d = 1; d <= reach; d++) {
+      add(x, A.y1 + d);
+      add(x, A.y0 - d);
+    }
+}
+
+/** Distance between two anchors' footprints (Chebyshev gap). */
+function anchorDist(a: Anchor, b: Anchor): number {
+  const gx = Math.max(0, b.x0 - a.x1, a.x0 - b.x1);
+  const gy = Math.max(0, b.y0 - a.y1, a.y0 - b.y1);
+  return Math.max(gx, gy);
+}
+
+/**
+ * Every partner of the anchor at (ax, ay) (§5.4): anchors in its lanes (green when a bridge builds, a red dot with the
+ * reason otherwise), nearest first; then two-bridge routes (blue "2") to tall towers within 10 tiles that don't line up,
+ * through a valid partner. A few hundred tile checks; recomputed on tap and on 'tiles' events while a source is selected.
+ */
+export function skybridgePartners(world: World, ax: number, ay: number): Partner[] {
+  const A = anchorAt(world, ax, ay);
+  if (!A) return [];
+  const N = world.N;
+  const lane = new Map<number, Anchor>();
+  lanePartners(world, A, lane);
+  const out: Partner[] = [];
+  const direct = [...lane.values()].sort((p, q) => anchorDist(A, p) - anchorDist(A, q) || p.i - q.i);
+  const valid: Anchor[] = [];
+  for (const B of direct) {
+    const c = checkSpan(world, A, B);
+    out.push({ x: B.i % N, y: (B.i / N) | 0, ok: c.reason === null, ...(c.reason ? { reason: c.reason } : {}), cost: c.cost });
+    if (!c.reason) valid.push(B);
+  }
+  // Routes: tall towers within reach that don't line up with A, through one valid partner.
+  const seen = new Set<number>([A.key, ...lane.keys()]);
+  for (const V of valid) {
+    const second = new Map<number, Anchor>();
+    lanePartners(world, V, second);
+    for (const C of second.values()) {
+      if (seen.has(C.key) || anchorDist(A, C) > SKY_V2.maxGap) continue;
+      const c2 = checkSpan(world, V, C);
+      if (c2.reason) continue;
+      seen.add(C.key);
+      const c1 = checkSpan(world, A, V);
+      out.push({ x: C.i % N, y: (C.i / N) | 0, ok: true, cost: c1.cost + c2.cost, route: { via: { x: V.i % N, y: (V.i / N) | 0 } } });
+    }
+  }
+  return out;
+}
+
+/** The lane rects of an anchor (§5.4: what the overlay draws and dims), with the direction (0 N, 1 E, 2 S, 3 W). */
+export function laneBands(world: World, ax: number, ay: number): { x0: number; y0: number; x1: number; y1: number; dir: number; roof: number }[] {
+  const A = anchorAt(world, ax, ay);
+  if (!A) return [];
+  const N = world.N;
+  const r = SKY_V2.maxGap;
+  const clip = (v: number) => Math.max(0, Math.min(N - 1, v));
+  const out = [
+    { x0: A.x0, y0: clip(A.y0 - r), x1: A.x1, y1: A.y0 - 1, dir: 0, roof: A.roof },
+    { x0: A.x1 + 1, y0: A.y0, x1: clip(A.x1 + r), y1: A.y1, dir: 1, roof: A.roof },
+    { x0: A.x0, y0: A.y1 + 1, x1: A.x1, y1: clip(A.y1 + r), dir: 2, roof: A.roof },
+    { x0: clip(A.x0 - r), y0: A.y0, x1: A.x0 - 1, y1: A.y1, dir: 3, roof: A.roof },
+  ];
+  return out.filter((b) => b.x0 <= b.x1 && b.y0 <= b.y1);
+}
+
+/** Sky Lobby name (§5.5): "{A} {B}" by a hash of the lobby's lowest anchor tile. */
+const LOBBY_A = ['Glass', 'Prism', 'Neon', 'High', 'Copper', 'Pearl', 'Hex', 'Cloud', 'Signal', 'Tide', 'Amber', 'Halo'];
+const LOBBY_B = ['Steps', 'Gallery', 'Walk', 'Arcade', 'Rise', 'Loop', 'Concourse', 'Crossing', 'Terrace', 'Promenade'];
+export function lobbyName(world: World, lowest: number): string {
+  let h = Math.imul(lowest ^ world.seed, 0x9e3779b1) >>> 0;
+  h ^= h >>> 13;
+  h = Math.imul(h, 0x85ebca6b) >>> 0;
+  return `${LOBBY_A[h % LOBBY_A.length]} ${LOBBY_B[(h >>> 8) % LOBBY_B.length]}`;
+}
+
+/** Sky Lobby terms (§5.5) for k towers: visitors a month (per-lobby cap), the land value add. */
+export function lobbyVisitors(k: number): number {
+  const L = SKYBRIDGE.lobby;
+  return k >= L.min ? Math.min(L.visitorsCap, L.visitorsPer * (k - 2)) : 0;
+}
+export function lobbyLv(k: number): number {
+  const L = SKYBRIDGE.lobby;
+  return k >= L.min ? Math.min(L.lvCap, L.lvPer * Math.min(k, 4)) : 0;
+}
+
+/**
+ * Groups of anchors joined by active bridges (union by anchorKey), with each group's anchors. `extra` adds a planned
+ * bridge (the plan's lobby preview).
+ */
+function anchorGroups(world: World, extra?: [Anchor, Anchor]): Map<number, Anchor[]> {
+  const parent = new Map<number, number>();
+  const anchors = new Map<number, Anchor>();
+  const find = (k: number): number => {
+    let r = k;
+    while (parent.get(r) !== r) r = parent.get(r)!;
+    let c = k;
+    while (c !== r) {
+      const nx = parent.get(c)!;
+      parent.set(c, r);
+      c = nx;
+    }
+    return r;
+  };
+  const join = (a: Anchor, b: Anchor) => {
+    for (const x of [a, b]) {
+      if (!parent.has(x.key)) parent.set(x.key, x.key);
+      anchors.set(x.key, x);
+    }
+    const ra = find(a.key);
+    const rb = find(b.key);
+    if (ra !== rb) parent.set(ra, rb);
+  };
+  const active = world.vertical.activeLinks;
+  for (const l of world.links) {
+    if (!active.has(l.id)) continue;
+    const a = anchorAt(world, l.ax, l.ay);
+    const b = anchorAt(world, l.bx, l.by);
+    if (a && b) join(a, b);
+  }
+  if (extra) join(extra[0], extra[1]);
+  const groups = new Map<number, Anchor[]>();
+  for (const [k, a] of anchors) {
+    const r = find(k);
+    let g = groups.get(r);
+    if (!g) groups.set(r, (g = []));
+    g.push(a);
+  }
+  return groups;
+}
+
+/**
+ * What a bridge between the anchors at a and b pays (§5.5): walkers a day (0.2 × the heads of both anchors), the car
+ * trips a day the two towers no longer make (20%, 25% in a Sky Lobby), the tiles that gain +5% land value, and the
+ * Sky Lobby it forms or joins.
+ */
+export function skybridgePayoff(world: World, a: { x: number; y: number }, b: { x: number; y: number }): BridgePayoff {
+  const A = anchorAt(world, a.x, a.y);
+  const B = anchorAt(world, b.x, b.y);
+  if (!A || !B) return { walkers: 0, tripsCut: 0, lvTiles: 0, lobby: null };
+  const walkers = Math.round(SKYBRIDGE.walkerShare * (anchorHeads(world, A) + anchorHeads(world, B)));
+  let lobby: BridgePayoff['lobby'] = null;
+  for (const g of anchorGroups(world, [A, B]).values()) {
+    if (!g.some((x) => x.key === A.key)) continue;
+    if (g.length >= SKYBRIDGE.lobby.min) {
+      const lowest = Math.min(...g.map((x) => x.i));
+      lobby = { k: g.length, name: lobbyName(world, lowest), visitors: lobbyVisitors(g.length) };
+    }
+  }
+  const share = 1 - (lobby ? SKYBRIDGE.lobby.tripMul : SKYBRIDGE.tripMul);
+  const tripsCut = Math.round(share * (anchorTrips(world, A) + anchorTrips(world, B)));
+  // Land value: tiles within lvRadius of either end tile that face each other.
+  const c = checkSpan(world, A, B);
+  const ends = c.axis ? [[c.ax, c.ay], [c.bx, c.by]] : [[a.x, a.y], [b.x, b.y]];
+  const N = world.N;
+  const seen = new Set<number>();
+  const r = SKYBRIDGE.lvRadius;
+  for (const [ex, ey] of ends)
+    for (let y = ey - r; y <= ey + r; y++)
+      for (let x = ex - r; x <= ex + r; x++) {
+        const dx = x - ex;
+        const dy = y - ey;
+        if (dx * dx + dy * dy > r * r || !world.isOwned(x, y)) continue;
+        if (world.tiles[y * N + x].terrain !== Terrain.Land) continue;
+        seen.add(y * N + x);
+      }
+  return { walkers, tripsCut, lvTiles: seen.size, lobby };
+}
+
+/**
+ * Skybridge v2 plan (MEGACITY §5.3, §5.4): from the anchor at `from` to the anchor at `to` (a tap, a tap; or a drag
+ * whose end snaps to the nearest valid partner within 2 tiles). Fills `plan.tiles`, `span`, `bridge` (the payoff) and,
+ * when the towers don't line up but a valid partner of A lines up with B, `route` (two bridges; the plan confirms).
+ * Returns the number of bridges it builds (0, 1 or 2). The caller applies cost multipliers and the funds check.
  */
 export function planSkybridge(world: World, from: Pt, to: Pt, plan: ActionPlan): number {
-  const N = world.N;
-  const SB = SKYBRIDGE;
   const fail = (reason: string, pts: Pt[]) => {
     for (const p of pts) if (world.inBounds(p.x, p.y)) plan.tiles.push({ x: p.x, y: p.y, ok: false });
     plan.reason = reason;
     return 0;
   };
   if (!world.inBounds(from.x, from.y) || !world.inBounds(to.x, to.y)) return fail('Off the map', [from, to]);
-  if (!isTallAt(world, from.x, from.y)) return fail('Start on a tall tower', [from]);
-  const keyA0 = anchorKey(world, from.x, from.y);
-  if (from.x === to.x && from.y === to.y) return fail('Drag to another tall tower', [from]);
-  if (from.x !== to.x && from.y !== to.y) return fail('Skybridges run in a straight line', [from, to]);
-  if (anchorKey(world, to.x, to.y) === keyA0) return fail('Drag to another tall tower', [from, to]);
-
-  const axisX = from.y === to.y;
-  const a = edgeAnchor(world, from, to, axisX);
-  const b = edgeAnchor(world, to, from, axisX);
-  const gap = Math.abs(b.x - a.x) + Math.abs(b.y - a.y) - 1;
-  const span = { ax: a.x, ay: a.y, bx: b.x, by: b.y, gap: Math.max(0, gap) };
-  plan.span = span;
-  plan.tiles.push({ x: a.x, y: a.y, ok: true });
-  const dx = Math.sign(b.x - a.x);
-  const dy = Math.sign(b.y - a.y);
-  let blocked: string | null = null;
-  for (let k = 1; k <= gap; k++) {
-    const x = a.x + dx * k;
-    const y = a.y + dy * k;
-    let ok = true;
-    if (isTallAt(world, x, y)) {
-      ok = false;
-      blocked ??= 'A tower is in the way';
-    } else if (gapUsed(world, x, y)) {
-      ok = false;
-      blocked ??= 'Another skybridge crosses here';
-    } else if (world.sky[y * N + x] !== 0) {
-      // A skyway deck and a skybridge can't share a gap tile (EXPANSION §3.7).
-      ok = false;
-      blocked ??= 'Skyway in the way';
+  if (!world.isOwned(from.x, from.y)) {
+    plan.slot = world.slotAt(from.x, from.y);
+    return fail(NOT_ANNEXED, [from]);
+  }
+  const A = anchorAt(world, from.x, from.y);
+  if (!A) return fail('Start on a tall tower', [from]);
+  if (!world.isOwned(to.x, to.y)) {
+    plan.slot = world.slotAt(to.x, to.y);
+    return fail(NOT_ANNEXED, [from, to]);
+  }
+  let B = anchorAt(world, to.x, to.y);
+  if (B && B.key === A.key) return fail('Tap another tall tower', [from]);
+  // A drag that ends off a tower snaps to the nearest valid partner within 2 tiles of the finger (§5.4 step 6).
+  if (!B) {
+    let best: Anchor | null = null;
+    let bestD = Infinity;
+    for (let dy = -2; dy <= 2; dy++)
+      for (let dx = -2; dx <= 2; dx++) {
+        const C = anchorAt(world, to.x + dx, to.y + dy);
+        if (!C || C.key === A.key || checkSpan(world, A, C).reason) continue;
+        const d = dx * dx + dy * dy;
+        if (d < bestD) {
+          bestD = d;
+          best = C;
+        }
+      }
+    if (best) B = best;
+  }
+  if (!B) return fail('End on a tall tower', [from, to]);
+  const c = checkSpan(world, A, B);
+  if (c.axis === null) {
+    // Not lined up: a two-bridge route through a valid partner of A that lines up with B (§5.4).
+    const route = skybridgePartners(world, from.x, from.y).find((p) => p.route && anchorAt(world, p.x, p.y)?.key === B!.key);
+    if (route?.route) {
+      const V = anchorAt(world, route.route.via.x, route.route.via.y)!;
+      const c1 = checkSpan(world, A, V);
+      const c2 = checkSpan(world, V, B);
+      pushSpanTiles(plan, c1, true);
+      pushSpanTiles(plan, c2, true);
+      plan.span = { ax: c1.ax, ay: c1.ay, bx: c1.bx, by: c1.by, gap: c1.gap };
+      plan.route = { via: { x: route.route.via.x, y: route.route.via.y }, second: { ax: c2.ax, ay: c2.ay, bx: c2.bx, by: c2.by, gap: c2.gap } };
+      plan.cost = c1.cost + c2.cost;
+      plan.confirm = true;
+      plan.bridge = skybridgePayoff(world, { x: c1.ax, y: c1.ay }, { x: c1.bx, y: c1.by });
+      return 2;
     }
-    plan.tiles.push({ x, y, ok });
+    return fail(c.reason ?? 'Not lined up with this tower', [from, to]);
   }
-  const endOk = isTallAt(world, b.x, b.y);
-  plan.tiles.push({ x: b.x, y: b.y, ok: endOk });
-  plan.cost = SB.base + SB.perTile * span.gap;
-
-  const bad = (reason: string) => {
-    plan.reason = reason;
-    for (const t of plan.tiles) t.ok = false;
+  plan.span = { ax: c.ax, ay: c.ay, bx: c.bx, by: c.by, gap: Math.max(0, c.gap) };
+  pushSpanTiles(plan, c, c.reason === null);
+  plan.cost = c.cost;
+  if (c.reason) {
+    plan.reason = c.reason;
     plan.cost = 0;
-    return 0;
-  };
-  if (!endOk) return bad('End on a tall tower');
-  if (gap < SB.minGap) return bad(`Gap ${span.gap}: min ${SB.minGap}`);
-  if (gap > SB.maxGap) return bad(`Gap ${gap}: max ${SB.maxGap}`);
-  const keyA = anchorKey(world, a.x, a.y);
-  const keyB = anchorKey(world, b.x, b.y);
-  for (const l of world.links) {
-    const ka = anchorKey(world, l.ax, l.ay);
-    const kb = anchorKey(world, l.bx, l.by);
-    if ((ka === keyA && kb === keyB) || (ka === keyB && kb === keyA)) return bad('Already linked');
-  }
-  if (linksOnAnchor(world, keyA) >= SB.maxPerAnchor || linksOnAnchor(world, keyB) >= SB.maxPerAnchor) {
-    return bad(`A tower takes at most ${SB.maxPerAnchor} skybridges`);
-  }
-  if (blocked) {
-    plan.reason = blocked;
-    plan.cost = 0;
+    if (c.block) for (const t of plan.tiles) if (t.x === c.block.x && t.y === c.block.y) t.ok = false;
+    if (c.reason !== 'A taller building is in the way' && c.reason !== 'Another skybridge crosses here') for (const t of plan.tiles) t.ok = false;
     return 0;
   }
+  plan.bridge = skybridgePayoff(world, { x: c.ax, y: c.ay }, { x: c.bx, y: c.by });
   return 1;
+}
+
+/** The anchor, gap and far-anchor tiles of a checked span. */
+function pushSpanTiles(plan: ActionPlan, c: SpanCheck, ok: boolean): void {
+  const dx = Math.sign(c.bx - c.ax);
+  const dy = Math.sign(c.by - c.ay);
+  plan.tiles.push({ x: c.ax, y: c.ay, ok });
+  for (let k = 1; k <= c.gap; k++) plan.tiles.push({ x: c.ax + dx * k, y: c.ay + dy * k, ok });
+  plan.tiles.push({ x: c.bx, y: c.by, ok });
 }
 
 /**
@@ -863,6 +1358,7 @@ export function planRail(world: World, path: readonly Pt[], plan: ActionPlan): n
   const rail = world.rail;
   const masks: number[] = [];
   let blocked = false;
+  let lockedAt: number | null = null;
   for (let k = 0; k < pts.length; k++) {
     const p = pts[k];
     const i = p.y * N + p.x;
@@ -877,7 +1373,11 @@ export function planRail(world: World, path: readonly Pt[], plan: ActionPlan): n
     masks.push(mask);
     const t = world.tiles[i];
     let ok = true;
-    if (t.buildingId >= 0) {
+    if (!world.isOwned(p.x, p.y)) {
+      // Locked land (MEGACITY §3.4): no rail there.
+      ok = false;
+      lockedAt ??= world.slotAt(p.x, p.y);
+    } else if (t.buildingId >= 0) {
       const b = world.buildings.get(t.buildingId);
       ok = !!b && !!BUILDINGS[b.type].station;
     }
@@ -887,6 +1387,11 @@ export function planRail(world: World, path: readonly Pt[], plan: ActionPlan): n
   plan.railMasks = masks;
   if (pts.length < 2) {
     plan.reason = 'Drag to lay track';
+    return 0;
+  }
+  if (lockedAt !== null) {
+    plan.slot = lockedAt;
+    plan.reason = NOT_ANNEXED;
     return 0;
   }
   if (blocked) {

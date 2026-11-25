@@ -41,37 +41,44 @@ describe('skybridge validation', () => {
     expect(planAction(w, 'skybridge', { x: 10, y: 10 }, { x: 14, y: 10 }).valid).toBe(true);
   });
 
-  it('prices by gap and describes the span for the renderer', () => {
+  it('prices by gap (v2: 250 a tile) and describes the span for the renderer', () => {
     const w = skyWorld();
     tallTile(w, 10, 10);
     tallTile(w, 14, 10);
     const p = planAction(w, 'skybridge', { x: 10, y: 10 }, { x: 14, y: 10 });
     expect(p.valid).toBe(true);
-    expect(p.cost).toBe(SKYBRIDGE.base + SKYBRIDGE.perTile * 3);
+    expect(p.cost).toBe(SKYBRIDGE.base + SKYBRIDGE.v2.perTile * 3);
     expect(p.span).toEqual({ ax: 10, ay: 10, bx: 14, by: 10, gap: 3 });
     expect(p.tiles.map((t) => t.x)).toEqual([10, 11, 12, 13, 14]);
+    expect(p.bridge?.walkers).toBeGreaterThan(0);
     w.mods.buildCostMul = 2;
-    expect(planAction(w, 'skybridge', { x: 10, y: 10 }, { x: 14, y: 10 }).cost).toBe(2 * (1200 + 900));
+    expect(planAction(w, 'skybridge', { x: 10, y: 10 }, { x: 14, y: 10 }).cost).toBe(2 * (1200 + 750));
   });
 
-  it('checks straightness, tall anchors and the 2..8 gap', () => {
+  it('checks line-up, tall anchors and the 1..10 gap (MEGACITY §5.3)', () => {
     const w = skyWorld();
     tallTile(w, 10, 10);
     tallTile(w, 14, 12);
     tallTile(w, 12, 10);
     tallTile(w, 20, 20);
-    tallTile(w, 30, 20);
+    tallTile(w, 32, 20);
+    tallTile(w, 40, 40);
+    tallTile(w, 41, 40, ZoneType.Commercial);
     const reason = (a: [number, number], b: [number, number]) =>
       planAction(w, 'skybridge', { x: a[0], y: a[1] }, { x: b[0], y: b[1] }).reason;
-    expect(reason([10, 10], [14, 12])).toMatch(/straight/);
-    expect(reason([10, 10], [12, 10])).toBe('Gap 1: min 2');
-    expect(reason([20, 20], [30, 20])).toBe('Gap 9: max 8');
+    expect(reason([10, 10], [14, 12])).toBe('Not lined up with this tower');
+    expect(reason([10, 10], [12, 10])).toBeUndefined(); // a gap of 1 now builds (across a single street)
+    expect(reason([20, 20], [32, 20])).toBe('Too far: 10 tiles at most');
+    expect(reason([40, 40], [41, 40])).toBe('Towers touch: no gap');
     expect(reason([10, 10], [10, 15])).toBe('End on a tall tower');
     expect(reason([11, 30], [15, 30])).toBe('Start on a tall tower');
     expect(reason([10, 10], [10, 10])).toMatch(/another tall tower/);
-    // A tower between the anchors blocks the span.
-    tallTile(w, 16, 10);
-    expect(reason([10, 10], [16, 10])).toBe('A tower is in the way');
+    // A drag ending off a tower snaps to a valid partner within 2 tiles; far from any, it needs a tall end.
+    expect(reason([12, 10], [10, 8])).toBeUndefined();
+    // Anything taller than the tube's clearance blocks the span (a Spire, 287 px, over L3 towers).
+    w.addBuilding('spire', 15, 10);
+    tallTile(w, 19, 10);
+    expect(reason([12, 10], [19, 10])).toBe('A taller building is in the way');
   });
 
   it('normalises building anchors to the facing footprint edges', () => {
@@ -85,7 +92,7 @@ describe('skybridge validation', () => {
     expect(planAction(w, 'skybridge', { x: 20, y: 20 }, { x: 21, y: 20 }).reason).toMatch(/another tall tower/);
   });
 
-  it('refuses a gap tile under a skyway deck (EXPANSION §3.7)', () => {
+  it('passes over a skyway deck (MEGACITY §5.2: their heights never meet)', () => {
     const w = skyWorld();
     tallTile(w, 10, 10);
     tallTile(w, 14, 10);
@@ -93,14 +100,10 @@ describe('skybridge validation', () => {
     w.setSky(12, 10, 1 | 4);
     w.setSky(12, 11, 1);
     const plan = planAction(w, 'skybridge', { x: 10, y: 10 }, { x: 14, y: 10 });
-    expect(plan.valid).toBe(false);
-    expect(plan.reason).toBe('Skyway in the way');
-    expect(plan.tiles.find((t) => t.x === 12)!.ok).toBe(false);
-    w.clearSky(12, 10);
-    expect(planAction(w, 'skybridge', { x: 10, y: 10 }, { x: 14, y: 10 }).valid).toBe(true);
+    expect(plan.valid).toBe(true);
   });
 
-  it('allows at most 2 bridges per anchor and no shared gap tiles', () => {
+  it('allows at most 2 bridges per single tower and no crossing at the same height', () => {
     const w = skyWorld();
     for (const [x, y] of [
       [10, 10],
@@ -113,7 +116,7 @@ describe('skybridge validation', () => {
     expect(applyAction(w, 'skybridge', { x: 10, y: 10 }, { x: 14, y: 10 }).valid).toBe(true);
     expect(planAction(w, 'skybridge', { x: 14, y: 10 }, { x: 10, y: 10 }).reason).toBe('Already linked');
     expect(applyAction(w, 'skybridge', { x: 10, y: 10 }, { x: 10, y: 14 }).valid).toBe(true);
-    expect(planAction(w, 'skybridge', { x: 6, y: 10 }, { x: 10, y: 10 }).reason).toMatch(/at most 2/);
+    expect(planAction(w, 'skybridge', { x: 6, y: 10 }, { x: 10, y: 10 }).reason).toBe('This tower has its 2 bridges');
     // (12, 7) → (12, 13) would cross the first bridge's gap at (12, 10).
     expect(planAction(w, 'skybridge', { x: 12, y: 7 }, { x: 12, y: 13 }).reason).toBe('Another skybridge crosses here');
     expect(w.links.length).toBe(2);
@@ -139,25 +142,26 @@ describe('skybridge sealing and effects', () => {
     expect(L.tripMul[w.idx(12, 10)]).toBe(1);
     expect(w.layers.lvAdd[w.idx(9, 10)]).toBeCloseTo(SKYBRIDGE.lv, 5); // composed
 
-    // An anchor drops below the skyline: sealed, dark, free.
+    // An anchor drops below the skyline: dark and free (MEGACITY §5.3 rule 9; "sealed" in code).
     w.setLevel(14, 10, 2);
     vertical.refresh(w);
     expect(w.vertical.activeLinks.has(id)).toBe(false);
     expect(vertical.linkSealed(w, w.links[0])).toBe(true);
     expect(vertical.upkeep(w).skybridges).toBe(0);
-    expect(w.news.some((n) => n.text.startsWith('Skybridge sealed'))).toBe(true);
+    expect(w.news.some((n) => n.text === 'Skybridge dark: an anchor dropped below the skyline.')).toBe(true);
     expect(w.layerParts.vertical.lvAdd[w.idx(9, 10)]).toBe(0);
 
-    // It reopens on its own.
+    // It relights on its own.
     w.setLevel(14, 10, 3);
     vertical.refresh(w);
     expect(w.vertical.activeLinks.has(id)).toBe(true);
 
-    // Unpowered: dark but not sealed (still costs upkeep).
+    // Unpowered: dark too (v2: no upkeep, nothing done), not sealed.
     w.tiles[w.idx(14, 10)].powered = false;
     vertical.refresh(w);
     expect(w.vertical.activeLinks.has(id)).toBe(false);
-    expect(vertical.upkeep(w).skybridges).toBeGreaterThan(0);
+    expect(vertical.linkSealed(w, w.links[0])).toBe(false);
+    expect(vertical.upkeep(w).skybridges).toBe(0);
   });
 
   it('bulldozing an anchor deletes its bridges', () => {

@@ -358,7 +358,9 @@ describe('skyways (§3.7)', () => {
     }
   });
 
-  it('a skybridge gap tile refuses a skyway, and a skyway refuses a skybridge (both ways)', () => {
+  // MEGACITY §5.2: a skybridge may now pass over a skyway (their heights never meet). The skyway side of EXPANSION
+  // §3.7's rule ("Skybridge in the way") lives in skyway.ts and goes at Step 9 (WP-2 hand-off).
+  it('a skybridge gap tile still refuses a skyway (skyway.ts), and a skybridge now passes over a skyway (v2)', () => {
     const tall = (w: World, x: number, y: number) => {
       const b = w.addBuilding('spire', x, y)!;
       b.powered = true;
@@ -380,8 +382,8 @@ describe('skyways (§3.7)', () => {
     tall(v, 16, 20);
     applyAction(v, 'skyway', { x: 13, y: 15 }, { x: 13, y: 25 });
     const bridge = planAction(v, 'skybridge', { x: 11, y: 20 }, { x: 16, y: 20 });
-    expect(bridge.valid).toBe(false);
-    expect(bridge.reason).toBe('Skyway in the way');
+    expect(bridge.valid).toBe(true);
+    expect(bridge.reason).toBeUndefined();
   });
 
   it('a highway drag under a sky ramp closes it, live and after a save round trip alike', () => {
