@@ -118,7 +118,7 @@ describe('a sliced day equals a whole step() (§3.3)', () => {
 });
 
 describe('unit sizes (§3.3: SLICE.unitMaxNodeMs at 25 districts)', () => {
-  it('every step kind of a sliced day on the 25-district fixture: median ≤ unitMaxNodeMs (with the suite's slack), p90 within twice that', () => {
+  it('every step kind of a sliced day on the 25-district fixture: median ≤ unitMaxNodeMs (with the suite slack), p90 within twice that', () => {
     const w = cachedMegacity(5, 25);
     const sim = megacitySim(w);
     // A month first, so every step kind (the turf bands included) has run warm once.
