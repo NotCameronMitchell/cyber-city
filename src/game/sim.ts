@@ -106,6 +106,12 @@ export class Simulation {
    */
   districtDaily: ((world: World, monthEnd: boolean) => void) | null = null;
   /**
+   * The same hook as steps (MEGACITY §3.3, §11.1): Game installs districts/daily.ts districtDayUnit; each value it
+   * yields ends one atomic step of unit C1, so the district part and the month's goals never land in one long step.
+   * When set it runs instead of `districtDaily`.
+   */
+  districtUnit: ((world: World, monthEnd: boolean) => Iterator<unknown, void, undefined>) | null = null;
+  /**
    * A ruin recovered (MEGACITY §3.7): Game installs actions.ruinRestored here (ground Plain, districts.ruinsRestored,
    * restorePay with the monthly cap shared with the player's restores). Unset, the sim applies the same rule itself.
    */
@@ -224,6 +230,18 @@ export class Simulation {
       this.advisor.primeWealth(this.census);
     }
     return steps;
+  }
+
+  /**
+   * Run the rest of a sliced day in flight now, if any (MEGACITY §3.3). Every save path calls this first (through
+   * Game): `w.tick` already names the new day once its first unit ran, so a city written mid-day would load with the
+   * rest of that day (a month end's settlement, its 'month' event and goals) skipped for good. Returns true when it
+   * finished a day (stats and events published).
+   */
+  finishDay(): boolean {
+    if (!this.day) return false;
+    this.step();
+    return true;
   }
 
   /** Advance one day (finishing a sliced day in progress, if any). */
@@ -375,7 +393,11 @@ export class Simulation {
     if (this.growth.changes > 0 || this.growth.tierSteps > 0) yield* this.guard(() => this.census.countUnit(g, w, banded));
     yield K.Post;
     const monthEnd = w.tick % DAYS_PER_MONTH === 0;
-    if (this.districtDaily) this.districtDaily(w, monthEnd);
+    if (this.districtUnit) {
+      // Like growth it changes the world, so it is never restarted; each of its steps is one atomic step.
+      const u = this.districtUnit(w, monthEnd);
+      for (let r = u.next(); !r.done; r = u.next()) yield K.Post;
+    } else if (this.districtDaily) this.districtDaily(w, monthEnd);
 
     // ── C2: the turf band, the budget projection, then the publish ──
     // O6: next month end's turf maps, banded over its last REGION[R].turfBands days (turf.update copies them in).

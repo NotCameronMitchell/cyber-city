@@ -482,6 +482,35 @@ describe('the frame guard (§3.3, §3.11)', () => {
     expect(frames).toBeGreaterThan(1);
   });
 
+  it('a save or a snapshot mid-day finishes the sliced day first (annex too): a month end paused mid-slice settles before it is written', () => {
+    const { g } = city(3, 5);
+    let t = 0;
+    g.msClock = () => (t += 0.7); // a slow clock: every day spans frames
+    g.setSpeed(3);
+    let found = false;
+    for (let f = 0; f < 20_000 && !found; f++) {
+      if (g.story.blocking) g.choose(0);
+      if (g.speed !== 3) g.setSpeed(3);
+      g.update(1 / 60);
+      found = g.sim.midDay && g.world.tick % 30 === 0 && g.world.tick > 0;
+    }
+    expect(found).toBe(true);
+    g.setSpeed(0); // the player pauses mid-day, then the tab closes (pagehide)
+    const hist = g.world.budget.history.length;
+    const months = record(g, 'month');
+    const data = g.snapshot();
+    expect(g.sim.midDay).toBe(false);
+    expect(months).toEqual([undefined]);
+    expect(g.world.budget.history.length).toBe(hist + 1);
+    expect(data.tick).toBe(g.world.tick);
+    // The written city carries the settled month.
+    const loaded = World.deserialize(JSON.parse(JSON.stringify(data)));
+    expect(loaded.budget.history.length).toBe(hist + 1);
+    // Nothing in flight: a second save changes nothing.
+    expect(g.snapshot().tick).toBe(data.tick);
+    expect(months).toHaveLength(1);
+  }, 60_000);
+
   it('a backlog over 4 days is dropped', () => {
     const { g } = city(3, 5);
     let t = 0;

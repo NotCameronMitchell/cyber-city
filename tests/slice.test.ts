@@ -5,6 +5,8 @@ import { describe, expect, it } from 'vitest';
 import { SLICE } from '../src/game/config';
 import { FIELD_STAGGER, FIELD_STAGGER_FROM, FIELD_STAGGER_SMALL } from '../src/game/sim/tuning';
 import { Simulation } from '../src/game/sim';
+import { districtDaily, districtDayUnit } from '../src/game/districts/daily';
+import { updateDistrictLayers } from '../src/game/districts/effects';
 import { Rng } from '../src/game/rng';
 import '../src/game/story/turf'; // registers the banded turf month (O6), as the game does
 import { World } from '../src/game/world';
@@ -38,8 +40,8 @@ function fieldsEqual(a: World, b: World): string[] {
   return bad;
 }
 
-/** Two copies of the same world, each with its own sim. */
-function twins(make: () => World): [World, Simulation, World, Simulation] {
+/** Two copies of the same world, each with its own sim (`daily`: a gets the drained district hook, b the stepped one). */
+function twins(make: () => World, daily = false): [World, Simulation, World, Simulation] {
   // Both from the same save: a fresh world and its deserialized copy differ in world.version, which seeds the
   // variant rolls of later placements.
   const json = JSON.stringify(make().serialize());
@@ -48,6 +50,12 @@ function twins(make: () => World): [World, Simulation, World, Simulation] {
   const sa = new Simulation(a);
   const sb = new Simulation(b);
   sa.options.events = sb.options.events = true;
+  if (daily) {
+    updateDistrictLayers(a, true);
+    updateDistrictLayers(b, true);
+    sa.districtDaily = districtDaily;
+    sb.districtUnit = districtDayUnit;
+  }
   sa.recomputeAll();
   sb.recomputeAll();
   return [a, sa, b, sb];
@@ -98,6 +106,18 @@ describe('a sliced day equals a whole step() (§3.3)', () => {
     expect(snapshot(b)).toBe(snapshot(a));
   }, 60_000);
 
+  it('9 districts with the district hook: the stepped hook, one step per call, equals the drained hook in a whole step() over 60 days', () => {
+    const [a, sa, b, sb] = twins(() => cachedMegacity(3, 9), true);
+    for (let d = 0; d < 60; d++) {
+      sa.step();
+      while (!sb.stepSlice(0));
+    }
+    expect(fieldsEqual(a, b)).toEqual([]);
+    expect(snapshot(b)).toBe(snapshot(a));
+    const parts = (w: World) => JSON.stringify(Array.from(w.layers.lvAdd)) + JSON.stringify(Array.from(w.layers.pollutionAdd));
+    expect(parts(b)).toBe(parts(a));
+  }, 120_000);
+
   it('stats, the budget and the month event publish only when the day completes (unit C2)', () => {
     const w = cachedMegacity(3, 1);
     const sim = megacitySim(w);
@@ -122,7 +142,45 @@ describe('a sliced day equals a whole step() (§3.3)', () => {
     expect(sim.midDay).toBe(false);
     void pop;
   });
+
+  it('finishDay() runs the rest of a sliced month-end day: a save taken after it loads and plays as the continuous run', () => {
+    // A save mid-day used to store the new day's tick with the rest of that day (the settlement) skipped for good.
+    const json = JSON.stringify(cachedMegacity(3, 9).serialize());
+    const a = World.deserialize(JSON.parse(json));
+    const b = World.deserialize(JSON.parse(json));
+    const sa = megacitySim(a);
+    const sb = megacitySim(b);
+    while ((a.tick + 1) % 30 !== 0) {
+      sa.step();
+      sb.step();
+    }
+    const hist = a.budget.history.length;
+    expect(sim0(sb, 6)).toBe(false); // six steps into the month-end day
+    expect(sb.midDay).toBe(true);
+    expect(sb.finishDay()).toBe(true);
+    expect(sb.midDay).toBe(false);
+    expect(sb.finishDay()).toBe(false); // nothing in flight
+    sa.step();
+    expect(b.budget.history.length).toBe(hist + 1);
+    expect(snapshot(b)).toBe(snapshot(a));
+    // The copy written now loads at the month end already settled, and plays on equal to the continuous run.
+    const c = World.deserialize(JSON.parse(JSON.stringify(b.serialize())));
+    const sc = megacitySim(c);
+    for (let d = 0; d < 30; d++) {
+      sa.step();
+      sc.step();
+    }
+    expect(c.tick).toBe(a.tick);
+    expect(c.budget.history.length).toBe(a.budget.history.length);
+    expect(c.budget.history.slice(0, hist + 1)).toEqual(a.budget.history.slice(0, hist + 1));
+  }, 60_000);
 });
+
+/** `n` single-step stepSlice calls; true when one of them completed the day. */
+function sim0(sim: Simulation, n: number): boolean {
+  for (let k = 0; k < n; k++) if (sim.stepSlice(0)) return true;
+  return false;
+}
 
 describe('the field stagger follows the city size (§3.3, O4)', () => {
   it('2 on a one-district city (today\'s phases), 4 from FIELD_STAGGER_FROM districts; a set value wins until null', () => {
@@ -168,9 +226,9 @@ describe('the field stagger follows the city size (§3.3, O4)', () => {
 });
 
 describe('unit sizes (§3.3: SLICE.unitMaxNodeMs at 25 districts)', () => {
-  it('every step kind of a sliced day on the 25-district fixture: median ≤ unitMaxNodeMs (with the suite slack), p90 within twice that', () => {
+  it('every step kind of a sliced day on the 25-district fixture (district hook included): median ≤ unitMaxNodeMs (with the suite slack), p90 within twice that', () => {
     const w = cachedMegacity(5, 25);
-    const sim = megacitySim(w);
+    const sim = megacitySim(w, true);
     // A month first, so every step kind (the turf bands included) has run warm once.
     for (let d = 0; d < 30; d++) while (!sim.stepSlice(0));
     // Best of 3 rounds (the perf tests' best-of-batches): a round is a sliced month (its 8 turf band days included),

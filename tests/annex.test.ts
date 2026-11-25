@@ -25,6 +25,7 @@ import {
 import { alleysIn, ruinsIn } from '../src/game/districts/goals';
 import { slotOffset, slotRect } from '../src/game/districts/slots';
 import { Simulation } from '../src/game/sim';
+import { composeLayers } from '../src/game/story/mods';
 import { DAYS_PER_MONTH, Ground, REGIONS, RoadKind, Terrain, ZoneType, type DistrictKind, type Region } from '../src/game/types';
 import { World } from '../src/game/world';
 import { ScriptedMayor } from './helpers';
@@ -160,6 +161,82 @@ describe.each(REGIONS)('%i×%i: annex content by kind (§3.7)', (R) => {
     expect(share).toBeGreaterThan(0.1);
     expect(share).toBeLessThan(0.3);
   });
+});
+
+describe.each(REGIONS)('%i×%i: the district part is rebuilt per slot, only where an input changed (§3.3, §11.1)', (R) => {
+  it('after random tile, terrain, tide and year changes the per-slot rebuild equals a whole rebuild exactly; a level change elsewhere rebuilds nothing', () => {
+    const w = World.generate(R === 3 ? 2091 : 7, 'Parts', undefined, R);
+    w.story.flags.published = true;
+    for (let s = 0; s < R * R; s++) if (!w.slotOwned[s]) w.annex(s);
+    updateDistrictLayers(w, true);
+    const N = w.N;
+    let seed = 99;
+    const rnd = () => ((seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0) / 2 ** 32);
+    const pick = (test: (i: number) => boolean): number => {
+      for (let k = 0; k < 4000; k++) {
+        const i = Math.floor(rnd() * w.area);
+        if (w.ownedAt(i) && test(i)) return i;
+      }
+      return -1;
+    };
+    const parts = () => {
+      const d = w.layerParts.district;
+      const l = w.layers;
+      return [d.lvAdd, d.crimeAdd, d.parkAdd, d.pollutionAdd, l.lvAdd, l.crimeAdd, l.parkAdd, l.pollutionAdd].map((a) => Array.from(a));
+    };
+    let rebuilt = 0;
+    for (let round = 0; round < 12; round++) {
+      for (let k = 0; k < 6; k++) {
+        const kind = Math.floor(rnd() * 6);
+        if (kind === 0) {
+          const i = pick((j) => w.tiles[j].ground === Ground.Reed && w.tiles[j].zone === ZoneType.None && !w.tiles[j].road);
+          if (i >= 0) w.setZone(i % N, (i / N) | 0, ZoneType.Residential);
+        } else if (kind === 1) {
+          const i = pick((j) => w.tiles[j].ground === Ground.Brownfield);
+          if (i >= 0) {
+            w.setZone(i % N, (i / N) | 0, ZoneType.Industrial);
+            w.setLevel(i % N, (i / N) | 0, w.tiles[i].level >= 1 ? 0 : 1);
+          }
+        } else if (kind === 2) {
+          const i = pick((j) => w.tiles[j].ground === Ground.Rubble);
+          if (i >= 0) w.setGround(i % N, (i / N) | 0, Ground.Plain);
+        } else if (kind === 3) {
+          const f = [...w.buildings.values()].find((b) => b.type === 'frame');
+          if (f) w.removeBuilding(f.id);
+        } else if (kind === 4) {
+          const i = pick((j) => w.tiles[j].terrain === Terrain.Water && !w.tiles[j].road && [1, -1, N, -N].some((d) => w.tiles[j + d]?.terrain === Terrain.Land));
+          if (i >= 0) w.setTerrain(i % N, (i / N) | 0, Terrain.Land);
+        } else {
+          w.tide = w.tide > 0 ? 0 : 20;
+          if (rnd() < 0.5) w.tick += 360;
+        }
+      }
+      if (updateDistrictLayers(w)) rebuilt++;
+      const inc = parts();
+      writeDistrictPart(w);
+      composeLayers(w, true);
+      const whole = parts();
+      for (let a = 0; a < inc.length; a++) {
+        const bad = inc[a].findIndex((v, i) => v !== whole[a][i]);
+        expect(bad, `round ${round}, array ${a}, tile ${bad}`).toBe(-1);
+      }
+    }
+    expect(rebuilt).toBeGreaterThan(6);
+    // Zoning and growing a plain lot in a district whose terms read tiles (inputs no term reads) leaves every slot clean.
+    const tileKinds = new Set(['sunk', 'flats', 'skeleton']);
+    const i = pick(
+      (j) =>
+        tileKinds.has(w.districts.kinds[w.slotAt(j % N, (j / N) | 0)]) &&
+        w.tiles[j].terrain === Terrain.Land &&
+        w.tiles[j].ground === Ground.Plain &&
+        !w.tiles[j].road &&
+        w.tiles[j].buildingId < 0,
+    );
+    expect(i).toBeGreaterThanOrEqual(0);
+    w.setZone(i % N, (i / N) | 0, ZoneType.Residential);
+    w.setLevel(i % N, (i / N) | 0, 2);
+    expect(updateDistrictLayers(w)).toBe(false);
+  }, 60_000);
 });
 
 describe.each(REGIONS)('%i×%i: the district layer part (§3.3; D2, D3)', (R) => {

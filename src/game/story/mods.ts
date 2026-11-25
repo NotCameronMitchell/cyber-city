@@ -323,6 +323,63 @@ export function composeLayers(
   }
 }
 
+/**
+ * Merge the owned tiles of one rect only (MEGACITY §3.3, §11.1): the district part is rebuilt slot by slot inside the
+ * sim day, so its merge is too (a whole compose is ≈ 3 ms at 25 districts). A writer that changed a part in place
+ * inside `rect` (without resetLayers) calls this; a part changed outside it still needs a whole compose with `force`.
+ * Moves layersVersion only when an output the coverage cache reads (transitAdd, parkAdd) changed. Returns whether it
+ * did.
+ */
+export function composeLayersRect(
+  world: Pick<World, 'layers' | 'layerParts' | 'N' | 'region' | 'slotOwned'>,
+  rect: { x0: number; y0: number; x1: number; y1: number },
+): boolean {
+  const out = world.layers;
+  const { turf: a, vertical: b, local: c, district: d } = world.layerParts;
+  const N = world.N;
+  const R = world.region;
+  const x0 = Math.max(0, rect.x0);
+  const y0 = Math.max(0, rect.y0);
+  const x1 = Math.min(N - 1, rect.x1);
+  const y1 = Math.min(N - 1, rect.y1);
+  let moved = false;
+  for (let y = y0; y <= y1; y++) {
+    const sy = (y >> 6) * R;
+    for (let sx = x0 >> 6; sx <= x1 >> 6; sx++) {
+      if (world.slotOwned[sy + sx] !== 1) continue;
+      const lo = y * N + Math.max(x0, sx << 6);
+      const hi = y * N + Math.min(x1, (sx << 6) + 63) + 1;
+      add4(out.crimeAdd, a.crimeAdd, b.crimeAdd, c.crimeAdd, d.crimeAdd, lo, hi);
+      add4(out.lvAdd, a.lvAdd, b.lvAdd, c.lvAdd, d.lvAdd, lo, hi);
+      if (max4c(out.transitAdd, a.transitAdd, b.transitAdd, c.transitAdd, d.transitAdd, lo, hi)) moved = true;
+      mul4(out.tripMul, a.tripMul, b.tripMul, c.tripMul, d.tripMul, lo, hi);
+      mul4(out.abandonMul, a.abandonMul, b.abandonMul, c.abandonMul, d.abandonMul, lo, hi);
+      mul4(out.taxMul, a.taxMul, b.taxMul, c.taxMul, d.taxMul, lo, hi);
+      if (max4c(out.parkAdd, a.parkAdd, b.parkAdd, c.parkAdd, d.parkAdd, lo, hi)) moved = true;
+      add4(out.pollutionAdd, a.pollutionAdd, b.pollutionAdd, c.pollutionAdd, d.pollutionAdd, lo, hi);
+    }
+  }
+  if (moved) layerVersions.set(out, layersVersion(out) + 1);
+  return moved;
+}
+
+/** max4, reporting whether any output value changed. */
+function max4c(o: Float32Array, a: Float32Array, b: Float32Array, c: Float32Array, d: Float32Array, lo: number, hi: number): boolean {
+  let moved = false;
+  for (let i = lo; i < hi; i++) {
+    let t = a[i];
+    if (b[i] > t) t = b[i];
+    if (c[i] > t) t = c[i];
+    if (d[i] > t) t = d[i];
+    const v = t < 0 ? 0 : t > 1 ? 1 : t;
+    if (o[i] !== v) {
+      o[i] = v;
+      moved = true;
+    }
+  }
+  return moved;
+}
+
 /** Were the layers last merged over these owned segments? */
 function sameSegs(last: Composed, segs: Int32Array | undefined, sc: number): boolean {
   if (!segs) return last.segs === null;

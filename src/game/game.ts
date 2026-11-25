@@ -52,7 +52,7 @@ import {
 } from './config';
 import { CityEvents } from './cityEvents';
 import { deviceClass } from './device';
-import { districtDaily, pumpRings } from './districts/daily';
+import { districtDayUnit, pumpRings } from './districts/daily';
 import { isFloodplain, updateDistrictLayers, isWildReed } from './districts/effects';
 import { districtShort, districtTitle, goalViews, type GoalView } from './districts/goals';
 import { adjacentLocked, slotRect, validSlot } from './districts/slots';
@@ -531,8 +531,9 @@ export class Game {
   private attachSystems(): void {
     const sim = new Simulation(this.world);
     sim.options.events = this.settings.events;
-    // Megacity (§3.3): the district daily hook (Pump Houses, king tides, the district part, goals on the month tick).
-    sim.districtDaily = districtDaily;
+    // Megacity (§3.3): the district daily hook (Pump Houses, king tides, the district part, goals on the month tick),
+    // as steps of unit C1 (no step over SLICE.unitMaxNodeMs).
+    sim.districtUnit = districtDayUnit;
     sim.clock = () => this.msClock();
     this.sim = sim;
     this.storyResumeSpeed = null;
@@ -942,6 +943,18 @@ export class Game {
       this.updateSpaceports(dt);
       this.syncStoryPause();
     }
+  }
+
+  /**
+   * Finish a sliced day in flight (MEGACITY §3.3) before the city is written or annexed: the day's first unit already
+   * advanced `w.tick`, so a save taken mid-day would store the new day with the rest of it (a month end's settlement,
+   * 'month' event, goals and the story's month tick) skipped for good. Runs the story's day as Game.update would.
+   */
+  private finishDay(): void {
+    if (!this.sim?.finishDay()) return;
+    this.tickAcc = Math.max(0, this.tickAcc - 1);
+    this.story.onDay();
+    this.events.emit('stats');
   }
 
   /** Days a second at the current speed: SPEED_TICKS_PER_SEC, capped at LOW_DETAIL.maxDaysPerSec in lower detail (§3.11). */
@@ -1548,6 +1561,8 @@ export class Game {
   }
 
   private doAnnex(slot: SlotId, lease?: 'nacre' | 'basalt'): void {
+    // The annex lands between two days, never inside a sliced one (its save below must not store half a day).
+    this.finishDay();
     const w = this.world;
     const kind = w.districts.kinds[slot];
     const repeat = w.districts.owned.some((s) => w.districts.kinds[s] === kind);
@@ -1820,6 +1835,7 @@ export class Game {
    */
   save(forceMirror = false): boolean {
     if (this.saveBlocked) return false;
+    this.finishDay();
     this.world.story.pace = this.settings.storyPace;
     const data = this.world.serialize();
     return this.writeSave(data, JSON.stringify(data), this.world.region, forceMirror);
@@ -2000,6 +2016,7 @@ export class Game {
       return null;
     }
     if (!worthKeeping(this.world)) return 'none';
+    this.finishDay();
     if (writePrev(JSON.stringify(this.world.serialize()))) return 'prev';
     this.refuseReplace(this.world.cityName, 'full');
     return null;
@@ -2014,6 +2031,7 @@ export class Game {
 
   /** Serialize current state (also used by the artifact hot-reload snapshot). */
   snapshot(): SaveData {
+    this.finishDay();
     return this.world.serialize();
   }
 

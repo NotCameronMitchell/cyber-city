@@ -71,7 +71,8 @@ describe('performance', () => {
   ];
   it.each(ROWS)('§11.1 %s: step(), recomputeAll() and recomputeAround() within budget', (_name, region, n, budget) => {
     const w = megacityWorld(region, n);
-    const sim = megacitySim(w);
+    // With the district daily hook, as Game installs it (MEGACITY §3.3): the game's real day.
+    const sim = megacitySim(w, true);
     for (let i = 0; i < 40; i++) sim.step();
     const batch = n >= 25 ? 15 : 40;
     let stepMs = Infinity;
@@ -118,7 +119,7 @@ describe('performance', () => {
   ];
   it.each(PACE)('§11.1 a speed-3 run, %s: per-frame sim work p95 and max within budget, no day dropped', (_name, region, n, cap, budget) => {
     const w = cachedMegacity(region, n);
-    const sim = megacitySim(w);
+    const sim = megacitySim(w, true);
     for (let i = 0; i < 20; i++) sim.step();
     const perFrame = 16 / 60;
     let dropped = 0;
@@ -164,7 +165,7 @@ describe('performance', () => {
 
   it('§11.1 a sliced day at 25 districts never spends more than the PC cap plus one unit in a frame', () => {
     const w = megacityWorld(5, 25);
-    const sim = megacitySim(w);
+    const sim = megacitySim(w, true);
     for (let i = 0; i < 20; i++) sim.step();
     // The worst frame of 20 sliced days, best of 2 rounds: a real overrun shows in both, a preempted frame on a busy
     // container rarely does.

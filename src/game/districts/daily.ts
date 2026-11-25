@@ -1,16 +1,17 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// The district daily hook (docs/MEGACITY.md §3.3, §3.7; WP-2), called by the
-// sim once per day after growth (`Simulation.districtDaily`, unit C1): Pump
-// House reclamation, king tides, the district layer part (at most once a day)
-// and, on the month tick, the district goals.
+// The district daily hook (docs/MEGACITY.md §3.3, §3.7; WP-2), run by the sim
+// once per day after growth (unit C1): Pump House reclamation, king tides, the
+// district layer part (per dirty slot) and, on the month tick, the district
+// goals. Game installs the stepped form (`Simulation.districtUnit`), so no step
+// of it is long; headless sims may install the drained `districtDaily`.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { DISTRICTS } from '../config';
 import { isBerthTile } from '../ports';
 import { DAYS_PER_MONTH, Terrain, type Building } from '../types';
 import type { World } from '../world';
-import { ownsTideDistrict, updateDistrictLayers } from './effects';
-import { checkDistrictGoals } from './goals';
+import { districtPartUnit, ownsTideDistrict } from './effects';
+import { checkDistrictGoalsUnit } from './goals';
 
 /** Pump House (§6.3): 90 days of reclamation, one ring every 30, then a pump garden. */
 export const PUMP = { days: 90, ringDays: 30, rings: 3, maxPerDistrict: 16, hallRadius: 6, landReach: 3 } as const;
@@ -93,10 +94,20 @@ export function kingTides(world: World): boolean {
   return changed;
 }
 
-/** The hook Game installs as `sim.districtDaily`. */
-export function districtDaily(world: World, monthEnd: boolean): void {
+/**
+ * One sim day of the districts as steps (MEGACITY §3.3, unit C1; Game installs it as `sim.districtUnit`): Pump Houses
+ * and king tides, then the district part one dirty slot per step, then on the month tick the district goals one
+ * district per step. Each yield ends an atomic step of the sim day (≤ SLICE.unitMaxNodeMs at 25 districts).
+ */
+export function* districtDayUnit(world: World, monthEnd: boolean): Generator<void, void, void> {
   pumpHouses(world);
-  const tideChanged = kingTides(world);
-  updateDistrictLayers(world, tideChanged);
-  if (monthEnd) checkDistrictGoals(world);
+  kingTides(world);
+  yield* districtPartUnit(world);
+  if (monthEnd) yield* checkDistrictGoalsUnit(world);
+}
+
+/** The whole day at once (headless sims and tests install it as `sim.districtDaily`): districtDayUnit, drained. */
+export function districtDaily(world: World, monthEnd: boolean): void {
+  const u = districtDayUnit(world, monthEnd);
+  while (!u.next().done);
 }

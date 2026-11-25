@@ -3,6 +3,8 @@
 // WP-2's tools). Each slot is §2.1's fill: a road every 4 tiles, 3×3 blocks zoned at levels 1–3 with tiers, a
 // reactor every 9th block and a service every 7th; generated water is left as it is.
 
+import { districtDayUnit } from '../src/game/districts/daily';
+import { updateDistrictLayers } from '../src/game/districts/effects';
 import { ringOf, slotNeighbours, slotRect } from '../src/game/districts/slots';
 import { Simulation } from '../src/game/sim';
 import { Terrain, type BuildingType, type DistrictKind, type Region, type SlotId, type WealthTier } from '../src/game/types';
@@ -66,10 +68,17 @@ export function megacityWorld(region: Region, n: number, seed = 99): World {
   return w;
 }
 
-/** A Simulation over the world, random events off, recomputed. */
-export function megacitySim(w: World): Simulation {
+/**
+ * A Simulation over the world, random events off, recomputed. `daily`: with the district daily hook as Game installs
+ * it (the stepped districtDayUnit, the district part built first), so budgets and slices measure the game's real day.
+ */
+export function megacitySim(w: World, daily = false): Simulation {
   const sim = new Simulation(w);
   sim.options.events = false;
+  if (daily) {
+    updateDistrictLayers(w, true);
+    sim.districtUnit = districtDayUnit;
+  }
   sim.recomputeAll();
   return sim;
 }

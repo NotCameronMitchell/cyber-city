@@ -74,8 +74,30 @@ export function buildingInSlot(world: World, b: Building, slot: SlotId): boolean
 
 export function countIn(world: World, slot: SlotId, type: BuildingType, test?: (b: Building) => boolean): number {
   let n = 0;
-  for (const b of world.buildings.values()) if (b.type === type && buildingInSlot(world, b, slot) && (!test || test(b))) n++;
+  for (const b of buildingsIn(world, slot)) if (b.type === type && (!test || test(b))) n++;
   return n;
+}
+
+/** Buildings by the slot of their footprint's centre tile, rebuilt when a conductor changed (every building add or remove bumps it). */
+const BY_SLOT = new WeakMap<World, { v: number; n: number; m: Map<SlotId, Building[]> }>();
+const NO_BUILDINGS: readonly Building[] = [];
+
+/** The buildings of a slot (buildingInSlot), from an index cached on world.conductorVersion. */
+export function buildingsIn(world: World, slot: SlotId): readonly Building[] {
+  let c = BY_SLOT.get(world);
+  if (!c || c.v !== world.conductorVersion || c.n !== world.buildings.size) {
+    const m = new Map<SlotId, Building[]>();
+    for (const b of world.buildings.values()) {
+      const k = (b.size - 1) >> 1;
+      const s = world.slotAt(b.x + k, b.y + k);
+      const a = m.get(s);
+      if (a) a.push(b);
+      else m.set(s, [b]);
+    }
+    c = { v: world.conductorVersion, n: world.buildings.size, m };
+    BY_SLOT.set(world, c);
+  }
+  return c.m.get(slot) ?? NO_BUILDINGS;
 }
 
 export function slotCensus(world: World, slot: SlotId): SlotCensus {
@@ -99,8 +121,7 @@ export function slotCensus(world: World, slot: SlotId): SlotCensus {
       if (t.zone === ZoneType.Commercial && t.wealth >= 1) out.marketRich++;
       if (t.level === 3 && top > 0 && t.elev === top) out.l3TopStep++;
     }
-  for (const b of world.buildings.values()) {
-    if (!buildingInSlot(world, b, slot)) continue;
+  for (const b of buildingsIn(world, slot)) {
     buildingStats(b, STATS);
     out.residents += STATS.residents;
     out.jobs += STATS.jobsCom + STATS.jobsInd;
@@ -118,73 +139,112 @@ export const ISLAND_MIN = 4;
  * slot's road network (bridges count).
  */
 export function shoalsIslands(world: World, slot: SlotId): { x: number; y: number; size: number; linked: boolean }[] {
+  // Islands read the terrain and the road network only: both move conductorVersion (as an annex does).
+  let cache = ISLANDS.get(world);
+  if (!cache || cache.v !== world.conductorVersion) ISLANDS.set(world, (cache = { v: world.conductorVersion, by: new Map() }));
+  const hit = cache.by.get(slot);
+  if (hit) return hit.map((i) => ({ ...i }));
   const r = slotRect(world, slot);
   const N = world.N;
-  // Road network reachable from roads in the start slot (BFS over road tiles, bridges included).
   const start = (world.region * world.region - 1) >> 1;
-  const sr = slotRect(world, start);
-  const seen = new Uint8Array(world.area);
-  const q: number[] = [];
-  for (let y = sr.y0; y <= sr.y1; y++)
-    for (let x = sr.x0; x <= sr.x1; x++) {
-      const i = y * N + x;
-      if (world.tiles[i].road) {
-        seen[i] = 1;
-        q.push(i);
-      }
+  const seen = startRoadReach(world);
+  // A land mask of the slot plus a 1-tile ring (2 = land in the start slot: the city's own shore).
+  const W = SLOT + 2;
+  const land = new Uint8Array(W * W);
+  for (let ly = -1; ly <= SLOT; ly++)
+    for (let lx = -1; lx <= SLOT; lx++) {
+      const x = r.x0 + lx;
+      const y = r.y0 + ly;
+      if (x < 0 || y < 0 || x >= N || y >= N || world.tiles[y * N + x].terrain !== Terrain.Land) continue;
+      const inside = lx >= 0 && ly >= 0 && lx < SLOT && ly < SLOT;
+      land[(ly + 1) * W + lx + 1] = inside ? 1 : world.slotAt(x, y) === start ? 2 : 0;
     }
-  while (q.length) {
-    const i = q.pop()!;
-    const x = i % N;
-    const y = (i / N) | 0;
-    for (const [dx, dy] of NB4) {
-      const nx = x + dx;
-      const ny = y + dy;
-      if (nx < 0 || ny < 0 || nx >= N || ny >= N) continue;
-      const j = ny * N + nx;
-      if (seen[j] || !world.tiles[j].road || !world.ownedAt(j)) continue;
-      seen[j] = 1;
-      q.push(j);
-    }
-  }
-  const comp = new Int32Array(SLOT * SLOT).fill(-1);
+  const comp = new Uint8Array(W * W);
+  const stack = new Int32Array(SLOT * SLOT);
   const out: { x: number; y: number; size: number; linked: boolean }[] = [];
   for (let ly = 0; ly < SLOT; ly++)
     for (let lx = 0; lx < SLOT; lx++) {
-      const k0 = ly * SLOT + lx;
-      if (comp[k0] >= 0 || world.tiles[(r.y0 + ly) * N + r.x0 + lx].terrain !== Terrain.Land) continue;
+      const k0 = (ly + 1) * W + lx + 1;
+      if (comp[k0] || land[k0] !== 1) continue;
       let size = 0;
       let mainland = false;
       let linked = false;
-      const stack = [k0];
-      comp[k0] = k0;
-      while (stack.length) {
-        const k = stack.pop()!;
+      let sp = 0;
+      stack[sp++] = k0;
+      comp[k0] = 1;
+      while (sp > 0) {
+        const k = stack[--sp];
         size++;
-        const kx = k % SLOT;
-        const ky = (k / SLOT) | 0;
-        const i = (r.y0 + ky) * N + r.x0 + kx;
-        if (seen[i]) linked = true;
-        for (const [dx, dy] of NB4) {
-          const nx = kx + dx;
-          const ny = ky + dy;
-          if (nx < 0 || ny < 0 || nx >= SLOT || ny >= SLOT) {
-            const wx = r.x0 + nx;
-            const wy = r.y0 + ny;
-            const t = world.tileAt(wx, wy);
-            // Land running on into the start slot is the city's own shore, not an island.
-            if (t && t.terrain === Terrain.Land && world.slotAt(wx, wy) === start) mainland = true;
-            continue;
-          }
-          const nk = ny * SLOT + nx;
-          if (comp[nk] >= 0 || world.tiles[(r.y0 + ny) * N + r.x0 + nx].terrain !== Terrain.Land) continue;
-          comp[nk] = k0;
-          stack.push(nk);
+        const kx = (k % W) - 1;
+        const ky = ((k / W) | 0) - 1;
+        if (seen[(r.y0 + ky) * N + r.x0 + kx]) linked = true;
+        for (let d = 0; d < 4; d++) {
+          const nk = d === 0 ? k + 1 : d === 1 ? k - 1 : d === 2 ? k + W : k - W;
+          const v = land[nk];
+          // Land running on into the start slot is the city's own shore, not an island.
+          if (v === 2) mainland = true;
+          if (v !== 1 || comp[nk]) continue;
+          comp[nk] = 1;
+          stack[sp++] = nk;
         }
       }
       if (!mainland && size >= ISLAND_MIN) out.push({ x: r.x0 + lx, y: r.y0 + ly, size, linked });
     }
-  return out;
+  cache.by.set(slot, out);
+  return out.map((i) => ({ ...i }));
+}
+const ISLANDS = new WeakMap<World, { v: number; by: Map<SlotId, { x: number; y: number; size: number; linked: boolean }[]> }>();
+
+/** Road tiles joined to the start slot's road network (bridges count), cached on world.conductorVersion (roads, annex). */
+const REACH = new WeakMap<World, { v: number; seen: Uint8Array }>();
+function startRoadReach(world: World): Uint8Array {
+  const c = REACH.get(world);
+  if (c && c.v === world.conductorVersion) return c.seen;
+  const u = startRoadReachUnit(world);
+  while (!u.next().done);
+  return REACH.get(world)!.seen;
+}
+
+/** Road tiles a step of the reach search visits (each reads its 4 neighbours: ≈ 0.5 ms). */
+const REACH_STEP = 4096;
+
+/** startRoadReach's search as steps (the month-end goal check runs it before the Shoals' islands): REACH_STEP tiles each. */
+function* startRoadReachUnit(world: World): Generator<void, void, void> {
+  const v = world.conductorVersion;
+  const N = world.N;
+  const R = world.region;
+  const own = world.slotOwned;
+  const tiles = world.tiles;
+  const start = (R * R - 1) >> 1;
+  const sr = slotRect(world, start);
+  const seen = new Uint8Array(world.area);
+  const q = new Int32Array(world.area);
+  let n = 0;
+  for (let y = sr.y0; y <= sr.y1; y++)
+    for (let x = sr.x0; x <= sr.x1; x++) {
+      const i = y * N + x;
+      if (tiles[i].road) {
+        seen[i] = 1;
+        q[n++] = i;
+      }
+    }
+  const visit = (j: number, x: number, y: number) => {
+    if (seen[j] || own[(y >> 6) * R + (x >> 6)] !== 1 || !tiles[j].road) return;
+    seen[j] = 1;
+    q[n++] = j;
+  };
+  for (let h = 0; h < n; h++) {
+    if (h > 0 && h % REACH_STEP === 0) yield;
+    const i = q[h];
+    const x = i % N;
+    const y = (i / N) | 0;
+    if (x + 1 < N) visit(i + 1, x + 1, y);
+    if (x > 0) visit(i - 1, x - 1, y);
+    if (y + 1 < N) visit(i + N, x, y + 1);
+    if (y > 0) visit(i - N, x, y - 1);
+  }
+  // A road changed while the search ran: keep it under the version it started from (the next read searches again).
+  REACH.set(world, { v, seen });
 }
 
 /** Islands of a district bridged to the city (the Shoals' "Bridge 3 islands to the city"). */
@@ -192,12 +252,6 @@ export function bridgedIslands(world: World, slot: SlotId): number {
   return shoalsIslands(world, slot).filter((i) => i.linked).length;
 }
 
-const NB4: readonly (readonly [number, number])[] = [
-  [1, 0],
-  [-1, 0],
-  [0, 1],
-  [0, -1],
-];
 
 /** Frames of a Skeleton Row district finished into Stratablocks (a `stack` stands on a frame site). */
 export function framesFinished(world: World, slot: SlotId): number {
@@ -390,9 +444,26 @@ export function goalViews(world: World, slot: SlotId): GoalView[] {
  */
 export function checkDistrictGoals(world: World): string[] {
   const done: string[] = [];
+  const u = checkDistrictGoalsUnit(world, done);
+  while (!u.next().done);
+  return done;
+}
+
+/**
+ * checkDistrictGoals as steps (MEGACITY §3.3, unit C1 on the month tick): one district per step, so the month end
+ * never checks 25 districts in one atomic step. Keys completed are pushed to `done`.
+ */
+export function* checkDistrictGoalsUnit(world: World, done: string[] = []): Generator<void, void, void> {
   const d = world.districts;
   d.goalsDone ??= [];
-  for (const slot of d.owned) {
+  // The Shoals' islands read the road reach of the start slot: searched in steps of its own when a road changed.
+  const islands = d.owned.some((s) => goalsOf(world, s).some((g) => g.id === 'shoals.islands' && !goalDone(world, g.id, s)));
+  const reach = REACH.get(world);
+  if (islands && !(reach && reach.v === world.conductorVersion)) {
+    yield* startRoadReachUnit(world);
+    yield;
+  }
+  for (const slot of d.owned.slice()) {
     const kind = d.kinds[slot];
     if (kind === 'shore') continue;
     for (const g of goalsOf(world, slot)) {
@@ -405,8 +476,8 @@ export function checkDistrictGoals(world: World): string[] {
       world.events.emit('districtGoal', { slot, id: g.id });
       done.push(goalKey(g.id, slot));
     }
+    yield;
   }
-  return done;
 }
 
 /** A district's on-screen name (its variant's name for a repeat). */
