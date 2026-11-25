@@ -1,32 +1,40 @@
 import { describe, expect, it } from 'vitest';
-import { Terrain, ZoneType, type Fields } from '../src/game/types';
+import { LEGACY_REGION, Terrain, ZoneType, type Fields } from '../src/game/types';
 import type { World } from '../src/game/world';
-import { flatWorld, makeSim } from './helpers';
+import { flatWorld, makeSim, startWorld } from './helpers';
 
+// Every case runs on the legacy 64 frame and on the start slot of a 3×3 region (MEGACITY §11.5: the size-grep files
+// move onto regions). Coordinates are slot-local; `o` places them in the frame's start slot. O1 makes the two equal.
+const FRAMES: [string, () => World, number][] = [
+  ['64 frame', () => flatWorld(11), 0],
+  ['3×3 start slot', () => startWorld(3, 11), 64],
+];
+
+describe.each(FRAMES)('fields (%s)', (_frame, make, o) => {
 /** Powered road along y = 30 (x 5..58) with a reactor at its west end. */
 function street(): World {
-  const w = flatWorld(11);
-  w.addBuilding('reactor', 2, 29);
-  for (let x = 5; x <= 58; x++) w.setRoad(x, 30);
+  const w = make();
+  expect(w.region === LEGACY_REGION ? 0 : 64).toBe(o);
+  w.addBuilding('reactor', o + 2, o + 29);
+  for (let x = 5; x <= 58; x++) w.setRoad(o + x, o + 30);
   return w;
 }
 
 function block(w: World, z: ZoneType, level: number, x0: number, y0: number, x1: number, y1: number) {
   for (let y = y0; y <= y1; y++)
     for (let x = x0; x <= x1; x++) {
-      w.setZone(x, y, z);
-      w.setLevel(x, y, level);
+      w.setZone(o + x, o + y, z);
+      w.setLevel(o + x, o + y, level);
     }
 }
 
-const at = (w: World, f: keyof Fields, x: number, y: number) => w.fields[f][w.idx(x, y)];
+const at = (w: World, f: keyof Fields, x: number, y: number) => w.fields[f][w.idx(o + x, o + y)];
 
-describe('fields', () => {
   it('pollution peaks at heavy industry, diffuses outward and is filtered by parks', () => {
     const make = (park: boolean) => {
       const w = street();
       block(w, ZoneType.Industrial, 3, 20, 31, 25, 34);
-      if (park) w.addBuilding('plaza', 26, 32);
+      if (park) w.addBuilding('plaza', o + 26, o + 32);
       makeSim(w);
       return w;
     };
@@ -44,7 +52,7 @@ describe('fields', () => {
       const w = street();
       block(w, ZoneType.Residential, 3, 30, 31, 34, 33);
       block(w, ZoneType.Commercial, 3, 30, 27, 34, 29);
-      if (transit) w.addBuilding('maglev', 36, 31);
+      if (transit) w.addBuilding('maglev', o + 36, o + 31);
       makeSim(w);
       return w;
     };
@@ -63,7 +71,7 @@ describe('fields', () => {
       const w = street();
       block(w, ZoneType.Residential, 2, 20, 31, 40, 33);
       block(w, ZoneType.Commercial, 2, 20, 27, 40, 29);
-      if (precinct) w.addBuilding('precinct', 41, 31);
+      if (precinct) w.addBuilding('precinct', o + 41, o + 31);
       makeSim(w);
       return w;
     };
@@ -76,7 +84,7 @@ describe('fields', () => {
 
   it('water views raise land value, smog lowers it', () => {
     const w = street();
-    for (let y = 50; y < 64; y++) for (let x = 0; x < 64; x++) w.tiles[w.idx(x, y)].terrain = Terrain.Water;
+    for (let y = 50; y < 64; y++) for (let x = 0; x < 64; x++) w.tiles[w.idx(o + x, o + y)].terrain = Terrain.Water;
     block(w, ZoneType.Industrial, 3, 20, 31, 25, 34);
     // Rebuild the sim so the static water term sees the new shoreline.
     makeSim(w);
