@@ -25,7 +25,7 @@ import type { Game } from '../game/game';
 import { PARCEL_HEAD, PARCEL_MEMBER, PARCEL_SHAPE, fillParcelMap } from '../game/parcels';
 import { ZoneType, type Building, type Parcel, type Settings, type SlotId, type Tile } from '../game/types';
 import type { World } from '../game/world';
-import { buildingCacheStats, drawServiceBuilding, drawZone, prepaintZone, resetFrame, serviceBuildingHeight, setSpriteLimits, zoneBuildingHeight, type ArtEnv } from './buildings';
+import { buildingCacheStats, drawServiceBuilding, drawZone, prepaintZone, resetFrame, serviceBuildingHeight, setSpriteLimits, spriteCacheBytes, zoneBuildingHeight, type ArtEnv } from './buildings';
 import { HALF_H, HALF_W, type Camera } from './camera';
 import { Atlas } from './atlas';
 import {
@@ -1089,11 +1089,17 @@ export class Renderer {
     const c = this.centreTile(b);
     const cap = buildingCacheStats().capBytes * WARM_CACHE;
     let checks = 0;
+    let full = false;
     const r = this.rings(b, c.x, c.y, w.ring, WARM_VISITS, (x, y) => {
-      if (++checks > WARM_CHECKS || buildingCacheStats().bytes > cap) return -1;
+      if (++checks > WARM_CHECKS) return -1;
+      if (spriteCacheBytes() > cap) {
+        full = true;
+        return -1;
+      }
       return this.prepaintAt(ctx, world, env, band, view, x, y, false, reach);
     });
-    if (r < 0) w.done = true;
+    // Done when the ring is, or when the cache holds its warm share (until the camera moves again).
+    if (r < 0 || full) w.done = true;
     else w.ring = r;
   }
   private readonly warm = { key: '', still: 0, ring: 0, done: false };

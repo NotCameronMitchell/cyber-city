@@ -1303,6 +1303,11 @@ export function buildingCacheStats() {
   };
 }
 
+/** Bytes the building sprite cache holds now (the warm ring's per-visit check; no allocation). */
+export function spriteCacheBytes(): number {
+  return cache.bytes;
+}
+
 /** The design families the kit and the landmarks reuse (tests enumerate them). */
 export const ART_FAMILIES = { DESIGNS, LEGACY_LANGS };
 void glowSprite;

@@ -111,12 +111,13 @@ export class SpriteCache {
       return s;
     }
     const fb = this.latest.get(family);
-    if (fb && this.spent >= this.budgetMs) {
+    const over = !this.canBuild();
+    if (fb && over) {
       fb.used = this.frame;
       this.stale++;
       return fb;
     }
-    if (!fb && fallback && this.spent >= this.budgetMs) {
+    if (!fb && fallback && over) {
       const cf = fallback();
       if (cf) {
         this.fallbacks++;
