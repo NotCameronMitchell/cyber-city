@@ -218,16 +218,13 @@ export class ScreenFx {
     if (!this.patCtx) this.init(ctx);
     ctx.globalCompositeOperation = 'source-over';
 
-    // Haze: a warm grey grade over the city.
-    if (this.haze > 0.004) {
-      ctx.globalAlpha = this.haze;
-      ctx.fillStyle = night > 0.5 ? '#5a4a44' : '#9c8a78';
-      ctx.fillRect(0, 0, w, h);
-    }
-    // Storm gloom.
-    if (this.storm > 0.02) {
-      ctx.globalAlpha = 0.22 * this.storm;
-      ctx.fillStyle = '#080a1c';
+    // Haze (a warm grey grade with the pollution, high quality only) and storm gloom: one full-screen fill between
+    // them (the gloom wins the colour while a storm is up).
+    const haze = quality === 'high' ? this.haze : 0;
+    const gloom = this.storm > 0.02 ? 0.22 * this.storm : 0;
+    if (haze > 0.004 || gloom > 0) {
+      ctx.globalAlpha = 1 - (1 - haze) * (1 - gloom);
+      ctx.fillStyle = gloom > haze ? '#080a1c' : night > 0.5 ? '#5a4a44' : '#9c8a78';
       ctx.fillRect(0, 0, w, h);
     }
     // Fog bands drifting across the screen.
