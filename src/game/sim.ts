@@ -337,25 +337,7 @@ export class Simulation {
     const monthEnd = w.tick % DAYS_PER_MONTH === 0;
     if (this.districtDaily) this.districtDaily(w, monthEnd);
 
-    // ── C2: publish, budget, advice ──
-    yield K.End;
-    this.advisor.highlights(w, this.growth.reached);
-    this.advisor.wealthHighlights(w, this.growth.reachedWealth);
-    this.portSystem.announce(w);
-    this.publish();
-    if (monthEnd) {
-      const cap = Math.min(MAX_TAX, w.mods.taxCap);
-      if (w.taxRate > cap) w.taxRate = cap;
-    }
-    if (monthEnd || w.tick % PROJECT_EVERY === 0) {
-      yield* this.guard(() => projectUnit(w, g, this.census, w.budget, this.portSystem, banded));
-    }
-    yield K.End;
-    if (monthEnd) {
-      settleMonth(w);
-      w.events.emit('month');
-      w.events.emit('sfx', 'money');
-    }
+    // ── C2: the turf band, the budget projection, then the publish ──
     // O6: next month end's turf maps, banded over its last REGION[R].turfBands days (turf.update copies them in).
     if (w.tick % DAYS_PER_MONTH >= DAYS_PER_MONTH - REGION[w.region].turfBands) {
       const hooks = monthBandHooks();
@@ -364,12 +346,38 @@ export class Simulation {
         for (const h of hooks) h(w);
       }
     }
-    this.advisor.milestones(w, this.census.population);
-    this.incidents.update(w, g, f, this.census, this.options.events);
-    this.advisor.flavor(w, this.census.population);
-    this.advisor.warnings(w, this.census, this.power, d, g);
-    // City life terms count down one sim day at a time (MEGACITY §6.4.1): speed never multiplies them.
-    if (w.cityEvent && w.cityEvent.daysLeft > 0) w.cityEvent.daysLeft--;
+    const capTax = () => {
+      if (!monthEnd) return;
+      const cap = Math.min(MAX_TAX, w.mods.taxCap);
+      if (w.taxRate > cap) w.taxRate = cap;
+    };
+    // Everything the UI and the story read changes in this one last step (stats, the budget, settlement, the sim's
+    // own events), so no frame ever sees half a day (§3.3).
+    const finish = () => {
+      this.advisor.highlights(w, this.growth.reached);
+      this.advisor.wealthHighlights(w, this.growth.reachedWealth);
+      this.portSystem.announce(w);
+      this.publish();
+      if (monthEnd) {
+        settleMonth(w);
+        w.events.emit('month');
+        w.events.emit('sfx', 'money');
+      }
+      this.advisor.milestones(w, this.census.population);
+      this.incidents.update(w, g, f, this.census, this.options.events);
+      this.advisor.flavor(w, this.census.population);
+      this.advisor.warnings(w, this.census, this.power, d, g);
+      // City life terms count down one sim day at a time (MEGACITY §6.4.1): speed never multiplies them.
+      if (w.cityEvent && w.cityEvent.daysLeft > 0) w.cityEvent.daysLeft--;
+    };
+    // O7: the projection runs every PROJECT_EVERY days and always fresh on the month end, in zoned chunks; its last
+    // chunk's step also writes it and publishes the day.
+    if (monthEnd || w.tick % PROJECT_EVERY === 0) {
+      yield* this.guard(() => projectUnit(w, g, this.census, w.budget, this.portSystem, banded, capTax, finish));
+    } else {
+      yield K.End;
+      finish();
+    }
   }
 
   /** A1's scan in row bands; `ages` counts the day's tile ages (only on the first attempt of the day). */
@@ -411,12 +419,22 @@ export class Simulation {
 
   // ── Coverage cache (O3) ───────────────────────────────────────────────────
 
-  /** A signature of what coverage reads per building beyond coverageVersion: offline, powered, built, stage. */
+  /**
+   * A signature of what coverage reads per building beyond coverageVersion (O3): offline, powered, built, stage, crown,
+   * sponsor, look and a Pump House's reclaim countdown, so a writer that forgets to bump coverageVersion is still seen.
+   */
   private buildingSig(): number {
     let h = this.grid.buildings.length | 0;
     for (const b of this.grid.buildings) {
-      const f = (b.offline > 0 ? 1 : 0) | (b.powered ? 2 : 0) | ((b.buildDays ?? 0) > 0 ? 4 : 0) | ((b.stage ?? 0) << 3);
-      h = (Math.imul(h ^ (b.id * 64 + f), 0x9e3779b1) + f) | 0;
+      const f =
+        (b.offline > 0 ? 1 : 0) |
+        (b.powered ? 2 : 0) |
+        ((b.buildDays ?? 0) > 0 ? 4 : 0) |
+        ((b.stage ?? 0) << 3) |
+        ((b.look ?? 0) << 5) |
+        (b.sponsor === 'basalt' ? 128 : b.sponsor === 'nacre' ? 256 : 0) |
+        ((b.reclaim ?? 0) > 0 ? 512 : 0);
+      h = (Math.imul(h ^ (b.id * 1024 + f), 0x9e3779b1) + f + (b.crown ? strHash(b.crown) : 0)) | 0;
     }
     return h;
   }
@@ -670,6 +688,13 @@ export class Simulation {
     w.stats.visitors = this.portSystem.visitors;
     if (this.census.population > w.maxPopulation) w.maxPopulation = this.census.population;
   }
+}
+
+/** A small string hash (crown ids in the coverage signature). */
+function strHash(t: string): number {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < t.length; i++) h = Math.imul(h ^ t.charCodeAt(i), 16777619);
+  return h;
 }
 
 /** The Tarmac lease's demand add (MEGACITY §3.7): +2,000 Market (Nacre) or Fab (Basalt) jobs. */

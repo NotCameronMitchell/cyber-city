@@ -72,7 +72,16 @@ function taxBase(world: World, g: SimGrid, base: number[], flat: number[], k0: n
  * The projection as a resumable unit (MEGACITY §3.3 C2): the zoned tax base in chunks of ZONED_CHUNK, then the
  * buildings and the lines; world.budget changes only in the last step.
  */
-export function* projectUnit(world: World, g: SimGrid, census: Census, out: BudgetReport, ports: PortSystem | undefined, banded: boolean): Unit {
+export function* projectUnit(
+  world: World,
+  g: SimGrid,
+  census: Census,
+  out: BudgetReport,
+  ports: PortSystem | undefined,
+  banded: boolean,
+  before?: () => void,
+  after?: () => void,
+): Unit {
   const lvField = world.fields.landValue;
   const taxMul = world.layers.taxMul;
   const mods = world.mods;
@@ -81,11 +90,13 @@ export function* projectUnit(world: World, g: SimGrid, census: Census, out: Budg
   const flat = [0, 0, 0, 0];
   const zc = g.zonedCount;
   const step = banded ? ZONED_CHUNK : zc + 1;
+  // `before` runs at the start of the first step; the lines, the writes and `after` share the last chunk's step.
+  yield K.Budget;
+  if (before) before();
   for (let k0 = 0; k0 < zc; k0 += step) {
-    yield K.Budget;
+    if (k0 > 0) yield K.Budget;
     taxBase(world, g, base, flat, k0, Math.min(zc, k0 + step));
   }
-  yield K.Budget;
   upkeepByType.clear();
   const st = STATS;
   for (const b of g.buildings) {
@@ -165,6 +176,7 @@ export function* projectUnit(world: World, g: SimGrid, census: Census, out: Budg
   out.expenses = expenses;
   out.incomeLines = incomeLines;
   out.expenseLines = expenseLines;
+  if (after) after();
 }
 
 /**

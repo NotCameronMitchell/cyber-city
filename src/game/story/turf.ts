@@ -263,22 +263,22 @@ function computeMaps(world: World): void {
 }
 
 /**
- * Steps of one map rebuild, each ≤ ≈ 0.6 ms in Node at 25 districts (MEGACITY O6): 4 row quarters of the tile pass,
+ * Steps of one map rebuild, each ≤ ≈ 0.6 ms in Node at 25 districts (MEGACITY O6): 8 row bands of the tile pass,
  * buildings, the near-city dilation, the Undertow's other dilations, its affinity in two row halves, the Kites'
  * dilations, their affinity in two row halves.
  */
-const MAP_STEPS = 12;
+const MAP_STEPS = 16;
 
 function mapStep(world: World, M: MapSet, k: number): void {
   const N = world.N;
-  if (k < 4) tileRows(world, M, ((N * k) / 4) | 0, ((N * (k + 1)) / 4) | 0);
-  else if (k === 4) buildingMaps(world, M);
-  else if (k === 5) dilateOwned(world, M.mD, 3, M.nearCity, M.tmp);
-  else if (k === 6) undertowMasks(world, M);
-  else if (k === 7) undertowAffinity(world, M, 0, N >> 1);
-  else if (k === 8) undertowAffinity(world, M, N >> 1, N);
-  else if (k === 9) kitesMasks(world, M);
-  else if (k === 10) kitesAffinity(world, M, 0, N >> 1);
+  if (k < 8) tileRows(world, M, ((N * k) / 8) | 0, ((N * (k + 1)) / 8) | 0);
+  else if (k === 8) buildingMaps(world, M);
+  else if (k === 9) dilateOwned(world, M.mD, 3, M.nearCity, M.tmp);
+  else if (k === 10) undertowMasks(world, M);
+  else if (k === 11) undertowAffinity(world, M, 0, N >> 1);
+  else if (k === 12) undertowAffinity(world, M, N >> 1, N);
+  else if (k === 13) kitesMasks(world, M);
+  else if (k === 14) kitesAffinity(world, M, 0, N >> 1);
   else kitesAffinity(world, M, N >> 1, N);
 }
 
@@ -563,7 +563,7 @@ export function bandStep(world: World): number {
     B.slots = world.slotsVersion;
     B.terrain = world.terrainVersion;
   }
-  // Day d of the window runs steps [⌊d · S / bands⌋, ⌊(d + 1) · S / bands⌋): 1–2 steps a day on 8 bands, 3 on 4.
+  // Day d of the window runs steps [⌊d · S / bands⌋, ⌊(d + 1) · S / bands⌋): 2 steps a day on 8 bands, 4 on 4.
   const until = Math.min(MAP_STEPS, Math.floor(((d + 1) * MAP_STEPS) / bands));
   let n = 0;
   while (B.done < until) {
