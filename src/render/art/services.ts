@@ -23,6 +23,9 @@ import { NEON, css, mix, type RGB } from '../palette';
 import { GLASS, mat, type ArtPal, type Mat, type Painter, type WinSpec } from './painter';
 import { PORT_PALS, portRecipe } from './ports';
 import type { Recipe } from './zones';
+import { LANDMARK_PALS, LANDMARK_RECIPES } from './landmarks';
+import { ENDING_PALS, endingLandmarkRecipe } from './legacy';
+import { arch, hexPrism, hull, lampString, pole, pyramid } from './parts';
 
 const CONC = mat([124, 126, 140]);
 const PAD = mat([96, 98, 110]);
@@ -65,35 +68,11 @@ const SERVICE_PAL_BASE = {
 
 export const SERVICE_PALS: Record<BuildingType, ArtPal> = {
   ...SERVICE_PAL_BASE,
-  // Megacity (MEGACITY §6.3, §9.2): placeholders reusing existing palettes until WP-4 draws each type.
-  floodwatch: SERVICE_PAL_BASE.precinct,
-  pumphouse: SERVICE_PAL_BASE.plaza,
-  canopypark: SERVICE_PAL_BASE.plaza,
-  medtower: SERVICE_PAL_BASE.clinic,
-  reclaim: SERVICE_PAL_BASE.solar,
-  metro: SERVICE_PAL_BASE.maglev,
-  markethall: SERVICE_PAL_BASE.clinic,
-  tidal: SERVICE_PAL_BASE.solar,
-  geothermal: SERVICE_PAL_BASE.reactor,
-  datavault: SERVICE_PAL_BASE.datahub,
-  charterhall: SERVICE_PAL_BASE.commons,
-  hexworks: SERVICE_PAL_BASE.foundry,
-  pearlatrium: SERVICE_PAL_BASE.glarewall,
-  hullhouse: SERVICE_PAL_BASE.tidemarket,
-  kitemast: SERVICE_PAL_BASE.roost,
-  lampchoir: SERVICE_PAL_BASE.memorial,
-  beacon: SERVICE_PAL_BASE.glarewall,
-  arena: SERVICE_PAL_BASE.arcology,
-  halolookout: SERVICE_PAL_BASE.spire,
-  terminal: SERVICE_PAL_BASE.maglev,
-  gantry: SERVICE_PAL_BASE.foundry,
-  glasssmile: SERVICE_PAL_BASE.glarewall,
-  breadpier: SERVICE_PAL_BASE.tidemarket,
-  recordtower: SERVICE_PAL_BASE.commons,
-  stillsquare: SERVICE_PAL_BASE.memorial,
-  frame: SERVICE_PAL_BASE.stack,
-  pumphall: SERVICE_PAL_BASE.memorial,
-};
+  // Megacity (MEGACITY §6.3, §9.2): art/landmarks.ts and art/legacy.ts.
+  ...(LANDMARK_PALS as Record<string, ArtPal>),
+  ...ENDING_PALS,
+} as Record<BuildingType, ArtPal>;
+
 
 /** Red warning light that blinks when the building is offline / unpowered. */
 function warn(p: Painter, u: number, v: number, z: number) {
@@ -567,33 +546,348 @@ export const SERVICE_RECIPES: Record<BuildingType, Recipe> = {
   seaport: portRecipe('seaport', 2)!,
   airport: portRecipe('airport', 0)!,
   spaceport: portRecipe('spaceport', 3)!,
-  // Megacity (MEGACITY §6.3, §9.2): placeholders reusing existing recipes until WP-4 draws each type.
-  floodwatch: precinct,
-  pumphouse: plaza,
-  canopypark: plaza,
-  medtower: clinic,
-  reclaim: solar,
-  metro: maglev,
-  markethall: clinic,
-  tidal: solar,
-  geothermal: reactor,
-  datavault: datahub,
-  charterhall: clinic,
-  hexworks: reactor,
-  pearlatrium: spire,
-  hullhouse: clinic,
-  kitemast: datahub,
-  lampchoir: plaza,
-  beacon: plaza,
-  arena: arcology,
-  halolookout: spire,
-  terminal: maglev,
-  gantry: reactor,
-  glasssmile: spire,
-  breadpier: clinic,
-  recordtower: datahub,
-  stillsquare: plaza,
-  frame: arcology,
-  pumphall: clinic,
+  // Megacity (MEGACITY §6.3, §9.2): art/landmarks.ts and art/legacy.ts (buildings.ts picks the state).
+  ...(LANDMARK_RECIPES as Record<string, Recipe>),
+  gantry: endingLandmarkRecipe('gantry', 0)!,
+  glasssmile: endingLandmarkRecipe('glasssmile', 0)!,
+  breadpier: endingLandmarkRecipe('breadpier', 0)!,
+  recordtower: endingLandmarkRecipe('recordtower', 0)!,
+  stillsquare: endingLandmarkRecipe('stillsquare', 0)!,
+} as Record<BuildingType, Recipe>;
+
+
+
+// ════════════════════════════════════════════════════════════════════════════
+// SERVICE LOOKS BY STYLE (MEGACITY §6.1 "Service buildings by style")
+//
+// The Med Clinic, Enforcer Precinct, Neon Plaza and Fusion Reactor get two more
+// looks each: today's look in Charter Shore, Highstep and Verdigris; an
+// "industrial" look in Kessel, Tarmac and Skeleton Row; a "waterfront" look in
+// the Shoals, the Sunk and Reedmere (the district of the building's head tile).
+// Same footprints, same numbers.
+// ════════════════════════════════════════════════════════════════════════════
+
+const CORR = mat([118, 112, 104], [26, 24, 28]);
+const SOOT = mat([96, 92, 92], [20, 20, 26]);
+const PASTEL = mat([226, 222, 214], [44, 46, 62]);
+const TIMBER = mat([150, 124, 92], [30, 24, 22]);
+const PILE = mat([96, 80, 62], [20, 16, 16]);
+const W_BAND: WinSpec = { style: 'band', floor: 8, col: 7, w: 1, h: 0.45 };
+
+function piles(p: Painter, s: number, z: number) {
+  for (let i = 0; i <= 4; i++) {
+    const t = 0.1 + ((s - 0.2) * i) / 4;
+    p.box(t - 0.03, s - 0.1, t + 0.03, s - 0.04, 0, z, PILE, { uplight: false });
+    p.box(s - 0.1, t - 0.03, s - 0.04, t + 0.03, 0, z, PILE, { uplight: false });
+  }
+  p.box(0.04, 0.04, s - 0.04, s - 0.04, z - 1, z, TIMBER, { uplight: false });
+}
+
+/** Industrial clinic: a corrugated works clinic with a sawtooth ward and a red-free teal cross-bar sign. */
+const clinicInd: Recipe = (p) => {
+  slab(p, 2, mat([120, 118, 112]), 1);
+  p.box(0.15, 0.2, 1.85, 1.8, 1, 22, CORR, { win: W_BAND, noTop: true });
+  p.saw(0.15, 0.2, 1.85, 1.8, 22, 7, 5, ROOF, p.pal.neon);
+  p.box(1.2, 1.2, 1.85, 1.8, 1, 30, mat([200, 206, 210], [40, 44, 60]), { win: W_GRID, top: ROOF, trim: p.pal.neon });
+  p.neon([0.15, 1.8, 8, 1.85, 1.8, 8, 1.85, 0.2, 8], p.pal.neon, 1);
+  p.box(1.4, 1.8, 1.65, 1.84, 18, 26, mat([20, 24, 34]), { uplight: false });
+  p.neon([1.43, 1.84, 22, 1.62, 1.84, 22], [90, 255, 220], 1.2);
+  p.neon([1.525, 1.84, 19, 1.525, 1.84, 25], [90, 255, 220], 1.2);
+  p.door(0.15, 1.8, 1.85, 1.8, 0.15, 0.4, 1, 8, [180, 255, 240]);
+  p.padMark(0.6, 0.9, 0.24, 1.1, [90, 255, 220]);
+  p.stack(0.4, 0.4, 0.05, 22, 10, false);
+  warn(p, 1.0, 1.0, 34);
 };
 
+/** Waterfront clinic: a pastel clinic on piles with a boat landing and a lit roof terrace. */
+const clinicWater: Recipe = (p) => {
+  piles(p, 2, 5);
+  p.chamfer(0.2, 0.2, 1.8, 1.6, 0.25, 5, 26, PASTEL, { win: { style: 'band', floor: 7, col: 7, w: 1, h: 0.5 }, glass: { day: [110, 180, 190], night: [10, 30, 40] }, top: mat([196, 200, 206]), trim: p.pal.neon });
+  p.dome(1.0, 0.9, 0.4, 26, 10, mat([200, 230, 230], [36, 50, 60]));
+  p.box(0.4, 1.6, 1.6, 1.95, 4.5, 5.5, TIMBER, { uplight: false });
+  p.box(0.5, 1.85, 1.0, 2.05, 0, 2, mat([220, 220, 226]), { uplight: false });
+  p.neon([0.2, 1.6, 12, 1.8, 1.6, 12], [90, 255, 220], 1);
+  p.door(0.2, 1.6, 1.8, 1.6, 0.4, 0.6, 5, 12, [180, 255, 240]);
+  p.lamp(1.7, 1.9, 9, [220, 240, 255], 12);
+  p.blinker(1.0, 0.9, 37, [90, 255, 220], 1.2, 12);
+  warn(p, 1.0, 1.0, 34);
+};
+
+/** Industrial precinct: a fortified depot with a watchtower, floodlights and a vehicle bay. */
+const precinctInd: Recipe = (p) => {
+  slab(p, 2, PAD, 1);
+  p.box(0.12, 0.12, 1.88, 1.88, 1, 18, SOOT, { win: W_SLIT, top: ROOF_DARK, trim: p.pal.neon });
+  p.ribs(0.12, 1.88, 1.88, 1.88, 1, 18, 26, SOOT);
+  p.door(0.12, 1.88, 1.88, 1.88, 0.1, 0.45, 1, 12, p.pal.neon);
+  p.door(1.88, 0.12, 1.88, 1.88, 0.55, 0.9, 1, 12, null);
+  // Watchtower with floodlights.
+  p.box(0.25, 0.25, 0.7, 0.7, 18, 52, mat([80, 88, 104]), { win: W_SLIT, top: ROOF_DARK });
+  p.box(0.18, 0.18, 0.77, 0.77, 52, 58, mat([60, 66, 80]), { win: { style: 'band', floor: 6, col: 4, w: 1, h: 0.6, lit: 2 }, top: ROOF_DARK, trim: p.pal.neon });
+  p.lamp(0.77, 0.77, 56, [230, 240, 255], 20);
+  p.antenna(0.45, 0.45, 58, 16, NEON.red);
+  const [sx, sy] = p.pt(1.7, 1.7, 19);
+  p.addFx({ k: 'strobe', x: sx, y: sy, w: 3, ph: p.rng.next() });
+  p.track(sx - 20, sy - 20);
+  p.fence([0.04, 1.96, 1.96, 1.96, 1.96, 0.04], 4);
+  warn(p, 1.2, 1.2, 22);
+};
+
+/** Waterfront precinct: a harbour patrol post on piles with a boat dock and a beacon mast. */
+const precinctWater: Recipe = (p) => {
+  piles(p, 2, 4);
+  p.box(0.2, 0.2, 1.5, 1.5, 4, 26, mat([88, 96, 116]), { win: W_SLIT, top: ROOF_DARK, trim: p.pal.neon });
+  p.box(0.3, 0.3, 1.0, 1.0, 26, 34, mat([70, 78, 96]), { win: { style: 'band', floor: 6, col: 4, w: 1, h: 0.55, lit: 1.6 }, top: ROOF_DARK });
+  p.neon([0.2, 1.5, 12, 1.5, 1.5, 12, 1.5, 0.2, 12], p.pal.neon, 1.1);
+  // Dock and patrol boat.
+  p.box(1.5, 0.4, 1.96, 1.8, 3, 4, TIMBER, { uplight: false });
+  p.box(1.62, 1.2, 1.92, 1.75, 0, 3, mat([220, 224, 232]), { uplight: false });
+  p.neon([1.62, 1.75, 2.8, 1.92, 1.75, 2.8], NEON.blue, 0.8);
+  pole(p, 0.4, 0.4, 34, 56, mat([140, 144, 152]), 0.8);
+  p.blinker(0.4, 0.4, 57, NEON.blue, 1.1, 16);
+  const [sx, sy] = p.pt(1.4, 1.4, 27);
+  p.addFx({ k: 'strobe', x: sx, y: sy, w: 3, ph: p.rng.next() });
+  p.track(sx - 20, sy - 20);
+  warn(p, 0.8, 0.8, 30);
+};
+
+/** Industrial plaza: a paved works yard square with a crane-arm holo mast and benches under a pipe gantry. */
+const plazaInd: Recipe = (p) => {
+  const pave = mat([118, 116, 112]);
+  slab(p, 1, pave, 1);
+  p.box(0.1, 0.1, 0.9, 0.16, 1, 12, mat([200, 160, 60]), { uplight: false });
+  p.box(0.1, 0.1, 0.16, 0.9, 1, 12, mat([200, 160, 60]), { uplight: false });
+  p.pipe(0.13, 0.13, 12, 0.9, 0.13, 12, 1.6, mat([170, 160, 150]));
+  p.pipe(0.13, 0.13, 12, 0.13, 0.9, 12, 1.6, mat([170, 160, 150]));
+  for (const [u, v] of [
+    [0.3, 0.8],
+    [0.8, 0.3],
+  ] as const)
+    p.container(u - 0.1, v - 0.06, u + 0.1, v + 0.06, 1, 4, [150, 70, 58]);
+  p.cyl(0.55, 0.55, 0.1, 1, 4, CONC, ROOF_DARK);
+  p.neonRing(0.55, 0.55, 0.1, 4, p.pal.neon, 1, true);
+  const [x, y] = p.pt(0.55, 0.55, 4);
+  p.addFx({ k: 'holo', x, y, h: 40, ph: p.rng.next() });
+  p.track(x - 26, y - 44);
+  p.reach(40);
+  p.lamp(0.13, 0.9, 12, [255, 170, 70], 14);
+  p.lamp(0.9, 0.13, 12, [255, 170, 70], 14);
+  warn(p, 0.5, 0.5, 10);
+};
+
+/** Waterfront plaza: a boardwalk square with a fountain pool, rope rails and lamp posts. */
+const plazaWater: Recipe = (p) => {
+  slab(p, 1, TIMBER, 1);
+  p.cyl(0.5, 0.5, 0.26, 1, 2, PASTEL, mat([80, 170, 200], [14, 40, 60]));
+  p.neonRing(0.5, 0.5, 0.26, 2, p.pal.neon, 0.8, true);
+  const [x, y] = p.pt(0.5, 0.5, 2);
+  p.addFx({ k: 'holo', x, y, h: 34, ph: p.rng.next() });
+  p.track(x - 26, y - 40);
+  p.reach(34);
+  if (p.g && !p.lod) {
+    p.begin_();
+    p.m(0.06, 0.94, 3);
+    p.l(0.94, 0.94, 3);
+    p.l(0.94, 0.06, 3);
+    p.stroke(p.col(mat([200, 180, 140]), 0.9), 0.5);
+  }
+  for (const [u, v] of [
+    [0.1, 0.94],
+    [0.94, 0.1],
+    [0.94, 0.94],
+  ] as const) {
+    pole(p, u, v, 1, 9, mat([200, 204, 208]), 0.6);
+    p.lamp(u, v, 9, [220, 240, 255], 12);
+  }
+  p.bench(0.35, 0.86, 'u');
+  p.bench(0.86, 0.35, 'v');
+  warn(p, 0.5, 0.5, 10);
+};
+
+/** Industrial reactor: a hex containment hall with stacks and a cooling-tower pair (Kessel, Tarmac, Skeleton Row). */
+const reactorInd: Recipe = (p) => {
+  slab(p, 3, PAD, 2);
+  const tower = mat([150, 146, 140]);
+  p.coolingTower(0.6, 0.6, 0.44, 56, tower);
+  for (const [u, v, h] of [[0.6, 0.6, 56]] as const) {
+    const [x, y] = p.pt(u, v, h);
+    p.addFx({ k: 'smoke', x, y, r: 11, ph: p.rng.next() });
+    p.track(x - 34, y - 66);
+  }
+  hexPrism(p, 1.8, 1.8, 0.95, 2, 30, SOOT, { win: W_SLIT, top: ROOF_DARK, trim: p.pal.neon });
+  p.dome(1.8, 1.8, 0.7, 30, 18, mat([140, 140, 160], [28, 24, 50]));
+  p.neonRing(1.8, 1.8, 0.96, 16, [150, 120, 255], 1.4, true);
+  p.box(0.3, 1.6, 0.95, 2.7, 2, 24, CORR, { win: W_GRID, top: ROOF, trim: p.pal.neon });
+  p.stack(2.6, 0.4, 0.1, 2, 50);
+  p.pipe(1.0, 0.8, 8, 1.4, 1.2, 8, 2.6, STEEL);
+  const [x, y] = p.pt(1.8, 1.8, 32);
+  p.addFx({ k: 'pulse', x, y, size: 80, c: NEON.violet, period: 2.2, ph: 0 });
+  p.track(x - 45, y - 45);
+  p.fence([0.04, 2.96, 2.96, 2.96, 2.96, 0.04]);
+  warn(p, 2.5, 1.0, 16);
+};
+
+/** Waterfront reactor: a sea-cooled reactor on a pier with intake pipes and a domed hall. */
+const reactorWater: Recipe = (p) => {
+  slab(p, 3, mat([110, 116, 120]), 2);
+  p.box(0.1, 2.5, 2.9, 2.95, 0, 3, CONC, { uplight: false });
+  for (let i = 0; i < 4; i++) p.pipe(0.5 + i * 0.6, 2.2, 4, 0.5 + i * 0.6, 3.05, 1, 2.4, mat([80, 140, 170]));
+  p.cyl(1.5, 1.3, 1.0, 2, 22, PASTEL, mat([200, 204, 210]));
+  p.cylBands(1.5, 1.3, 1.0, 4, 20, 8);
+  p.dome(1.5, 1.3, 0.95, 22, 30, mat([200, 210, 220], [40, 44, 64]));
+  p.neonRing(1.5, 1.3, 1.02, 14, [150, 120, 255], 1.4, true);
+  p.box(2.3, 0.2, 2.9, 1.0, 2, 26, PASTEL, { win: W_GRID, top: ROOF, trim: p.pal.neon });
+  p.antenna(2.6, 0.5, 26, 14);
+  const [x, y] = p.pt(1.5, 1.3, 30);
+  p.addFx({ k: 'pulse', x, y, size: 90, c: NEON.violet, period: 2.2, ph: 0 });
+  p.track(x - 45, y - 45);
+  warn(p, 2.6, 0.6, 30);
+};
+
+/** Recipe for a style-looked service: group 0 today's, 1 industrial, 2 waterfront. */
+export function serviceStyleRecipe(type: BuildingType, group: number): Recipe | null {
+  if (group === 0) return null;
+  const ind = group === 1;
+  switch (type) {
+    case 'clinic':
+      return ind ? clinicInd : clinicWater;
+    case 'precinct':
+      return ind ? precinctInd : precinctWater;
+    case 'plaza':
+      return ind ? plazaInd : plazaWater;
+    case 'reactor':
+      return ind ? reactorInd : reactorWater;
+  }
+  return null;
+}
+
+/** The service types whose look follows the district (§6.1). */
+export const STYLED_SERVICES = new Set<BuildingType>(['clinic', 'precinct', 'plaza', 'reactor']);
+
+// ── Arcology by district style (§6.2) ───────────────────────────────────────
+// Same numbers, footprint 3×3; facades reach ≥ 186 px (its roof 180) and the top stays near 204.
+
+/** Hive (Kessel, Tarmac): honeycomb hex cells stacked into a tower. */
+const hive: Recipe = (p) => {
+  slab(p, 3, mat([92, 90, 100]), 1);
+  const cell = mat([150, 120, 80], [32, 26, 22]);
+  const cell2 = mat([120, 100, 80], [26, 22, 22]);
+  const win: WinSpec = { style: 'grid', floor: 6, col: 5, w: 0.6, h: 0.5, lit: 1.3 };
+  const rings: [number, number][] = [
+    [0, 0],
+    [0.62, 0],
+    [-0.62, 0],
+    [0.31, 0.54],
+    [-0.31, -0.54],
+    [0.31, -0.54],
+    [-0.31, 0.54],
+  ];
+  for (let L = 0; L < 4; L++) {
+    const z0 = 1 + L * 46;
+    const n = L === 3 ? 1 : L === 2 ? 3 : 7;
+    for (let k = 0; k < n; k++) {
+      const [du, dv] = rings[k];
+      hexPrism(p, 1.5 + du, 1.5 + dv, 0.34, z0, z0 + 46 - (k % 2) * 4, (L + k) % 2 ? cell : cell2, { win, top: ROOF, trim: k === 0 ? p.pal.neon : undefined });
+    }
+  }
+  p.cyl(1.5, 1.5, 0.05, 185, 204, STEEL, STEEL, 0.01);
+  p.blinker(1.5, 1.5, 205, NEON.red, 1.4, 22);
+  p.wallSign(0.4, 2.6, 2.6, 2.6, 0.3, 0.7, 10, 22, p.pal.neon2);
+  warn(p, 1.5, 1.5, 60);
+};
+
+/** Hanging Gardens (Terraces, Reedmere): stepped green terraces spilling planting over every edge. */
+const hangingGardens: Recipe = (p) => {
+  slab(p, 3, mat([92, 100, 90]), 1);
+  const stone = mat([196, 184, 164], [40, 36, 40]);
+  const green = mat([86, 140, 96], [16, 36, 30]);
+  const win: WinSpec = { style: 'grid', floor: 6, col: 5, w: 0.6, h: 0.5, lit: 1.3 };
+  let z = 1;
+  const tiers = 6;
+  for (let i = 0; i < tiers; i++) {
+    const ins = 0.1 + i * 0.2;
+    const h = i === tiers - 1 ? 186 - z : 31;
+    p.box(ins, ins, 3 - ins * 0.6, 3 - ins * 0.6, z, z + h, stone, { win, top: green, trim: i === tiers - 1 ? p.pal.neon : undefined });
+    p.greens(ins + 0.05, 3 - ins * 0.6 - 0.25, 3 - ins * 0.6 - 0.05, 3 - ins * 0.6 - 0.05, z + h, 5);
+    p.greens(3 - ins * 0.6 - 0.25, ins + 0.05, 3 - ins * 0.6 - 0.05, 3 - ins * 0.6 - 0.2, z + h, 5);
+    // Vines down the faces.
+    if (p.g && !p.lod) {
+      p.begin_();
+      for (let k = 0; k < 6; k++) {
+        const t = ins + (k + 0.5) * ((3 - ins * 1.6) / 6);
+        p.m(t, 3 - ins * 0.6, z + h);
+        p.l(t, 3 - ins * 0.6, z + h - 10 - (k % 3) * 4);
+      }
+      p.stroke(p.col(green, 0.9, 0.9), 1.2);
+    }
+    z += h;
+  }
+  p.greens(1.2, 1.2, 2.0, 2.0, z, 6);
+  p.lamp(1.6, 1.6, z + 10, [255, 220, 150], 22);
+  pole(p, 1.6, 1.6, z, 204, mat([140, 144, 152]), 0.8);
+  warn(p, 1.5, 1.5, 60);
+};
+
+/** Pier Arcology (Shoals, the Sunk): a tower block on stilts at the water's edge with boardwalk decks. */
+const pierArcology: Recipe = (p) => {
+  piles(p, 3, 10);
+  const white = mat([226, 222, 214], [44, 46, 62]);
+  const win: WinSpec = { style: 'band', floor: 7, col: 6, w: 1, h: 0.5, lit: 1.2 };
+  p.box(0.25, 0.25, 2.75, 2.75, 10, 40, white, { win, top: mat([200, 204, 210]), trim: p.pal.neon2 });
+  p.box(0.45, 0.35, 2.3, 2.4, 40, 186, white, { win, top: mat([200, 204, 210]), trim: p.pal.neon });
+  p.box(2.3, 0.6, 2.7, 2.0, 40, 120, mat([190, 214, 214], [32, 44, 56]), { win, top: mat([200, 204, 210]) });
+  // Boardwalk decks every few floors.
+  for (let z = 70; z < 180; z += 36) p.box(0.4, 2.4, 2.35, 2.55, z - 1.5, z, TIMBER, { uplight: false });
+  p.dome(1.35, 1.35, 0.5, 186, 12, mat([150, 186, 196], [28, 40, 56]));
+  pole(p, 1.35, 1.35, 198, 204, STEEL, 0.6);
+  p.blinker(1.35, 1.35, 205, NEON.red, 1.4, 18);
+  lampString(p, [0.25, 2.75, 38], [2.75, 2.75, 38], 9, [220, 240, 255], 3, 8);
+  warn(p, 1.5, 1.5, 60);
+};
+
+/** Ring (Verdigris, Skeleton Row): a circle of towers around a lit court. */
+const ringArcology: Recipe = (p) => {
+  slab(p, 3, mat([92, 90, 100]), 1);
+  const win: WinSpec = { style: 'grid', floor: 6, col: 5, w: 0.55, h: 0.5, lit: 1.3 };
+  const n = 8;
+  const towers: { u: number; v: number; h: number; front: boolean }[] = [];
+  for (let i = 0; i < n; i++) {
+    const a = (i / n) * Math.PI * 2;
+    towers.push({ u: 1.5 + Math.cos(a) * 1.05, v: 1.5 + Math.sin(a) * 1.05, h: 186 - (i % 3) * 26, front: Math.sin(a + Math.PI / 4) > 0 });
+  }
+  const draw = (front: boolean) => {
+    for (const t of towers) {
+      if (t.front !== front) continue;
+      p.box(t.u - 0.24, t.v - 0.24, t.u + 0.24, t.v + 0.24, 1, t.h, mat([176, 128, 80], [36, 26, 22]), { win, top: mat([86, 156, 132], [16, 36, 34]), trim: p.pal.neon });
+      pyramid(p, t.u - 0.26, t.v - 0.26, t.u + 0.26, t.v + 0.26, t.h, 8, mat([86, 156, 132], [16, 36, 34]));
+    }
+  };
+  draw(false);
+  // The lit court and the ring bridge.
+  p.neonRing(1.5, 1.5, 0.6, 2, p.pal.neon, 1, true);
+  p.glow(1.5, 1.5, 10, p.pal.neon, 140, p.glowA() * 0.8);
+  p.ring(1.5, 1.5, 1.05, 120, mat([200, 180, 140]), 2);
+  draw(true);
+  p.reach(204);
+  warn(p, 1.5, 1.5, 60);
+};
+
+/** Arcology recipe by district style (today's ziggurat for Charter Shore and any style without its own). */
+export function arcologyRecipe(style: string): Recipe | null {
+  switch (style) {
+    case 'flats':
+    case 'tarmac':
+      return hive;
+    case 'terraces':
+    case 'reedmere':
+      return hangingGardens;
+    case 'shoals':
+    case 'sunk':
+      return pierArcology;
+    case 'bazaar':
+    case 'skeleton':
+      return ringArcology;
+  }
+  return null;
+}
+void arch;
+void hull;

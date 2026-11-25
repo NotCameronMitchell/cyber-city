@@ -1283,14 +1283,20 @@ const HAZARD = mat([214, 182, 40]);
 
 const tile4 = (p: Painter, u0: number, v0: number, u1: number, v1: number, z: number) => p.quad(u0, v0, z, u1, v0, z, u1, v1, z, u0, v1, z);
 
-/** Lot plate under a developed zone sprite: $ cracked tint, $$ none (today's lot), $$$ clean pavers with planter dots. */
-export function dressBase(p: Painter): void {
+/**
+ * Lot plate under a developed zone sprite: $ cracked tint, $$ none (today's lot), $$$ clean pavers with planter dots.
+ * `W` × `H` is the footprint (a merged parcel, MEGACITY §6.1); 1 × 1 draws exactly today's plate.
+ */
+export function dressBase(p: Painter, W = 1, H = 1): void {
   if (p.tier === 1) return;
   const a = 0.04;
   const b = 0.96;
+  // Scale tile-unit points to the footprint (identity on a single tile).
+  const U = (u: number) => (u === a ? a : u === b ? W - 0.04 : u * W);
+  const V = (v: number) => (v === a ? a : v === b ? H - 0.04 : v * H);
   if (p.tier === 0) {
     p.begin_();
-    tile4(p, a, a, b, b, 0);
+    tile4(p, a, a, U(b), V(b), 0);
     p.fill(p.col(PLATE_GRIME, 1, 0.16));
     if (p.lod || !p.g) return;
     // A few hairline cracks (hashed from the seed: no rng before the recipe).
@@ -1298,59 +1304,59 @@ export function dressBase(p: Painter): void {
     for (let i = 0; i < 3; i++) {
       let u = 0.1 + 0.8 * hash2(i, 1, p.seed);
       let v = 0.1 + 0.8 * hash2(i, 2, p.seed);
-      p.m(u, v, 0.05);
+      p.m(u * W, v * H, 0.05);
       for (let s = 0; s < 3; s++) {
         u = Math.max(a, Math.min(b, u + (hash2(i, s + 3, p.seed) - 0.5) * 0.22));
         v = Math.max(a, Math.min(b, v + (hash2(i, s + 7, p.seed) - 0.5) * 0.22));
-        p.l(u, v, 0.05);
+        p.l(u * W, v * H, 0.05);
       }
     }
     p.stroke(p.col(CRACK, 1, 0.55), 0.45);
     return;
   }
   p.begin_();
-  tile4(p, a, a, b, b, 0);
+  tile4(p, a, a, U(b), V(b), 0);
   p.fill(p.col(PAVER, 1.04));
   if (!p.g) return;
   if (!p.lod) {
     p.begin_();
-    for (let k = 1; k < 4; k++) {
-      const t = a + ((b - a) * k) / 4;
+    for (let k = 1; k < 4 * W; k++) {
+      const t = a + ((U(b) - a) * k) / (4 * W);
       p.m(t, a, 0.05);
-      p.l(t, b, 0.05);
+      p.l(t, V(b), 0.05);
+    }
+    for (let k = 1; k < 4 * H; k++) {
+      const t = a + ((V(b) - a) * k) / (4 * H);
       p.m(a, t, 0.05);
-      p.l(b, t, 0.05);
+      p.l(U(b), t, 0.05);
     }
     p.stroke(p.col(PAVER_LINE, 1, 0.7), 0.35);
   }
   // Planter dots along the two front edges, with garden lights at night.
   const g = p.g;
-  for (let k = 0; k < 4; k++) {
-    for (const [u, v] of [
-      [0.12 + k * 0.25, 0.93],
-      [0.93, 0.12 + k * 0.25],
-    ] as const) {
-      const x = p.X(u, v);
-      const y = p.Y(u, v, 0.8);
+  const dot = (u: number, v: number) => {
+    const x = p.X(u, v);
+    const y = p.Y(u, v, 0.8);
+    g.beginPath();
+    g.ellipse(x, y, 2.1, 1.3, 0, 0, Math.PI * 2);
+    g.fillStyle = p.col(LEAF, 1);
+    g.fill();
+    if (!p.lod) {
       g.beginPath();
-      g.ellipse(x, y, 2.1, 1.3, 0, 0, Math.PI * 2);
-      g.fillStyle = p.col(LEAF, 1);
+      g.ellipse(x + 0.4, y - 0.5, 1.1, 0.7, 0, 0, Math.PI * 2);
+      g.fillStyle = p.col(LEAF_HI, 1);
       g.fill();
-      if (!p.lod) {
-        g.beginPath();
-        g.ellipse(x + 0.4, y - 0.5, 1.1, 0.7, 0, 0, Math.PI * 2);
-        g.fillStyle = p.col(LEAF_HI, 1);
-        g.fill();
-      }
     }
+  };
+  for (let k = 0; k < 4 * Math.max(W, H); k++) {
+    if (k < 4 * W) dot(0.12 + k * 0.25, H - 0.07);
+    if (k < 4 * H) dot(W - 0.07, 0.12 + k * 0.25);
   }
   const ga = p.glowA();
   if (ga > 0.1 && !p.lod) {
     g.fillStyle = css([255, 226, 160], Math.min(1, ga));
-    for (let k = 0; k < 3; k++) {
-      g.fillRect(p.X(0.25 + k * 0.25, 0.96) - 0.5, p.Y(0.25 + k * 0.25, 0.96, 1.5) - 0.5, 1, 1);
-      g.fillRect(p.X(0.96, 0.25 + k * 0.25) - 0.5, p.Y(0.96, 0.25 + k * 0.25, 1.5) - 0.5, 1, 1);
-    }
+    for (let k = 0; k < 4 * W - 1; k++) g.fillRect(p.X(0.25 + k * 0.25, H - 0.04) - 0.5, p.Y(0.25 + k * 0.25, H - 0.04, 1.5) - 0.5, 1, 1);
+    for (let k = 0; k < 4 * H - 1; k++) g.fillRect(p.X(W - 0.04, 0.25 + k * 0.25) - 0.5, p.Y(W - 0.04, 0.25 + k * 0.25, 1.5) - 0.5, 1, 1);
   }
 }
 

@@ -26,6 +26,28 @@ import { HALF_H, HALF_W } from '../camera';
 import { css, glowSprite, mix, shade, type RGB } from '../palette';
 import type { Fx } from './fx';
 
+/**
+ * A faction signature anchor (MEGACITY §6.2), world px relative to the footprint top corner: furnace slits flicker,
+ * stacks flare at the shift change, halos turn, clock hands move and flags stir, lamps swing, antenna tips blink in
+ * patterns and kites tug by day, lantern windows pulse in step across the city.
+ */
+export type Sig =
+  | { k: 'furnace'; x: number; y: number; w: number; h: number }
+  | { k: 'flare'; x: number; y: number }
+  | { k: 'halo'; x: number; y: number; rx: number; ry: number; c: RGB }
+  | { k: 'clock'; x: number; y: number; r: number }
+  | { k: 'flag'; x: number; y: number; c: RGB; len: number }
+  | { k: 'swing'; x: number; y: number; c: RGB; len: number }
+  | { k: 'tips'; x: number; y: number; c: RGB; n: number }
+  | { k: 'kite'; x: number; y: number; c: RGB }
+  | { k: 'lantern'; x: number; y: number; c: RGB; size: number }
+  /** A sweeping lighthouse beam at night (Harbour Beacon). */
+  | { k: 'sweep'; x: number; y: number; c: RGB; len: number }
+  /** A scrolling ledger face (Record Tower): live lines, or frozen on the review day. */
+  | { k: 'ledger'; ox: number; oy: number; ex: number; ey: number; h: number; c: RGB; frozen: boolean }
+  /** MOTH's smile screen on a sphere at night (The Glass Smile). */
+  | { k: 'smile'; x: number; y: number; r: number; c: RGB };
+
 export interface Mat {
   day: RGB;
   night: RGB;
@@ -261,7 +283,14 @@ export class Painter {
   pal: ArtPal;
   /** Collected live effects (record mode). */
   fx: Fx[] = [];
+  /** Faction signature anchors (record mode; art/faction.ts draws them live, MEGACITY §6.2). */
+  sig: Sig[] = [];
   recording = false;
+  /**
+   * District style tint of role-tagged materials (MEGACITY §6.1, art/styles.ts): [day, night, amount] per role, applied
+   * before the wealth tier. Null = today's materials (Charter Shore).
+   */
+  sty: Partial<Record<MatKind, readonly [RGB, RGB, number]>> | null = null;
 
   // Bounds of everything drawn, world px relative to the footprint top corner.
   bx0 = 0;
@@ -284,6 +313,7 @@ export class Painter {
     this.pal = pal;
     this.faceId = 0;
     this.fx = [];
+    this.sig = [];
     this.bx0 = this.by0 = Infinity;
     this.bx1 = this.by1 = -Infinity;
     this.maxZ = 0;
@@ -373,6 +403,10 @@ export class Painter {
   // ── Colour helpers ───────────────────────────────────────────────────────
   rgb(m: Mat, k = 1): RGB {
     let c = mix(m.day, m.night, this.n);
+    if (m.kind && this.sty) {
+      const st = this.sty[m.kind];
+      if (st) c = mix(c, mix(st[0], st[1], this.n), st[2]);
+    }
     if (m.kind && this.zone) c = this.tint(c, m.kind);
     // Abandoned: grimy, desaturated, darker.
     return this.abandoned ? shade(mix(c, GRIME, 0.4), k * 0.78) : shade(c, k);
@@ -1595,6 +1629,11 @@ export class Painter {
   /** Declare that something (e.g. a live hologram) reaches height z. */
   reach(z: number) {
     this.tz(z);
+  }
+
+  /** Register a faction signature anchor (record mode only; MEGACITY §6.2). */
+  addSig(s: Sig) {
+    if (this.recording) this.sig.push(s);
   }
 
   /** Register an arbitrary live effect (record mode only). A $$$ clean fab drops smoke and flares. */

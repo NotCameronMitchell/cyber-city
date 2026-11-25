@@ -11,7 +11,10 @@
 //  * Painting new sprites is time-budgeted per frame. When over budget, the
 //    most recent sprite of the same body (other night or scale bucket) is
 //    drawn instead, so zooming and dusk transitions refine smoothly instead of
-//    hitching. A body that has never been painted is always painted at once.
+//    hitching. A body that has never been painted is painted at once, unless it
+//    names a cross-family fallback (MEGACITY §6.1: a kit body shows the classic
+//    body of its zone, level, tier and palette, painted first and kept warm,
+//    until its turn in the budget), so panning into a new district never hitches.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export interface Sprite {
@@ -65,11 +68,14 @@ export class SpriteCache {
   capBytes = 32 * 1024 * 1024;
   /** Sprites painted this frame (stats). */
   built = 0;
+  /** Cross-family fallback draws this frame (stats: frames showing a fallback body, V1). */
+  fallbacks = 0;
 
   newFrame() {
     this.frame++;
     this.spent = 0;
     this.built = 0;
+    this.fallbacks = 0;
   }
 
   /** True if painting more sprites this frame is still within budget. */
@@ -79,9 +85,10 @@ export class SpriteCache {
 
   /**
    * Fetch the sprite for `key`, painting it with `build` if missing (subject to
-   * the frame budget when a fallback for `family` exists).
+   * the frame budget when a fallback for `family` exists, or when `fallback`
+   * names another family's sprite to show meanwhile).
    */
-  get(key: number, family: number, build: () => Sprite | null): Sprite | null {
+  get(key: number, family: number, build: () => Sprite | null, fallback?: () => Sprite | null): Sprite | null {
     const s = this.map.get(key);
     if (s) {
       s.used = this.frame;
@@ -91,6 +98,13 @@ export class SpriteCache {
     if (fb && this.spent >= this.budgetMs) {
       fb.used = this.frame;
       return fb;
+    }
+    if (!fb && fallback && this.spent >= this.budgetMs) {
+      const cf = fallback();
+      if (cf) {
+        this.fallbacks++;
+        return cf;
+      }
     }
     const t0 = performance.now();
     const ns = build();

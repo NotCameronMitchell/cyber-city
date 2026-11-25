@@ -95,7 +95,8 @@ describe('sweep: every zone body paints cleanly (EXPANSION §11 WP-4 acceptance)
                   for (const zoom of [1, 0.4]) {
                     resetMockStats();
                     const tl = tile(z, l, f | (b << 3), t, { powered: state !== 'dark', abandoned: state === 'abandoned' });
-                    art.drawZoneBuilding(ctx, 0, 0, tl, 10, 10, env(night, zoom));
+                    // Today's form itself (Charter Shore, parameter set 0): look 0, exactly today's recipe.
+                    art.drawZoneBody(ctx, 0, 0, tl, { form: f, seed: 0 }, env(night, zoom));
                     expect(mockStats.errors, `zone ${z} L${l} form ${f} pal ${b} tier ${t} ${state} night ${night} zoom ${zoom}`).toEqual([]);
                     expect(mockStats.draws).toBeGreaterThan(5);
                   }
@@ -215,6 +216,11 @@ describe('per-tile phases hash art coordinates (MEGACITY §3.2; review fix)', ()
     let differs = 0;
     for (let y = 0; y < 64; y += 3)
       for (let x = 0; x < 64; x += 3) {
+        // The kit picks each tile's body by its art coordinates (MEGACITY §6.1): paint each body once first.
+        draws(x, y);
+        draws(x + 64, y + 64, 64);
+        draws(x + 128, y + 128, 128);
+        draws(x + 64, y + 64);
         const legacy = draws(x, y);
         expect(draws(x + 64, y + 64, 64)).toBe(legacy);
         expect(draws(x + 128, y + 128, 128)).toBe(legacy);

@@ -351,5 +351,36 @@ const memorial: Recipe = (p) => {
   warn(p, 0.5, 0.5, 50);
 };
 
+/**
+ * The Sunk Memorial's "Lower Wards" look (MEGACITY §9.3): built inside the Sunk it faces the water, a long names wall
+ * lit from the canal side, a channel of still water along its foot and lamps on a low quay.
+ */
+export const memorialLowerWards: Recipe = (p) => {
+  slab(p, 1, mat([70, 74, 86]), 1);
+  const water = mat([40, 70, 90], [6, 16, 30]);
+  // The canal along the front (+u) edge.
+  p.box(0.62, 0.06, 0.96, 0.94, 0.2, 0.9, water, { uplight: false, top: water });
+  p.box(0.56, 0.06, 0.62, 0.94, 0, 2.2, mat([120, 120, 128]), { uplight: false });
+  // The long names wall facing the canal.
+  const basalt = mat([46, 48, 60], [10, 10, 18]);
+  p.box(0.18, 0.1, 0.42, 0.9, 1, 34, basalt, { top: mat([60, 62, 74], [14, 14, 22]), uplight: false });
+  if (p.g) {
+    const g = p.g;
+    const on = p.lights && !p.abandoned;
+    g.fillStyle = on ? css(mix([120, 140, 160], MEMO, 0.3 + 0.7 * p.n)) : css([80, 84, 96]);
+    for (let z = 5; z < 31; z += 2.2)
+      for (let i = 0; i < 7; i++) {
+        const t0 = 0.06 + i * 0.13 + ((z * 7) % 5) * 0.008;
+        const [x, y] = p.pt(0.42, 0.1 + 0.8 * t0, z);
+        g.fillRect(x, y - 0.5, 1.6, 0.5);
+      }
+  }
+  // Lit from the canal side.
+  p.glow(0.5, 0.5, 4, MEMO, 60, p.glowA() * 0.85);
+  for (let k = 0; k < 6; k++) p.lamp(0.6, 0.14 + k * 0.14, 2.6, CANDLE, 9);
+  p.reach(40);
+  warn(p, 0.3, 0.5, 38);
+};
+
 export const STORY_RECIPES = { foundry, glarewall, tidemarket, roost, commons, memorial } as const;
 
