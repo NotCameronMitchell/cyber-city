@@ -411,6 +411,15 @@ export interface Settings {
    * written once from the device class (on for a handheld, off for a PC), so it never flips mid-session. Ignored on a 3×3 region.
    */
   lowerDetail?: boolean;
+  /**
+   * Weather (MEGACITY §6.4, §7.6): Full / Light / Off. Missing reads from `rain` (true → 'full', false → 'off');
+   * `rain` is still written (weather !== 'off') for older builds. Read it through `weatherOf` (game/settings.ts).
+   */
+  weather?: 'full' | 'light' | 'off';
+  /** Crowds on the streets (§6.4). Missing reads as on at high quality, off at low (`crowdsOn`). */
+  crowds?: boolean;
+  /** City life happenings' visuals and ticker lines (§6.4.1). Missing reads as on (`cityLifeOn`). */
+  cityLife?: boolean;
 }
 
 /** Story pace setting (docs/PACING.md). */

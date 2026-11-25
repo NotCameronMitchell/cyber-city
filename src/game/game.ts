@@ -51,6 +51,7 @@ import {
   zoneDefFor,
 } from './config';
 import { CityEvents } from './cityEvents';
+import { withLifeDefaults } from './settings';
 import { deviceClass } from './device';
 import { districtDayUnit, pumpRings } from './districts/daily';
 import { isFloodplain, updateDistrictLayers, isWildReed } from './districts/effects';
@@ -445,7 +446,8 @@ export class Game {
   constructor() {
     const stored = this.readSettings();
     // Older stored settings have no storyPace (or an unknown one): they read as 'relaxed'.
-    this.settings = { ...DEFAULT_SETTINGS, ...stored, storyPace: paceOf(stored.storyPace) };
+    // Weather reads from the old rain toggle when missing (MEGACITY §7.6); crowds and City life stay unset (default).
+    this.settings = withLifeDefaults({ ...DEFAULT_SETTINGS, ...stored, storyPace: paceOf(stored.storyPace) });
     const world = this.loadStored();
     this.world = world ?? World.generate(randomSeed(), undefined, this.events);
     this.attachSystems();
