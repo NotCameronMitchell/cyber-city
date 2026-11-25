@@ -221,7 +221,8 @@ describe('Game story API', () => {
     expect(r2.Turf).toBe('Undertow 72%');
     expect(r2['Ribbon Rail']).toBe('dead: needs 2 powered stations');
     w.addBuilding('spire', 20, 20);
-    expect(Object.fromEntries(g.getTileInfo(20, 20)!.rows).Skybridges).toBe('0/2');
+    // Skybridges v2 (MEGACITY §5.3 rule 6): a building takes 4 bridges, a single zone tower 2.
+    expect(Object.fromEntries(g.getTileInfo(20, 20)!.rows).Skybridges).toBe('0/4');
   });
 
   it('toolCost applies modifiers, credits and the stack scaling', () => {
@@ -232,7 +233,7 @@ describe('Game story API', () => {
     expect(g.toolCost('stack')).toBe(13800);
     w.story.credits.push({ what: 'stack', n: 1, mul: 0.5 });
     expect(g.toolCost('stack')).toBe(6900);
-    expect(g.toolCost('skybridge')).toBe(1800);
+    expect(g.toolCost('skybridge')).toBe(1450); // Skybridges v2 (MEGACITY §5.3): 1,200 + 250 for the shortest gap (1)
     expect(g.toolCost('rail')).toBe(110);
     w.mods.buildCostMul = 2;
     expect(g.toolCost('res')).toBe(ZONES.res.cost * 2);

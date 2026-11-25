@@ -1,9 +1,12 @@
 import {
+  NOT_ANNEXED,
   applyAction,
   buildingCost,
   crackdown,
   crackdownStatus,
   crownOptions,
+  finishFrame,
+  frameStatus,
   planAction,
   raiseStage,
   skywayNetwork,
@@ -14,6 +17,7 @@ import {
 import { buildingStats } from './buildingStats';
 import {
   AIRPORT,
+  ANNEX,
   BUILDINGS,
   BULLDOZE_COST,
   CURRENCY,
@@ -36,8 +40,11 @@ import {
   SPACEPORT,
   SPEED_TICKS_PER_SEC,
   STACK_STAGES,
+  STORY_PACE,
   ZONES,
+  SLEEP,
   districtPrice,
+  milestonesFor,
   isBuildingTool,
   isZoneTool,
   paceOf,
@@ -45,10 +52,17 @@ import {
 } from './config';
 import { CityEvents } from './cityEvents';
 import { deviceClass } from './device';
-import { adjacentLocked, validSlot } from './districts/slots';
+import { districtDaily, pumpRings } from './districts/daily';
+import { isFloodplain, updateDistrictLayers, isWildReed } from './districts/effects';
+import { districtShort, districtTitle, goalViews, type GoalView } from './districts/goals';
+import { adjacentLocked, slotRect, validSlot } from './districts/slots';
+import { isRuin } from './districts/annex';
+import { FrameGuard, frameCapMs } from './frameGuard';
+import { heightOf } from './heights';
+import { parcelAt } from './parcels';
 import { isFutureSave } from './districts/migrate';
 import { Emitter, type GameEventMap, type ToastAction } from './events';
-import type { Region, SlotId } from './types';
+import { Ground, type BridgePayoff, type DistrictKind, type DistrictVariant, type Region, type SlotId } from './types';
 import {
   FUTURE_SAVE_KEY,
   MIRROR_SAVE_KEY,
@@ -120,11 +134,91 @@ export const FUTURE_SAVE_TEXT = 'This city was saved by a newer version. Reload 
 /** Shown once when an older version had saved over the city and the mirror brought it back. */
 export const RESTORED_SAVE_TEXT = 'An older version saved over your city. It is back as you left it.';
 
+/** Days of backlog the frame loop may carry; more is dropped (MEGACITY §3.3: today's 4). */
+const BACKLOG_DAYS = 4;
+
 /** Visual clock rate by speed (index 0..3): frozen while paused, ×1 / ×1.6 / ×2.4 (EXPANSION §1.3, §2.7). */
 const CLOCK_RATE = [0, 1, 1.6, 2.4] as const;
 
 /** Safe localStorage wrappers (storage may be missing or throw); they live in a leaf module so story code can share them. */
 export { storageGet, storageRemove, storageSet } from './storage';
+
+/** One slot on the City map (§7.2), as Game.districtView() gives it. */
+export interface DistrictSlotView {
+  slot: SlotId;
+  kind: DistrictKind;
+  variant: DistrictVariant;
+  /** The district's own name (a 5×5 repeat by its variant's name) and short name. */
+  name: string;
+  short: string;
+  /** The kind's name ("Kessel Flats"): the census line of a variant names it ("Ironside Docks · Flats"). */
+  kindName: string;
+  tagline: string;
+  color: string;
+  /** owned · candidate (annexable now) · notAdjacent ("Not next to the city yet") · notOpen ("Still flooded: opens later"). */
+  state: 'owned' | 'candidate' | 'notAdjacent' | 'notOpen';
+  /** Share of the slot that is land (the sheet's terrain line). */
+  land: number;
+  perks: string[];
+  hazards: string[];
+  /** Lobbyists and their lines (§8.2; the hidden Tuning never, its fallback speaks before it is active). */
+  lobby: { faction: FactionId; quote: string }[];
+  /** Annexing it now (candidates): favor per faction (§8.2), lease aside. */
+  reactions: { f: FactionId; v: number }[];
+  /** Regional links on the city's border with it that annexing turns into city streets (§3.5). */
+  linksInternal: number;
+  /** Owned: its goals with their state and pay (§3.7). */
+  goals: GoalView[];
+  /** Owned: its census (WP-1's per-district census; missing until the sim fills stats.districts). */
+  census?: { residents: number; jobs: number; developed: number; avgLandValue: number; ruins: number };
+  /** Tarmac Reach (variant 0) as a candidate: the lease choice; Annex waits for it. */
+  lease: { options: ['nacre', 'basalt']; prompt: string } | null;
+  /** The price line: a grant, credits (after an ending) or the wait (§7.2). */
+  price: { grants: number; credits: number; text: string };
+  /** A candidate the player can annex right now (a grant, or credits enough after an ending). */
+  canAnnex: boolean;
+}
+
+/** The City map's model (§7.2). */
+export interface DistrictView {
+  region: number;
+  owned: number;
+  total: number;
+  grants: number;
+  /** An ending was chosen: districts can be bought. */
+  ended: boolean;
+  /** The next district's price after an ending (districtPrice(owned)), else 0. */
+  price: number;
+  /** "Next land grant: finish Chapter III" while no grant waits, else null. */
+  nextGrant: string | null;
+  /** Every slot is owned. */
+  whole: boolean;
+  edgeLine: string | null;
+  /** A whole 3×3 region shows the Grow to 25 districts button (§3.11; WP-9's growRegion). */
+  canGrow: boolean;
+  slots: DistrictSlotView[];
+}
+
+const ROMAN = ['', 'I', 'II', 'III', 'IV', 'V', 'VI', 'VII'];
+
+/** Corp Spire designs by sponsor (§6.2; look 0 is today's art). */
+const SPIRE_LOOKS: Record<'basalt' | 'nacre' | 'none', readonly string[]> = {
+  nacre: ['Facet', 'Spiral', 'Pearl Drop', 'Halo Atrium'],
+  basalt: ['Hex Column', 'Crucible', 'Gantry Spine'],
+  none: ['Needle', 'Twin Blade', 'Lattice'],
+};
+/** Crown designs (§6.2; look 0 of the four old crowns is today's, "Classic"). */
+const CROWN_LOOK_NAMES: Record<CrownId, readonly string[]> = {
+  foundry: ['Classic', 'Crucible', 'Hex Column'],
+  glare: ['Classic', 'Pearl Drop', 'Halo Atrium'],
+  nest: ['Classic', 'Antenna Forest', 'Sail Canopy'],
+  commons: ['Classic', 'Stepped Tower', 'Open Belfry'],
+  salvage: ['Hull Stack', 'Net Loft', 'Crane Hab'],
+  lamp: ['Lamp Chapel', 'Coil Belfry', 'Choir Ring'],
+};
+/** Ending names for the ending landmarks' note (§9.2). */
+const ENDING_NAMES: Record<EndingId, string> = { ironwork: 'Ironwork', pearl: 'Pearlescence', lowcrown: 'the Low Crown', ledger: 'Open Ledger', quiet: 'the Quiet Hand' };
+const SLOT_TILES = 64 * 64;
 
 export interface TileInfo {
   title: string;
@@ -309,6 +403,28 @@ export class Game {
   /** The first launch's announced lead: spaceport id and seconds left. */
   private lead: { id: number; left: number } | null = null;
 
+  // ── Megacity: the frame guard, skybridges, the City map (MEGACITY §3.3, §3.11, §5.4; WP-2) ──
+  /**
+   * Milliseconds clock the frame guard and the sim's slices read (tests swap in a fake one; each new Simulation
+   * gets it in attachSystems).
+   */
+  msClock: () => number = () => performance.now();
+  /** Sim work in the last frame (ms) and whether a slice ran in it (main.ts autosaves only in a frame without one). */
+  simMsThisFrame = 0;
+  simRanThisFrame = false;
+  /** Days the backlog guard dropped since the world loaded (tests, the FPS readout). */
+  droppedDays = 0;
+  /** Strain detector for 'auto' sleeping districts (§3.11). Its cap is the frame cap of this device class. */
+  readonly guard = new FrameGuard(frameCapMs(deviceClass()));
+  /** The skybridge tool's selected tower (§5.4: tap a tower, tap a partner; the partner becomes the next source). */
+  bridgeSource: { x: number; y: number } | null = null;
+  /** The last skybridge build, undoable for SAFETY.undoSec (EXPANSION §7.7 extended, §5.3 rule 8). */
+  private bridgeUndo: { ids: number[]; spent: number; at: number } | null = null;
+  /** The locked slot the last refused plan touched: the "Map" toast action opens the City map on it (§3.4). */
+  mapSlot: SlotId | null = null;
+  /** The tile at the view centre (main.ts sets it each frame): 'forced' sleep keeps that district's ring awake. */
+  private viewSlot: SlotId = -1;
+
   constructor() {
     const stored = this.readSettings();
     // Older stored settings have no storyPace (or an unknown one): they read as 'relaxed'.
@@ -413,8 +529,16 @@ export class Game {
   private attachSystems(): void {
     const sim = new Simulation(this.world);
     sim.options.events = this.settings.events;
+    // Megacity (§3.3): the district daily hook (Pump Houses, king tides, the district part, goals on the month tick).
+    sim.districtDaily = districtDaily;
+    sim.clock = () => this.msClock();
     this.sim = sim;
     this.storyResumeSpeed = null;
+    this.guard.reset();
+    this.bridgeSource = null;
+    this.bridgeUndo = null;
+    this.mapSlot = null;
+    this.droppedDays = 0;
     // Session-only expansion state belongs to the world it was made in (EXPANSION §7.7, §5.3).
     this.pendingConfirm = null;
     this.undoSnap = null;
@@ -423,6 +547,8 @@ export class Game {
     this.launchBuilding.clear();
     this.lead = null; // a pending launch is dropped with the world
     this.story = new StoryDirector(this);
+    // The district layer part (§3.3) is derived: built before the first recompute so its fields see it.
+    updateDistrictLayers(this.world, true);
     sim.recomputeAll();
     // A v1 / v2 city takes its wealth tiers once, in one batch, at load (EXPANSION §4.3).
     if (this.world.loadedVersion < 3 && sim.settleWealth() > 0) sim.recomputeAll();
@@ -561,15 +687,21 @@ export class Game {
     // The story build credit a placement uses (applyAction consumes it): a refund gives it back.
     const c = isBuildingTool(tool) ? w.story.credits.find((e) => e.what === tool && e.n > 0) : undefined;
     const credit: UsedCredit | undefined = c ? { what: c.what, mul: c.mul } : undefined;
+    const linkMark = w.nextLinkId;
     // Refunded buildings' demolition fees are waived, not charged and credited back.
     const plan = applyAction(w, tool, from, to, refund?.ids.length ? { ...opts, waive: new Set(refund.ids) } : opts);
     if (!plan.valid) {
-      if (plan.reason && plan.reason !== 'Nothing to change') this.toast(plan.reason, 'error');
+      if (plan.slot !== undefined && plan.reason === NOT_ANNEXED) {
+        // Locked land (MEGACITY §3.4): name the district; the Map action opens the City map on it.
+        this.mapSlot = plan.slot;
+        this.toast(`${districtTitle(w, plan.slot)} isn't part of the city yet`, 'error', { id: 'map', label: 'Map', sec: 6 });
+      } else if (plan.reason && plan.reason !== 'Nothing to change') this.toast(plan.reason, 'error');
       this.events.emit('sfx', 'error');
       return plan;
     }
-    // Any action replaces the one-step undo; only road, skyway and zone drags make a new one.
+    // Any action replaces the one-step undo; only road, skyway and zone drags (and skybridges) make a new one.
     this.undoSnap = before ? this.makeUndo(tool, before, plan.cost) : null;
+    this.bridgeUndo = null;
     const kind: GameEventMap['sfx'] =
       tool === 'bulldoze'
         ? 'bulldoze'
@@ -582,7 +714,7 @@ export class Game {
               : 'click';
     this.events.emit('sfx', kind);
     if (isBuildingTool(tool)) this.placedBuilding(tool, plan, credit);
-    else if (tool === 'skybridge') this.toast('Skybridge built', 'good');
+    else if (tool === 'skybridge') this.builtSkybridge(plan, linkMark);
     if (refund?.ids.length) {
       // In full: the price paid and any build credit used come back (the demolition fee was waived).
       w.funds += refund.total;
@@ -666,6 +798,11 @@ export class Game {
 
   /** Seconds left to undo the last road, skyway or zone drag (0 = nothing to undo). */
   undoLeft(): number {
+    const b = this.bridgeUndo;
+    if (b) {
+      const left = SAFETY.undoSec - (this.now() - b.at);
+      return left > 0 ? left : 0;
+    }
     const u = this.undoSnap;
     if (!u) return 0;
     const left = SAFETY.undoSec - (this.now() - u.at);
@@ -679,6 +816,7 @@ export class Game {
    * the credits spent, recomputes and toasts "Undone". Returns true when it undid something.
    */
   undo(): boolean {
+    if (this.bridgeUndo) return this.undoSkybridge();
     const u = this.undoSnap;
     if (!u) return false;
     const w = this.world;
@@ -745,9 +883,16 @@ export class Game {
   }
 
   // ── Frame update ──────────────────────────────────────────────────────────
-  /** Advance by real seconds `dt` (clamped). Runs whole sim ticks according to speed. */
+  /**
+   * Advance by real seconds `dt` (clamped). The sim runs in slices (MEGACITY §3.3): `Simulation.stepSlice` within the
+   * frame cap of this device class (6 ms handheld, 10 ms PC), a day's units over one or more frames; days are due at
+   * the speed's rate (capped at LOW_DETAIL.maxDaysPerSec in lower detail, §3.11), a backlog over 4 days is dropped,
+   * and the frame guard switches far districts to resting under strain ('auto', §3.11).
+   */
   update(dt: number) {
     dt = Math.min(Math.max(dt, 0), 0.25);
+    this.simMsThisFrame = 0;
+    this.simRanThisFrame = false;
     if (this.notices.length) {
       const n = this.notices.splice(0);
       for (const t of n) this.toast(t.text, t.kind, t.action);
@@ -756,27 +901,78 @@ export class Game {
     if (this.speed > 0) {
       tickMirrorClock(dt);
       this.cityEvents.update(dt);
+      this.tickEpilogue(dt);
     }
     this.syncStoryPause();
     if (this.speed > 0) {
       this.clock += dt * this.clockRate;
-      this.tickAcc += dt * SPEED_TICKS_PER_SEC[this.speed];
-      let steps = 0;
-      while (this.tickAcc >= 1 && steps < 8) {
-        this.tickAcc -= 1;
-        steps++;
-        this.sim.step();
+      this.tickAcc += dt * this.daysPerSec;
+      const sim = this.sim;
+      const cap = this.guard.cap;
+      const t0 = this.msClock();
+      let days = 0;
+      while (this.tickAcc >= 1 || sim.midDay) {
+        const spent = this.msClock() - t0;
+        if (this.simRanThisFrame && spent >= cap) break;
+        this.simRanThisFrame = true;
+        // A step starts only while it fits; at least one runs per call, so the sim never stalls.
+        const done = sim.stepSlice(Math.max(0, cap - spent));
+        if (!done) break;
+        this.tickAcc = Math.max(0, this.tickAcc - 1);
+        days++;
         this.story.onDay();
         if (this.story.blocking) {
           this.tickAcc = 0; // a card opened: stop now and drop the backlog
           break;
         }
       }
-      if (steps > 0) this.events.emit('stats');
-      if (this.tickAcc > 4) this.tickAcc = 0; // drop backlog on slow devices
+      this.simMsThisFrame = this.msClock() - t0;
+      if (days > 0) this.events.emit('stats');
+      let dropped = false;
+      if (this.tickAcc > BACKLOG_DAYS) {
+        // Drop the backlog on slow devices: a hitch never turns into seconds of saturated catch-up.
+        this.droppedDays += Math.floor(this.tickAcc);
+        this.tickAcc = 0;
+        dropped = true;
+      }
+      this.guard.record(dt, this.simMsThisFrame, this.speed, dropped);
+      this.syncSleep();
       this.updateSpaceports(dt);
       this.syncStoryPause();
     }
+  }
+
+  /** Days a second at the current speed: SPEED_TICKS_PER_SEC, capped at LOW_DETAIL.maxDaysPerSec in lower detail (§3.11). */
+  get daysPerSec(): number {
+    const rate = SPEED_TICKS_PER_SEC[this.speed] ?? 0;
+    return this.lowerDetail ? Math.min(rate, LOW_DETAIL.maxDaysPerSec) : rate;
+  }
+
+  /** Unpaused seconds between autosaves (§3.3, §3.11): REGION[R].autosaveMinSec, LOW_DETAIL.autosaveMinSec in lower detail. */
+  get autosaveMinSec(): number {
+    if (this.lowerDetail) return LOW_DETAIL.autosaveMinSec;
+    return REGION[this.world.region as Region]?.autosaveMinSec ?? REGION[3].autosaveMinSec;
+  }
+
+  /**
+   * How far districts rest (O8, §3.3, §3.11): 'forced' in lower detail; on a 5×5 city (and a 3×3 city on a handheld
+   * device while SLEEP.region3Handheld is 'auto') they rest only while the frame guard sees strain; else never.
+   */
+  get sleepMode(): 'off' | 'auto' | 'forced' {
+    if (this.lowerDetail) return 'forced';
+    const r = this.world.region;
+    const adaptive = r === 5 || (r === 3 && deviceClass() === 'handheld' && SLEEP.region3Handheld === 'auto');
+    return adaptive && this.guard.engaged ? 'auto' : 'off';
+  }
+
+  private syncSleep(): void {
+    this.sim.sleep = this.sleepMode;
+    this.sim.sleepFocus = this.viewSlot;
+  }
+
+  /** The tile at the centre of the view (main.ts, each frame): its district stays awake in lower detail. */
+  setViewCentre(x: number, y: number): void {
+    this.viewSlot = this.world.inBounds(x, y) ? this.world.slotAt(x, y) : -1;
   }
 
   // ── Spaceport construction floor and launches (EXPANSION §5.3) ───────────
@@ -911,8 +1107,8 @@ export class Game {
     this.story.later();
   }
   /** Raise a Stratablock (crown required when starting stage 3). */
-  raiseStage(id: number, crown?: CrownId): ActionResult {
-    return this.afterStoryAction(raiseStage(this.world, id, crown), 'build');
+  raiseStage(id: number, crown?: CrownId, look?: 0 | 1 | 2 | 3): ActionResult {
+    return this.afterStoryAction(raiseStage(this.world, id, crown, look), 'build');
   }
   crackdown(precinctId: number): ActionResult {
     return this.afterStoryAction(crackdown(this.world, precinctId), 'alert');
@@ -943,8 +1139,17 @@ export class Game {
    * (radius for the map preview), Raise / Crown on a Stratablock (crown picker
    * rows on 'crown'). Disabled rows carry their reason. Empty elsewhere.
    */
-  inspectActions(x: number, y: number, sky = false): InspectAction[] {
+  inspectActions(x: number, y: number, sky = false, link?: number): InspectAction[] {
     const w = this.world;
+    if (link !== undefined) {
+      // A skybridge tube (MEGACITY §5.5): remove it (no refund once the 10 s undo has passed).
+      if (!w.links.some((l) => l.id === link)) return [];
+      return [{ id: 'bridgeRemove', label: 'Remove skybridge', cost: 0, enabled: true, buildingId: -1, x, y }];
+    }
+    if (w.inBounds(x, y) && !w.isOwned(x, y)) {
+      // A locked district (§3.4): its preview opens the City map on it.
+      return [{ id: 'map', label: 'Open City map', cost: 0, enabled: true, buildingId: -1, x, y }];
+    }
     if (sky) {
       // Skyway sheet (EXPANSION §7.4): demolish this segment (one tile, a sky-layer bulldoze).
       if (!w.inBounds(x, y) || w.sky[w.idx(x, y)] === 0) return [];
@@ -955,6 +1160,13 @@ export class Game {
     }
     const b = w.buildingAt(x, y);
     if (!b) return [];
+    if (b.type === 'frame') {
+      // Skeleton Row (§3.7): finish it as a Stratablock with its Plinth done, for 60% of the plinth.
+      const st = frameStatus(w, b.id);
+      const a: InspectAction = { id: 'frame', label: `Finish frame · ${num(st.cost)} ${CURRENCY}`, cost: st.cost, enabled: !st.reason, buildingId: b.id };
+      if (st.reason) a.reason = st.reason;
+      return [a];
+    }
     if (b.type === 'spaceport') {
       // Launch rights (EXPANSION §5.3): chosen when the player is ready, from placement on.
       if (w.story.flags.launchRights) return [];
@@ -1046,6 +1258,157 @@ export class Game {
     return { ok: true, cost: plan.cost };
   }
 
+  // ── Skybridges v2 (MEGACITY §5.4, §5.5; WP-2) ─────────────────────────────
+  /**
+   * Tap a tower with the Skybridge tool (§5.4): the tall anchor at (x, y) becomes the source and its partners come
+   * back (green ones build, red ones carry their reason, blue routes are two bridges). Null (and no source) when
+   * (x, y) is not a tall tower in the city; tapping the source again deselects.
+   */
+  skybridgeSource(x: number, y: number): vertical.Partner[] | null {
+    const w = this.world;
+    const a = vertical.anchorAt(w, x, y);
+    const cur = this.bridgeSource ? vertical.anchorAt(w, this.bridgeSource.x, this.bridgeSource.y) : null;
+    if (!a || (cur && cur.key === a.key)) {
+      this.bridgeSource = null;
+      return null;
+    }
+    this.bridgeSource = { x, y };
+    return vertical.skybridgePartners(w, x, y);
+  }
+
+  /** The current source's partners (recomputed on every call: the UI asks again on 'tiles' events). */
+  skybridgePartners(): vertical.Partner[] {
+    const src = this.bridgeSource;
+    if (!src) return [];
+    return vertical.skybridgePartners(this.world, src.x, src.y);
+  }
+
+  /** The current source's lanes (the overlay's ghost tubes and see-through bands, §5.4). */
+  skybridgeLanes(): ReturnType<typeof vertical.laneBands> {
+    const src = this.bridgeSource;
+    return src ? vertical.laneBands(this.world, src.x, src.y) : [];
+  }
+
+  /** Plan a bridge (or a two-bridge route) from the source to (x, y): payoff, price, reason (§5.3, §5.5). */
+  planSkybridge(x: number, y: number): ActionPlan {
+    const src = this.bridgeSource;
+    if (!src) return { tool: 'skybridge', tiles: [], cost: 0, valid: false, reason: 'Start on a tall tower' };
+    return planAction(this.world, 'skybridge', src, { x, y });
+  }
+
+  /**
+   * Build the planned bridge from the source to (x, y) (§5.4 step 3): with the Undo toast (10 s) and the payoff; the
+   * far tower becomes the next source, so a Sky Lobby takes one tap per bridge. A two-bridge route confirms first:
+   * pass `confirmed` once the player tapped ✓ (the plan comes back with `confirm` until then).
+   */
+  applySkybridge(x: number, y: number, confirmed = false): ActionPlan {
+    const src = this.bridgeSource;
+    const plan = this.planSkybridge(x, y);
+    if (!src || !plan.valid || (plan.confirm && !confirmed)) {
+      if (!plan.valid && plan.reason && src) this.toast(plan.reason, 'error');
+      return plan;
+    }
+    if (this.tool !== 'skybridge') this.setTool('skybridge');
+    const out = this.apply(src, { x, y });
+    return out;
+  }
+
+  /** After a bridge (or route) was built: the payoff toast with Undo, and the far tower as the next source. */
+  private builtSkybridge(plan: ActionPlan, linkMark: number): void {
+    const w = this.world;
+    const ids = w.links.filter((l) => l.id >= linkMark).map((l) => l.id);
+    this.bridgeUndo = ids.length ? { ids, spent: plan.cost, at: this.now() } : null;
+    const p = plan.bridge;
+    const n = ids.length;
+    const head = n > 1 ? `${n} skybridges` : 'Skybridge';
+    const pay = p ? ` · ${num(p.walkers)} walkers · cars −${p.lobby ? 25 : 20}%` : '';
+    this.toast(`${head} built${pay}`, 'good', { id: 'undo', label: 'Undo', sec: SAFETY.undoSec });
+    const far = plan.route?.second ?? plan.span;
+    const next = far ? { x: far.bx, y: far.by } : null;
+    this.bridgeSource = next && vertical.anchorAt(w, next.x, next.y) ? next : null;
+  }
+
+  /** Undo the last skybridge build inside SAFETY.undoSec: the links go and their price comes back (§5.3 rule 8). */
+  private undoSkybridge(): boolean {
+    const u = this.bridgeUndo;
+    this.bridgeUndo = null;
+    if (!u) return false;
+    const w = this.world;
+    if (this.now() - u.at > SAFETY.undoSec || !u.ids.every((id) => w.links.some((l) => l.id === id))) {
+      this.toast('Too late to undo', 'error');
+      this.events.emit('sfx', 'error');
+      return false;
+    }
+    for (const id of u.ids) removeLink(w, id);
+    w.funds += u.spent;
+    this.cancelPending();
+    this.events.emit('sfx', 'click');
+    this.toast('Undone', 'info');
+    this.sim.recomputeAll();
+    vertical.refresh(w);
+    this.story.markDirty();
+    this.events.emit('stats');
+    return true;
+  }
+
+  /** The inspect sheet's "Remove skybridge" (§5.5): the link goes, no refund (the 10 s undo already passed). */
+  removeSkybridge(linkId: number): ActionResult {
+    const w = this.world;
+    if (!w.links.some((l) => l.id === linkId)) {
+      this.events.emit('sfx', 'error');
+      return { ok: false, reason: 'No skybridge here', cost: 0 };
+    }
+    removeLink(w, linkId);
+    if (this.selected?.link === linkId) this.select(null);
+    this.events.emit('sfx', 'bulldoze');
+    this.cancelPending();
+    this.undoSnap = null;
+    this.bridgeUndo = null;
+    this.sim.recomputeAll();
+    vertical.refresh(w);
+    this.story.markDirty();
+    this.events.emit('stats');
+    return { ok: true, cost: 0 };
+  }
+
+  /** What one built bridge pays now (§5.5), for inspect and the UI. */
+  skybridgePayoff(linkId: number): BridgePayoff | null {
+    const l = this.world.links.find((k) => k.id === linkId);
+    return l ? vertical.skybridgePayoff(this.world, { x: l.ax, y: l.ay }, { x: l.bx, y: l.by }) : null;
+  }
+
+  /**
+   * Inspect a skybridge tube (Selection.link, §5.5): walkers a day, cars saved, land, its lobby, upkeep; the lobby
+   * note, the dark note. Null when the link is gone.
+   */
+  linkInfo(linkId: number): TileInfo | null {
+    const w = this.world;
+    const l = w.links.find((k) => k.id === linkId);
+    if (!l) return null;
+    const p = vertical.skybridgePayoff(w, { x: l.ax, y: l.ay }, { x: l.bx, y: l.by });
+    const active = w.vertical.activeLinks.has(l.id);
+    const gap = vertical.linkGap(l);
+    const rows: [string, string][] = [
+      ['Walkers', active ? `${num(p.walkers)}/day` : '0/day'],
+      ['Cars', active ? `−${p.lobby ? 25 : 20}%` : '—'],
+      ['Land', active ? '+5%' : '—'],
+    ];
+    if (p.lobby && active) rows.push(['Lobby', `${p.lobby.k} towers`]);
+    rows.push(['Upkeep', active ? `${SKYBRIDGE.upkeepBase + SKYBRIDGE.upkeepPerTile * gap}/mo` : '0/mo']);
+    const notes: NonNullable<TileInfo['notes']> = [];
+    if (p.lobby && active) notes.push({ text: `Part of Sky Lobby ${p.lobby.name}: +${num(p.lobby.visitors)} visitors a month`, tone: 'good' });
+    if (vertical.linkSealed(w, l)) notes.push({ text: 'Dark: a tower here is no longer tall', tone: 'warn' });
+    else if (!active) notes.push({ text: 'Dark: a tower here has no power', tone: 'warn' });
+    return { title: 'Skybridge', subtitle: 'A walkway for people. Skyways carry cars.', color: '#7fe8ff', rows, ...(notes.length ? { notes } : {}) };
+  }
+
+  // ── Skeleton Row frames (MEGACITY §3.7) ──────────────────────────────────
+  /** Finish a frame into a Stratablock with its Plinth done (the inspect action 'frame'). */
+  finishFrame(id: number): ActionResult {
+    const r = finishFrame(this.world, id);
+    return this.afterStoryAction(r, 'build', true);
+  }
+
   /** Common follow-up for story actions: feedback, and a refresh when something changed. */
   private afterStoryAction(r: ActionResult, sfx: GameEventMap['sfx'], refreshTurf = false): ActionResult {
     if (!r.ok) {
@@ -1055,6 +1418,7 @@ export class Game {
     }
     // Any other action ends the one-step undo (EXPANSION §7.7).
     this.undoSnap = null;
+    this.bridgeUndo = null;
     this.events.emit('sfx', sfx);
     if (refreshTurf) turf.refreshStats(this.world);
     this.story.markDirty();
@@ -1123,60 +1487,291 @@ export class Game {
     this.save(true);
   }
 
-  // ── Districts (MEGACITY §3.8). Step 0b stubs with the final signatures; WP-2 adds the rules, lease, banners. ──
+  // ── Districts (MEGACITY §3.4, §3.8, §7.2; WP-2) ──────────────────────────
   /**
-   * Annex a slot (§3.8): a locked slot 4-adjacent to the city whose `opensWhen` holds, paid with one land grant.
-   * Structural annex, the lobbyists' reactions (director.onAnnex), a full recompute and a save. Not undoable.
+   * Annex a slot (§3.8): a locked slot 4-adjacent to the city whose `opensWhen` holds. It costs one land grant while
+   * the city holds any; with none left, after an ending only, `districtPrice(owned)` credits (as buyDistrict). Tarmac
+   * Reach (variant 0 only) needs its lease picked. Structural annex (one batched 'tiles' event), the district layer
+   * part, the lobbyists' reactions (repeat districts of a kind react less), a full recompute, the banners and a save.
+   * Not undoable (confirmed on the sheet, §7.2).
    */
   annex(slot: SlotId, lease?: 'nacre' | 'basalt'): ActionResult {
     const w = this.world;
-    const why = this.annexBlock(slot);
+    const why = this.annexBlock(slot, lease);
     if (why) return { ok: false, reason: why, cost: 0 };
-    if (w.districts.grants <= 0) return { ok: false, reason: 'No land grant', cost: 0 };
+    if (w.districts.grants <= 0) return this.buyDistrict(slot, lease);
     w.districts.grants--;
-    this.events.emit('grant', { grants: w.districts.grants, why: 'chapter' });
     this.doAnnex(slot, lease);
     return { ok: true, cost: 0 };
   }
 
-  /** Buy a district with credits (§3.8): after an ending only, at districtPrice(owned), never scaled with funds. */
-  buyDistrict(slot: SlotId): ActionResult {
+  /**
+   * Buy a district with credits (§3.8): after an ending only, at districtPrice(owned): a fixed rule by districts owned,
+   * never scaled with funds. Buying never resets the epilogue grant clock.
+   */
+  buyDistrict(slot: SlotId, lease?: 'nacre' | 'basalt'): ActionResult {
     const w = this.world;
-    const why = this.annexBlock(slot);
+    const why = this.annexBlock(slot, lease);
     if (why) return { ok: false, reason: why, cost: 0 };
-    if (!w.story.ending) return { ok: false, reason: 'Next land grant: finish the story', cost: 0 };
+    if (!w.story.ending) return { ok: false, reason: this.nextGrantText(), cost: 0 };
     const price = districtPrice(w.districts.owned.length);
-    if (w.funds < price) return { ok: false, reason: 'Not enough credits', cost: 0 };
+    if (w.funds < price) return { ok: false, reason: `Not enough credits (need ${num(price)} ${CURRENCY})`, cost: 0 };
     w.funds -= price;
     w.districts.bought++;
-    this.doAnnex(slot);
+    this.doAnnex(slot, lease);
     return { ok: true, cost: price };
   }
 
-  /** Why a slot can't be annexed now, or null. */
-  private annexBlock(slot: SlotId): string | null {
+  /** Why a slot can't be annexed now (its state and the lease), or null. Payment is checked by the caller. */
+  private annexBlock(slot: SlotId, lease?: 'nacre' | 'basalt'): string | null {
     const w = this.world;
+    if (this.saveBlocked) return 'Reload to update first';
     if (!validSlot(w.region, slot) || w.slotOwned[slot]) return 'Not a district to annex';
-    if (!adjacentLocked(w).includes(slot)) return 'Not next to the city yet';
     const def = DISTRICTS[w.districts.kinds[slot]];
     if (def?.opensWhen && !evalCond(w, def.opensWhen)) return 'Still flooded: opens later';
+    if (!adjacentLocked(w).includes(slot)) return 'Not next to the city yet';
+    if (this.needsLease(slot) && lease !== 'nacre' && lease !== 'basalt') return 'Pick who leases the old apron';
     return null;
+  }
+
+  /** Tarmac Reach itself (variant 0, never its repeats) asks who leases the apron (§3.7). */
+  private needsLease(slot: SlotId): boolean {
+    const w = this.world;
+    return w.districts.kinds[slot] === 'tarmac' && w.variantOf(slot) === 0 && !!DISTRICTS.tarmac.lease;
   }
 
   private doAnnex(slot: SlotId, lease?: 'nacre' | 'basalt'): void {
     const w = this.world;
     const kind = w.districts.kinds[slot];
     const repeat = w.districts.owned.some((s) => w.districts.kinds[s] === kind);
-    const tarmac0 = kind === 'tarmac' && w.variantOf(slot) === 0;
-    if (tarmac0 && (lease === 'nacre' || lease === 'basalt')) w.districts.leases = { ...w.districts.leases, tarmac: lease };
+    const leased = this.needsLease(slot) ? lease : undefined;
+    if (leased) w.districts.leases = { ...w.districts.leases, tarmac: leased };
+    // Rivals: the lobbyists of the other current candidates (director.onAnnex skips kinds already owned).
     const rivals = adjacentLocked(w)
       .filter((s) => s !== slot)
+      .filter((s) => {
+        const d = DISTRICTS[w.districts.kinds[s]];
+        return !d?.opensWhen || evalCond(w, d.opensWhen);
+      })
       .map((s) => w.districts.kinds[s]);
+    this.cancelPending();
+    this.undoSnap = null;
+    this.bridgeUndo = null;
     w.annex(slot);
-    this.story.onAnnex(kind, tarmac0 ? lease : undefined, repeat, rivals);
+    updateDistrictLayers(w, true);
+    this.story.onAnnex(kind, leased, repeat, rivals);
     this.sim.recomputeAll();
+    vertical.refresh(w, { quiet: true });
+    turf.refreshStats(w);
+    const name = districtTitle(w, slot);
+    w.addNews(`${w.cityName} grows: ${name} joins the city.`, 'good');
+    // The once-per-kind banner (§3.8): the first district of a kind only; repeats post the news line alone.
+    if (!repeat) {
+      const def = DISTRICTS[kind];
+      this.events.emit('moment', { id: 'region', title: `DISTRICT ANNEXED · ${name.toUpperCase()}`, sub: def?.perks[0] ?? def?.tagline ?? '' });
+    }
+    this.regionWhole();
     this.events.emit('stats');
     this.save();
+  }
+
+  /** The annex that makes every slot owned queues the "region is whole" banner once (again at 25 after growing, §3.8). */
+  private regionWhole(): void {
+    const w = this.world;
+    const total = w.region * w.region;
+    if (w.districts.owned.length < total) return;
+    const flag = `regionWhole${total}`;
+    if (w.story.flags[flag]) return;
+    w.story.flags[flag] = true;
+    w.moments.add('region');
+    this.events.emit('moment', { id: 'region', title: 'THE REGION IS WHOLE', sub: `All ${total} districts are part of ${w.cityName}.` });
+    w.addNews('The city reaches the edge of the region.', 'info');
+  }
+
+  /** "Next land grant: finish Chapter III" (§7.2 price line), or the epilogue grant's wait. */
+  nextGrantText(): string {
+    const w = this.world;
+    const st = w.story;
+    if (st.ending) {
+      if (!adjacentLocked(w).length && w.districts.owned.length >= w.region * w.region) return 'The city reaches the edge of the region.';
+      const left = Math.max(0, this.epilogueGrantSec() - (w.districts.epilogueSec ?? 0));
+      return `Next land grant in ${Math.max(1, Math.ceil(left / 60))} min`;
+    }
+    const ch = Math.max(1, st.chapter | 0);
+    if (ch >= 6) return 'Next land grant: Charter Night';
+    return `Next land grant: finish Chapter ${ROMAN[ch] ?? ch}`;
+  }
+
+  /** Unpaused seconds between epilogue grants (§3.8): the pace's chapter floor × REGION[R].epilogueGrantMul. */
+  epilogueGrantSec(): number {
+    const pace = STORY_PACE[this.settings.storyPace] ?? STORY_PACE.relaxed;
+    const mul = REGION[this.world.region as Region]?.epilogueGrantMul ?? 1;
+    return pace.chapterMinSec * mul;
+  }
+
+  /**
+   * The epilogue grant clock (§3.8, §9.5): after an ending, unpaused real seconds count in `districts.epilogueSec`
+   * (saved) while a slot is locked and no grant is unspent; every epilogueGrantSec() one grant arrives with one ticker
+   * line. Never while paused, never while a grant waits, never once every slot is owned. Buying never resets it.
+   */
+  private tickEpilogue(dt: number): void {
+    const w = this.world;
+    const d = w.districts;
+    if (!w.story.ending || d.grants > 0 || d.owned.length >= w.region * w.region) return;
+    d.epilogueSec = (d.epilogueSec ?? 0) + dt;
+    if (d.epilogueSec < this.epilogueGrantSec()) return;
+    d.epilogueSec = 0;
+    d.grants++;
+    this.events.emit('grant', { grants: d.grants, why: 'epilogue' });
+    w.addNews('A land grant arrives: the city may annex again.', 'good');
+  }
+
+  /**
+   * The City map's model (§7.2): every slot with its state (owned, candidate, not next to the city, not open yet),
+   * names (variants by their own), perks, hazards, lobbyists and their lines, the reactions annexing brings, the
+   * regional links that would become streets, the price line, the lease and, for owned districts, the census and goals.
+   */
+  districtView(): DistrictView {
+    const w = this.world;
+    const d = w.districts;
+    const R = w.region;
+    const total = R * R;
+    const cands = new Set(adjacentLocked(w));
+    const ended = !!w.story.ending;
+    const price = districtPrice(d.owned.length);
+    const slots: DistrictSlotView[] = [];
+    for (let s = 0; s < total; s++) {
+      const kind = d.kinds[s];
+      const def = DISTRICTS[kind];
+      const v = w.variantOf(s);
+      const vd = v > 0 ? def?.variants[v - 1] : undefined;
+      const owned = w.slotOwned[s] === 1;
+      const open = !def?.opensWhen || evalCond(w, def.opensWhen);
+      const state: DistrictSlotView['state'] = owned ? 'owned' : !open ? 'notOpen' : cands.has(s) ? 'candidate' : 'notAdjacent';
+      const r = slotRect(w, s);
+      let water = 0;
+      for (let y = r.y0; y <= r.y1; y++) for (let x = r.x0; x <= r.x1; x++) if (w.tiles[y * w.N + x].terrain === Terrain.Water) water++;
+      const name = vd?.name ?? def?.name ?? 'District';
+      const view: DistrictSlotView = {
+        slot: s,
+        kind,
+        variant: v,
+        name,
+        short: vd?.short ?? def?.short ?? name,
+        kindName: def?.name ?? name,
+        tagline: state === 'notOpen' ? 'Still flooded: opens later' : vd?.tagline ?? def?.tagline ?? '',
+        color: vd?.accent ?? def?.color ?? '#7f8aa8',
+        state,
+        land: 1 - water / (SLOT_TILES),
+        perks: state === 'notOpen' ? [] : [...(def?.perks ?? [])],
+        hazards: state === 'notOpen' ? [] : [...(def?.hazards ?? [])],
+        lobby: state === 'notOpen' ? [] : this.lobbyLines(s),
+        reactions: state === 'candidate' ? this.annexReactions(s) : [],
+        linksInternal: state === 'candidate' ? this.linksOnBorder(s) : 0,
+        goals: owned ? goalViews(w, s) : [],
+        lease: state === 'candidate' && this.needsLease(s) && DISTRICTS.tarmac.lease ? { options: ['nacre', 'basalt'], prompt: DISTRICTS.tarmac.lease.prompt } : null,
+        price: { grants: 0, credits: 0, text: '' },
+        canAnnex: false,
+      };
+      if (owned) {
+        const c = w.stats.districts?.find((x) => x.slot === s);
+        view.census = c
+          ? { residents: c.residents, jobs: c.jobs, developed: c.developed, avgLandValue: c.avgLandValue, ruins: c.ruins }
+          : undefined;
+      }
+      if (state === 'candidate') {
+        if (d.grants > 0) view.price = { grants: 1, credits: 0, text: `Uses 1 land grant (${d.grants - 1} left)` };
+        else if (ended) view.price = { grants: 0, credits: price, text: `${num(price)} ${CURRENCY} · or wait for the next grant` };
+        else view.price = { grants: 0, credits: 0, text: this.nextGrantText() };
+        view.canAnnex = !this.saveBlocked && (d.grants > 0 || (ended && w.funds >= price));
+      } else if (state === 'notAdjacent') view.price = { grants: 0, credits: 0, text: 'Not next to the city yet' };
+      else if (state === 'notOpen') view.price = { grants: 0, credits: 0, text: 'Still flooded: opens later' };
+      slots.push(view);
+    }
+    const whole = d.owned.length >= total;
+    return {
+      region: R,
+      owned: d.owned.length,
+      total,
+      grants: d.grants,
+      ended,
+      price: ended ? price : 0,
+      nextGrant: d.grants > 0 ? null : this.nextGrantText(),
+      whole,
+      edgeLine: whole ? 'The city reaches the edge of the region.' : null,
+      canGrow: whole && R === 3,
+      slots,
+    };
+  }
+
+  /** Lobbyists of a slot with their lines (§8.2): the Tuning only once active (its fallback speaks before), variant lines first. */
+  private lobbyLines(slot: SlotId): { faction: FactionId; quote: string }[] {
+    const w = this.world;
+    const def = DISTRICTS[w.districts.kinds[slot]];
+    if (!def) return [];
+    const v = w.variantOf(slot);
+    const vq = v > 0 ? def.variants[v - 1]?.quote : undefined;
+    const out: { faction: FactionId; quote: string }[] = [];
+    for (const f0 of def.lobby) {
+      const f = f0 === 'tuning' && !w.story.flags.tuningActive ? def.lobbyFallback : f0;
+      if (!f || out.some((o) => o.faction === f)) continue;
+      const quote = vq?.[f] ?? def.quote[f] ?? '';
+      out.push({ faction: f, quote });
+    }
+    return out;
+  }
+
+  /** What annexing this candidate does to the factions (§8.2), as the choice summary shows it. */
+  annexReactions(slot: SlotId, lease?: 'nacre' | 'basalt'): { f: FactionId; v: number }[] {
+    const w = this.world;
+    const d = w.districts;
+    const kind = d.kinds[slot];
+    const repeat = d.owned.some((s) => d.kinds[s] === kind);
+    const ownedKinds = new Set(d.owned.map((s) => d.kinds[s]));
+    const lobbyOf = (k: DistrictKind): FactionId[] => {
+      const def = DISTRICTS[k];
+      if (!def) return [];
+      return def.lobby.flatMap((f) => (f === 'tuning' && !w.story.flags.tuningActive ? (def.lobbyFallback ? [def.lobbyFallback] : []) : [f]));
+    };
+    const out = new Map<FactionId, number>();
+    const add = (f: FactionId, v: number) => out.set(f, (out.get(f) ?? 0) + v);
+    const mine = new Set(lobbyOf(kind));
+    for (const f of mine) add(f, repeat ? ANNEX.repeatLobbyFavor : ANNEX.lobbyFavor);
+    const hit = new Set<FactionId>();
+    for (const s of adjacentLocked(w)) {
+      if (s === slot) continue;
+      const k = d.kinds[s];
+      const def = DISTRICTS[k];
+      if (k === kind || ownedKinds.has(k) || (def?.opensWhen && !evalCond(w, def.opensWhen))) continue;
+      for (const f of lobbyOf(k)) if (!mine.has(f)) hit.add(f);
+    }
+    for (const f of hit) add(f, repeat ? ANNEX.repeatRivalLobbyFavor : ANNEX.rivalLobbyFavor);
+    if (lease && this.needsLease(slot)) {
+      add(lease, ANNEX.leaseFavor);
+      add(lease === 'nacre' ? 'basalt' : 'nacre', ANNEX.leaseRivalFavor);
+    }
+    return [...out].map(([f, v]) => ({ f, v }));
+  }
+
+  /** Regional links on the city's border with this slot: annexing turns them into city streets (§3.5). */
+  linksOnBorder(slot: SlotId): number {
+    const w = this.world;
+    const r = slotRect(w, slot);
+    let n = 0;
+    for (let y = r.y0 - 1; y <= r.y1 + 1; y++)
+      for (let x = r.x0 - 1; x <= r.x1 + 1; x++) {
+        const inside = x >= r.x0 && x <= r.x1 && y >= r.y0 && y <= r.y1;
+        const corner = (x === r.x0 - 1 || x === r.x1 + 1) && (y === r.y0 - 1 || y === r.y1 + 1);
+        if (inside || corner || !w.isOwned(x, y)) continue;
+        if (regionalLink(w, x, y) > 0) n++;
+      }
+    return n;
+  }
+
+  /** The milestones this city's region counts (§4.5): Electric Tide and Glass Horizon only on a 5×5 region. */
+  milestones(): { pop: number; title: string; reward: number; reached: boolean }[] {
+    const w = this.world;
+    return milestonesFor(w.region).map((m) => ({ pop: m.pop, title: m.title, reward: m.grant, reached: w.milestones.includes(m.pop) }));
   }
 
   /**
@@ -1495,9 +2090,9 @@ export class Game {
 
   // ── Inspect info ──────────────────────────────────────────────────────────
   /**
-   * Inspect on a locked tile (§3.4): the district's name and "Not annexed yet" with its tagline, or only "Still
-   * flooded: opens later" while its `opensWhen` doesn't hold. A stub until WP-2 / WP-5's district preview (perks,
-   * hazards, lobbyists, "Open City map").
+   * Inspect on a locked tile (§3.4): the district preview (name, tagline, perks, hazards, lobbyists; the sheet's action
+   * is "Open City map", inspectActions 'map'), or only its name and "Still flooded: opens later" while its `opensWhen`
+   * doesn't hold (no reason given).
    */
   private lockedInfo(x: number, y: number): TileInfo {
     const w = this.world;
@@ -1509,7 +2104,39 @@ export class Game {
     const color = vd?.accent ?? def?.color ?? '#7f8aa8';
     if (def?.opensWhen && !evalCond(w, def.opensWhen)) return { title: name, subtitle: 'Still flooded: opens later', color, rows: [] };
     const tagline = vd?.tagline ?? def?.tagline;
-    return { title: name, subtitle: 'Not annexed yet', color, rows: [], ...(tagline ? { notes: [{ text: tagline }] } : {}) };
+    const notes: NonNullable<TileInfo['notes']> = [];
+    if (tagline) notes.push({ text: tagline });
+    for (const p of def?.perks ?? []) notes.push({ text: `+ ${p}`, tone: 'good' });
+    for (const h of def?.hazards ?? []) notes.push({ text: `! ${h}`, tone: 'warn' });
+    for (const l of this.lobbyLines(s)) if (l.quote) notes.push({ text: `${FACTION_LABELS[l.faction].short}: "${l.quote}"` });
+    const adjacent = adjacentLocked(w).includes(s);
+    return { title: name, subtitle: adjacent ? 'Not annexed yet' : 'Not next to the city yet', color, rows: [], ...(notes.length ? { notes } : {}) };
+  }
+
+  /** Zone tile forms by zone and level (§4.6: the subtitle names the form; the kit's own form names are WP-4's art). */
+  private static readonly FORMS: Record<number, readonly string[]> = {
+    [ZoneType.Residential]: ['Empty lot', 'Walk-up', 'Mid-rise', 'Point tower'],
+    [ZoneType.Commercial]: ['Empty lot', 'Corner shop', 'Shop block', 'Office tower'],
+    [ZoneType.Industrial]: ['Empty lot', 'Workshop', 'Works', 'Factory'],
+  };
+
+  /** Floors of a body from its top (§4.6: max(1, round(top / 6.5)), heights.ts, the art's own number). */
+  private floorsAt(x: number, y: number): number {
+    return Math.max(1, Math.round(heightOf(this.world, x, y) / 6.5));
+  }
+
+  /** District rows and notes every owned tile can carry (§7.5): the district, terraces, ground, floodplain. */
+  private districtNotes(x: number, y: number, rows: [string, string][], notes: NonNullable<TileInfo['notes']>): void {
+    const w = this.world;
+    const t = w.tiles[y * w.N + x];
+    const s = w.slotAt(x, y);
+    if (w.districts.owned.length > 1) rows.push(['District', districtShort(w, s)]);
+    const mods = DISTRICTS[w.districts.kinds[s]]?.mods;
+    if (t.terrain !== Terrain.Land || !mods) return;
+    if (mods.lvPerElev && t.elev > 0) notes.push({ text: `Terrace ${t.elev}: views +${Math.round(mods.lvPerElev * t.elev * 1000) / 10}%`, tone: 'good' });
+    if (t.ground === Ground.Brownfield && mods.brownfield) notes.push({ text: 'Brownfield: smog until the soil clears', tone: 'warn' });
+    if (t.ground === Ground.Reed && isWildReed(w, y * w.N + x)) notes.push({ text: 'Reedbed: a free park while unbuilt', tone: 'good' });
+    if (isFloodplain(w, x, y) && !(w.fields.resilience[y * w.N + x] > 0)) notes.push({ text: 'Floodplain: level 2 at most without a Floodwatch', tone: 'warn' });
   }
 
   /**
@@ -1552,6 +2179,7 @@ export class Game {
       if (b.offline > 0) rows.push(['Status', `Offline ${b.offline}d`]);
       this.portRows(b, rows, notes);
       info = { title: def.name, subtitle: def.desc, color: def.color, rows };
+      this.megacityBuilding(b, info, notes);
     } else if (t.road) {
       info = this.roadInfo(x, y, notes);
     } else if (zoneDefFor(t.zone)) {
@@ -1577,11 +2205,40 @@ export class Game {
       if (wi.lifted) notes.push({ text: `Lifted by: ${wi.lifted}`, tone: 'good' });
       if (wi.affordable) notes.push({ text: 'Affordable quarter: +10% residents', tone: 'good' });
       if (highwayOnly) notes.push({ text: 'Highway only: lots need a street or avenue', tone: 'warn' });
-      info = { title: zd.name, subtitle: zd.desc, color: zd.color, rows };
+      // Megacity (§4.6, §7.5): the form and floors, homes, the parcel's sum, ruins.
+      let subtitle = zd.desc;
+      if (t.level > 0 && !t.abandoned) {
+        subtitle = `${Game.FORMS[t.zone]?.[t.level] ?? zd.name} · ${this.floorsAt(x, y)} floors`;
+        if (t.zone === ZoneType.Residential) rows.splice(3, 0, ['Homes', num(cap / 2.4)]);
+        const p = parcelAt(w, x, y);
+        if (p) {
+          let heads = 0;
+          for (let py = p.y; py < p.y + p.h; py++)
+            for (let px = p.x; px < p.x + p.w; px++) {
+              const m = w.tiles[py * w.N + px];
+              if (m.zone !== ZoneType.None && m.level > 0 && !m.abandoned) heads += zoneCapacity(m.zone, m.level, m.wealth, wealthInfo(w, px, py).affordable);
+            }
+          notes.push({ text: `Part of a ${p.w}×${p.h} tower: ${num(heads)} ${t.zone === ZoneType.Residential ? 'residents' : 'jobs'}` });
+        }
+      }
+      this.districtNotes(x, y, rows, notes);
+      const lobby = this.lobbyNote(x, y);
+      if (lobby) notes.push({ text: lobby, tone: 'good' });
+      let title = zd.name;
+      if (isRuin(t)) {
+        title = 'Ruin';
+        notes.push({ text: 'Comes back as homes with a road and power', tone: 'good' });
+        const pay = DISTRICTS[w.kindAt(x, y)]?.mods.restorePay;
+        if (pay) notes.push({ text: `Restoring it pays ${pay} ${CURRENCY}`, tone: 'good' });
+      }
+      info = { title, subtitle, color: zd.color, rows };
     } else if (t.terrain === Terrain.Water) {
       info = { title: 'Bay water', subtitle: 'Black water. Roads can bridge it.', color: '#1b6c8a', rows: [['Pollution', pct(f.pollution[i])]] };
     } else {
-      info = { title: 'Open ground', subtitle: 'Unclaimed lot, ready to build.', color: '#6b6f8f', rows: common };
+      const rows = [...common];
+      this.districtNotes(x, y, rows, notes);
+      const ruble = t.ground === Ground.Rubble;
+      info = { title: ruble ? 'Rubble lot' : 'Open ground', subtitle: 'Unclaimed lot, ready to build.', color: '#6b6f8f', rows };
     }
     if (w.sky[i] !== 0) notes.push({ text: 'Skyway overhead: tap the deck' });
     this.storyRows(x, y, info.rows);
@@ -1700,14 +2357,64 @@ export class Game {
     }
     const key = vertical.anchorKey(w, x, y);
     const links = vertical.linksOnAnchor(w, key);
-    if (links > 0 || vertical.isTallAt(w, x, y)) rows.push(['Skybridges', `${links}/${SKYBRIDGE.maxPerAnchor}`]);
+    const a = vertical.anchorAt(w, x, y);
+    if (links > 0 || a) rows.push(['Skybridges', `${links}/${a?.limit ?? SKYBRIDGE.maxPerAnchor}`]);
+  }
+
+  /** The Sky Lobby an anchor at (x, y) belongs to (§5.5), for the anchor's inspect note. */
+  private lobbyNote(x: number, y: number): string | null {
+    const w = this.world;
+    const a = vertical.anchorAt(w, x, y);
+    if (!a) return null;
+    for (const l of w.vertical.lobbies) {
+      if (!l.anchors.includes(a.i)) continue;
+      return `Part of Sky Lobby ${vertical.lobbyName(w, l.anchors[0])}: ${l.anchors.length} towers`;
+    }
+    return null;
+  }
+
+  /** Megacity building rows and notes (§6.2, §6.3, §7.5, §9.2): sponsor, looks, floors, frames, pumps, landmarks. */
+  private megacityBuilding(b: Building, info: TileInfo, notes: NonNullable<TileInfo['notes']>): void {
+    const w = this.world;
+    const def = BUILDINGS[b.type];
+    if (vertical.isTallBuilding(b)) info.subtitle = `${def.name} · ${this.floorsAt(b.x, b.y)} floors`;
+    if (b.type === 'spire') {
+      const sp = b.sponsor ?? 'nacre';
+      info.rows.push(['Sponsor', sp === 'none' ? 'Independent' : sp === 'basalt' ? 'Basalt' : 'Nacre']);
+      info.rows.push(['Look', SPIRE_LOOKS[sp][b.look ?? 0] ?? SPIRE_LOOKS[sp][0]]);
+    } else if (b.type === 'stack' && b.crown && (b.stage ?? 1) >= 3) {
+      info.rows.push(['Look', CROWN_LOOK_NAMES[b.crown]?.[b.look ?? 0] ?? 'Classic']);
+    } else if (b.type === 'frame') {
+      info.title = 'Unfinished frame';
+      info.subtitle = 'Finish it as a Stratablock with its Plinth done.';
+      info.rows = [];
+    } else if (b.type === 'pumphall') {
+      info.title = 'Old pump hall';
+      info.subtitle = 'A dark hall on the water.';
+      info.rows = [];
+    } else if (b.type === 'pumphouse') {
+      info.rows.push(['Reclaim', (b.reclaim ?? 0) > 0 ? `${pumpRings(b)}/3 rings` : 'Pump garden']);
+    } else if (b.type === 'floodwatch') {
+      notes.push({ text: 'Stops king tides and the floodplain limit nearby', tone: 'good' });
+    } else if (b.type === 'halolookout') {
+      const inLobby = !!this.lobbyNote(b.x, b.y);
+      notes.push({ text: 'Works only while bridged into a Sky Lobby', ...(inLobby ? {} : { tone: 'warn' as const }) });
+    }
+    const end = def.gate?.ending;
+    if (end) {
+      notes.push({ text: `Built under ${ENDING_NAMES[end]}` });
+      if (w.story.ending !== end) notes.push({ text: 'Dormant: its ending is not current', tone: 'warn' });
+    }
+    const lobby = this.lobbyNote(b.x, b.y);
+    if (lobby && b.type !== 'halolookout') notes.push({ text: lobby, tone: 'good' });
   }
 
   /** Short label + cost for a tool (for UI buttons). Base price, no modifiers. */
   static toolCost(tool: ToolId): number {
     if (isBuildingTool(tool)) return BUILDINGS[tool].cost;
     if (tool === 'res' || tool === 'com' || tool === 'ind') return ZONES[tool].cost;
-    if (tool === 'skybridge') return SKYBRIDGE.base + SKYBRIDGE.perTile * SKYBRIDGE.minGap;
+    // Skybridges v2 (MEGACITY §5.3): the shortest bridge, 1,200 + 250 for its one gap tile.
+    if (tool === 'skybridge') return vertical.bridgeCost(SKYBRIDGE.v2.minGap);
     if (tool === 'rail') return RIBBON.perTile;
     // Road kinds: one land tile of the kind (Street 15, Back Alley 6, Avenue 40, Highway 90).
     if (isRoadTool(tool)) return roadDef(ROAD_TOOL_KIND[tool]).cost;
@@ -1786,7 +2493,17 @@ function regionalLink(world: World, x: number, y: number): number {
   return t.roadKind === RoadKind.Street ? EDGE_LINKS.street : t.roadKind === RoadKind.Avenue ? EDGE_LINKS.avenue : t.roadKind === RoadKind.Highway ? EDGE_LINKS.highway : 0;
 }
 
-/** A save written by a newer build (its version is above every supported one). */
+/**
+ * Remove one skybridge by id (World has no single-link mutator, only removeLinksAt): the other links on its first
+ * anchor tile are put back with their ids, so every change goes through World's own events.
+ */
+function removeLink(world: World, id: number): void {
+  const l = world.links.find((k) => k.id === id);
+  if (!l) return;
+  const keep = world.links.filter((k) => k.id !== id && ((k.ax === l.ax && k.ay === l.ay) || (k.bx === l.ax && k.by === l.ay)));
+  world.removeLinksAt(l.ax, l.ay);
+  for (const k of keep) world.addLink({ id: k.id, ax: k.ax, ay: k.ay, bx: k.bx, by: k.by });
+}
 
 export function randomSeed(): number {
   return (Math.random() * 0xffffffff) >>> 0;

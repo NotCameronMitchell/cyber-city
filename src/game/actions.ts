@@ -1183,7 +1183,14 @@ export function stageStatus(
  * Charges the stage cost now; scaffolding counts down in vertical.onDay().
  * Picking a crown gives its one-time favor.
  */
-export function raiseStage(world: World, id: number, crown?: CrownId): ActionResult {
+/** Crown designs per crown (§6.2): three each; look 0 is today's crown (the Salvage and Lamp crowns are new). */
+export const CROWN_LOOKS = 3;
+
+/**
+ * Raise a Stratablock one stage (§4.2). Starting the crown stage takes the crown and its design (`look` 0..2,
+ * MEGACITY §6.2: the crown picker preselects 0, today's crown; a value out of range reads as 0).
+ */
+export function raiseStage(world: World, id: number, crown?: CrownId, look?: number): ActionResult {
   const b = world.buildings.get(id);
   if (!b || b.type !== 'stack') return { ok: false, reason: 'Not a Stratablock', cost: 0 };
   const st = stageStatus(world, b);
@@ -1196,6 +1203,13 @@ export function raiseStage(world: World, id: number, crown?: CrownId): ActionRes
   }
   world.funds -= st.cost;
   world.setStage(b, st.next, st.days, st.next === 3 ? crown : undefined);
+  if (st.next === 3) {
+    const l = look !== undefined && Number.isInteger(look) && look >= 0 && look < CROWN_LOOKS ? (look as 0 | 1 | 2) : 0;
+    if ((b.look ?? 0) !== l) {
+      b.look = l;
+      world.coverageVersion++;
+    }
+  }
   if (st.next === 3 && crown) {
     for (const [f, v] of Object.entries(CROWNS[crown].favor) as [FactionId, number][]) addFavor(world, f, v);
   }

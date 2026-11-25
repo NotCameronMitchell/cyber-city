@@ -8,7 +8,8 @@
 //
 //   frame:  game.update → input.update → renderer.render → ui.update
 //           (on the title: start.update (drift) → renderer.render → ui.update)
-//   saves:  every 3 sim months · every 90 s of unpaused play · page hide
+//   saves:  at most every max(3 sim months, game.autosaveMinSec unpaused s: 60, 120 in lower detail), in an idle
+//           callback after a frame that ran no sim slice (MEGACITY §3.3) · page hide (synchronous)
 //           (none while the title is up: nothing changes behind it)
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -27,10 +28,17 @@ import { UI } from './ui/ui';
 
 /** Longest frame step fed to the game (s): a long stall must not teleport the sim. */
 const MAX_DT = 0.1;
-/** Autosave every N months of sim time … */
+/** Autosave at most every N months of sim time and game.autosaveMinSec unpaused seconds (MEGACITY §3.3). */
 const AUTOSAVE_MONTHS = 3;
-/** … and every N seconds of unpaused play. */
-const AUTOSAVE_SECONDS = 90;
+/** A due autosave waits for a frame without a sim slice at most this long (ms), then runs anyway. */
+const AUTOSAVE_WAIT_MS = 500;
+
+/** Run `fn` when the browser is idle (requestIdleCallback with a timeout), or on the next task without it. */
+function whenIdle(fn: () => void, timeoutMs: number): void {
+  const ric = (window as { requestIdleCallback?: (cb: () => void, o?: { timeout: number }) => number }).requestIdleCallback;
+  if (typeof ric === 'function') ric(fn, { timeout: timeoutMs });
+  else setTimeout(fn, 0);
+}
 /** The idle title redraws the drifting city at most this often (s): half the work on phones. */
 const TITLE_FRAME = 1 / 30;
 /** With reduced motion the title's city is a still picture: redrawn this rarely (s), time stopped. */
@@ -110,14 +118,18 @@ function start(data?: unknown): void {
   window.visualViewport?.addEventListener('resize', queueResize);
   renderer.resize();
 
-  // ── Autosave ──────────────────────────────────────────────────────────────
+  // ── Autosave (MEGACITY §3.3: off the month tick, in an idle frame) ───────
   let monthsSinceSave = 0;
   let playSinceSave = 0;
+  /** An autosave is due (the month handler only marks it); performance.now() when it became due, else 0. */
+  let dueSince = 0;
+  let idleQueued = false;
   const save = (why: string): boolean => {
     // Nothing changes behind the title, and a first launch that never left it has no city to keep.
     if (title.holding && why !== 'menu') return false;
     monthsSinceSave = 0;
     playSinceSave = 0;
+    dueSince = 0;
     try {
       return game.save();
     } catch (err) {
@@ -125,13 +137,18 @@ function start(data?: unknown): void {
       return false;
     }
   };
+  const markDue = () => {
+    if (!dueSince && monthsSinceSave >= AUTOSAVE_MONTHS && playSinceSave >= game.autosaveMinSec) dueSince = performance.now();
+  };
   game.events.on('month', () => {
-    if (++monthsSinceSave >= AUTOSAVE_MONTHS) save('monthly');
+    monthsSinceSave++;
+    markDue();
   });
   // A fresh world starts its own count (newCity already saves itself).
   game.events.on('world', () => {
     monthsSinceSave = 0;
     playSinceSave = 0;
+    dueSince = 0;
   });
   saveNow = save;
   window.addEventListener('pagehide', () => save('pagehide'));
@@ -166,6 +183,8 @@ function start(data?: unknown): void {
           titleAcc = 0;
         }
       } else {
+        const c = camera.screenToTile(camera.width / 2, camera.height / 2);
+        game.setViewCentre(Math.floor(c.x), Math.floor(c.y));
         game.update(dt);
         input.update(dt);
         renderer.render(dt, time);
@@ -178,7 +197,15 @@ function start(data?: unknown): void {
     }
     if (game.speed > 0) {
       playSinceSave += dt;
-      if (playSinceSave >= AUTOSAVE_SECONDS) save('timer');
+      markDue();
+    }
+    // The due save runs in an idle callback after a frame that ran no sim slice, or after AUTOSAVE_WAIT_MS anyway.
+    if (dueSince && !idleQueued && (!game.simRanThisFrame || now - dueSince >= AUTOSAVE_WAIT_MS)) {
+      idleQueued = true;
+      whenIdle(() => {
+        idleQueued = false;
+        if (dueSince) save('autosave');
+      }, AUTOSAVE_WAIT_MS);
     }
   };
 

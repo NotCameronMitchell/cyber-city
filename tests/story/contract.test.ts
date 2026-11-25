@@ -230,7 +230,8 @@ describe('game story stubs', () => {
     expect(v.goals).toEqual([]);
     expect(v.chapter.numeral).toBe('I');
     expect(v.coherence).toBe(4);
-    expect(g.inspectActions(10, 10)).toEqual([]);
+    // (74, 74) is in the start slot of the 3×3 region: a locked tile would offer 'Open City map' (MEGACITY §3.4).
+    expect(g.inspectActions(74, 74)).toEqual([]);
     expect(g.takeDeal('basalt').ok).toBe(false);
     g.world.pushSignal({ t: 'milestone', pop: 100 });
     for (let k = 0; k < 40; k++) g.update(0.25);
