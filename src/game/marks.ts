@@ -324,6 +324,27 @@ function centreRoad(world: World, r: { x0: number; y0: number; x1: number; y1: n
   return cy * N + cx;
 }
 
+/** The tile nearest the Seam a mast can stand on: a street first, then open land, then any land (else the Seam). */
+function mastSite(world: World, seam: number): number {
+  const N = world.N;
+  const sx = seam % N;
+  const sy = (seam / N) | 0;
+  let best = seam;
+  let bestScore = Infinity;
+  for (let y = Math.max(0, sy - 4); y <= Math.min(N - 1, sy + 4); y++)
+    for (let x = Math.max(0, sx - 4); x <= Math.min(N - 1, sx + 4); x++) {
+      const t = world.tiles[y * N + x];
+      if (t.terrain !== Terrain.Land || !world.isOwned(x, y)) continue;
+      const kind = t.road ? 0 : t.buildingId < 0 && t.zone === ZoneType.None ? 1 : 2;
+      const score = kind * 100 + Math.max(Math.abs(x - sx), Math.abs(y - sy)) * 2 + Math.abs(x - sx) + Math.abs(y - sy);
+      if (score < bestScore) {
+        bestScore = score;
+        best = y * N + x;
+      }
+    }
+  return best;
+}
+
 /** Three developed blocks on the strongest gang's turf, nearest its strongest tile (§9.3 wentToGround). */
 function darkBlocks(world: World, startRect: { x0: number; y0: number; x1: number; y1: number }): number[] {
   const N = world.N;
@@ -424,7 +445,8 @@ export function deriveMarks(world: World): Marks {
     if (row) {
       nameCell(sx, sy, MARK_NAMES[row]);
       const decal = row === 'cleanGlassMast' ? 'mast' : row === 'truceWall' ? (f.seamFair ? 'mural:lit' : 'mural') : row === 'lowWater' ? 'nets' : 'highline';
-      add(row, row === 'cleanGlassMast' ? around(world, seam, 1) : around(world, seam, 2), decal);
+      // The mast stands on the street nearest the Seam (the Seam can fall on a canal: a mast never stands in the water).
+      add(row, row === 'cleanGlassMast' ? around(world, mastSite(world, seam), 1) : around(world, seam, 2), decal);
     }
   }
 

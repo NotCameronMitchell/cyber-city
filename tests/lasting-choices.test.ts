@@ -187,6 +187,37 @@ describe('§9.6 item 1: every key choice leaves exactly its mark, at its place; 
     expect(plaquesAt(w, ids[0] % w.N, (ids[0] / w.N) | 0)).toContain('Something hums here after midnight.');
   });
 
+  it('the Clean Glass mast stands on the nearest street when the Seam falls on water', () => {
+    const w = city.w;
+    const N = w.N;
+    // A water tile beside the Seam street: the Seam moves onto it; the mast keeps to the street.
+    const sx = city.seam % N;
+    const sy = ((city.seam / N) | 0) + 1;
+    const i = sy * N + sx;
+    const t = w.tiles[i];
+    const keep = { terrain: t.terrain, road: t.road, zone: t.zone, level: t.level };
+    t.terrain = Terrain.Water;
+    t.road = false;
+    t.zone = ZoneType.None;
+    t.level = 0;
+    try {
+      w.story.seam = i;
+      w.story.flags.cleanGlass = true;
+      const m = find(w, 'cleanGlassMast')!;
+      const at = (m.y + (m.h >> 1)) * N + m.x + (m.w >> 1);
+      expect(w.tiles[at].terrain).toBe(Terrain.Land);
+      expect(w.tiles[at].road).toBe(true);
+      expect(Math.max(Math.abs((at % N) - sx), Math.abs(((at / N) | 0) - sy))).toBeLessThanOrEqual(2);
+      // The Seam's cell keeps its new name.
+      const [cx, cy] = cellOf(w, i);
+      expect(markCellName(w.seed, cx, cy)).toBe('Glass Yard');
+    } finally {
+      Object.assign(t, keep);
+      w.story = JSON.parse(JSON.stringify(base));
+      deriveMarks(w); // leave no derived name behind for the next test
+    }
+  });
+
   it('renames the cell (news, inspect and cards read it through districtName) and swaps the Sunk tagline', () => {
     const w = city.w;
     const [cx, cy] = cellOf(w, city.seam);
