@@ -53,6 +53,7 @@ import {
   type StartButtons,
 } from './startModel';
 import { Showcase } from './showcase';
+import { TRANSFER_COPY, TRANSFER_ICONS } from '../transfer';
 
 export interface StartOptions {
   game: Game;
@@ -90,6 +91,11 @@ export class StartScreen {
   private readonly newBtn: HTMLButtonElement;
   private readonly prevBtn: HTMLButtonElement;
   private readonly prevName: HTMLElement;
+  /** Import city (MEGACITY §13.1), beside Previous city. */
+  private readonly importBtn: HTMLButtonElement;
+  /** "A newer city was kept: Neon Bay · 2.41M" with Restore (§3.10), only while `.future` holds a city this build reads. */
+  private readonly keptRow: HTMLElement;
+  private readonly keptText: HTMLElement;
   private readonly hint: HTMLElement;
   private readonly hintText: HTMLElement;
   private readonly warn: HTMLElement;
@@ -195,6 +201,19 @@ export class StartScreen {
       h('span', { html: icon('back') }),
       h('span', { class: 'cc-start-prev-text' }, h('span', { text: 'Previous city' }), this.prevName),
     );
+    this.importBtn = h(
+      'button',
+      { class: 'cc-start-prev cc-start-import', type: 'button', 'data-act': 'import' },
+      h('span', { html: TRANSFER_ICONS.import }),
+      h('span', { class: 'cc-start-prev-text', text: TRANSFER_COPY.titleImport }),
+    );
+    this.keptText = h('span', { class: 'cc-start-kept-text' });
+    this.keptRow = h(
+      'div',
+      { class: 'cc-start-kept', hidden: true, role: 'group', 'aria-label': 'A newer city was kept' },
+      this.keptText,
+      h('button', { class: 'cc-btn cc-start-kept-btn', type: 'button', 'data-act': 'kept', text: 'Restore' }),
+    );
     this.hintText = h('span', { class: 'cc-start-hint-text' });
     this.hint = h(
       'div',
@@ -204,7 +223,8 @@ export class StartScreen {
     );
     this.warn = h('p', { class: 'cc-start-warn', role: 'status', hidden: true });
     this.foot = h('div', { class: 'cc-start-foot' });
-    const actions = h('nav', { class: 'cc-start-actions', 'aria-label': 'Start' }, this.warn, this.slot, this.newBtn, row, this.prevBtn, this.hint, this.foot);
+    const links = h('div', { class: 'cc-start-links' }, this.prevBtn, this.importBtn);
+    const actions = h('nav', { class: 'cc-start-actions', 'aria-label': 'Start' }, this.warn, this.slot, this.newBtn, row, this.keptRow, links, this.hint, this.foot);
     this.layout = h('div', { class: 'cc-start-layout' }, brand, actions);
 
     // ── New city sheet ─────────────────────────────────────────────────────
@@ -298,6 +318,13 @@ export class StartScreen {
     window.addEventListener('keydown', this.onKey, true);
     this.ui.menu.onMainMenu = () => this.show();
     this.ui.menu.onNewCity = () => this.show(true);
+    // City transfer (§13.1): an import frames the city; from the title it then leaves the title like Continue.
+    this.ui.transfer.hooks.imported = (from) => this.afterImport(from);
+    this.ui.transfer.hooks.dropSource = () => {
+      const depth = this.ui.ctx.modals.depth;
+      if (this.flow.phase === 'play') return depth === 0 || (depth === 1 && this.ui.menu.isOpen) ? 'menu' : null;
+      return this.flow.phase === 'title' && depth === 0 ? 'title' : null;
+    };
 
     // First launch: a lit city behind the title (the real, empty map waits underneath).
     if (!o.hasCity && o.canvas) {
@@ -413,6 +440,10 @@ export class StartScreen {
     setClass(this.newBtn, 'is-primary', b.newPrimary);
     setClass(this.newBtn, 'cc-start-big', b.newPrimary);
     setHidden(this.prevBtn, !b.previous);
+    // The kept newer city (§3.10): offered back once this build can read it.
+    const kept = game.keptCityInfo();
+    setHidden(this.keptRow, !kept);
+    if (kept) setText(this.keptText, `A newer city was kept: ${kept.cityName || 'Unnamed city'} · ${abbrPop(kept.maxPopulation)}`);
     if (b.previous) {
       const info = game.previousSaveInfo();
       // §7.9: "Neon Bay · 2.41M · 5×5".
@@ -684,6 +715,12 @@ export class StartScreen {
       case 'previous':
         this.restorePrevious();
         return;
+      case 'import':
+        this.ui.transfer.openImport('title');
+        return;
+      case 'kept':
+        this.restoreKept();
+        return;
       case 'hint-x':
         try {
           globalThis.localStorage?.setItem(A2HS_KEY, '1');
@@ -720,6 +757,49 @@ export class StartScreen {
         this.leave();
       },
     });
+  }
+
+  /** The kept newer city (§3.10): "Restore Neon Bay? Harbor Nine moves to Previous city.", then straight into it. */
+  private restoreKept(): void {
+    const { game } = this;
+    const info = game.keptCityInfo();
+    if (!info) return;
+    const w = game.world;
+    const keeps = this.city && !game.saveBlocked && worthKeeping({ tick: w.tick, buildingCount: w.buildings.size, tiles: w.tiles });
+    const name = info.cityName || 'the kept city';
+    this.ui.ctx.actions.confirm({
+      title: `Restore ${name}?`,
+      body: keeps ? `${w.cityName} moves to Previous city.` : `${name} becomes your city on this device.`,
+      confirmLabel: 'Restore',
+      onConfirm: () => {
+        if (!this.flow.interactive) return;
+        if (!game.restoreKept()) {
+          // A refused swap (no room for a copy, or for the restored city) has already said why, with Export.
+          if (game.keepCopyFailed === null && !game.lastSaveFailed) game.toast('The kept city could not be read', 'error');
+          this.refresh();
+          return;
+        }
+        this.nightClock();
+        this.reframe();
+        this.city = true;
+        this.unreadable = false;
+        game.toast(`Welcome back to ${game.world.cityName}`, 'good');
+        this.leave();
+      },
+    });
+  }
+
+  /** After Import city (from the menu or this title): frame the imported city; from the title, leave it like Continue. */
+  private afterImport(from: 'menu' | 'title'): void {
+    if (from === 'title' && this.flow.interactive) {
+      this.nightClock();
+      this.reframe();
+      this.city = true;
+      this.unreadable = false;
+      this.leave();
+      return;
+    }
+    frameCity(this.camera, this.game.world);
   }
 
   private readonly onKey = (e: KeyboardEvent) => {

@@ -43,6 +43,7 @@ import './story/story.css';
 import { Ticker } from './ticker';
 import { Tips, newsTip, type TipId } from './tips';
 import { traySections, type CategoryId } from './tools';
+import { TransferUI } from './transfer';
 
 /** HUD figures refresh interval (s). */
 const HUD_INTERVAL = 0.2;
@@ -55,8 +56,8 @@ const WATCH_Y = 0.66;
 const WATCH_ZOOM = 0.85;
 
 
-/** Toast actions this UI handles (Undo, Watch, Map: the City map on the locked slot). WP-9 adds 'export' with its Export city handler. */
-const TOAST_HANDLED: ReadonlySet<ToastAction['id']> = new Set<ToastAction['id']>(['undo', 'watch', 'map']);
+/** Toast actions this UI handles (Undo, Watch, Map: the City map on the locked slot, Export: the Export sheet, §3.10). */
+const TOAST_HANDLED: ReadonlySet<ToastAction['id']> = new Set<ToastAction['id']>(['undo', 'watch', 'map', 'export']);
 /** How often the camera insets are re-measured from the HUD and dock (s), besides resizes and world swaps. */
 const INSET_INTERVAL = 1;
 
@@ -88,6 +89,8 @@ export class UI {
   readonly story: StoryUI;
   /** The City map and annex sheet (MEGACITY §7.2). */
   readonly cityMap: CityMap;
+  /** City transfer and growing (MEGACITY §13, §3.11): the Export and Import sheets, the Grow flow. */
+  readonly transfer: TransferUI;
   private insetAcc = INSET_INTERVAL;
 
   private hudAcc = 0;
@@ -116,6 +119,8 @@ export class UI {
       openReport: () => this.report.open(),
       openMenu: (view) => this.menu.open(view ?? 'main'),
       openCityMap: (slot) => this.openCityMap(slot ?? null),
+      openTransfer: (kind) => (kind === 'export' ? this.transfer.openExport() : this.transfer.openImport('menu')),
+      growRegion: (from) => this.transfer.grow(from),
       confirm: (opts) => this.confirm.open(opts),
       openTray: (cat) => this.dock.openTray(cat as CategoryId),
       closeTray: () => this.dock.closeTray(),
@@ -151,8 +156,10 @@ export class UI {
         if (id === 'undo') game.undo();
         else if (id === 'watch') this.watchLaunch();
         else if (id === 'map') this.openCityMap(game.mapSlot);
+        else if (id === 'export') this.transfer.openExport();
       },
-      alive: (id) => (id === 'undo' ? game.undoLeft() > 0 : id === 'map' ? game.world.region >= 3 : game.launchLead !== null),
+      // Export stays for the toast's own window (its `sec`): storage stays full until the player acts.
+      alive: (id) => (id === 'undo' ? game.undoLeft() > 0 : id === 'map' ? game.world.region >= 3 : id === 'export' ? true : game.launchLead !== null),
       left: (id) => (id === 'undo' ? game.undoLeft() : (game.launchLead?.left ?? 0)),
     };
     this.spire = new SpirePicker();
@@ -179,6 +186,7 @@ export class UI {
     this.confirm = new ConfirmDialog(this.ctx);
     this.story = new StoryUI(this.ctx);
     this.cityMap = new CityMap(this.ctx);
+    this.transfer = new TransferUI(this.ctx, { mapView: () => ({ open: this.cityMap.isOpen, back: this.cityMap.returnView }) });
     // §7.2: the annex banner follows the fly-in, so a banner waits while the City map is open and while the camera
     // flies in to a new district (a tap that skips the fly-in lets it show at once).
     this.banner.held = () => this.story.busy || this.modals.depth > 0 || this.cityMap.isOpen || mapBus.flyIn !== null;
@@ -343,6 +351,8 @@ export class UI {
     this.statsDirty = true;
     this.panelsDirty = true;
     this.refreshHud();
+    // A swap with the menu open (Grow from Settings): its City line and rows follow the new city.
+    if (this.menu.isOpen) this.menu.refresh();
   }
 
   // ── DOM input ─────────────────────────────────────────────────────────────

@@ -40,6 +40,7 @@ import { buzz, esc, h, setAttr, setClass, setHidden, setHtml, setStyle, setText 
 import { abbr, credits, MINUS } from './format';
 import { icon } from './icons';
 import { factionSigil } from './story/sigils';
+import { BLOCKED_TEXT, TRANSFER_COPY, TRANSFER_ICONS } from './transfer';
 
 // ── Copy (§7.2) ─────────────────────────────────────────────────────────────
 
@@ -320,6 +321,8 @@ export class CityMap {
   private readonly okBtn: HTMLButtonElement;
   private readonly edgeEl: HTMLElement;
   private readonly growSlot: HTMLElement;
+  private readonly growBtn: HTMLButtonElement;
+  private readonly growNote: HTMLElement;
   private readonly svg: SVGSVGElement;
   private readonly poly: SVGPolygonElement;
   private readonly metroCase: SVGPathElement;
@@ -384,6 +387,9 @@ export class CityMap {
     this.body.append(this.helpEl);
     this.sheet = h('section', { class: 'cc-cm-sheet cc-panel', 'aria-labelledby': 'cc-cm-title' }, this.handle, this.chips, this.body, this.tipSlot, this.foot);
     this.growSlot = h('span', { class: 'cc-cm-growslot', 'data-slot': 'grow' });
+    // Grow to 25 districts (§3.11, §7.2): a 44 px button beside the edge line, on a 3×3 region once all 9 are owned.
+    this.growBtn = h('button', { class: 'cc-btn cc-cm-grow', type: 'button', 'data-act': 'grow', html: TRANSFER_ICONS.grow }, TRANSFER_COPY.grow);
+    this.growNote = h('span', { class: 'cc-cm-grownote', hidden: true, text: BLOCKED_TEXT });
     this.edgeEl = h('div', { class: 'cc-cm-edge', hidden: true }, h('span', { class: 'cc-cm-edge-text' }), this.growSlot);
     const svgNS = 'http://www.w3.org/2000/svg';
     this.svg = document.createElementNS(svgNS, 'svg');
@@ -430,6 +436,11 @@ export class CityMap {
 
   get isOpen(): boolean {
     return this.open_;
+  }
+
+  /** The city view ✕ and Esc return to (world px and zoom), null when the map opened from the map view or is closed. */
+  get returnView(): { x: number; y: number; zoom: number } | null {
+    return this.open_ && this.back ? { ...this.back } : null;
   }
 
   /** The selected slot (−1 when closed). */
@@ -706,6 +717,15 @@ export class CityMap {
     setHidden(this.edgeEl, !v.edgeLine);
     if (v.edgeLine) setText(this.edgeEl.firstChild as HTMLElement, v.edgeLine);
     setClass(this.growSlot, 'is-wanted', v.canGrow);
+    if (v.canGrow !== (this.growSlot.firstChild !== null)) {
+      if (v.canGrow) this.growSlot.append(this.growBtn, this.growNote);
+      else this.growSlot.textContent = '';
+    }
+    if (v.canGrow) {
+      // Disabled while a newer build's city is stored, with its line (§3.11).
+      this.growBtn.disabled = g.saveBlocked;
+      setHidden(this.growNote, !g.saveBlocked);
+    }
     this.renderChips(v);
     const s = v.slots[this.slot];
     if (!s) return;
@@ -833,6 +853,7 @@ export class CityMap {
     const act = t.closest<HTMLElement>('[data-act]')?.dataset.act;
     if (!act) return;
     if (act === 'close') this.close();
+    else if (act === 'grow') this.ctx.actions.growRegion('map');
     else if (act === 'help') {
       const show = this.helpEl.hidden;
       setHidden(this.helpEl, !show);

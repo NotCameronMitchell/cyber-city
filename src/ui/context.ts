@@ -31,6 +31,10 @@ export interface UIActions {
   confirm(opts: ConfirmOptions): void;
   /** Open the City map (MEGACITY §7.2), optionally on a slot (a pin, the 'map' toast). */
   openCityMap(slot?: number | null): void;
+  /** City transfer (MEGACITY §13): Menu › Export city / Import city, and the storage-full toast's Export. */
+  openTransfer(kind: 'export' | 'import'): void;
+  /** Grow to 25 districts (§3.11): Settings' City line or the City map's edge line. */
+  growRegion(from: 'settings' | 'map'): void;
   /** Open a toolbar tray by category id (used by the onboarding coach). */
   openTray(category: string): void;
   closeTray(): void;

@@ -63,7 +63,7 @@ import { landmarkInspect, plaquesAt, sunkTagline } from './marks';
 import { FrameGuard, frameCapMs } from './frameGuard';
 import { heightOf } from './heights';
 import { parcelAt } from './parcels';
-import { isFutureSave } from './districts/migrate';
+import { isFutureSave, upgradeRegion } from './districts/migrate';
 import { Emitter, type GameEventMap, type ToastAction } from './events';
 import { DAYS_PER_MONTH, Ground, type BridgePayoff, type DistrictKind, type DistrictVariant, type Region, type SlotId } from './types';
 import {
@@ -106,6 +106,7 @@ import {
   type SaveData,
   type Selection,
   type Settings,
+  type StoryPace,
   type TileSnap,
   type ToolId,
 } from './types';
@@ -134,6 +135,10 @@ export const LOW_DETAIL_TEXT = 'Big city, small screen: lower detail is on to ke
 export const LOW_DETAIL_NOTICE_KEY = 'cybercity.ui.lowdetail.v1';
 /** Shown once when the stored city came from a newer build. */
 export const FUTURE_SAVE_TEXT = 'This city was saved by a newer version. Reload to update.';
+/** The news line after growing a city into a 5×5 region (MEGACITY §3.11). */
+export function growNews(name: string): string {
+  return `${name} now spans a 5×5 region: 16 new districts to annex.`;
+}
 /** Shown once when an older version had saved over the city and the mirror brought it back. */
 export const RESTORED_SAVE_TEXT = 'An older version saved over your city. It is back as you left it.';
 
@@ -384,11 +389,19 @@ export class Game {
    * the UI offers Export and Replace without a copy (newCity's `replaceWithoutCopy`). Null otherwise.
    */
   keepCopyFailed: string | null = null;
+  /** The sentence that says why (§3.10: "Couldn't keep a copy of Harbor Nine: storage is full. Export it first."). */
+  keepCopyText: string | null = null;
   /**
    * The last main-save write failed even after the quota drops (§3.10). A Restore that couldn't save the restored
    * city changes nothing and leaves this set, so the UI doesn't call the backup unreadable.
    */
   lastSaveFailed = false;
+  /**
+   * Why the last swap (Restore, the kept city, Import, Grow) changed nothing: the incoming city couldn't be built
+   * ('build'), the current one couldn't be kept ('copy', keepCopyFailed), or the incoming one couldn't be saved
+   * ('save', lastSaveFailed). Null after a swap that happened.
+   */
+  swapFailed: 'build' | 'copy' | 'save' | null = null;
   private tickAcc = 0;
   /** Running means of story.onDay's ms on ordinary days and on month ticks (the frame guard's budget, §3.3). */
   private storyDayMs = 0;
@@ -2050,6 +2063,67 @@ export class Game {
     return ok;
   }
 
+  // ── City transfer and growing (MEGACITY §13, §3.11; WP-9) ────────────────
+  /**
+   * Export (§13.1): save now, then hand back the city's save JSON (exactly what SAVE_KEY holds) for transfer.ts to
+   * pack. Null while saveBlocked (this device holds a newer build's city: the Export row says "Reload to update
+   * first"). A save that can't be stored (storage full) still exports: Export is the way out of a full storage.
+   */
+  exportCity(): { json: string; data: SaveData } | null {
+    if (this.saveBlocked) return null;
+    this.finishDay();
+    this.world.story.pace = this.settings.storyPace;
+    const data = this.world.serialize();
+    const json = JSON.stringify(data);
+    this.writeSave(data, json, this.world.region, false);
+    return { json, data };
+  }
+
+  /**
+   * Import (§13.4): replace the city with a checked save (transfer.ts readCityFile, parsed once), after the player's
+   * confirm. Restore previous city's path: the current city goes to `.prev` first (unless untouched; while saveBlocked
+   * the stored newer city goes to `.future` instead and the block lifts), the imported city is built and written as
+   * the main save before anything in memory changes, then it takes over with `pace` (the preview's choice) before its
+   * first update. A v1–v3 save migrates like a stored one (to a 3×3 region) and writes no `.v2` / `.v3`: the file
+   * still exists. A 5×5 city on a handheld device gets lower detail once and its notice. False when nothing changed
+   * (`swapFailed` says why; 'copy': the sheet offers Export and Replace without a copy).
+   */
+  importCity(save: SaveData, pace?: StoryPace, opts: { replaceWithoutCopy?: boolean } = {}): boolean {
+    this.swapFailed = null;
+    if (!save || typeof save !== 'object' || isFutureSave(save)) {
+      this.swapFailed = 'build';
+      return false;
+    }
+    return this.swapIn(save, { from: null, pace, replaceWithoutCopy: opts.replaceWithoutCopy, quiet: true });
+  }
+
+  /**
+   * Grow a 3×3 city into a 5×5 one (§3.11), one way, with the frozen `upgradeRegion`: the 3×3 save goes to `.prev`
+   * first (plain, with the quota rule: the confirm promises the 3×3 copy as Previous city), then the grown city is
+   * built, saved and takes over; grants, the story and the epilogue clock carry on (it runs at the 5×5 cadence from
+   * now on). One news line; the lower-detail default and notice on a handheld device (adoptCity). The camera's tile
+   * moves by (64, 64): the UI keeps the view in place. Disabled while saveBlocked. False when nothing changed.
+   */
+  growRegion(opts: { replaceWithoutCopy?: boolean } = {}): boolean {
+    this.swapFailed = null;
+    if (this.saveBlocked || this.world.region !== 3) return false;
+    this.finishDay();
+    this.world.story.pace = this.settings.storyPace;
+    const data = this.world.serialize();
+    const json = JSON.stringify(data);
+    const grown = upgradeRegion(data);
+    if (grown === data || grown.region !== 5) return false;
+    const name = this.world.cityName;
+    if (!this.swapIn(grown, { from: null, replaceWithoutCopy: opts.replaceWithoutCopy, alwaysCopy: true, quiet: true, copyJson: json })) return false;
+    this.world.addNews(growNews(name), 'good');
+    return true;
+  }
+
+  /** Whether "Grow to 25 districts" can run now (a 3×3 city on a device that may save). */
+  get canGrow(): boolean {
+    return this.world.region === 3 && !this.saveBlocked;
+  }
+
   /**
    * Restore the city "New City" replaced. The current city (if it has any progress) takes its place in the backup
    * slot, so the swap can be undone. False when there is no readable backup, or nothing could change: the current city
@@ -2063,7 +2137,7 @@ export class Game {
   }
 
   /**
-   * Swap the current city for a stored one (Restore previous city, the kept city; WP-9's Import and Grow reuse it).
+   * Swap the current city for a stored one (Restore previous city, the kept city; Import and Grow use `swapIn`).
    * Every city stays stored at every step (§3.10):
    * 1. the city being replaced goes to `.prev` first, plain and synchronously (never while saveBlocked: it is a
    *    stand-in; then the stored newer city must be safe in `.future` instead). If it doesn't fit, nothing changes;
@@ -2080,26 +2154,48 @@ export class Game {
       return false;
     }
     if (!data || isFutureSave(data)) return false;
+    return this.swapIn(data, { from, raw, replaceWithoutCopy: opts.replaceWithoutCopy });
+  }
+
+  /**
+   * The swap behind replaceWith, importCity and growRegion (§3.10's order of a replacement): build the incoming World
+   * first (nothing has changed if that throws: `swapFailed` 'build'), keep the current city in `.prev` (or the
+   * stored newer one in `.future`; 'copy' when it doesn't fit, `keepCopyFailed` names the city), write the incoming
+   * city as the main save before anything in memory changes ('save' when that fails: `.prev` is put back exactly),
+   * then swap. `raw`: the stored text (Restore's `.v2` / `.v3` backups by source version; Import and Grow pass none).
+   * `pace`: the story pace the city takes (Import's choice); `alwaysCopy`: keep a copy even of an untouched city
+   * (Grow's confirm promises the 3×3 copy); `quiet`: no toast when the copy is refused (the sheet says it).
+   */
+  private swapIn(
+    data: SaveData,
+    o: { from: string | null; raw?: string; replaceWithoutCopy?: boolean; pace?: StoryPace; alwaysCopy?: boolean; quiet?: boolean; copyJson?: string },
+  ): boolean {
+    this.swapFailed = null;
     let world: World;
     try {
       world = World.deserialize(data, this.events);
     } catch {
+      this.swapFailed = 'build';
       return false;
     }
     const prevBefore = snapshotKey(PREV_SAVE_KEY);
-    const backup = this.backupCurrent(opts.replaceWithoutCopy === true);
-    if (backup === null) return false;
-    // The pace the restored city will save with once adopted (adoptCity, then save()).
-    const pace = world.story.pace;
+    const backup = this.backupCurrent(o.replaceWithoutCopy === true, { always: o.alwaysCopy, quiet: o.quiet, json: o.copyJson });
+    if (backup === null) {
+      this.swapFailed = 'copy';
+      return false;
+    }
+    // The pace the incoming city will save with once adopted (adoptCity, then save()).
+    const pace = o.pace ?? world.story.pace;
     world.story.pace = pace && paceOf(pace) === pace ? pace : this.settings.storyPace;
     const saved = world.serialize();
     const json = JSON.stringify(saved);
     if (!this.writeSave(saved, json, world.region, true, true)) {
       if (backup === 'prev') restoreKey(prevBefore);
+      this.swapFailed = 'save';
       return false;
     }
-    if (from === PREV_SAVE_KEY && backup !== 'prev') storageRemove(PREV_SAVE_KEY);
-    this.keepOldSave(raw, world);
+    if (o.from === PREV_SAVE_KEY && backup !== 'prev') storageRemove(PREV_SAVE_KEY);
+    if (o.raw !== undefined) this.keepOldSave(o.raw, world);
     if (this.saveBlocked) {
       // An explicit replacement, like New City, lifts the newer-save block: the newer city is safe in FUTURE_SAVE_KEY.
       this.saveBlocked = false;
@@ -2123,27 +2219,36 @@ export class Game {
    * needed keeping, and null when the copy didn't fit (or `.future` holds another city): nothing changed,
    * `keepCopyFailed` names the city and a toast offers Export.
    */
-  private backupCurrent(withoutCopy = false): 'prev' | 'none' | null {
+  private backupCurrent(withoutCopy = false, o: { always?: boolean; quiet?: boolean; json?: string } = {}): 'prev' | 'none' | null {
     this.keepCopyFailed = null;
+    this.keepCopyText = null;
     if (withoutCopy) return 'none';
     if (this.saveBlocked) {
       const r = keepNewerSave();
       if (r === 'kept') return 'none';
-      this.refuseReplace(readHeader(storageGet(SAVE_KEY))?.cityName || 'the newer city', r);
+      this.refuseReplace(readHeader(storageGet(SAVE_KEY))?.cityName || 'the newer city', r, o.quiet);
       return null;
     }
-    if (!worthKeeping(this.world)) return 'none';
-    this.finishDay();
-    if (writePrev(JSON.stringify(this.world.serialize()))) return 'prev';
-    this.refuseReplace(this.world.cityName, 'full');
+    if (!o.always && !worthKeeping(this.world)) return 'none';
+    let json = o.json;
+    if (json === undefined) {
+      this.finishDay();
+      json = JSON.stringify(this.world.serialize());
+    }
+    if (writePrev(json)) return 'prev';
+    this.refuseReplace(this.world.cityName, 'full', o.quiet);
     return null;
   }
 
-  /** A replacement that couldn't keep a copy (§3.10): nothing changed; name the city and offer Export. */
-  private refuseReplace(name: string, why: 'full' | 'taken'): void {
+  /**
+   * A replacement that couldn't keep a copy (§3.10): nothing changed; name the city and offer Export (a toast, or the
+   * Import / Grow sheet itself with `quiet`: it shows `keepCopyText` with Export and Replace without a copy).
+   */
+  private refuseReplace(name: string, why: 'full' | 'taken', quiet = false): void {
     this.keepCopyFailed = name;
     const reason = why === 'full' ? 'storage is full' : 'another city is already kept aside';
-    this.toast(`Couldn't keep a copy of ${name}: ${reason}. Export it first.`, 'error', { id: 'export', label: 'Export', sec: 12 });
+    this.keepCopyText = `Couldn't keep a copy of ${name}: ${reason}. Export it first.`;
+    if (!quiet) this.toast(this.keepCopyText, 'error', { id: 'export', label: 'Export', sec: 12 });
   }
 
   /** Serialize current state (also used by the artifact hot-reload snapshot). */

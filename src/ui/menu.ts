@@ -18,6 +18,7 @@ import { buildDialog, type UIContext } from './context';
 import { closestData, h, setAttr, setClass, setHidden, setText } from './dom';
 import { groupInt } from './format';
 import { icon, type IconName } from './icons';
+import { ABOUT_SAVE_LINE, BLOCKED_TEXT, HELP_TRANSFER, TRANSFER_COPY, TRANSFER_ICONS } from './transfer';
 
 type View = 'main' | 'settings' | 'help' | 'about';
 
@@ -97,6 +98,12 @@ export class Menu {
   private readonly loadBtn: HTMLButtonElement;
   private readonly restoreBtn: HTMLButtonElement;
   private readonly restoreDesc: HTMLElement;
+  /** City transfer (§13.1): Export city (disabled while a newer build's city is stored) and Import city. */
+  private readonly exportBtn: HTMLButtonElement;
+  private readonly exportDesc: HTMLElement;
+  private readonly growBtn: HTMLButtonElement;
+  private readonly growNote: HTMLElement;
+  private readonly cityRow: HTMLElement;
   private readonly toggles = new Map<keyof Settings, HTMLButtonElement>();
   /** Each toggle row's description line (the Crowds row says why it is off at Low quality). */
   private readonly toggleDesc = new Map<keyof Settings, HTMLElement>();
@@ -129,17 +136,20 @@ export class Menu {
     d.head.prepend(this.back);
 
     // ── Main ───────────────────────────────────────────────────────────────
-    const item = (act: string, ico: IconName, label: string, desc: string, cls = '') =>
+    const item = (act: string, ico: IconName | { html: string }, label: string, desc: string, cls = '') =>
       h(
         'button',
         { class: `cc-menu-item ${cls}`, type: 'button', 'data-act': act },
-        h('span', { class: 'cc-menu-ico', html: icon(ico) }),
+        h('span', { class: 'cc-menu-ico', html: typeof ico === 'string' ? icon(ico) : ico.html }),
         h('span', { class: 'cc-menu-text' }, h('strong', { text: label }), h('span', { text: desc })),
         h('span', { class: 'cc-menu-chev', html: icon('chevron') }),
       );
     this.loadBtn = item('load', 'load', 'Load saved city', 'Return to your last save');
     this.restoreBtn = item('restore', 'back', 'Restore previous city', 'The city New City replaced');
     this.restoreDesc = this.restoreBtn.querySelector('.cc-menu-text span') as HTMLElement;
+    this.exportBtn = item('export', { html: TRANSFER_ICONS.export }, TRANSFER_COPY.exportRow.label, TRANSFER_COPY.exportRow.desc);
+    this.exportDesc = this.exportBtn.querySelector('.cc-menu-text span') as HTMLElement;
+    const importBtn = item('import', { html: TRANSFER_ICONS.import }, TRANSFER_COPY.importRow.label, TRANSFER_COPY.importRow.desc);
     this.mainMenuBtn = item('mainmenu', 'logo', 'Main menu', 'Save and go to the title screen');
     const resume = item('resume', 'play', 'Resume', 'Back to the streets', 'is-primary');
     resume.setAttribute('data-autofocus', '');
@@ -151,6 +161,8 @@ export class Menu {
       this.loadBtn,
       item('new', 'newCity', 'New city', 'Fresh map, fresh charter'),
       this.restoreBtn,
+      this.exportBtn,
+      importBtn,
       this.mainMenuBtn,
       h('div', { class: 'cc-menu-sep' }),
       item('view:settings', 'gear', 'Settings', 'Story pace, weather, crowds, quality'),
@@ -163,15 +175,17 @@ export class Menu {
     // The City line (§7.6): which size the city is, read-only; WP-9's Grow button goes in growSlot on a 3×3 city.
     this.cityText = h('span');
     this.growSlot = h('span', { class: 'cc-set-growslot', 'data-slot': 'grow' });
-    settings.append(
-      h(
-        'div',
-        { class: 'cc-set-row cc-set-city' },
-        h('span', { class: 'cc-menu-ico', html: icon('map') }),
-        h('span', { class: 'cc-menu-text' }, h('strong', { text: 'City' }), this.cityText),
-        this.growSlot,
-      ),
+    // Grow to 25 districts (§3.11, §7.6): a 44 px button on a 3×3 city, disabled with its line while saveBlocked.
+    this.growBtn = h('button', { class: 'cc-btn cc-set-grow', type: 'button', 'data-act': 'grow', html: TRANSFER_ICONS.grow }, TRANSFER_COPY.grow);
+    this.growNote = h('span', { class: 'cc-set-grownote', hidden: true, text: BLOCKED_TEXT });
+    this.cityRow = h(
+      'div',
+      { class: 'cc-set-row cc-set-city' },
+      h('span', { class: 'cc-menu-ico', html: icon('map') }),
+      h('span', { class: 'cc-menu-text' }, h('strong', { text: 'City' }), this.cityText),
+      this.growSlot,
     );
+    settings.append(this.cityRow);
     // Story pace first: it is the setting that changes how the game feels most. Applies at once.
     const paceSeg = h('div', { class: 'cc-seg cc-seg-pace', role: 'radiogroup', 'aria-label': 'Story pace' });
     for (const p of STORY_PACES) {
@@ -293,6 +307,8 @@ export class Menu {
         // MEGACITY §7.7: two steps after the fourteen (WP-9 adds 17).
         step('map', HELP_MEGA[0].title, HELP_MEGA[0].body, '#ffd84d'),
         step('skybridge', HELP_MEGA[1].title, HELP_MEGA[1].body, '#8fe3ff'),
+        // MEGACITY §7.7, §13.6: step 17 (WP-9).
+        step('save', HELP_TRANSFER.title, HELP_TRANSFER.body, '#22e5ff', TRANSFER_ICONS.export),
       ),
       h('p', { class: 'cc-help-foot', text: 'Watch the treasury: taxes come in monthly, upkeep goes out. Tap your credits to open the budget.' }),
     );
@@ -305,7 +321,7 @@ export class Menu {
       h('div', { class: 'cc-about-name', text: 'Cyber City' }),
       h('div', { class: 'cc-about-ver', text: 'Build 0.1 · neon edition' }),
       h('p', { text: 'An original city builder set in a rain-slicked, neon-lit future. Every name, district, company and pixel was invented for this game.' }),
-      h('p', { text: 'Hand-made with TypeScript, Canvas 2D and Web Audio: no image files, no sound files, no trackers. Your city is saved only on this device.' }),
+      h('p', { text: `Hand-made with TypeScript, Canvas 2D and Web Audio: no image files, no sound files, no trackers. ${ABOUT_SAVE_LINE}` }),
       h('p', { class: 'cc-about-small', text: 'Made with care for small screens and long nights.' }),
     );
 
@@ -385,6 +401,21 @@ export class Menu {
       setClass(b, 'is-on', on);
     }
     setText(this.cityText, cityLine(w.cityName, w.region));
+    // Grow (§3.11): only a 3×3 city; disabled while this device holds a newer build's city.
+    const grow = w.region === 3;
+    if (grow !== (this.growSlot.firstChild !== null)) {
+      if (grow) this.growSlot.append(this.growBtn, this.growNote);
+      else this.growSlot.textContent = '';
+    }
+    setClass(this.cityRow, 'has-grow', grow);
+    if (grow) {
+      this.growBtn.disabled = game.saveBlocked;
+      setHidden(this.growNote, !game.saveBlocked);
+    }
+    // Export (§13.1): disabled while blocked, with the reason as its line.
+    setAttr(this.exportBtn, 'aria-disabled', game.saveBlocked ? 'true' : 'false');
+    setClass(this.exportBtn, 'is-disabled', game.saveBlocked);
+    setText(this.exportDesc, game.saveBlocked ? BLOCKED_TEXT : TRANSFER_COPY.exportRow.desc);
     setHidden(this.lowerRow, w.region !== 5);
     for (const b of this.quality) {
       const on = b.dataset.quality === s.quality;
@@ -476,6 +507,12 @@ export class Menu {
           } else if (game.keepCopyFailed !== null || game.lastSaveFailed) modals.closeAll(); // its Export toast shows over the city
         },
       });
+    } else if (act === 'export') {
+      if (game.saveBlocked) return;
+      actions.openTransfer('export');
+    } else if (act === 'import') actions.openTransfer('import');
+    else if (act === 'grow') {
+      if (game.canGrow) actions.growRegion('settings');
     } else if (act === 'new' && this.onNewCity) {
       const go = this.onNewCity;
       this.resumeSpeed = 0; // the start screen holds the game; Continue or Found city resumes at 1×
