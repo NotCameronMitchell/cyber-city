@@ -1671,6 +1671,14 @@ describe('megacity story content (MEGACITY §8)', () => {
     expect(bad).toEqual([]);
   });
 
+  it('gives one land grant with every chapter reward I–V and none elsewhere in the content (§8.2)', () => {
+    const grants: string[] = [];
+    eachEffect((e, site) => e.t === 'grant' && grants.push(`${site.where} ${e.n}`));
+    expect(grants).toEqual(['chapter 1 reward 1', 'chapter 2 reward 1', 'chapter 3 reward 1', 'chapter 4 reward 1', 'chapter 5 reward 1']);
+    // The ✦ chip shows on any choice that does carry one (none of §8.3's cards does).
+    for (const c of C.MEGACITY_CARDS) for (const ch of c.choices) expect(ch.fx.some((e) => e.t === 'grant'), `${c.id} ${ch.label}`).toBe(false);
+  });
+
   it('keeps the noun "grant" on screen for the ✦ land grant only (§0 Words: milestone money is a bonus)', () => {
     // Every source string (class lists, ids and markup aside) and every story text that says "grant" means a land grant.
     const ALL_SOURCES: Record<string, string> = import.meta.glob(['../../src/**/*.ts'], { query: '?raw', import: 'default', eager: true });
