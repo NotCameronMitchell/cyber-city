@@ -251,11 +251,11 @@ const REVIEW_CARD = 'ep.review';
 const MARKS_THROTTLE_SEC = 2;
 /** The ending each ending landmark belongs to (§9.2). */
 const LANDMARK_ENDING: Partial<Record<BuildingType, EndingId>> = { gantry: 'ironwork', glasssmile: 'pearl', breadpier: 'lowcrown', recordtower: 'ledger', stillsquare: 'quiet' };
-/** The Spire's build reaction by its sponsor (MEGACITY §6.2, §8.4); a Nacre (or old, unsponsored) Spire keeps today's row. */
 /** Bread Pier's stalls (§9.2): an untaxed monthly line while the Low Crown is current. */
 const PIER_STALLS = { label: 'Pier stalls', perMonth: 900 } as const;
 /** The Quiet Hand's Nudge cooldown with the Still Square standing under it (§9.2), against STORY_PACING.nudgeEvery. */
 const STILL_SQUARE_NUDGE_DAYS = 270;
+/** The Spire's build reaction by its sponsor (MEGACITY §6.2, §8.4); a Nacre (or old, unsponsored) Spire keeps today's row. */
 const SPIRE_REACTIONS: Record<'basalt' | 'none', Partial<Record<FactionId, number>>> = {
   basalt: { basalt: 6, nacre: 2, undertow: -2 },
   none: { board: 3 },
@@ -1785,7 +1785,8 @@ export class StoryDirector implements EffectHost {
    * memorial row of §9.3, +1 for a Sunk Memorial inside the Sunk once Chapter IV's logs were read. Only while the
    * landmark's ending is current: the Gantry's industrial demand and its reactor / Stratablock / Foundry Spine price
    * cut, the Record Tower's upkeep cut. (Faction power is factions.ts', visitors sim/tuning.ts', the Pier's stalls
-   * the ledger's, land value the local layer's; the Nudge cooldown is nudge()'s.)
+   * the ledger's and its turf terms landmarkTerms.ts' (turf.ts reads them), land value the local layer's; the Nudge
+   * cooldown is nudge()'s.)
    */
   private landmarkPatches(): ModPatch[] {
     const w = this.world;
@@ -1808,11 +1809,6 @@ export class StoryDirector implements EffectHost {
     return out;
   }
 
-  /**
-   * The local layer part: the story's locals (effects.ts writeLocals) plus the ending landmarks' land value (§9.2,
-   * kept after a swap): the Glass Smile +0.04 r14, the Record Tower +0.03 r12. Derived: they ride along for this one
-   * write and are never saved.
-   */
   /** What the local layer part is written from: the live locals and the ending landmarks' land value terms. */
   private localsKey(): string {
     const w = this.world;
@@ -1822,6 +1818,11 @@ export class StoryDirector implements EffectHost {
     return k;
   }
 
+  /**
+   * The local layer part: the story's locals (effects.ts writeLocals) plus the ending landmarks' land value (§9.2,
+   * kept after a swap): the Glass Smile +0.04 r14, the Record Tower +0.03 r12. Derived: they ride along for this one
+   * write and are never saved.
+   */
   private writeLocalLayer(): void {
     const w = this.world;
     const st = w.story;

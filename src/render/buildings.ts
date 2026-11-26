@@ -31,7 +31,7 @@
 import { BUILDINGS, BUILDING_ORDER } from '../game/config';
 import { CLASSIC_TOPS, classicId } from '../game/heights';
 import { hash2 } from '../game/rng';
-import { skylineLang } from '../game/marks';
+import { lanternBands, skylineLang } from '../game/marks';
 import { standing } from '../game/story/factions';
 import type { EndingId, FactionId } from '../game/story/types';
 import type { Building, BuildingType, DistrictKind, Parcel, Tile } from '../game/types';
@@ -430,7 +430,7 @@ function zoneSpec(tile: Tile, x: number, y: number, parcel: Parcel | null, env: 
     const e = skylineLang(ax, ay);
     if (e) lang = legacyLang(e, ax, ay);
   }
-  if (!lang && art.lamplight && zone === ZoneType.Residential && level >= 2) {
+  if (!lang && (art.lamplight || lanternBands()) && zone === ZoneType.Residential && level >= 2) {
     const e = skylineLang(ax, ay);
     lantern = e === 'quiet';
   }

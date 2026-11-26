@@ -40,7 +40,8 @@ import type { World } from './world';
 export const TAKEOVER = { perYear: 0.07, cap: 0.35, total: 0.5, patron: 0.1 } as const;
 const YEAR_DAYS = DAYS_PER_MONTH * MONTHS_PER_YEAR;
 const BODY_SALT = 0x5c1e9;
-const ENDING_NAMES: Record<EndingId, string> = { ironwork: 'Ironwork', pearl: 'Pearlescence', lowcrown: 'The Low Crown', ledger: 'Open Ledger', quiet: 'The Quiet Hand' };
+/** Ending names inside a plaque line ("Built under the Low Crown."), as inspect's notes write them. */
+const ENDING_NAMES: Record<EndingId, string> = { ironwork: 'Ironwork', pearl: 'Pearlescence', lowcrown: 'the Low Crown', ledger: 'Open Ledger', quiet: 'the Quiet Hand' };
 const LANDMARK_OF: Record<EndingId, BuildingType> = { ironwork: 'gantry', pearl: 'glasssmile', lowcrown: 'breadpier', ledger: 'recordtower', quiet: 'stillsquare' };
 
 /** One band of [0, 1): bodies whose hash falls below `end` (and above the band before) draw in `lang`. */
@@ -66,6 +67,8 @@ interface Derived {
   /** world.tick and the history entry count the bands were laid out for. */
   bandsTick: number;
   bandsKey: string;
+  /** Some ending held was Lamplight (its band draws lantern roofs, current or kept after a review swap). */
+  lanterns: boolean;
   /** Neighbourhood names by art cell key. */
   names: Map<number, string>;
   tagline: string | null;
@@ -125,6 +128,7 @@ function refreshBands(d: Derived): void {
   d.bandsStart = d.patron ? layBands(hist, d.world.tick, TAKEOVER.total - TAKEOVER.patron) : d.bands;
   d.bandsTick = d.world.tick;
   d.bandsKey = bandsKeyOf(st);
+  d.lanterns = hist.some((h) => h.id === 'quiet' && h.variant === 'lamplight');
 }
 
 const bandsKeyOf = (st: StoryState) => `${st.endingHistory?.length ?? 0}:${st.ending ?? ''}:${st.endingVariant ?? ''}`;
@@ -172,6 +176,17 @@ export function skylineLang(x: number, y: number): EndingId | null {
   return null;
 }
 
+/**
+ * Whether the skyline has a Lamplight band (render/buildings.ts asks skylineLang for lantern roofs only then): true
+ * while Lamplight holds and after a Charter Review swaps it away, since its band and so its lantern roofs stay (§9.2).
+ */
+export function lanternBands(): boolean {
+  const d = active;
+  if (!d) return false;
+  if (bandsKeyOf(d.world.story) !== d.bandsKey) refreshBands(d);
+  return d.lanterns;
+}
+
 // ── Names, tagline, plaques (read by news.ts, game.ts and the Keepsakes list) ──
 
 /** The name a mark gives the 8×8 neighbourhood cell (cx, cy) in art coordinates (§9.3), or null. */
@@ -205,6 +220,8 @@ export function plaquesAt(world: World, x: number, y: number): string[] {
 
 /** The Keepsakes row title of a mark (§9.6). */
 export function markTitle(m: Mark): string {
+  // Under Lamplight the Still Square is the Lamp Square (§9.2).
+  if (m.id === 'landmark.stillsquare' && m.decal === 'landmark:lamp') return 'The Lamp Square';
   if (m.id.startsWith('landmark.')) return BUILDINGS[m.id.slice(9) as BuildingType]?.name ?? 'Landmark';
   return MARK_COPY[m.id]?.title ?? m.id;
 }
@@ -480,12 +497,17 @@ export function deriveMarks(world: World): Marks {
   if (f.fullRecall && hall) add('everyLamp', rectOf(hall), 'hall:lamps');
 
   // The ending landmarks the city has built (§9.2): built under their ending, dormant while another is current.
+  // The Quiet Hand's landmark names Lamplight when the city last held the Quiet Hand as Lamplight.
+  const hist = historyOf(st, world.tick);
   for (const e of ['ironwork', 'pearl', 'lowcrown', 'ledger', 'quiet'] as EndingId[]) {
     const b = oldestOf(world, LANDMARK_OF[e]);
     if (!b) continue;
     const dormant = st.ending !== e;
-    const plaque = dormant ? `Built under ${ENDING_NAMES[e]}. Dormant while another ending holds.` : `Built under ${ENDING_NAMES[e]}.`;
-    add(`landmark.${LANDMARK_OF[e]}`, rectOf(b), dormant ? 'landmark:past' : 'landmark', plaque);
+    let held = ENDING_NAMES[e];
+    if (e === 'quiet' && (dormant ? [...hist].reverse().find((h) => h.id === 'quiet')?.variant : st.endingVariant) === 'lamplight') held = 'Lamplight';
+    const plaque = dormant ? `Built under ${held}. Dormant while another ending holds.` : `Built under ${held}.`;
+    const lamp = !dormant && e === 'quiet' && st.endingVariant === 'lamplight';
+    add(`landmark.${LANDMARK_OF[e]}`, rectOf(b), dormant ? 'landmark:past' : lamp ? 'landmark:lamp' : 'landmark', plaque);
   }
 
   // Version: bumps when the set (or a name, or the tagline) changes.
@@ -506,6 +528,7 @@ export function deriveMarks(world: World): Marks {
     bandsStart: [],
     bandsTick: -1,
     bandsKey: '',
+    lanterns: false,
     names,
     tagline,
     marks,

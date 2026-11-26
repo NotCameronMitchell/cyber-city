@@ -8,7 +8,9 @@ import { lockedReason } from '../src/game/actions';
 import { REGION, STORY_PACE, STORY_PACING } from '../src/game/config';
 import { slotRect, startSlotOf } from '../src/game/districts/slots';
 import { Game } from '../src/game/game';
-import { deriveMarks, markCellName, plaquesAt, skylineLang, skylineShares, sunkTagline, TAKEOVER } from '../src/game/marks';
+import { deriveMarks, lanternBands, markCellName, markTitle, plaquesAt, skylineLang, skylineShares, sunkTagline, TAKEOVER } from '../src/game/marks';
+import { BREAD_PIER_TURF, pierCrime, pierProtect } from '../src/game/story/landmarkTerms';
+import * as turf from '../src/game/story/turf';
 import { districtName } from '../src/game/news';
 import { EPILOGUE_DECK, LANDMARK_CARD_ENDING } from '../src/game/story/content/cards/epilogue';
 import { GENERIC_REVIEW_LINE, REVIEW_LINES, SUNK_TAGLINES } from '../src/game/story/content/epilogue';
@@ -220,9 +222,21 @@ describe('§9.6 item 1: every key choice leaves exactly its mark, at its place; 
     const w = city.w;
     const b = w.addBuilding('stillsquare', ...(Object.values(freeSquare(w, startSlotOf(w), 3, new Set())!) as [number, number]))!;
     w.story.ending = 'quiet';
-    expect(find(w, 'landmark.stillsquare')!.plaque).toBe('Built under The Quiet Hand.');
+    expect(find(w, 'landmark.stillsquare')!.plaque).toBe('Built under the Quiet Hand.');
+    expect(markTitle(find(w, 'landmark.stillsquare')!)).toBe('The Still Square');
     w.story.ending = 'ledger';
-    expect(find(w, 'landmark.stillsquare')!.plaque).toBe('Built under The Quiet Hand. Dormant while another ending holds.');
+    expect(find(w, 'landmark.stillsquare')!.plaque).toBe('Built under the Quiet Hand. Dormant while another ending holds.');
+    // Under Lamplight it is the Lamp Square, built under Lamplight; after a swap it remembers Lamplight.
+    w.story.ending = 'quiet';
+    w.story.endingVariant = 'lamplight';
+    w.story.endingHistory = [{ id: 'quiet', variant: 'lamplight', from: 0, to: null }];
+    expect(find(w, 'landmark.stillsquare')!.plaque).toBe('Built under Lamplight.');
+    expect(markTitle(find(w, 'landmark.stillsquare')!)).toBe('The Lamp Square');
+    w.story.endingHistory = [{ id: 'quiet', variant: 'lamplight', from: 0, to: 100 }, { id: 'ledger', variant: null, from: 100, to: null }];
+    w.story.ending = 'ledger';
+    w.story.endingVariant = null;
+    expect(find(w, 'landmark.stillsquare')!.plaque).toBe('Built under Lamplight. Dormant while another ending holds.');
+    expect(markTitle(find(w, 'landmark.stillsquare')!)).toBe('The Still Square');
     w.removeBuilding(b.id);
     expect(find(w, 'landmark.stillsquare')).toBeUndefined();
   });
@@ -330,6 +344,42 @@ describe('§9.6 item 3: the ending history sets each ending\'s band; a swap keep
       }
     expect(nacre / n).toBeGreaterThan(0.08);
     expect(nacre / n).toBeLessThan(0.12);
+  });
+
+  it('Lamplight\'s band keeps its lantern roofs after a review swap (render/buildings.ts asks only while lanternBands())', () => {
+    const w = city.w;
+    const s = w.story;
+    s.ending = 'ironwork';
+    s.endingHistory = [{ id: 'ironwork', variant: null, from: 0, to: null }];
+    w.tick = 4 * YEAR;
+    deriveMarks(w);
+    expect(lanternBands()).toBe(false);
+    s.ending = 'quiet';
+    s.endingVariant = 'lamplight';
+    s.endingHistory = [{ id: 'quiet', variant: 'lamplight', from: 0, to: null }];
+    deriveMarks(w);
+    expect(lanternBands()).toBe(true);
+    expect(skylineShares(w).quiet).toBeCloseTo(0.28, 9);
+    const ao = artOffset(w);
+    const r = slotRect(w, w.districts.kinds.indexOf('flats'));
+    const lamps: [number, number][] = [];
+    for (let y = r.y0; y <= r.y1; y += 2) for (let x = r.x0; x <= r.x1; x += 2) if (skylineLang(x - ao, y - ao) === 'quiet') lamps.push([x - ao, y - ao]);
+    expect(lamps.length).toBeGreaterThan(0);
+    // A Charter Review swaps to Open Ledger: the Lamplight band (and its lantern roofs) stays.
+    s.endingHistory[0].to = 4 * YEAR;
+    s.endingHistory.push({ id: 'ledger', variant: null, from: 4 * YEAR, to: null });
+    s.ending = 'ledger';
+    s.endingVariant = null;
+    w.tick = 6 * YEAR;
+    deriveMarks(w);
+    expect(lanternBands()).toBe(true);
+    for (const [x, y] of lamps) expect(skylineLang(x, y)).toBe('quiet');
+    // A plain Quiet Hand takes no band and draws no lanterns.
+    s.endingHistory = [{ id: 'quiet', variant: null, from: 0, to: null }];
+    s.ending = 'quiet';
+    deriveMarks(w);
+    expect(lanternBands()).toBe(false);
+    w.tick = 0;
   });
 });
 
@@ -447,6 +497,75 @@ describe('§9.6 item 4: ending landmarks build only under their ending; after a 
     expect(f).toBeDefined();
     expect(st.nudgeReady - w.tick).toBe(270);
     expect(270).toBeLessThan(STORY_PACING.nudgeEvery);
+  });
+
+  it('the Bread Pier softens gang turf crime ×0.85 within r12 and protects both gangs r6, only while the Low Crown holds', () => {
+    const g = gameOn(city.w);
+    const w = g.world;
+    const st = w.story;
+    st.chapter = 7;
+    st.phase = 'ended';
+    st.ending = 'lowcrown';
+    st.endingHistory = [{ id: 'lowcrown', variant: null, from: 0, to: null }];
+    const site = freeSquare(w, startSlotOf(w), 4, new Set())!;
+    const cx = site.x + 2;
+    const cy = site.y + 2;
+    // Both gangs hold the streets around it.
+    for (let y = cy - 16; y <= cy + 16; y++)
+      for (let x = cx - 16; x <= cx + 16; x++) {
+        const i = y * w.N + x;
+        w.turf.owner[i] = x < cx ? 1 : 2;
+        w.turf.str[i] = 80;
+      }
+    const near = (cy + 3) * w.N + cx + 3;
+    const far = (cy + 15) * w.N + cx + 15;
+    turf.refreshStats(w);
+    const crime0 = { near: w.layerParts.turf.crimeAdd[near], far: w.layerParts.turf.crimeAdd[far] };
+    expect(crime0.near).toBeGreaterThan(0);
+    const pier = w.addBuilding('breadpier', site.x, site.y)!;
+    turf.refreshStats(w);
+    expect(w.layerParts.turf.crimeAdd[near]).toBeCloseTo(crime0.near * BREAD_PIER_TURF.crimeMul, 6);
+    expect(w.layerParts.turf.crimeAdd[far]).toBeCloseTo(crime0.far, 6);
+    const pu = new Uint8Array(w.area);
+    const pk = new Uint8Array(w.area);
+    pierProtect(w, pu, pk);
+    const r = BREAD_PIER_TURF.protectRadius;
+    expect(pu[(site.y - r) * w.N + site.x - r]).toBe(1);
+    expect(pk[(site.y + 3 + r) * w.N + site.x + 3 + r]).toBe(1);
+    expect(pu[(site.y - r - 1) * w.N + site.x]).toBe(0);
+    // A Charter Review swaps the ending: the pier stands dormant and its turf terms drop.
+    st.ending = 'ledger';
+    turf.refreshStats(w);
+    const dormant = w.layerParts.turf.crimeAdd[near];
+    w.removeBuilding(pier.id);
+    turf.refreshStats(w);
+    expect(w.layerParts.turf.crimeAdd[near]).toBeCloseTo(dormant, 6); // the dormant pier changes nothing
+    w.addBuilding('breadpier', site.x, site.y);
+    pu.fill(0);
+    pk.fill(0);
+    pierProtect(w, pu, pk);
+    expect(pu.some((v) => v)).toBe(false);
+    const c = new Float32Array(w.area).fill(1);
+    pierCrime(w, c);
+    expect(c.every((v) => v === 1)).toBe(true);
+  });
+});
+
+describe('carry 10: the Spire\'s build reaction follows its sponsor (§6.2)', () => {
+  it.each([
+    ['nacre', { nacre: 6, basalt: 2, undertow: -2 }],
+    ['basalt', { basalt: 6, nacre: 2, undertow: -2 }],
+    ['none', { board: 3 }],
+  ] as const)('a %s Spire', (sponsor, want) => {
+    const g = gameOn(city.w);
+    const w = g.world;
+    const site = freeSquare(w, startSlotOf(w), 3, new Set())!;
+    const b = w.addBuilding('spire', site.x, site.y)!;
+    b.sponsor = sponsor;
+    const before = { ...w.story.favor };
+    w.pushSignal({ t: 'built', type: 'spire', id: b.id });
+    g.story.onDay();
+    for (const f of ['board', 'basalt', 'nacre', 'undertow', 'kites', 'tuning'] as const) expect(w.story.favor[f] - before[f], f).toBe((want as Partial<Record<string, number>>)[f] ?? 0);
   });
 });
 

@@ -22,6 +22,7 @@ import { scratchFor } from '../frame';
 import { DAYS_PER_MONTH, RoadKind, Terrain, ZoneType, type Building, type BuildingType, type DistrictKind } from '../types';
 import type { World } from '../world';
 import { standing, tier } from './factions';
+import { pierCrime, pierProtect } from './landmarkTerms';
 import { composeLayers, onMonthBands, resetLayers } from './mods';
 import type { EndingRules, GangId, ModPatch } from './types';
 import { isTallBuilding, isTallZoneTile, spanMask } from './vertical';
@@ -430,6 +431,7 @@ function buildingMaps(world: World, M: MapSet): void {
     if (b.type === 'glarewall') fillRect(mGlare, b.x - rGlare, b.y - rGlare, x1 + rGlare, y1 + rGlare, N);
     else if (b.type === 'frame') fillRect(mFrame, b.x - rFrame, b.y - rFrame, x1 + rFrame, y1 + rFrame, N);
   }
+  pierProtect(world, protU, protK); // MEGACITY §9.2: a Bread Pier protects both gangs' turf r6 while the Low Crown holds
   const lvBlock = TURF.pact.noSpreadLandValue;
   const lv = world.fields.landValue;
   forOwned(world, (a, e) => {
@@ -1190,6 +1192,7 @@ function writeLayers(world: World): void {
         if (dx * dx + dy * dy <= r * r) L.crimeAdd[y * N + x] += 0.1;
       }
   }
+  pierCrime(world, L.crimeAdd); // MEGACITY §9.2: gang turf crime ×0.85 r12 around a Bread Pier while the Low Crown holds
 }
 
 /**
