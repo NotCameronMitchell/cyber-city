@@ -519,7 +519,24 @@ export class StartScreen {
     if (remember) {
       this.regionTouched = true;
       storageSet(REGION_KEY, String(r));
+      // §3.11, §7.9: the warning shows under the control before Found city, so a tap that adds it brings it into view
+      // above the sticky footer (on a landscape phone it would land under the footer).
+      if (warn) this.revealRegionWarn();
     }
+  }
+
+  /** Scroll the sheet body so the region warning sits above the sticky footer (no-op when it already does). */
+  private revealRegionWarn(): void {
+    const w = this.regionWarn;
+    const body = this.sheet.querySelector<HTMLElement>('.cc-start-sheet-body');
+    const foot = this.sheet.querySelector<HTMLElement>('.cc-start-sheet-foot');
+    if (!body || w.hidden || typeof w.getBoundingClientRect !== 'function') return;
+    const r = w.getBoundingClientRect();
+    const b = body.getBoundingClientRect();
+    const limit = Math.min(b.bottom, foot ? foot.getBoundingClientRect().top : Infinity) - 8;
+    const top = b.top + 8;
+    const dy = r.bottom > limit ? Math.min(r.bottom - limit, r.top - top) : r.top < top ? r.top - top : 0;
+    if (Math.abs(dy) > 1) body.scrollBy({ top: dy, behavior: prefersReducedMotion() ? 'auto' : 'smooth' });
   }
 
   private found(): void {

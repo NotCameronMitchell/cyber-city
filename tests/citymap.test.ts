@@ -9,7 +9,7 @@ import { adjacentLocked, slotRect } from '../src/game/districts/slots';
 import { Game } from '../src/game/game';
 import type { Building, Region, SlotId } from '../src/game/types';
 import { World } from '../src/game/world';
-import { zoomRange } from '../src/input/input';
+import { mapPanLocked, zoomRange } from '../src/input/input';
 import { MAP_PINCH_IN, MAP_PINCH_OUT, pinchMayLeaveMap } from '../src/input/mapbus';
 import { Camera, HALF_H, HALF_W } from '../src/render/camera';
 import {
@@ -76,6 +76,16 @@ describe('City map model (§7.2)', () => {
     w.story.ending = 'quiet';
     s = g.districtView().slots[cand];
     expect(s.price.text).toBe(`${districtPrice(w.districts.owned.length).toLocaleString('en-US')} CR · or wait for the next grant`);
+    // Too few credits to buy it: the disabled Annex says why (by how much), not only a shake.
+    w.funds = 1000;
+    s = g.districtView().slots[cand];
+    const poor = footerModel(s, { lease: 'nacre', confirming: false, funds: w.funds });
+    expect(poor.enabled).toBe(false);
+    expect(poor.note).toBe(`Not enough credits: ${(districtPrice(w.districts.owned.length) - 1000).toLocaleString('en-US')} CR short`);
+    expect(footerModel(s, { lease: 'nacre', confirming: false }).note).toBe('Not enough credits');
+    w.funds = 1e9;
+    s = g.districtView().slots[cand];
+    expect(footerModel(s, { lease: 'nacre', confirming: false, funds: w.funds }).note).toBeNull();
     const farSlot = g.districtView().slots.find((x) => x.state === 'notAdjacent')!;
     expect(farSlot.price.text).toBe('Not next to the city yet');
     const far = footerModel(farSlot, { lease: null, confirming: false });
@@ -398,6 +408,16 @@ describe('5×5 City map (§7.2)', () => {
     expect(pinchMayLeaveMap(fit * 1.6, fit, 2)).toBe(false);
     expect(pinchMayLeaveMap(fit * 2, fit, 2)).toBe(true);
     expect(pinchMayLeaveMap(cam3.mapZoom, cam3.mapZoom, 1)).toBe(true);
+    // §7.2: a one-finger pan only while a 5×5 atlas is zoomed; at the fit (and on a 3×3 map, which never zooms) a drag
+    // or a fling does not move the atlas.
+    cam.zoomAt(0.1, 195, 300);
+    expect(mapPanLocked(cam)).toBe(true);
+    cam.zoomAt(1.5, 195, 300);
+    expect(mapPanLocked(cam)).toBe(false);
+    expect(mapPanLocked(cam3)).toBe(true);
+    const street = new Camera(g.world.N);
+    street.setViewport(390, 844);
+    expect(mapPanLocked(street)).toBe(false);
   });
 
   it('the region sits in the middle of the area the header and the sheet leave, on every phone size and region', () => {

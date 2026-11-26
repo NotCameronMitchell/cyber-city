@@ -179,7 +179,9 @@ export class UI {
     this.confirm = new ConfirmDialog(this.ctx);
     this.story = new StoryUI(this.ctx);
     this.cityMap = new CityMap(this.ctx);
-    this.banner.held = () => this.story.busy || this.modals.depth > 0;
+    // §7.2: the annex banner follows the fly-in, so a banner waits while the City map is open and while the camera
+    // flies in to a new district (a tap that skips the fly-in lets it show at once).
+    this.banner.held = () => this.story.busy || this.modals.depth > 0 || this.cityMap.isOpen || mapBus.flyIn !== null;
     this.toasts.held = () => this.story.holdsToasts;
     // One item at a time (EXPANSION §7.6): never over a tray, drag, confirm, story surface, message banner or dialog.
     this.tips = new Tips(this.dock.tipSlot, (id) => this.tipBlocked(id));
@@ -198,6 +200,7 @@ export class UI {
       open: (slot) => this.openCityMap(slot ?? null),
       tap: (sx, sy) => this.cityMap.tap(sx, sy),
       leave: (sx, sy) => this.cityMap.close({ sx, sy }),
+      refit: () => this.cityMap.snap(),
     };
     this.story.onChange = () => this.syncCoach();
     this.story.onView = () => this.dock.syncCategories();
@@ -210,6 +213,7 @@ export class UI {
     this.wireInput();
     this.applySettings();
     this.syncCoach();
+    this.schedulePrewarm();
   }
 
   // ── Game bus ──────────────────────────────────────────────────────────────
@@ -306,8 +310,20 @@ export class UI {
   }
 
   /** game.world was replaced (new city / load): drop every per-world view state. */
+  /** Warm the City map in idle time (a region city): its first open then animates from the first frame. */
+  private schedulePrewarm(): void {
+    if (this.game.world.region < 3) return;
+    const run = () => {
+      if (!this.cityMap.isOpen) this.cityMap.prewarm();
+    };
+    const w = typeof window !== 'undefined' ? (window as Window & { requestIdleCallback?: (cb: () => void, o?: { timeout: number }) => number }) : null;
+    if (w?.requestIdleCallback) w.requestIdleCallback(run, { timeout: 4000 });
+    else if (w) w.setTimeout(run, 1500);
+  }
+
   private onWorld(): void {
     this.glide = null;
+    this.schedulePrewarm();
     // A world swap while the City map was open: leave it (the new city frames itself).
     const wasMap = this.cityMap.isOpen;
     this.cityMap.reset();

@@ -18,6 +18,8 @@ export interface CityMapHooks {
   tap(sx: number, sy: number): void;
   /** Leave the map towards screen point (sx, sy): a pinch-in on the City map (§3.9). */
   leave(sx: number, sy: number): void;
+  /** Ease back to the fitted framing (a pinch or double-tap that returns a zoomed 5×5 map to 1×; the fit does not pan). */
+  refit?(): void;
 }
 
 export const mapBus: {

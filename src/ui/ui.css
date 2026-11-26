@@ -3130,6 +3130,12 @@ body {
   box-shadow: 0 0 10px var(--cc-cyan);
 }
 
+/* A disabled switch (Crowds at Low quality): dimmed, its row says why (§7.6). */
+.cc-switch.is-off {
+  opacity: 0.4;
+  cursor: default;
+}
+
 .cc-seg {
   display: flex;
   flex: none;
@@ -4156,6 +4162,20 @@ body {
   }
 }
 
+/* A landscape phone: the label would squeeze the city name and date; the 44 px icon keeps its gold dot (§7.2, §7.3). */
+@media (orientation: landscape) and (max-height: 520px) {
+  .cc-hud-map .cc-hud-maplabel {
+    display: none !important;
+  }
+  .cc-hud-map {
+    width: 44px;
+    padding: 0;
+  }
+  .cc-hud-mapdot {
+    position: absolute;
+  }
+}
+
 @media (hover: hover) {
   .cc-hud-map:hover {
     background: rgba(255, 255, 255, 0.05);
@@ -5038,10 +5058,34 @@ body {
   display: block;
 }
 
+/* Not yet / Crown it stay in view at the bottom of the scrolling sheet (a landscape phone, a 360 px phone). */
 .cc-crowns-go {
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
   display: flex;
   gap: 8px;
   margin-top: 8px;
+  padding: 6px 0 2px;
+  background: rgba(10, 8, 22, 0.94);
+}
+
+/* A short screen: once a crown is picked, the grid folds to it (tap it to see the others), so the sheet rests low
+   enough for the Stratablock and its look ghost to show above it (§6.2). */
+@media (max-height: 720px) {
+  .cc-crowns.has-pick .cc-crown-grid {
+    grid-template-columns: 1fr;
+  }
+  .cc-crowns.has-pick .cc-crown:not(.is-on) {
+    display: none;
+  }
+  .cc-crowns.has-pick .cc-crown.is-on .cc-crown-main span {
+    display: none;
+  }
+  .cc-crowns.has-pick .cc-crown.is-on {
+    flex-direction: row;
+    align-items: center;
+  }
 }
 
 .cc-crowns-go .cc-btn {

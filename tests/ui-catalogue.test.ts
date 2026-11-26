@@ -588,6 +588,22 @@ describe('the ticker keeps City life lines (§6.4.1: a happening posts one line 
   });
 });
 
+// ── Settings: the Crowds row at Low quality (MEGACITY §6.4, §7.6) ───────────
+import { toggleRow } from '../src/ui/menu';
+import { DEFAULT_SETTINGS } from '../src/game/game';
+
+describe('Settings: a switch never claims what the game will not do', () => {
+  it('at Low quality the Crowds row reads Off, is disabled and says why; High brings the choice back', () => {
+    const crowds = TOGGLES.find((t) => t.key === 'crowds')!;
+    const low = toggleRow({ ...DEFAULT_SETTINGS, quality: 'low', crowds: true }, crowds);
+    expect(low).toEqual({ on: false, disabled: true, desc: 'Off at Low quality' });
+    expect(toggleRow({ ...DEFAULT_SETTINGS, quality: 'high', crowds: true }, crowds)).toEqual({ on: true, disabled: false, desc: crowds.desc });
+    expect(toggleRow({ ...DEFAULT_SETTINGS, quality: 'high', crowds: false }, crowds).on).toBe(false);
+    // Every other row is unchanged by quality.
+    for (const t of TOGGLES.filter((x) => x.key !== 'crowds')) expect(toggleRow({ ...DEFAULT_SETTINGS, quality: 'low' }, t).disabled).toBe(false);
+  });
+});
+
 // ── Megacity trays (MEGACITY §7.1) ───────────────────────────────────────────
 import { SECTIONS, cardCondition, cardState, sectionOf, traySections } from '../src/ui/tools';
 import { adjacentLocked } from '../src/game/districts/slots';

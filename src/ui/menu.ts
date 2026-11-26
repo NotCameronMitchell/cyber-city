@@ -50,6 +50,15 @@ function toggleOn(s: Settings, key: keyof Settings): boolean {
   return !!s[key];
 }
 
+/**
+ * A toggle row as Settings shows it. Low quality turns crowds off whatever the switch says (§6.4), so at Low the Crowds
+ * row reads Off, is disabled and says why; the player's choice comes back with High quality (§7.6).
+ */
+export function toggleRow(s: Settings, t: Pick<Toggle, 'key' | 'desc'>): { on: boolean; disabled: boolean; desc: string } {
+  if (t.key === 'crowds' && s.quality === 'low') return { on: false, disabled: true, desc: 'Off at Low quality' };
+  return { on: toggleOn(s, t.key), disabled: false, desc: t.desc };
+}
+
 /** How to play steps 15 and 16 (MEGACITY §7.7), verbatim. */
 export const HELP_MEGA: readonly { title: string; body: string }[] = [
   {
@@ -89,6 +98,8 @@ export class Menu {
   private readonly restoreBtn: HTMLButtonElement;
   private readonly restoreDesc: HTMLElement;
   private readonly toggles = new Map<keyof Settings, HTMLButtonElement>();
+  /** Each toggle row's description line (the Crowds row says why it is off at Low quality). */
+  private readonly toggleDesc = new Map<keyof Settings, HTMLElement>();
   private readonly quality: HTMLButtonElement[] = [];
   private readonly weather: HTMLButtonElement[] = [];
   /** The read-only City line (§7.6) and WP-9's Grow to 25 districts slot beside it (a 3×3 city). */
@@ -197,12 +208,14 @@ export class Menu {
     for (const t of TOGGLES) {
       const sw = h('button', { class: 'cc-switch', type: 'button', role: 'switch', 'aria-checked': 'false', 'data-setting': t.key, 'aria-label': t.label }, h('i'));
       this.toggles.set(t.key, sw);
+      const desc = h('span', { text: t.desc });
+      this.toggleDesc.set(t.key, desc);
       settings.append(
         h(
           'div',
           { class: 'cc-set-row' },
           h('span', { class: 'cc-menu-ico', html: icon(t.icon) }),
-          h('span', { class: 'cc-menu-text' }, h('strong', { text: t.label }), h('span', { text: t.desc })),
+          h('span', { class: 'cc-menu-text' }, h('strong', { text: t.label }), desc),
           sw,
         ),
       );
@@ -356,9 +369,14 @@ export class Menu {
     }
     const s = game.settings;
     for (const [key, el] of this.toggles) {
-      const on = toggleOn(s, key);
-      setAttr(el, 'aria-checked', on ? 'true' : 'false');
-      setClass(el, 'is-on', on);
+      const t = TOGGLES.find((x) => x.key === key);
+      const row = t ? toggleRow(s, t) : { on: toggleOn(s, key), disabled: false, desc: '' };
+      setAttr(el, 'aria-checked', row.on ? 'true' : 'false');
+      setAttr(el, 'aria-disabled', row.disabled ? 'true' : 'false');
+      setClass(el, 'is-on', row.on);
+      setClass(el, 'is-off', row.disabled);
+      const d = this.toggleDesc.get(key);
+      if (d && t) setText(d, row.desc);
     }
     const weather = weatherOf(s);
     for (const b of this.weather) {
@@ -391,6 +409,8 @@ export class Menu {
     const setting = closestData(t, 'setting', this.el);
     if (setting) {
       const key = setting.dataset.setting as keyof Settings;
+      // A disabled row (Crowds at Low quality) keeps the player's choice for High.
+      if (setting.getAttribute('aria-disabled') === 'true') return;
       game.updateSettings({ [key]: !toggleOn(game.settings, key) } as Partial<Settings>);
       return;
     }

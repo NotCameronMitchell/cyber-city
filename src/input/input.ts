@@ -352,7 +352,7 @@ export class InputController {
     }
 
     // Keyboard pan (eased).
-    if (this.keyboard.step(dt, this.tmpV)) cam.panBy(-this.tmpV.x * dt, -this.tmpV.y * dt);
+    if (this.keyboard.step(dt, this.tmpV) && !this.mapLocked) cam.panBy(-this.tmpV.x * dt, -this.tmpV.y * dt);
 
     // If the view moved under a stationary pointer, the tile under it changed.
     if (cam.x !== this.camX || cam.y !== this.camY || cam.zoom !== this.camZoom) {
@@ -814,6 +814,8 @@ export class InputController {
         this.animateZoom(1 / DOUBLE_TAP_ZOOM, this.pinchStartCx, this.pinchStartCy, false);
       }
       this.pinchTapEligible = false;
+      // A pinch that brings the City map back to its fit lands on the fitted framing (it cannot pan there, §7.2).
+      if (this.mapLocked && !cancelled) mapBus.hooks?.refit?.();
       if (left === 1) {
         // Hand over to the remaining finger as a plain pan — from where it is now.
         const rest = this.pointers[0];
@@ -871,9 +873,11 @@ export class InputController {
         if (!cancelled && isTap) {
           const cam = this.camera;
           if (this.mapSession) {
-            // The 5×5 City map (§7.2): a double-tap toggles 1× ↔ 2× around the finger.
+            // The 5×5 City map (§7.2): a double-tap zooms to 2× around the finger, and back to the fitted framing.
             const fit = cam.mapZoom;
-            this.animateZoom(cam.zoom < fit * 1.4 ? (fit * cam.mapHeadroom) / cam.zoom : fit / cam.zoom, ptr.downX, ptr.downY, false);
+            if (cam.zoom < fit * 1.4) this.animateZoom((fit * cam.mapHeadroom) / cam.zoom, ptr.downX, ptr.downY, false);
+            else if (mapBus.hooks?.refit) mapBus.hooks.refit();
+            else this.animateZoom(fit / cam.zoom, ptr.downX, ptr.downY, false);
             break;
           }
           // At max zoom a double-tap backs out instead of doing nothing.
@@ -941,8 +945,17 @@ export class InputController {
 
   // ── Pan / fling / zoom ────────────────────────────────────────────────────
 
+  /**
+   * The City map at its fitted zoom does not pan (§7.2: a one-finger pan only while a 5×5 atlas is zoomed; a 3×3
+   * region never zooms): a drag or a fling there would push districts under the sheet or off the side.
+   */
+  private get mapLocked(): boolean {
+    return mapPanLocked(this.camera);
+  }
+
   private panGesture(dx: number, dy: number, now: number): void {
     if (dx === 0 && dy === 0) return;
+    if (this.mapLocked) return;
     this.camera.panBy(dx, dy);
     this.panAccX += dx;
     this.panAccY += dy;
@@ -950,6 +963,7 @@ export class InputController {
   }
 
   private startFling(now: number): void {
+    if (this.mapLocked) return;
     const v = this.tracker.velocity(now, this.tmpV);
     const speed = capSpeed(v, FLING_MAX_SPEED);
     if (speed < FLING_MIN_SPEED) return;
@@ -1354,6 +1368,11 @@ export class InputController {
 }
 
 /** The zoom range input may ease to: the City map's [fit, fit × headroom] while it is open, else [minZoom, maxZoom]. */
+/** The City map at (or within 2% of) its fitted zoom: no pan or fling there (§7.2); a zoomed 5×5 atlas pans. */
+export function mapPanLocked(cam: Pick<Camera, 'mapView' | 'zoom' | 'mapZoom'>): boolean {
+  return cam.mapView && cam.zoom <= cam.mapZoom * 1.02;
+}
+
 export function zoomRange(cam: Pick<Camera, 'mapView' | 'mapZoom' | 'mapHeadroom' | 'minZoom' | 'maxZoom'>): { lo: number; hi: number } {
   return cam.mapView ? { lo: cam.mapZoom, hi: cam.mapZoom * cam.mapHeadroom } : { lo: cam.minZoom, hi: cam.maxZoom };
 }

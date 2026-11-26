@@ -30,6 +30,11 @@ import { factionColor, factionSigil } from './sigils';
 
 const CONFIRM_MS = 6000;
 
+/** Does the crown grid fold to the picked crown (a short screen, ui.css `.cc-crowns.has-pick`)? */
+function pickerFolds(): boolean {
+  return typeof matchMedia === 'function' && matchMedia('(max-height: 720px)').matches;
+}
+
 export class InspectStory {
   readonly el: HTMLElement;
   private sel: Selection | null = null;
@@ -75,7 +80,7 @@ export class InspectStory {
       if (a.id === 'crown' && this.mode === 'crowns' && a.crowns) {
         // MEGACITY §6.2 Pickers: a 2-column grid of crown cards; the picked crown shows its three looks (look 0 first),
         // the ghost on the map shows the chosen look, and Crown it raises it with that look.
-        s += `<div class="cc-crowns" role="list"><div class="cc-crowns-head">Pick a crown · ${esc(a.label.replace(/^Raise to Crown · /, ''))}</div><div class="cc-crown-grid">`;
+        s += `<div class="cc-crowns${this.pickCrown ? ' has-pick' : ''}" role="list"><div class="cc-crowns-head">Pick a crown · ${esc(a.label.replace(/^Raise to Crown · /, ''))}</div><div class="cc-crown-grid">`;
         for (const c of a.crowns) {
           const chips = c.favor
             .map((f) => `<span class="cc-hc is-fav ${f.v > 0 ? 'is-up' : 'is-down'}" style="--fc:${factionColor(f.f)}">${factionSigil(f.f, 14, 'cc-hc-sig')}<b>${f.v > 0 ? '+' : MINUS}${Math.abs(f.v)}</b></span>`)
@@ -188,6 +193,14 @@ export class InspectStory {
     }
     const crown = btn.dataset.crown as CrownId | undefined;
     if (crown && a) {
+      // On a short screen the grid folds to the picked crown once one is picked (the Stratablock and its look ghost
+      // show above the sheet): a tap on it unfolds the grid again.
+      if (crown === this.pickCrown && pickerFolds()) {
+        this.setPick(null, 0);
+        this.key = '';
+        this.refresh();
+        return;
+      }
       // Pick the crown (its looks show under the grid, look 0 preselected); Crown it raises it.
       this.setPick(crown, 0, a.buildingId);
       this.key = '';

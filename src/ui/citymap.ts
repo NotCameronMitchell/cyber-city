@@ -125,7 +125,10 @@ export interface FooterModel {
   note: string | null;
 }
 
-export function footerModel(s: DistrictSlotView, opts: { lease: 'nacre' | 'basalt' | null; confirming: boolean; blocked?: boolean }): FooterModel {
+export function footerModel(
+  s: DistrictSlotView,
+  opts: { lease: 'nacre' | 'basalt' | null; confirming: boolean; blocked?: boolean; funds?: number },
+): FooterModel {
   if (s.state === 'owned') {
     const done = s.goals.filter((g) => g.done).length;
     const price = s.goals.length ? `Part of the city · ${done} of ${s.goals.length} district goals done` : 'Part of the city';
@@ -134,7 +137,18 @@ export function footerModel(s: DistrictSlotView, opts: { lease: 'nacre' | 'basal
   if (s.state !== 'candidate') return { price: s.price.text, act: null, label: '', enabled: false, confirm: null, note: null };
   const needLease = !!s.lease && !opts.lease;
   const enabled = s.canAnnex && !needLease && !opts.blocked;
-  const note = opts.blocked ? 'Reload to update first' : needLease && s.canAnnex ? 'Pick who leases the old apron' : null;
+  // After an ending with no grant left a district costs credits: a short purse says by how much (§9.5).
+  const buy = !s.canAnnex && s.price.grants <= 0 && s.price.credits > 0;
+  const short = buy && opts.funds !== undefined ? Math.ceil(s.price.credits - opts.funds) : 0;
+  const note = opts.blocked
+    ? 'Reload to update first'
+    : needLease && s.canAnnex
+      ? 'Pick who leases the old apron'
+      : buy
+        ? short > 0
+          ? `Not enough credits: ${short.toLocaleString('en-US')} CR short`
+          : 'Not enough credits'
+        : null;
   return {
     price: s.price.text,
     act: 'annex',
@@ -365,7 +379,10 @@ export class CityMap {
     );
     this.foot = h('footer', { class: 'cc-cm-foot' }, this.priceEl, this.primary, this.confirmRow, this.noteEl);
     this.tipSlot = h('div', { class: 'cc-cm-tipslot' });
-    this.sheet = h('section', { class: 'cc-cm-sheet cc-panel', 'aria-labelledby': 'cc-cm-title' }, this.handle, this.chips, this.helpEl, this.body, this.tipSlot, this.foot);
+    // The "?" help sits at the top of the scrolling body, so it scrolls away with the district (on a landscape phone it
+    // would otherwise squeeze the district into a sliver above the sticky footer).
+    this.body.append(this.helpEl);
+    this.sheet = h('section', { class: 'cc-cm-sheet cc-panel', 'aria-labelledby': 'cc-cm-title' }, this.handle, this.chips, this.body, this.tipSlot, this.foot);
     this.growSlot = h('span', { class: 'cc-cm-growslot', 'data-slot': 'grow' });
     this.edgeEl = h('div', { class: 'cc-cm-edge', hidden: true }, h('span', { class: 'cc-cm-edge-text' }), this.growSlot);
     const svgNS = 'http://www.w3.org/2000/svg';
@@ -441,6 +458,28 @@ export class CityMap {
       this.snap();
     }
     this.ctx.sfx('click');
+  }
+
+  /**
+   * Build the sheet once while the map is closed (idle time after a city loads, §11.1 "City map open"): the first open
+   * then skips the district view's first pass, the chips, the body with its style vignette and the panel's first
+   * layout, so the 0.3 s snap starts on its first frame instead of after an 18-44 ms hitch.
+   */
+  prewarm(): void {
+    if (this.open_) return;
+    const g = this.ctx.game;
+    if (g.world.region < 3 || !g.world.districts.owned.length) return;
+    this.view = g.districtView();
+    this.readMetro();
+    this.select(defaultSlot(this.view, null, g.world.districts.owned[0] ?? -1), false);
+    // One layout of the panel while it is invisible (styles and fonts resolved before the first real open).
+    if (typeof this.el.getBoundingClientRect === 'function') {
+      this.el.style.visibility = 'hidden';
+      this.el.hidden = false;
+      void this.sheet.getBoundingClientRect();
+      this.el.hidden = true;
+      this.el.style.visibility = '';
+    }
   }
 
   /**
@@ -746,13 +785,14 @@ export class CityMap {
       html += '</ul></div>';
     }
     this.body.innerHTML = html;
+    this.body.prepend(this.helpEl);
     const vig = this.body.querySelector<HTMLElement>('.cc-cm-vig');
     const c = vig ? styleVignette(s.kind) : null;
     if (vig && c) vig.append(c);
   }
 
   private renderFoot(s: DistrictSlotView, blocked: boolean): void {
-    const f = footerModel(s, { lease: this.lease, confirming: this.confirming, blocked });
+    const f = footerModel(s, { lease: this.lease, confirming: this.confirming, blocked, funds: this.ctx.game.world.funds });
     if (!f.confirm) this.confirming = false;
     setText(this.priceEl, f.price);
     setClass(this.priceEl, 'is-grant', s.price.grants > 0);
@@ -797,7 +837,10 @@ export class CityMap {
       const show = this.helpEl.hidden;
       setHidden(this.helpEl, !show);
       setAttr(this.helpBtn, 'aria-expanded', show ? 'true' : 'false');
-      if (show) this.setExpanded(true);
+      if (show) {
+        this.setExpanded(true);
+        this.body.scrollTop = 0;
+      }
     } else if (act === 'expand') this.setExpanded(!this.expanded);
     else if (act === 'primary') this.primaryTap();
     else if (act === 'no') {
