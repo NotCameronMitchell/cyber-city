@@ -5849,3 +5849,10 @@ body {
   font-size: 11.5px;
   color: var(--cc-ink-2);
 }
+
+/* The City report in a 360 px side panel: a long figure ("2,410,280 / 5,910,240") wraps instead of running into
+   the next column. */
+.cc-dialog.is-side .cc-rep-grid dd {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}

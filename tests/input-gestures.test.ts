@@ -880,6 +880,27 @@ describe('the hover pick for the tooltips (§14.2): input.ts, at most every 100 
     expect(picks.at(-1)).toBeNull();
   });
 
+  it('a mouse click on a locked district opens the City map on it (its tooltip says so); a touch tap keeps the inspect preview', () => {
+    const w = game.world;
+    const v = game.districtView();
+    const cand = v.slots.find((s) => s.state !== 'owned')!;
+    const off = (w.N - w.region * 64) / 2;
+    const tx = (cand.slot % w.region) * 64 + 32 + off;
+    const ty = Math.floor(cand.slot / w.region) * 64 + 32 + off;
+    cam.zoom = 0.6;
+    cam.centerOnTile(tx, ty);
+    const p = cam.tileToScreen(tx, ty);
+    canvas.dispatchEvent(pointer('pointerdown', { clientX: p.x, clientY: p.y, buttons: 1 }));
+    canvas.dispatchEvent(pointer('pointerup', { clientX: p.x, clientY: p.y }));
+    expect(opened).toEqual([cand.slot]);
+    expect(game.selected).toBeNull();
+    now += 2000;
+    canvas.dispatchEvent(pointer('pointerdown', { clientX: p.x, clientY: p.y, buttons: 1, pointerType: 'touch', pointerId: 7 }));
+    canvas.dispatchEvent(pointer('pointerup', { clientX: p.x, clientY: p.y, pointerType: 'touch', pointerId: 7 }));
+    expect(opened).toEqual([cand.slot]);
+    expect(game.selected).not.toBeNull();
+  });
+
   it('the wheel at minZoom opens the City map only on a new gesture past 240 px (input → mapBus.hooks.open)', () => {
     cam.zoom = cam.minZoom;
     const wheel = (d: number) => canvas.dispatchEvent(Object.assign(new Event('wheel', { cancelable: true }), { deltaY: d, deltaMode: 0, clientX: 700, clientY: 450, ctrlKey: false }));
