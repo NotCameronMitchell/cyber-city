@@ -1,6 +1,6 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // Card registry: every story card by id, and the faction deck: STORY.md §7's 43 cards
-// plus the 11 expansion cards (docs/EXPANSION.md §8.3).
+// plus the 11 expansion cards (docs/EXPANSION.md §8.3) and the 11 megacity cards (docs/MEGACITY.md §8.3).
 // ─────────────────────────────────────────────────────────────────────────────
 
 import type { Card, FactionId } from '../../types';
@@ -12,6 +12,7 @@ import { EPILOGUE_DECK } from './epilogue';
 import { EXPANSION_CARDS } from './expansion';
 import { KITES_CARDS } from './kites';
 import { LOG_CARDS } from './logs';
+import { MEGACITY_CARDS } from './megacity';
 import { MULTI_CARDS, SYSTEM_CARDS } from './multi';
 import { NACRE_CARDS } from './nacre';
 import { TUNING_CARDS } from './tuning';
@@ -20,10 +21,11 @@ import { WHISPER_CARDS } from './whispers';
 
 export { BASALT_CARDS, BEAT_CARDS, BOARD_CARDS, ENDING_CARDS, EPILOGUE_CARDS, EPILOGUE_DECK, EXPANSION_CARDS, KITES_CARDS, LOG_CARDS };
 export { MULTI_CARDS, NACRE_CARDS, SYSTEM_CARDS, TUNING_CARDS, UNDERTOW_CARDS, WHISPER_CARDS };
+export { MEGACITY_CARDS };
 export { SILT_LOGS, logCardId } from './logs';
 export type { SiltLog } from './logs';
 
-/** Single-faction deck cards by faction (§7.2–§7.7). The expansion cards are not in here (EXPANSION §8.3). */
+/** Single-faction deck cards by faction (§7.2–§7.7). The expansion and megacity cards are not in here (EXPANSION §8.3, MEGACITY §8.3). */
 export const FACTION_DECKS: Record<FactionId, readonly Card[]> = {
   board: BOARD_CARDS,
   basalt: BASALT_CARDS,
@@ -34,7 +36,7 @@ export const FACTION_DECKS: Record<FactionId, readonly Card[]> = {
 };
 
 /**
- * The faction deck (§7): 43 cards plus the 11 expansion cards (EXPANSION §8.3), kinds
+ * The faction deck (§7): 43 cards plus the 11 expansion cards (EXPANSION §8.3) and the 11 megacity cards (MEGACITY §8.3), kinds
  * `faction` | `hostile` | `system`, plus the epilogue deck cards (MEGACITY §9.4; empty
  * until WP-8 fills `EPILOGUE_DECK`). Includes the queued-only follow-ups (`nc.fake`,
  * `kt.probe`, `tu.hymn`): the draw must skip `queuedOnly` cards. Excludes beats, logs,
@@ -50,6 +52,7 @@ export const DECK: readonly Card[] = [
   ...MULTI_CARDS,
   ...SYSTEM_CARDS,
   ...EXPANSION_CARDS,
+  ...MEGACITY_CARDS,
   ...EPILOGUE_DECK,
 ];
 

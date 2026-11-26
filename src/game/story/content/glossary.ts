@@ -72,7 +72,11 @@ export const GLOSSARY: GlossaryEntry[] = [
   },
   {
     term: 'Skybridge',
-    text: 'A walkway between two tall towers. It raises land value and shop demand near both ends and cuts road traffic. It goes dark if either tower stops being tall.',
+    text: 'A walkway for people between two tall towers that line up. Anything lower than the bridge passes under. It cuts car trips and lifts land value. Three linked towers form a Sky Lobby.',
+  },
+  {
+    term: 'Sky Lobby',
+    text: 'Three or more towers linked by skybridges. Fewer car trips, higher land value nearby, and visitors who come to walk it.',
   },
   {
     term: 'Ribbon Rail',
@@ -93,5 +97,9 @@ export const GLOSSARY: GlossaryEntry[] = [
   {
     term: 'The Sunk',
     text: 'The old lower wards, drowned by a storm surge in 2084 and left to silt. The Undertow salvage there. The new city is being built at its edge.',
+  },
+  {
+    term: 'Districts and grants',
+    text: 'A District is one 64×64 part of the region. Each chapter brings a land grant: spend it on the City map to annex a district next to yours. After Charter Night, grants keep coming and credits buy more.',
   },
 ];

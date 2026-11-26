@@ -17,7 +17,7 @@ import {
   STORY_PACING,
   TRACE,
 } from '../../config';
-import type { Faction, FactionId, FlagValue, Metric } from '../types';
+import type { EndingId, Faction, FactionId, FlagValue, Metric } from '../types';
 import { ALWAYS, effects, favor, flagIs, funds, income, m, mod, offline, pact, trace } from './dsl';
 
 const DAYS_PER_MONTH = 30;
@@ -46,6 +46,8 @@ export const FACTIONS: Record<FactionId, Faction> = {
       { label: 'Turf', m: ['turf.undertow', 'turf.kites'], mul: -1 / 40, min: -10, max: 0 },
       // Expansion (docs/EXPANSION.md §8.2): glass towers taking over a third of the city.
       { label: 'Priced out', m: 'wealth.high', offset: 0.3, mul: -40, min: -8, max: 0 },
+      // Megacity (MEGACITY §8.4): Reedmere districts owned, the marsh the Board lobbied for.
+      { label: 'Green lung', m: 'district.reedmere', mul: 3, min: 0, max: 3 },
     ],
     deal: {
       id: 'deal.board',
@@ -79,6 +81,8 @@ export const FACTIONS: Record<FactionId, Faction> = {
       { label: 'Tax', m: 'tax', offset: 12, mul: -2, min: -10, max: 0 },
       // Expansion (EXPANSION §8.2).
       { label: 'Seaports', m: 'count.seaport', mul: 3, min: 0, max: 6 },
+      // Megacity (MEGACITY §8.4): Kessel Flats districts owned.
+      { label: 'The Flats', m: 'district.flats', mul: 3, min: 0, max: 3 },
     ],
     deal: {
       id: 'deal.basalt',
@@ -230,6 +234,8 @@ export const FACTIONS: Record<FactionId, Faction> = {
       { label: 'Silt Logs', m: 'logs', mul: 1, min: 0, max: 6 },
       { label: 'Crackdowns', when: m('daysSinceCrackdown', '<', 180), value: -10 },
       { label: 'Revealed', when: flagIs('revealed'), value: 10 },
+      // Megacity (MEGACITY §8.4): Highstep Terraces districts owned (the Tuning's mood shows only once it is active).
+      { label: 'Lamps on the hill', m: 'district.terraces', mul: 3, min: 0, max: 3 },
     ],
     deal: {
       id: 'deal.tuning',
@@ -283,13 +289,16 @@ export const TIER_TEXT: Record<FactionId, { perk: string; cold: string | null; h
 
 /**
  * One term of a faction's power weight: `mul × metric` (summed metrics, capped at `max`
- * when given), `add` while a flag matches, or `mul × Number(flag)` for a counting flag
- * (`branded`).
+ * when given; counted only while `ending` is the current ending when given), `add` while
+ * a flag matches, `mul × Number(flag)` for a counting flag (`branded`), or `mul ×` the
+ * Corp Spires a corp sponsors (MEGACITY §6.2: Nacre's count includes every unsponsored,
+ * pre-Megacity Spire; an Independent Spire counts for nobody).
  */
 export type PowerTerm =
-  | { m: Metric | Metric[]; mul: number; max?: number }
+  | { m: Metric | Metric[]; mul: number; max?: number; ending?: EndingId }
   | { flag: string; eq?: FlagValue; add: number }
-  | { flagCount: string; mul: number };
+  | { flagCount: string; mul: number }
+  | { spires: 'basalt' | 'nacre'; mul: number };
 
 const W = POWER_WEIGHTS;
 /** Power weights as data; numbers come from config POWER_WEIGHTS. power.f = 100 × weight_f / Σ weights. */
@@ -301,6 +310,8 @@ export const POWER_TERMS: Record<'board' | 'basalt' | 'nacre' | 'undertow' | 'ki
     { flag: 'honestTie', add: W.board.honestTie },
     // Expansion (EXPANSION §8.2): the Spaceport's launch rights (ex.rights).
     { flag: 'launchRights', eq: 'board', add: W.board.launchRights },
+    // Megacity (MEGACITY §8.4): the Board's seat.
+    { m: 'count.charterhall', mul: W.board.perCharterHall },
   ],
   basalt: [
     { m: 'jobs.ind', mul: 1 / W.basalt.jobsIndDiv },
@@ -311,16 +322,24 @@ export const POWER_TERMS: Record<'board' | 'basalt' | 'nacre' | 'undertow' | 'ki
     { flag: 'patron', eq: 'basalt', add: W.basalt.patron },
     { m: 'count.seaport', mul: W.basalt.perSeaport },
     { flag: 'launchRights', eq: 'basalt', add: W.basalt.launchRights },
+    // Megacity (MEGACITY §8.4): Hexworks, Basalt-sponsored Spires, and the Foreman's Gantry while Ironwork holds.
+    { m: 'count.hexworks', mul: W.basalt.perHexworks },
+    { spires: 'basalt', mul: W.basalt.perSpireBasalt },
+    { m: 'count.gantry', mul: W.basalt.perGantry, ending: 'ironwork' },
   ],
   nacre: [
     { m: 'jobs.com', mul: 1 / W.nacre.jobsComDiv },
     { m: 'count.datahub', mul: W.nacre.perDatahub },
-    { m: 'count.spire', mul: W.nacre.perSpire },
+    // Megacity (MEGACITY §6.2, §8.4): Nacre-sponsored Spires and every unsponsored (pre-Megacity) one.
+    { spires: 'nacre', mul: W.nacre.perSpire },
     { m: 'count.glarewall', mul: W.nacre.perGlarewall },
     { m: 'crowns.glare', mul: W.nacre.perCrownGlare },
     { flag: 'patron', eq: 'nacre', add: W.nacre.patron },
     { m: 'count.airport', mul: W.nacre.perAirport },
     { flag: 'launchRights', eq: 'nacre', add: W.nacre.launchRights },
+    // Megacity (MEGACITY §8.4): the Pearl Atrium, and the Glass Smile while Pearlescence holds.
+    { m: 'count.pearlatrium', mul: W.nacre.perPearlAtrium },
+    { m: 'count.glasssmile', mul: W.nacre.perGlassSmile, ending: 'pearl' },
   ],
   undertow: [
     { m: 'turf.undertow', mul: W.undertow.perTurfTile },
@@ -328,6 +347,9 @@ export const POWER_TERMS: Record<'board' | 'basalt' | 'nacre' | 'undertow' | 'ki
     { flag: 'oneTide', eq: 'undertow', add: W.undertow.oneTide },
     // Capped: alleys are cheap, and power.gangs ≥ 30% is an ending claim (EXPANSION §8.2).
     { m: 'roads.alley', mul: W.undertow.perAlley, max: W.undertow.alleyMax },
+    // Megacity (MEGACITY §8.4): the Hullhouse and Salvage crowns.
+    { m: 'count.hullhouse', mul: W.undertow.perHullhouse },
+    { m: 'crowns.salvage', mul: W.undertow.perCrownSalvage },
   ],
   kites: [
     { m: 'turf.kites', mul: W.kites.perTurfTile },
@@ -336,6 +358,8 @@ export const POWER_TERMS: Record<'board' | 'basalt' | 'nacre' | 'undertow' | 'ki
     { flag: 'oneTide', eq: 'kites', add: W.kites.oneTide },
     { m: 'skyway.tiles', mul: W.kites.perSkywayTile, max: W.kites.skywayMax },
     { flag: 'launchRights', eq: 'kites', add: W.kites.launchRights },
+    // Megacity (MEGACITY §8.4): the Kite Mast.
+    { m: 'count.kitemast', mul: W.kites.perKiteMast },
   ],
 };
 

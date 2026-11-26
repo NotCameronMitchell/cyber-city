@@ -855,7 +855,9 @@ export type Hint =
   /** Leads to another card (a `queue` of a beat, faction or system card; whispers don't count). */
   | { k: 'follow' }
   /** Opens Charter Night (a `charterNight` effect). */
-  | { k: 'charter' };
+  | { k: 'charter' }
+  /** Megacity (MEGACITY §8.2): n land grants (a `grant` effect), the ✦ chip. */
+  | { k: 'grant'; n: number };
 
 export interface ActionView {
   label: string;

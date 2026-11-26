@@ -65,6 +65,7 @@ export function hintChip(h: Hint): string {
       return chip('is-misc', icon('star'), 'Opens Charter Night');
     case 'follow':
       return chip('is-misc', icon('comms'), 'Leads to a follow-up');
+    case 'grant': return ''; // drawn by grantHint above (the Hint union carries 'grant' since WP-7)
   }
 }
 

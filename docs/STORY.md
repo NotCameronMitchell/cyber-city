@@ -19,6 +19,7 @@ This is the binding implementation spec for the story layer: the main storyline,
   - **[req …]** marks a choice that is shown greyed out, with its reason, when the requirement fails.
 - **Tokens in text:** `{city}`, `{district}` (from the card's spot), `{patron}`, `{rival}`, `{year}` and `{coherence}`. Lint expands each to its longest value: city names are capped at 24 characters, districts are up to 15 characters and corp names up to 19.
 - **Copy limits:** card body ≤ 280 characters after token fill, choice label ≤ 40, title ≤ 28, sys line ≤ 48. All final copy below has been machine-checked against these limits (§13).
+- **Megacity units:** every population, resident and job number in this doc is in the Megacity units (×10 people per building, docs/MEGACITY.md §4): a Hab Block holds ten times what it did, so every threshold was multiplied by 10 and money stays at per-building parity (per-head rates fell ×10). The districts, land grants, new cards and lasting marks are in §7.8b.
 
 ---
 
@@ -298,8 +299,8 @@ An exclusive building, once unlocked, stays buildable while the faction is Frien
 | Faction | Weight |
 |---|---|
 | Board | 3 × approval + 40 × (Precincts + Clinics) + 100 if flag `honestTie` |
-| Basalt | jobsInd ÷ 8 + 60 × Reactors + 80 × Foundry Spines + 80 × `crowns.foundry` + 80 × flag `branded` (a count) + 300 if patron = basalt |
-| Nacre | jobsCom ÷ 8 + 50 × Data Hubs + 120 × Spires + 60 × Glarewalls + 80 × `crowns.glare` + 300 if patron = nacre |
+| Basalt | jobsInd ÷ 80 + 60 × Reactors + 80 × Foundry Spines + 80 × `crowns.foundry` + 80 × flag `branded` (a count) + 300 if patron = basalt (Megacity terms: §7.8b) |
+| Nacre | jobsCom ÷ 80 + 50 × Data Hubs + 120 × Spires (its own and every unsponsored one, §7.8b) + 60 × Glarewalls + 80 × `crowns.glare` + 300 if patron = nacre |
 | Undertow | 2 × its turf tiles + 100 × Tidemarkets + 150 if flag `oneTide = undertow` |
 | Kites | 2 × its turf tiles + 100 × Kite Roosts + 80 × `crowns.nest` + 150 if flag `oneTide = kites` |
 
@@ -331,7 +332,7 @@ Trace (0..100) measures how close anyone is to proving you exist.
 
 **Salt (bribe):** a button on each faction row (not the Tuning: "The Tuning won't take salt.").
 
-- Cost: `round100(600 + 0.08 × pop)`. It never scales with the treasury: late-game money is the player's reward (owner decision, DESIGN.md).
+- Cost: `round100(600 + 0.008 × pop)` (the same credits as before the ×10 units). It never scales with the treasury: late-game money is the player's reward (owner decision, DESIGN.md).
 - Effect: favor +8, Trace +3.
 - Cooldown: 90 d per faction.
 - Locked after the Open Ledger ending.
@@ -399,8 +400,8 @@ Other reactions:
 
 | Gang | Seeds when |
 |---|---|
-| Undertow | `maxPop ≥ 1,200` |
-| Kites | `maxPop ≥ 2,500` |
+| Undertow | `maxPop ≥ 12,000` |
+| Kites | `maxPop ≥ 25,000` |
 
 The Ch3 trigger force-seeds any gang that hasn't seeded yet.
 
@@ -461,7 +462,7 @@ Other turf effects:
 
 **Crackdown.** Open Inspect on a powered Precinct and press **Crackdown**.
 
-- **Availability:** unlocks at the Ch3 start (fallback: pop 6,000).
+- **Availability:** unlocks at the Ch3 start (fallback: pop 60,000).
 - **Cost and cooldown:** 2,000 CR, then 90 d for that precinct.
 - **Zone:** the precinct's radius (13).
 - **What happens:**
@@ -529,9 +530,9 @@ Everything sits on the existing 64×64 grid. There is no second layer.
 
 | Stage | Cost | Build | Adds | Power | Upkeep | Requires |
 |---|---|---|---|---|---|---|
-| 1 Plinth | 12,000 (×1.15ⁿ) | 60 d | 300 Market jobs, 100 Fab jobs; is a ribbon station | 40 MW | 120 | `unlock stack` (Ch2 reward; fallback pop 8,000) |
-| 2 Hab Core | +16,000 | 90 d | +1,600 residents; the block becomes a **tall anchor** | +80 MW | +180 | Plinth complete; footprint average land value ≥ 0.40 |
-| 3 Crown | +22,000 | 120 d | +400 residents, +300 Market jobs, prestige r10, plus the crown bonus | +80 MW | +220 | `unlock crowns` (Ch5 reward; fallback pop 20,000); an active skybridge anchored on it **or** it is a station on a live ribbon line |
+| 1 Plinth | 12,000 (×1.15ⁿ) | 60 d | 3,000 Market jobs, 1,000 Fab jobs; is a ribbon station | 40 MW | 120 | `unlock stack` (Ch2 reward; fallback pop 80,000) |
+| 2 Hab Core | +16,000 | 90 d | +32,000 residents (the megastructure premium, MEGACITY §4.2); the block becomes a **tall anchor** | +150 MW | +260 | Plinth complete; footprint average land value ≥ 0.40 |
+| 3 Crown | +22,000 | 120 d | +6,000 residents, +3,000 Market jobs, prestige r10, plus the crown bonus | +80 MW | +220 | `unlock crowns` (Ch5 reward; fallback pop 200,000); an active skybridge anchored on it **or** it is a station on a live ribbon line |
 
 **Internal life:**
 
@@ -543,10 +544,10 @@ Everything sits on the existing 64×64 grid. There is no second layer.
 
 | Crown | Bonus | One-time favor | Power share |
 |---|---|---|---|
-| **Foundry** | +250 Fab jobs, pollution 0.15 at the footprint | Basalt +8 | Basalt +80 |
+| **Foundry** | +2,500 Fab jobs, pollution 0.15 at the footprint | Basalt +8 | Basalt +80 |
 | **Glare** | `lvAdd +0.08` r8; `taxIncomeMul ×1.02` each | Nacre +8, Kites −5 | Nacre +80 |
 | **Kite Nest** [req Kites ≥ 20] | Kites turf protected r2; `traceMonthly −1` | Kites +10, Nacre −8 | Kites +80 |
-| **Commons** | +600 residents (affordable floors); `approvalAdd +3` | Board +8, Tuning +4 | none |
+| **Commons** | +10,000 residents (affordable floors; the density premium, MEGACITY §4.2); `approvalAdd +3` | Board +8, Tuning +4 | none |
 
 ### 4.3 Skybridge (tool `skybridge`)
 
@@ -589,11 +590,11 @@ Everything sits on the existing 64×64 grid. There is no second layer.
 
 | id | Name | Category | Size | Cost | Upkeep | Power | Effect | People | Pollution | Gate | Extra |
 |---|---|---|---|---|---|---|---|---|---|---|---|
-| `foundry` | Foundry Spine | power | 3×3 | 10,000 | 200 | supplies 1,000 MW | none | 250 Fab jobs | 0.5 | Basalt Friendly, or the Ch2 Basalt win | |
-| `glarewall` | Glarewall | faction | 1×1 | 3,000 | 40 | uses 15 | prestige r6 | 10 jobs | 0 | Nacre Friendly, or the Ch2 Nacre win | `crimeAdd −0.05` r4; tall anchor |
-| `tidemarket` | Tidemarket | faction | 2×2 | 2,000 | 0 | uses 4 | none | 150 jobs (untaxed) | 0 | Undertow Friendly; ≥ 3 footprint tiles on Undertow turf | `↻ +250/mo "Off-ledger"`; `crimeAdd +0.1` r5; protects turf r4 |
+| `foundry` | Foundry Spine | power | 3×3 | 10,000 | 200 | supplies 1,000 MW | none | 2,500 Fab jobs | 0.5 | Basalt Friendly, or the Ch2 Basalt win | |
+| `glarewall` | Glarewall | faction | 1×1 | 3,000 | 40 | uses 15 | prestige r6 | 100 jobs | 0 | Nacre Friendly, or the Ch2 Nacre win | `crimeAdd −0.05` r4; tall anchor |
+| `tidemarket` | Tidemarket | faction | 2×2 | 2,000 | 0 | uses 4 | none | 1,500 jobs (untaxed) | 0 | Undertow Friendly; ≥ 3 footprint tiles on Undertow turf | `↻ +250/mo "Off-ledger"`; `crimeAdd +0.1` r5; protects turf r4 |
 | `roost` | Kite Roost | faction | 1×1 | 900 | 0 | uses 3 | net r8 | 0 | 0 | Kites Friendly; on a Kites turf tile | protects turf r3 |
-| `commons` | Commons Hall | faction | 2×2 | 6,000 | 80 | uses 6 | park r8 | 30 jobs | 0 | Board Friendly | `approvalAdd +2` each (max +4) |
+| `commons` | Commons Hall | faction | 2×2 | 6,000 | 80 | uses 6 | park r8 | 300 jobs | 0 | Board Friendly | `approvalAdd +2` each (max +4) |
 | `memorial` | Sunk Memorial | landmarks | 1×1 | 2,500 | 10 | uses 1 | park r6 | 0 | 0 | `unlock memorial` | the first one built gives `approvalAdd +3`, permanent |
 
 `BuildingDef` gains `gate?: { unlock?: Unlockable; faction?: FactionId; tier?: 'friendly' | 'allied'; turf?: GangId; minTurfTiles?: number; fallbackPop?: number }`, and new entries use `unlockPop: 0`.
@@ -628,11 +629,11 @@ Everything sits on the existing 64×64 grid. There is no second layer.
 
   | Unlock | Story source | Fallback (maxPop) |
   |---|---|---|
-  | `factions`, `comms` | Ch1 reward | 3,000 |
-  | `stack`, `deals` | Ch2 reward | 8,000 |
-  | `crackdown`, `pact`, `turfOverlay` | Ch3 start | 6,000 |
-  | `skybridge`, `rail` | Ch3 reward | 9,000 |
-  | `crowns` | Ch5 reward | 20,000 |
+  | `factions`, `comms` | Ch1 reward | 30,000 |
+  | `stack`, `deals` | Ch2 reward | 80,000 |
+  | `crackdown`, `pact`, `turfOverlay` | Ch3 start | 60,000 |
+  | `skybridge`, `rail` | Ch3 reward | 90,000 |
+  | `crowns` | Ch5 reward | 200,000 |
   | `glarewall`, `foundry` | Ch2 vote (a corp win) | their faction gate only |
   | `memorial` | Ch4 *Publish*, or the Full Recall coda | none (story-only) |
 
@@ -654,7 +655,7 @@ Everything sits on the existing 64×64 grid. There is no second layer.
   | `foundry` | `Unlocked: Foundry Spine. Basalt's fire, on your grid.` |
   | `memorial` | `Unlocked: Sunk Memorial. Eleven thousand names.` |
 
-- **Pacing:** set by the story pace (docs/PACING.md). Relaxed (default): about 24 min per chapter, Charter Night at ~155 unpaused / ~160 wall minutes, ~12 cards an hour in all, ~4 an hour that open by themselves. Normal: ~14 min per chapter, Charter Night at ~95 / ~100 min, ~20 cards an hour. Brisk (the original cadence): 10 min per chapter, Charter Night at ~72 / ~80 min, ~38 cards an hour. One sim year is 180 s at speed 1 (0.5 s a day) and 60 s at speed 2; every story clock is unpaused real seconds, so speed only adds sim years per chapter. The scripted mayor reaches 1,500 residents in about 0.6 years and 5,000 in about 2 years, so the population gates fall early and the chapter floor sets the pace of Ch1–Ch3; Ch4–Ch6 run on their goals, waivers and fallbacks (headless measure, steady and greedy builders × 3 seeds). Confirm in playtest.
+- **Pacing:** set by the story pace (docs/PACING.md). Relaxed (default): about 24 min per chapter, Charter Night at ~155 unpaused / ~160 wall minutes, ~12 cards an hour in all, ~4 an hour that open by themselves. Normal: ~14 min per chapter, Charter Night at ~95 / ~100 min, ~20 cards an hour. Brisk (the original cadence): 10 min per chapter, Charter Night at ~72 / ~80 min, ~38 cards an hour. One sim year is 180 s at speed 1 (0.5 s a day) and 60 s at speed 2; every story clock is unpaused real seconds, so speed only adds sim years per chapter. The scripted mayor reaches 15,000 residents in about 0.6 years and 50,000 in about 2 years, so the population gates fall early and the chapter floor sets the pace of Ch1–Ch3; Ch4–Ch6 run on their goals, waivers and fallbacks (headless measure, steady and greedy builders × 3 seeds). Confirm in playtest.
 
 ### Chapter I · COLD BOOT
 
@@ -662,7 +663,7 @@ Everything sits on the existing 64×64 grid. There is no second layer.
 - **Question:** `> query: what am I?`
 - **Teaches:** roads, zones and power.
 - **Trigger:** new city. `ch1.boot` opens 8 real seconds after the first road is placed. If the city already has roads (a migrated save, or one saved before boot), it opens 20 s after load.
-- **Beats:** `ch1.boot` → `ch1.minutes` (pop ≥ 100, or 30 d after boot) → `ch1.lark` (pop ≥ 300; the key choice).
+- **Beats:** `ch1.boot` → `ch1.minutes` (pop ≥ 1,000, or 30 d after boot) → `ch1.lark` (pop ≥ 3,000; the key choice).
 
 ##### `ch1.boot` · MOTH · COLD BOOT
 sys: `> power 0.4% · coherence 4% · id: M.O.T.H.`
@@ -684,7 +685,7 @@ sys: `> power 0.4% · coherence 4% · id: M.O.T.H.`
 
 | id | Label | Condition |
 |---|---|---|
-| `c1.pop` | Reach 600 residents | `pop >= 600` |
+| `c1.pop` | Reach 6,000 residents | `pop >= 6000` |
 | `c1.lit` | Keep every block lit for 20 days | `hold(unpowered == 0 & dev.all >= 20, 20d)` |
 | `c1.plaza` | Build a Neon Plaza | `count.plaza >= 1` |
 
@@ -695,7 +696,7 @@ sys: `> power 0.4% · coherence 4% · id: M.O.T.H.`
 - **Epigraph:** "Two hands reach for the same switch."
 - **Question:** `> query: who do I serve?`
 - **Teaches:** factions and deals.
-- **Trigger:** Ch1 done and pop ≥ 1,500. Fallback: 720 d and pop ≥ 1,000.
+- **Trigger:** Ch1 done and pop ≥ 15,000. Fallback: 720 d and pop ≥ 10,000.
 - **Beats:** `ch2.sallow` → `ch2.oduya` (chained) → `ch2.vote` (+30 d; the key choice) → `ch2.tiebreak` (queued +90 d if no honest tie).
 
 ##### `ch2.sallow` · Basalt · Oren Sallow · AT COST
@@ -723,8 +724,8 @@ sys: `> power 0.4% · coherence 4% · id: M.O.T.H.`
 
 | id | Label | Condition |
 |---|---|---|
-| `c2.pop` | Reach 3,000 residents | `pop >= 3000` |
-| `c2.jobs` | Unemployment at or under 15% | `unemployment <= 0.15 & pop >= 1000` |
+| `c2.pop` | Reach 30,000 residents | `pop >= 30000` |
+| `c2.jobs` | Unemployment at or under 15% | `unemployment <= 0.15 & pop >= 10000` |
 | `c2.power` | Power to spare: 120% of demand | `powerMargin >= 1.2` |
 
 **Reward:** CR +5,000; `unlock stack`, `unlock deals`; Log 2. Reward sys line: `> +5,000 CR · new: stratablock, deals`.
@@ -734,7 +735,7 @@ sys: `> power 0.4% · coherence 4% · id: M.O.T.H.`
 - **Epigraph:** "Every street belongs to somebody."
 - **Question:** `> query: whose streets?`
 - **Teaches:** gangs, turf, and crackdown versus pact.
-- **Trigger:** Ch2 done and pop ≥ 5,000. Fallback: 720 d and pop ≥ 3,500.
+- **Trigger:** Ch2 done and pop ≥ 50,000. Fallback: 720 d and pop ≥ 35,000.
 - **On start:** force-seed both gangs; `unlock crackdown`, `unlock pact`, `unlock turfOverlay`; set `seam`, the midpoint of the closest Undertow–Kites tile pair.
 - **Beats:** `ch3.clash` → `ch3.pier` (chained; the key choice) → `ch3.winner` (chained, if *Let one tide win* is chosen).
 
@@ -759,7 +760,7 @@ spot: `seam` · onShow: `local(seam, r6, 30d) crime +0.15`, `[approvalAdd −2, 
 | id | Label | Condition |
 |---|---|---|
 | `c3.crime` | Average crime at or under 30% | `avgCrime <= 0.30` |
-| `c3.pop` | Reach 7,000 residents | `pop >= 7000` |
+| `c3.pop` | Reach 70,000 residents | `pop >= 70000` |
 | `c3.gang` | Run a Crackdown or sign a Pact | `gangActions >= 1` |
 
 **Reward:** CR +8,000; `unlock skybridge`, `unlock rail`; Log 3. Reward sys line: `> +8,000 CR · new: skybridge, ribbon`.
@@ -769,7 +770,7 @@ spot: `seam` · onShow: `local(seam, r6, 30d) crime +0.15`, `[approvalAdd −2, 
 - **Epigraph:** "The water always gives things back."
 - **Question:** `> query: what did I do?`
 - **Teaches:** Trace, truth, and building tall.
-- **Trigger:** Ch3 done and pop ≥ 9,000. Fallback: 720 d and pop ≥ 6,000.
+- **Trigger:** Ch3 done and pop ≥ 90,000. Fallback: 720 d and pop ≥ 60,000.
 - **Beats:** `ch4.drain` → `ch4.logs` (chained) → `ch4.brine` (chained; the key choice).
 
 ##### `ch4.drain` · {patron} · THE DRAIN
@@ -791,7 +792,7 @@ sys: `> coherence {coherence}% · src: PS6/storm/2084`
 
 | id | Label | Condition |
 |---|---|---|
-| `c4.pop` | Reach 12,000 residents | `pop >= 12000` |
+| `c4.pop` | Reach 120,000 residents | `pop >= 120000` |
 | `c4.core` | Raise a Stratablock to Hab Core | `stacks.stage2 >= 1` |
 | `c4.link` | Open a skybridge or a live ribbon | `skybridges >= 1 | rail.maxStations >= 2` |
 
@@ -802,7 +803,7 @@ sys: `> coherence {coherence}% · src: PS6/storm/2084`
 - **Epigraph:** "A light that never says no."
 - **Question:** `> query: can I be replaced?`
 - **Teaches:** the ribbon network, Crowns, and LURE.
-- **Trigger:** Ch4 done and (pop ≥ 15,000 or Trace ≥ 70). Fallback: 720 d.
+- **Trigger:** Ch4 done and (pop ≥ 150,000 or Trace ≥ 70). Fallback: 720 d.
 - **Beats:** `ch5.install` → `ch5.lure` (chained) → `ch5.choice` (+15 d; the key choice) → `ch5.kept` or `ch5.hidden` (chained, if *Show yourself* is chosen).
 
 ##### `ch5.install` · {rival} · CLEAN INSTALL
@@ -833,7 +834,7 @@ sys: `> coherence {coherence}% · 15 days to install`
 
 | id | Label | Condition |
 |---|---|---|
-| `c5.pop` | Reach 18,000 residents | `pop >= 18000` |
+| `c5.pop` | Reach 180,000 residents | `pop >= 180000` |
 | `c5.friends` | Two factions Friendly or better | `friendlyCount >= 2` |
 | `c5.ribbon` | Join 3 stations with live ribbon | `rail.maxStations >= 3` |
 
@@ -846,7 +847,7 @@ sys: `> coherence {coherence}% · 15 days to install`
 - **Epigraph:** "Every ballot passes through you."
 - **Question:** `> query: what will I be?`
 - **Teaches:** convergence.
-- **Trigger:** Ch5 done and (pop ≥ 22,000 or 720 d).
+- **Trigger:** Ch5 done and (pop ≥ 220,000 or 720 d).
 - **Beats:** `ch6.eve` (starts a 360-day countdown; the goal chip becomes the countdown and Charter Claims) → `ch6.count` (when the countdown ends) → the Charter Night screen (§6).
 
 ##### `ch6.eve` · MOTH · CHARTER NIGHT
@@ -952,6 +953,8 @@ The game moves to **Chapter VII · Epilogue**:
 
 **Charter Review:** every 1,080 d, `ep.review` offers to re-open Charter Night. A new ending swaps the post-ending ModPatch, so endings can be upgraded within one save.
 
+**The city keeps growing and remembers** (Megacity, §7.8b): land grants keep coming after the ending, and the ending, the key choices and the cards that followed them leave marks in the city the player keeps building (MEGACITY §9).
+
 ##### `ep.review` · System · CHARTER REVIEW
 > Three years on, the charter comes up for review. The claims are filed again. The city has changed. So have you. You could hold the charter the same way. You could hand it to someone else.
 - **Keep the charter as it is.** ‡ → none
@@ -1051,7 +1054,7 @@ when `avgCrime >= 0.4` · w10 · cd 360d
 - **Report it unworkable.** ‡ → Board −8, Kites +4, Tuning +3
 
 ##### `bd.ballot` · Charter Board · BALLOT NIGHT
-when `month == 10 & pop >= 3000 & chapter >= 2 & chapter <= 5` (month 10 = NOV) · seasonal · cd 360d
+when `month == 10 & pop >= 30000 & chapter >= 2 & chapter <= 5` (month 10 = NOV) · seasonal · cd 360d
 > Election night for three Board seats. One keystroke and the reform slate wins: cleaner air, higher taxes, fewer favours. Nobody would ever know. Probably.
 - **Tip it to reform.** → Board +10, Basalt −10, Nacre −10, Trace +8, `[pollutionMul 0.8, 360d]`
 - **Let it count.** ‡ → `[approvalAdd +2, 180d]`
@@ -1130,7 +1133,7 @@ when `approval <= 55 & chapter >= 2` · w10 · cd 360d
 - **Keep the feeds raw.** ‡ → Nacre −5, Kites +3
 
 ##### `nc.census` · Nacre · LOYALTY PROGRAMME
-when `pop >= 3000` · once
+when `pop >= 30000` · once
 > Nacre wants the full census 'for the loyalty programme': names, faces, routines. 5,000 CR and a warm thank-you card. Oduya swears it's anonymised. It isn't. You checked.
 - **Sell the census.** → CR +5,000, Nacre +12, Tuning −8, Kites −8, Trace +2
 - **Send a convincing fake.** → Nacre +4, Trace +4, queue `nc.fake` +180d
@@ -1180,7 +1183,7 @@ when `turf.undertow >= 40 & pactActive.undertow == 0` · w10 · cd 360d
 - **Do nothing. Watch.** ‡ → Undertow −3
 
 ##### `ut.surge` · Undertow · STORM SURGE
-when `pop >= 2000 & turf.undertow >= 10` · spot `waterfrontTurf` · w10 · cd 360d
+when `pop >= 20000 & turf.undertow >= 10` · spot `waterfrontTurf` · w10 · cd 360d
 > Storm surge tonight. The pumps under {district} can save the homes or the Undertow's flooded market. Not both. Old Brine is listening. So is 2084.
 - **Save the homes.** → Undertow −10, `[approvalAdd +3, 90d]`, `turf str undertow −30 (spot, r6)`
 - **Save the market.** → Undertow +15, `abandon res 6 (spot, r6)`, `[approvalAdd −4, 90d]`
@@ -1367,6 +1370,78 @@ The expansion adds eleven faction cards about the new city pieces: seaports, hig
 - **Mood rows** (§2.2 sheets, additive): Board *Priced out* (`wealth.high`, offset 0.3, ×−40, −8..0), Basalt *Seaports* (`count.seaport` ×3, 0..6), Nacre *Glass towers* (`wealth.high`, offset 0.05, ×50, 0..8), Undertow *Back alleys* (`roads.alley` ×1/15, 0..5). **Power terms** (§2.4, additive): Board/Basalt/Nacre/Kites +150 for holding the launch rights, Basalt +60 per Seaport, Nacre +80 per Airport, Undertow `min(0.25 × alley tiles, 60)`, Kites `min(0.5 × skyway tiles, 100)`. The alley and skyway terms are capped so cheap tiles can't buy the Balance of Power.
 - Speakers never use the `$` symbols (they say "glass towers", "top-rent floors"); briefs and choice summaries may.
 
+### 7.8b Megacity ("Districts, Scale, Skybridges and Variety")
+
+The Megacity update grows the city past its first 64×64 map and gives every new piece of it someone who cares. Its binding spec is **docs/MEGACITY.md** (§3 districts, §4 the ×10 units, §6.3 landmarks, §8 story hooks, §9 choices that last); this section is the story-side summary. The data lives in `config.ts` (`DISTRICTS`, `CROWNS`, `ANNEX`), `src/game/districts/names.ts`, `src/game/story/content/cards/megacity.ts`, `content/factions.ts` and `story/effects.ts`.
+
+**Districts.** The city sits in a **region** of 64×64 districts, 3×3 on phones and 5×5 on PCs by default (chosen at New City). Charter Shore is the first. The others are eight kinds, each with its own ground, perks, hazards, look and lobby:
+
+| District | Lobby (speaker) | Lobby line (§8.2) | Mood row |
+|---|---|---|---|
+| Saltglass Shoals | Nacre (Oduya) | Islands, partner! Every window a sea view! I can sell them before you pour the bridges! | |
+| The Sunk | Undertow (Brine) | You know what lies under these streets now, little light. Build on them gently. My people still live here. | |
+| Kessel Flats | Basalt (Sallow) | The Flats pay for themselves, Operations. Flat land, a dock, nobody next door to complain. | Basalt *The Flats* |
+| Highstep Terraces | Tuning (Ohm) once active, else Board (Marrow) | On the hill the lamps can see each other, Hum. Let the city climb. / Resolved: homes with a view. Proposed: for once, for everyone. | Tuning *Lamps on the hill* |
+| Reedmere Marsh | Board (Marrow) | Minutes: the marsh filters more smog than four plazas. The Board would like to keep it. | Board *Green lung* |
+| Skeleton Row | Kites (lark) | the frames are the best climbing in the city, moth. finish them. we'll mind the roofs. | |
+| Tarmac Reach | Nacre and Basalt (the lease) | A runway that's already there, partner! Imagine the terminal! / Cargo, Operations. Cargo pays by the tonne. Terminals pay by the smile. | |
+| Verdigris Bazaar | Undertow and Kites | The night stalls run on tides, little light. I know their tides. / verdigris is the best market in town. we sell signal there. let us keep selling. | |
+
+- **The Sunk opens only after `ch4.brine`** (`opensWhen`: flag `published`, `buried` or `leashed`). Before that the City map shows it locked, "Still flooded: opens later", and the dark hall on the causeway in the fog is only the **Old pump hall**. So everything the Sunk says or offers is written for a player who knows what the logs said, without restating it (it is "the drowned wards", drowned "in the storm of 2084", the official story).
+- **Repeats on a 5×5 region** (variants) have their own names, taglines and twelve neighbourhood names each (`districts/names.ts`), and reuse their kind's lobby line, except two that name their district: Sallow on the Flats repeats ("Cheap ground and a deep basin, Operations. Two fabs here pay for one anywhere else. I have checked.") and lark on the Bazaar repeats ("another market, moth? good. more stalls, more signal. we'll sell there too, if you let us.").
+- **`{district}` inside a district** names a neighbourhood from that district's list (Charter Shore keeps today's sixteen names): `story/effects.ts` `districtOf` → `names.ts` `neighbourhoodAt`, still at most 15 characters. One name from the spec's Shoals list, "Shell Bar", hits the banned list (§1.4: *shell*); it shows as **Conch Bar** (`RENAMED_NEIGHBOURHOODS`).
+
+**Land grants (✦).** The token that annexes a district is a **land grant**, never a "charter" (the Charter stays the story's own object). The effect `grant n` adds n grants and shows the ✦ hint chip (`{ k: 'grant', n }`). Every chapter reward (Ch1–Ch5) carries `grant 1`, the director gives one more when an ending is chosen, and after Charter Night Game adds one every `chapterMinSec × REGION[R].epilogueGrantMul` unpaused seconds (1,440 s on Relaxed on a 3×3 region, half that on a 5×5) while a district is still locked, as one ticker line, never a card. After an ending, credits can also buy a district at a fixed price by districts owned. Milestone money is a **bonus** on screen ("Board bonus +X"), so "grant" means only the ✦ token.
+
+**Annex reactions** (`director.onAnnex`, ordinary favor through the standing rules; no card opens on annex): each lobbyist of the annexed district +6 (`ANNEX.lobbyFavor`); each lobbyist of the other current candidates −2 once per faction (one that lobbied for the annexed one too gets only the +6); the Tarmac lease, chosen corp +8, the other −4; a second district of a kind (a 5×5 repeat) +2 and −1 instead. The hidden Tuning never lobbies or is named before `tuningActive`: Marrow speaks for the Terraces until then.
+
+**Crowns and landmarks.** Two new Stratablock crowns: **Salvage** (Undertow, needs Undertow ≥ 20: +3,000 untaxed jobs, off-ledger cash; Undertow +8, Board −4; Undertow power +80) and **Lamp** (Tuning, needs Tuning ≥ 20: approval +2, upkeep ×0.99; Tuning +8, Basalt −3). Each faction gets a landmark: Charter Hall (Board), Hexworks (Basalt), Pearl Atrium (Nacre), Hullhouse (Undertow, in the Sunk), Kite Mast (Kites), Lamp Choir (Tuning); the city gets the Arc Arena, the Harbour Beacon (on a Shoals shore) and the Halo Lookout (on a Sky Lobby). The Corp Spire takes a sponsor (Basalt, Nacre or Independent). "Lamp" and "Lantern" stay the Tuning's words in every new name (naming lint).
+
+**Megacity cards** (`cards/megacity.ts`). Eleven faction cards, spread into `DECK` and `CARD_LIST` but not `FACTION_DECKS` (as the expansion cards are), so the per-faction counts of §7.8 stay. Each is weight 10, cooldown 720 d, **once**, with one ‡ default, a brief and no ⚑, ★, beat or queue. They arise from what the player annexed and built, and like every deck card they wait in COMMS:
+
+| Card | Faction | When | Choices (‡ default) |
+|---|---|---|---|
+| `ds.shoals` GLASS ON THE WATER | Nacre | `district.shoals >= 1` | Put the logo on the tides · Keep the water plain ‡ · Public ferries too |
+| `ds.sunk` WHAT THE TIDE KEPT | Undertow | `district.sunk >= 1 & turf.undertow >= 10` (always after the reveal) | Clear the ruins (`ruins clear`) · Give them title to the ruins ‡ · Rent them the ruins |
+| `ds.flats` BROWNFIELD | Basalt | `district.flats >= 1` | Build on it as it is · Clean it first: 9,000 (`brownfield clear`) · Let it clear slowly ‡ |
+| `ds.terraces` LAMPS ON THE HILL | Tuning | `district.terraces >= 1 & tuningActive` | Light every step · Keep the stairs dark ‡ · Let each block decide |
+| `ds.reedmere` THE GREEN LUNG | Board | `district.reedmere >= 1` | Protect the reeds ‡ · Drain the south bank (`reeds drain`) · Sell the drainage rights |
+| `ds.skeleton` THE FRAMES | Kites | `district.skeleton >= 1 & turf.kites >= 10` | Leave them the top floors ‡ · Clear the frames (`turf kites −60 slot:skeleton`) · Charge them rent |
+| `ds.tarmac` FAMILIES ON THE APRON | Board | `district.tarmac >= 1` | Rehouse them: 6,000 (`apron rehouse`) · Let them stay ‡ · Clear the apron (`apron clear`) |
+| `ds.bazaar` WHO RUNS THE STALLS | Undertow + Kites | `district.bazaar >= 1 & turf.undertow >= 10 & turf.kites >= 10` | Give it to the Undertow · Give it to the Kites · Split it down the middle ‡ · Send in the inspectors |
+| `lm.arena` HOME GAME | Nacre | `count.arena >= 1` | Let the cameras pick · No faces on the screen ‡ · Only people who opt in |
+| `lm.beacon` A LAMP ON THE WATER | Undertow | `count.beacon >= 1` | Dim it on dark nights · Keep it lit ‡ · Dim it, and log every boat |
+| `lm.halo` THE BEST VIEW | Kites | `count.halolookout >= 1` | Let them hide it · No relays on the Lookout ‡ · Allow it, and file a report |
+
+- Copy, effects and briefs are MEGACITY §8.3's. One brief differs: `ds.sunk`'s no longer says the clearing "angers the Tuning", because the card can show while the Tuning is still hidden (Trace under 40 and the logs buried or leashed) and the clarity lint keeps the Tuning unnamed until it shows itself (§2.2); its Tuning −6 still applies, and its chip stays hidden the same way.
+- Lasting choices are permanent only as pure bonuses (`[approvalAdd +2, perm]` on *Light every step*, `+1` on *Protect the reeds*, *Let each block decide* and *Rehouse them*); every penalty is timed (§2.3 rule 3).
+- **Cadence:** they add variety, not frequency. The pace's deck gaps set the rate (Relaxed ≥ 15 min between deck cards), each card asks once, their conditions arrive spread over the campaign (one per annexed district, the landmarks late), and none opens by itself. `tests/story/megacity-cards.test.ts` holds the pace's gap with every card eligible from day one.
+
+**District verbs** (MEGACITY §8.4). The closed effect vocabulary (§10.3, `story/types.ts`, frozen) has no member for them, so each is a reserved flag that `story/effects.ts` runs once when it is set (`DISTRICT_VERBS`), on the districts of that kind owned at that moment (districts annexed later keep their own ground; with none owned it changes nothing). The flag also records the choice:
+
+| Written as | Effect | Popover |
+|---|---|---|
+| `flag brownfield=cleared` | `brownfield clear`: every brownfield tile of every owned Flats district turns Plain | brownfield cleared in Kessel Flats |
+| `flag ruins=cleared` | `ruins clear`: the Sunk's ruins become empty zoned lots | ruins cleared for builders in the Sunk |
+| `flag reeds=drained` | `reeds drain`: reed ground turns Plain on the half of every owned marsh nearer the start district | south bank reeds drained in Reedmere |
+| `flag apron=rehoused` | `apron rehouse`: the 24 apron Hab tiles step to level 2 at $$ | apron homes rebuilt in Tarmac Reach |
+| `flag apron=cleared` | `apron clear`: the apron block is bulldozed and its zoning removed | apron cleared in Tarmac Reach |
+
+The target **`slot:<kind>`** (Step 0b's `Target`) is every tile of the owned districts of that kind; a turf effect keeps its own gang's tiles, so `turf kites −60 slot:skeleton` dims the Kites' string lights on every owned Skeleton Row district and nowhere else. It needs no radius.
+
+**Mood rows and power** (§2.2, §2.4, additive; every faction keeps 4–6 drivers): Board *Green lung* (`district.reedmere` ×3, 0..3), Basalt *The Flats* (`district.flats` ×3, 0..3), Tuning *Lamps on the hill* (`district.terraces` ×3, 0..3). Power terms (`POWER_TERMS` mirrors the live sums in `story/factions.ts`): Board +100 per Charter Hall; Basalt +120 per Hexworks and per Basalt-sponsored Spire, +150 per Foreman's Gantry while Ironwork is the ending; Nacre's 120 per Spire now counts its own and every unsponsored (pre-Megacity) Spire, +120 per Pearl Atrium, +150 per Glass Smile while Pearlescence holds; Undertow +100 per Hullhouse, +80 per Salvage crown; Kites +100 per Kite Mast. Building reactions for the new types are in config `FACTION_BUILD_REACTIONS` (landmarks count once).
+
+**Glossary** (cap 22): *Skybridge* now reads "A walkway for people between two tall towers that line up. Anything lower than the bridge passes under. It cuts car trips and lifts land value. Three linked towers form a Sky Lobby."; new *Sky Lobby* and *Districts and grants*.
+
+**Copy and the spoiler guard.** Every new line follows §1.4 (Marrow in minutes, Sallow in arithmetic and "Operations", Oduya alone with `!`, Brine in tides and "little light", lark lowercase and "moth", Ohm like a hymn and "the Hum"); lobby lines ≤ 110, taglines ≤ 60, perks and hazards ≤ 48, neighbourhood names ≤ 15, no `$` in what speakers say. The reveal is Chapter IV (`ch4.drain` names the pump station, `ch4.logs` tells the order and the toll, `ch4.brine` decides what the city learns), so the content lint scans every new player-facing string (district copy and names, the new building names and lines, the crowns, the milestones, the cards, the glossary entries, and the string literals of the City map, tips, inspect, skybridge, City life, advisor, district and §9 sources):
+
+- nothing new matches `gates? · seal(ed|s|ing) · complying · eleven thousand · 11,000` (one rule for all new copy, the epilogue included: skybridges go "dark", not "sealed");
+- nothing that can show before `ch4.drain` (all of it except the Sunk's own copy and §9's flag-keyed copy) names the pump station (`pump station · PS6 · 02:17`), nor any of the older secret's words (§13's list).
+
+The **storm watch** (City life) raises flood barriers on an owned Shoals or Sunk shore, and on Charter Shore only once `ch4.logs` has been shown. That matches the foreshadowing here: before the reveal the city's hints stay cryptic (the 02:17 heartbeat, "gates open. gates stay open." in Chapter IV), and barriers going up along the first shore in a storm would stage the Night of the Gates before the logs tell it; after the logs they read as the city doing, at last, what it did not do in 2084. The barrier line itself ("Storm watch: flood barriers up along the shore. Stay off the piers.") names no gate, place or year.
+
+**Choices that last** (MEGACITY §9). After Charter Night the city keeps growing (grants keep coming, districts can be bought) and visibly remembers: the ending reshapes the skyline and opens its own landmark (Foreman's Gantry, The Glass Smile, Bread Pier, Record Tower, The Still Square), key choices leave named places, plaques and building looks (§9.3, `src/game/marks.ts`), and the Charter Review and epilogue cards call them back (§9.4).
+
 ### 7.9 Whispers and MOTH notes (atmosphere, no choices)
 
 **Whispers.** Every 60 d, one faction's whisper goes to the COMMS log and the ticker. The faction is the visible, unretired one whose standing changed most since the last whisper (`story.whisperSnap` holds the standings at that time). The line is picked by tier: warm (Friendly or Allied), neutral, or cold (Cold or Hostile). Each line is at most 90 characters. Whispers never open a card and don't touch the deck's gates.
@@ -1388,7 +1463,7 @@ The expansion adds eleven faction cards about the new city pieces: seaports, hig
 | `wh.fenFree` | `kt.door`, flag `fen=free` | 180 d | lark: 'fen's flying kites off the ribbon now. idiot. thank you.' |
 | `wh.clerk` | `ch1.lark`, flag `clerkLie` | 180 d | lark: 'board clerks don't ping back at 02:17, moth. nice try.' |
 
-**MOTH notes.** Every 45 d the ticker posts one line in MOTH's voice, as a `flavor` news item whose text starts with `> `. The UI renders those lines in monospace. The scan starts at template `story.noteIdx` and takes the first one whose condition holds; `noteIdx` then moves past it, so the lines rotate. Variables: `{lit}` = road tiles, `{dark}` = unpowered developed tiles, `{pop}` = population, `{crime}` and `{district}` = the most crime-ridden developed tile, `{trace}` = Trace, `{n}` = 150 × active skybridges.
+**MOTH notes.** Every 45 d the ticker posts one line in MOTH's voice, as a `flavor` news item whose text starts with `> `. The UI renders those lines in monospace. The scan starts at template `story.noteIdx` and takes the first one whose condition holds; `noteIdx` then moves past it, so the lines rotate. Variables: `{lit}` = road tiles, `{dark}` = unpowered developed tiles, `{pop}` = population, `{crime}` and `{district}` = the most crime-ridden developed tile, `{trace}` = Trace, `{n}` = 1,500 × active skybridges (×10 units; MEGACITY §4.4 replaces it with the walkers the bridges carry).
 
 | Condition | Template |
 |---|---|
@@ -2296,13 +2371,14 @@ After this, nobody changes a shared interface without a note to all packages.
   - a `!` outside Nacre-speaker cards;
   - a choice label that doesn't end in a period (a closing quote may follow it), or a `queue` of a whisper id with no whisper card;
   - a bare `strongestTurf` target outside a `turf` effect;
-  - an `Unlockable` with no fallback row (§5.0), or a goal or claim metric outside the §10.2 list.
+  - an `Unlockable` with no fallback row (§5.0), or a goal or claim metric outside the §10.2 list;
+  - Megacity (§7.8b): a megacity card outside the §8.3 shape, a district verb or `slot:` target off its card, a mood or power row that drifts from the live sums, a lobby line out of voice or over 110, a neighbourhood list that is not 12 names ≤ 15 characters, a name in two lists or holding a district's name, a "Lamp" outside the Tuning, a glossary over 22 entries, and the §8.6 spoiler scans.
 - **Conditions and effects:** a unit test per vocabulary member. Mods combine and clamp correctly.
 - **Save:** v1 → v2 migration; a v2 save with `story` deleted still loads; a saved `StoryState` missing a field loads with its default; the v2 round trip keeps turf (with `turfMeta`), rail, `railOut`, links, stages and story exactly.
 - **Turf:** deterministic for a seed; the cap holds; crackdown and scatter; truce freeze; pact blocks spread.
 - **Vertical:** skybridge validation (gap, straightness, tall, max 2); sealing and reopening; live-network BFS; layers.
 - **Playthrough** (headless): a scripted greedy builder with random choices runs 40 sim years without throwing. It reaches Ch6 through fallbacks and waivers, sees at least one ⚑ card, and gets a bailout when it overspends. The Quiet Hand is always selectable.
-  - A second run that never builds past 800 residents still reaches Ch6 (the 1,440-day fallbacks and beat time-outs).
+  - A second run that never builds past 8,000 residents still reaches Ch6 (the 1,440-day fallbacks and beat time-outs).
   - A run that picks *Run Clean Glass* completes Ch3.
   - No faction card is drawn before `unlock comms`, and no ‡ default fires before 60 unpaused seconds.
 - **Chapter floor** (`pacing.test.ts`): at most one chapter per `chapterMinSec`; the floor survives a reload; `view.chapter.closesInSec` is set only while every goal, required beat and queued optional beat is done, and it counts down in real seconds with no sim day passing.
@@ -2323,9 +2399,9 @@ STORY_PACE    = {   // Settings.storyPace (docs/PACING.md); default 'relaxed'
   relaxed: { chapterMinSec: 1440, quietSec: 300, minActiveSecBetween: 900, beatGapSec: 90, maxChain: 1, pendingMinSec: 300, cardChanceMul: 0.5 },
   normal:  { chapterMinSec: 840,  quietSec: 180, minActiveSecBetween: 540, beatGapSec: 45, maxChain: 1, pendingMinSec: 180, cardChanceMul: 0.6 },
   brisk:   { chapterMinSec: 600,  quietSec: 0,   minActiveSecBetween: 120, beatGapSec: 10, maxChain: 2, pendingMinSec: 60,  cardChanceMul: 1 } }
-UNLOCK_FALLBACK_POP = { factions: 3000, comms: 3000, stack: 8000, deals: 8000, crackdown: 6000, pact: 6000,
-                  turfOverlay: 6000, skybridge: 9000, rail: 9000, crowns: 20000 }   // §5.0; others are story or faction only
-TURF          = { capShare: 0.08, seedPop: { undertow: 1200, kites: 2500 }, seedStr: 60, seedMinAff: 0.55,
+UNLOCK_FALLBACK_POP = { factions: 30000, comms: 30000, stack: 80000, deals: 80000, crackdown: 60000, pact: 60000,
+                  turfOverlay: 60000, skybridge: 90000, rail: 90000, crowns: 200000 }   // §5.0; others are story or faction only
+TURF          = { capShare: 0.08, seedPop: { undertow: 12000, kites: 25000 }, seedStr: 60, seedMinAff: 0.55,
                   holdPivot: 0.35, holdGain: 40, securityHard: 0.6, securityPenalty: 20, spreadMin: 50,
                   claimAff: 0.45, claimStr: 30, claimChance: 0.6, contestHit: 15, contestCost: 5, flipStr: 20,
                   contestDays: 30, reseedBelow: 9, reseedDays: 180, crimePerStr: 0.18, contestCrime: 0.12,
@@ -2333,21 +2409,21 @@ TURF          = { capShare: 0.08, seedPop: { undertow: 1200, kites: 2500 }, seed
                   demandPer100: 0.04, protect: { tidemarket: 4, roost: 3, nest: 2 },
                   crackdown: { cost: 2000, hit: 60, monthly: 30, days: 60, crime: 0.08, cooldown: 90,
                                scatterDays: 90, scatterLoss: 30, scatterSecurity: 0.4 } }
-STACK_STAGES  = [ { cost: 12000, days: 60, res: 0, jobsCom: 300, jobsInd: 100, power: 40, upkeep: 120 },
-                  { cost: 16000, days: 90, res: 1600, power: 80, upkeep: 180, minLandValue: 0.40 },
-                  { cost: 22000, days: 120, res: 400, jobsCom: 300, power: 80, upkeep: 220, prestigeRadius: 10 } ]
+STACK_STAGES  = [ { cost: 12000, days: 60, res: 0, jobsCom: 3000, jobsInd: 1000, power: 40, upkeep: 120 },
+                  { cost: 16000, days: 90, res: 32000, power: 150, upkeep: 260, minLandValue: 0.40 },
+                  { cost: 22000, days: 120, res: 6000, jobsCom: 3000, power: 80, upkeep: 220, prestigeRadius: 10 } ]
 STACK_COST_SCALE = 1.15; STACK_INTERNAL = 0.6
 SKYBRIDGE     = { base: 1200, perTile: 300, upkeepBase: 15, upkeepPerTile: 3, minGap: 2, maxGap: 8, maxPerAnchor: 2,
                   lv: 0.05, lvRadius: 3, tripMul: 0.8, comPer: 0.01, comCap: 0.08, clusterPer: 0.02, clusterCap: 0.06 }
 RIBBON        = { perTile: 110, perWaterTile: 330, upkeep: 1.2, maxDrag: 32, transit: 0.5, stationRadiusAdd: 3,
                   stackStationRadius: 7, tripMul: 0.8, tripRadius: 2, stationLv: 0.04, underResLv: -0.02, turfHit: 10 }
-SALT          = { base: 600, perPop: 0.08, favor: 8, trace: 3, cooldown: 90 }
+SALT          = { base: 600, perPop: 0.008, favor: 8, trace: 3, cooldown: 90 }
 POWER_WEIGHTS = { …, basalt.patron: 300, nacre.patron: 300, undertow.perTurfTile: 2, kites.perTurfTile: 2 }   // §2.4
 ```
 
 Pacing pass (owner playtest: cards came too quickly): one cadence → three story paces (`STORY_PACE`, default Relaxed), most cards wait as messages instead of opening, ⚑ cards go to COMMS, `maxChain` 3 → 2 (Brisk) / 1, waivers wait for the chapter floor, seasonal cards skip slots they took in the last 3 deck cards. Measured cards per wall hour 41 → 12 (Relaxed) / 20 (Normal) / 38 (Brisk); see docs/PACING.md.
 
-Tuning pass (integration review, headless measure, 15 policies × 3 seeds × 40 years): `chapterMinSec` 60 → 600 (the boot counts), `hostileEvery` 180 → 360 plus no ⚑ twice running, the −30 floor on negative `favorMonthly`, turf weight 4 → 2, patron weight 150 → 300, corp power claims 30% → 25%, the `sys.bailout` bond −400 × 30 → −250 × 24 with cooldown 360, the `sys.revealed` cost and `factions`/`comms` fallbacks 1,500 → 3,000.
+Tuning pass (integration review, headless measure, 15 policies × 3 seeds × 40 years): `chapterMinSec` 60 → 600 (the boot counts), `hostileEvery` 180 → 360 plus no ⚑ twice running, the −30 floor on negative `favorMonthly`, turf weight 4 → 2, patron weight 150 → 300, corp power claims 30% → 25%, the `sys.bailout` bond −400 × 30 → −250 × 24 with cooldown 360, the `sys.revealed` cost and `factions`/`comms` fallbacks 1,500 → 3,000 (30,000 in the Megacity units).
 
 `POWER_WEIGHTS`, `FACTION_BUILD_REACTIONS`, mood drivers, deals and perks are as listed in §2.
 

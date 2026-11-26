@@ -9,17 +9,22 @@
 //   fillTokens                   {city} {district} {patron} {rival} {year} {coherence} …
 //   hintsFor / effectsText       choice hint chips and the exact-effects popover
 //   writeLocals                  story.locals → world.layerParts.local → composeLayers
+//   slot:<kind> targets          every owned district of a kind (MEGACITY §8.4)
+//   DISTRICT_VERBS               brownfield clear, ruins clear, reeds drain, apron
+//                                rehouse / clear, written as reserved flags (§8.4)
 //
 // Director-level effects (queue, log, countdown, charterNight, ending, flag
 // hooks) go through the EffectHost the director implements.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { artOffset } from '../districts/slots';
+import { apron, clearBrownfield, clearRuins, drainReeds, ownedOfKind } from '../districts/effects';
+import { neighbourhoodAt } from '../districts/names';
+import { artOffset, slotRect } from '../districts/slots';
 import { BUILDINGS, FACTION_IDS, FACTION_LABELS, GANG_IDS, GANG_NEWS_NAME, STANDING, TRACE, TURF, TURF_OWNER } from '../config';
 import { capitalizeFirst, districtName } from '../news';
 import type { Rng } from '../rng';
 import { scratchFor } from '../frame';
-import { DAYS_PER_MONTH, RoadKind, Terrain, ZoneType, type Building, type BuildingType } from '../types';
+import { DAYS_PER_MONTH, RoadKind, Terrain, ZoneType, type Building, type BuildingType, type DistrictKind } from '../types';
 import type { World } from '../world';
 import { evalCond, storyContent } from './conditions';
 import { changeFavor, endingRules, isVisible, patronOf, resolveRef, rivalOf } from './factions';
@@ -447,7 +452,33 @@ export function targetCenter(world: World, at: Target, spot: number, gang?: Gang
       return -1;
     }
   }
+  const kind = slotKindOf(at);
+  if (kind) {
+    // A slot target's centre (local, seed, renew…): the middle of the first owned district of that kind.
+    const s = ownedOfKind(world, kind)[0];
+    if (s === undefined) return -1;
+    const r = slotRect(world, s);
+    return idxOf(world, (r.x0 + r.x1) >> 1, (r.y0 + r.y1) >> 1);
+  }
   return -1;
+}
+
+/** The district kind of a `slot:<kind>` target (MEGACITY §8.4), or null for every other target. */
+export function slotKindOf(at: Target): DistrictKind | null {
+  return at.startsWith('slot:') ? (at.slice(5) as DistrictKind) : null;
+}
+
+/** Every tile inside the owned districts of a kind (a `slot:<kind>` target's area), or null when none is owned. */
+export function slotTiles(world: World, kind: DistrictKind): number[] | null {
+  const slots = ownedOfKind(world, kind);
+  if (!slots.length) return null;
+  const N = world.N;
+  const out: number[] = [];
+  for (const s of slots) {
+    const r = slotRect(world, s);
+    for (let y = r.y0; y <= r.y1; y++) for (let x = r.x0; x <= r.x1; x++) out.push(y * N + x);
+  }
+  return out;
 }
 
 /** A turf-style area for a target and radius, or null when it resolves to nothing. */
@@ -457,6 +488,10 @@ export function targetArea(world: World, at: Target, r: number, spot: number, ga
     const tiles = vertical.railArea(world, Math.max(0, Math.round(r)));
     return tiles.length ? tiles : null;
   }
+  // `slot:<kind>` (MEGACITY §8.4): every tile of the owned districts of that kind; the turf op keeps its gang's tiles.
+  // Districts annexed after the choice keep their own ground; none owned → the effect is skipped.
+  const kind = slotKindOf(at);
+  if (kind) return slotTiles(world, kind);
   const c = targetCenter(world, at, spot, gang);
   if (c < 0) return null;
   return { x: xOf(world, c), y: yOf(world, c), r: Math.max(0, r) };
@@ -748,6 +783,7 @@ export function applyEffect(host: EffectHost, e: Effect, ctx: EffectCtx): void {
       else v = e.v;
       s.flags[e.key] = v;
       host.flagSet(e.key, v);
+      districtVerb(e.key, v)?.run(world);
       return;
     }
     case 'floor': {
@@ -809,6 +845,42 @@ export function grantLand(world: World, n: number, why: 'chapter' | 'ending' | '
   world.events.emit('grant', { grants: world.districts.grants, why });
 }
 
+// ── District verbs (MEGACITY §8.4) ──────────────────────────────────────────
+//
+// The closed Effect union (story/types.ts, frozen since Step 0b) has no member for the story verbs that change a
+// district's ground, so each verb is written as a reserved flag: `flag brownfield=cleared` is `brownfield clear`.
+// Setting the flag records the choice (marks and later cards can read it) and runs the verb once, on the districts
+// of that kind owned now (districts annexed later keep their own ground, §3.7); with none owned it changes nothing.
+
+export interface DistrictVerb {
+  key: string;
+  v: string;
+  kind: DistrictKind;
+  /** Popover text (effectText). */
+  text: string;
+  /** Applies the change; returns the tiles changed. */
+  run: (world: World) => number;
+}
+
+/** The five verbs of §8.4, by `key=value`. */
+export const DISTRICT_VERBS: Readonly<Record<string, DistrictVerb>> = Object.fromEntries(
+  (
+    [
+      { key: 'brownfield', v: 'cleared', kind: 'flats', text: 'brownfield cleared in Kessel Flats', run: clearBrownfield },
+      { key: 'ruins', v: 'cleared', kind: 'sunk', text: 'ruins cleared for builders in the Sunk', run: clearRuins },
+      { key: 'reeds', v: 'drained', kind: 'reedmere', text: 'south bank reeds drained in Reedmere', run: drainReeds },
+      { key: 'apron', v: 'rehoused', kind: 'tarmac', text: 'apron homes rebuilt in Tarmac Reach', run: (w: World) => apron(w, 'rehouse') },
+      { key: 'apron', v: 'cleared', kind: 'tarmac', text: 'apron cleared in Tarmac Reach', run: (w: World) => apron(w, 'clear') },
+    ] satisfies DistrictVerb[]
+  ).map((d) => [`${d.key}=${d.v}`, d]),
+);
+
+/** The district verb a flag write runs, or null for an ordinary flag. */
+export function districtVerb(key: string, v: FlagValue | '+1' | '$patron'): DistrictVerb | null {
+  if (typeof v !== 'string') return null;
+  return DISTRICT_VERBS[`${key}=${v}`] ?? null;
+}
+
 /** Pact (§3.6): extends an active one; gangActions +1; news. Skipped under a lockPacts ending. */
 export function signPactEffect(world: World, gang: GangId, months: number): boolean {
   if (endingRules(world)?.lockPacts) return false;
@@ -830,12 +902,17 @@ function newsTokens(ctx: EffectCtx): Record<string, string> {
   return { plant: name, building: name };
 }
 
-/** District name of a tile (map centre when −1). */
+/**
+ * Neighbourhood name of a tile (map centre when −1), the `{district}` token: today's names in Charter Shore, the
+ * district's own list elsewhere (MEGACITY §3.7, districts/names.ts). Never longer than CARD_TOKEN_MAX.district.
+ */
 export function districtOf(world: World, i: number): string {
   const N = world.N;
   const area = world.area;
   const c = i >= 0 && i < area ? i : idxOf(world, N >> 1, N >> 1);
-  return districtName(xOf(world, c), yOf(world, c), world.seed, artOffset(world));
+  const x = xOf(world, c);
+  const y = yOf(world, c);
+  return world.slotAt(x, y) >= 0 ? neighbourhoodAt(world, x, y) : districtName(x, y, world.seed, artOffset(world));
 }
 
 /** Fill {city} {district} {patron} {rival} {year} {coherence} (plus `extra`). Unknown tokens stay. */
@@ -881,6 +958,7 @@ export function hintsFor(world: World, fx: readonly Effect[] | undefined): Hint[
   let abandon = false;
   let follow = false;
   let charter = false;
+  let grants = 0;
   for (const e of fx) {
     switch (e.t) {
       case 'favor':
@@ -922,6 +1000,9 @@ export function hintsFor(world: World, fx: readonly Effect[] | undefined): Hint[
       case 'charterNight':
         charter = true;
         break;
+      case 'grant':
+        grants += Math.max(0, Math.floor(e.n));
+        break;
     }
   }
   const out: Hint[] = [];
@@ -937,6 +1018,7 @@ export function hintsFor(world: World, fx: readonly Effect[] | undefined): Hint[
   if (offline) out.push({ k: 'offline' });
   if (abandon) out.push({ k: 'abandon' });
   if (charter) out.push({ k: 'charter' });
+  if (grants > 0) out.push({ k: 'grant', n: grants });
   if (follow) out.push({ k: 'follow' });
   if (maybe) out.push({ k: 'maybe' });
   return out;
@@ -1009,7 +1091,7 @@ const TARGET_TEXT: Record<Target, string> = {
   'strongestTurf:kites': 'on Kites turf',
   largestAbandoned: 'in the dark lots',
   rail: 'along the ribbon',
-  // Megacity (MEGACITY §8.4): the turf target `slot:<kind>` (WP-7 resolves it).
+  // Megacity (MEGACITY §8.4): the target `slot:<kind>`, every owned district of that kind (slotTiles).
   'slot:shore': 'in Charter Shore',
   'slot:shoals': 'in the Shoals',
   'slot:sunk': 'in the Sunk',
@@ -1079,7 +1161,7 @@ export function effectText(world: World, e: Effect): string {
       return e.mul === 0 ? `next ${name} free` : `next ${name} ${signed(Math.round((e.mul - 1) * 100))}%`;
     }
     case 'flag':
-      return '';
+      return districtVerb(e.key, e.v)?.text ?? '';
     case 'floor':
       return `${short(e.f)} never below ${e.v}`;
     case 'ceil':

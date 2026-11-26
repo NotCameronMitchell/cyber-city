@@ -1,9 +1,14 @@
 // Story content lint (docs/STORY.md §13). Fails the build on any copy, id,
 // reference or vocabulary problem in src/game/story/content/*. Each check
-// collects every offender, so one run lists them all.
+// collects every offender, so one run lists them all. The Megacity section
+// (docs/MEGACITY.md §8, §3.7) adds the eleven district and landmark cards, the
+// lobby lines, the neighbourhood naming lint and the §8.6 spoiler guard.
 
+import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
-import { BUILDINGS, FACTION_IDS, FACTION_LABELS, POWER_WEIGHTS, UNLOCK_FALLBACK_POP } from '../../src/game/config';
+import { BUILDINGS, BUILDING_ORDER, CROWNS, DISTRICTS, FACTION_IDS, FACTION_LABELS, MILESTONES, POWER_WEIGHTS, UNLOCK_FALLBACK_POP } from '../../src/game/config';
+import { RENAMED_NEIGHBOURHOODS, VARIANT_NEIGHBOURHOODS, neighbourhoodsOf } from '../../src/game/districts/names';
+import { DISTRICTS as START_NEIGHBOURHOODS } from '../../src/game/news';
 import { Rng } from '../../src/game/rng';
 import { EMPTY_CONTENT, metric, useStoryContent, type StoryContent } from '../../src/game/story/conditions';
 import * as C from '../../src/game/story/content';
@@ -16,11 +21,12 @@ import {
   TARGETS,
   UNLOCKABLES,
 } from '../../src/game/story/content/vocab';
-import { findSpot, spotAvailable } from '../../src/game/story/effects';
+import { DISTRICT_VERBS, districtVerb, findSpot, spotAvailable } from '../../src/game/story/effects';
 import { powerWeight } from '../../src/game/story/factions';
+import { lobbyName } from '../../src/game/story/vertical';
 import { DEFAULT_MODS } from '../../src/game/story/mods';
 import type { Card, Condition, Effect, FactionId, FlagValue, ModPatch, SpotRule } from '../../src/game/story/types';
-import { RoadKind, Terrain, ZoneType } from '../../src/game/types';
+import { RoadKind, Terrain, ZoneType, type BuildingType, type DistrictVariant } from '../../src/game/types';
 import type { World } from '../../src/game/world';
 import { flatWorld } from '../helpers';
 
@@ -535,7 +541,8 @@ describe('story content lint (§13)', () => {
           if (e.op === 'freeze' && !e.days) bad.push(`${w}: turf freeze needs days`);
           if (e.op === 'flip' && (!e.to || e.gang === 'all' || e.to === e.gang)) bad.push(`${w}: turf flip`);
           if (e.op === 'seed' && e.gang === 'all') bad.push(`${w}: turf seed needs one gang`);
-          if ((e.op === 'clear' || e.op === 'flip') && e.at !== 'city' && !e.r) bad.push(`${w}: turf ${e.op} needs r`);
+          // A `slot:<kind>` target is a whole district, so it takes no radius (MEGACITY §8.4).
+          if ((e.op === 'clear' || e.op === 'flip') && e.at !== 'city' && !e.at.startsWith('slot:') && !e.r) bad.push(`${w}: turf ${e.op} needs r`);
           break;
         case 'offline':
           // No effect deletes a building; offline lasts at most 30 d (§2.3 rule 4).
@@ -624,19 +631,21 @@ describe('story content lint (§13)', () => {
     expect(bad).toEqual([]);
   });
 
-  it('holds the 43-card deck as specified (§7.8), plus the 11 expansion cards (EXPANSION §8.3)', () => {
+  it('holds the 43-card deck as specified (§7.8), plus the 11 expansion cards (EXPANSION §8.3) and the 11 megacity cards (MEGACITY §8.3)', () => {
     const per = Object.fromEntries(Object.entries(C.FACTION_DECKS).map(([f, cards]) => [f, cards.length]));
     expect(per).toEqual({ board: 6, basalt: 6, nacre: 7, undertow: 7, kites: 7, tuning: 6 });
     expect(C.MULTI_CARDS.length).toBe(2);
     expect(C.SYSTEM_CARDS.length).toBe(2);
     expect(C.EXPANSION_CARDS.length).toBe(11);
-    expect(C.DECK.length).toBe(43 + 11);
+    expect(C.MEGACITY_CARDS.length).toBe(11);
+    // The epilogue deck (MEGACITY §9.4) is WP-8's: counted by whatever it holds.
+    expect(C.DECK.length).toBe(43 + 11 + 11 + C.EPILOGUE_DECK.length);
     for (const [f, cards] of Object.entries(C.FACTION_DECKS)) for (const c of cards) expect(c.speaker, c.id).toBe(f);
     for (const c of C.DECK) expect(['faction', 'hostile', 'system'], c.id).toContain(c.kind);
     // 83 cards in the review log (20 beats + 43 deck + 12 logs + 6 ending cards + review + coda),
-    // plus 3 whisper callbacks, plus the 11 expansion cards.
+    // plus 3 whisper callbacks, plus the 11 expansion cards, the 11 megacity cards and the epilogue deck.
     expect(C.BEAT_CARDS.length).toBe(20);
-    expect(CARDS.length).toBe(86 + 11);
+    expect(CARDS.length).toBe(86 + 11 + 11 + C.EPILOGUE_DECK.length);
     expect(CARDS.filter((c) => c.kind === 'whisper').length).toBe(3);
   });
 
@@ -847,10 +856,11 @@ describe('story clarity pass (briefs, intros, glossary)', () => {
     expect(bad).toEqual([]);
   });
 
-  it('keeps a glossary of 12–20 unique terms, each within its limit, covering the story vocabulary', () => {
+  it('keeps a glossary of 12–22 unique terms, each within its limit, covering the story vocabulary', () => {
     const g = C.GLOSSARY;
     expect(g.length).toBeGreaterThanOrEqual(12);
-    expect(g.length).toBeLessThanOrEqual(20);
+    // MEGACITY §8.4 raised the cap from 20 to 22 (Sky Lobby, Districts and grants).
+    expect(g.length).toBeLessThanOrEqual(22);
     const bad: string[] = [];
     const seen = new Set<string>();
     for (const e of g) {
@@ -866,13 +876,15 @@ describe('story clarity pass (briefs, intros, glossary)', () => {
     // Terms a player meets in the HUD, on cards and in the faction panel.
     const must = ['MOTH', 'Trace', 'Silt Logs', 'standing', 'Salt', 'Deal', 'Patron', 'Turf', 'Seam', 'Crackdown', 'Pact', 'Wasps'];
     must.push('Stratablock', 'Skybridge', 'Ribbon Rail', 'COMMS', 'Charter', 'Charter Night', 'Sunk');
+    must.push('Sky Lobby', 'District');
     for (const t of must) if (!g.some((e) => e.term.toLowerCase().includes(t.toLowerCase()))) bad.push(`missing term ${t}`);
     expect(bad).toEqual([]);
   });
 
   it('runs the banned-term and "!" scans over every clarity text', () => {
     const texts = clarityTexts();
-    // 97 briefs (86 + 11 expansion), 6 summaries, 6 recaps, the epilogue, 6 faction lines and the glossary.
+    // Every card's brief (86 + 11 expansion + 11 megacity + the epilogue deck), 6 summaries, 6 recaps, the epilogue,
+    // 6 faction lines and the glossary.
     expect(texts.length).toBe(CARDS.length + 6 + 6 + 1 + 6 + C.GLOSSARY.length);
     const bad: string[] = [];
     for (const { where, text } of texts) {
@@ -954,6 +966,8 @@ function termWeight(w: World, terms: readonly C.PowerTerm[]): number {
   let sum = 0;
   for (const t of terms) {
     if ('m' in t) {
+      // A term tied to an ending counts only while that ending is current (MEGACITY §9.2).
+      if (t.ending !== undefined && w.story.ending !== t.ending) continue;
       let v = 0;
       for (const k of typeof t.m === 'string' ? [t.m] : t.m) v += metric(w, k);
       const x = t.mul * v;
@@ -961,9 +975,14 @@ function termWeight(w: World, terms: readonly C.PowerTerm[]): number {
     } else if ('flag' in t) {
       const f = w.story.flags[t.flag];
       if (t.eq === undefined ? !!f : f === t.eq) sum += t.add;
-    } else {
+    } else if ('flagCount' in t) {
       const f = w.story.flags[t.flagCount];
       sum += t.mul * (typeof f === 'number' ? f : f ? 1 : 0);
+    } else {
+      // Corp Spires by sponsor (MEGACITY §6.2): an unsponsored, pre-Megacity Spire counts for Nacre.
+      let n = 0;
+      for (const b of w.buildings.values()) if (b.type === 'spire' && (b.sponsor ?? 'nacre') === t.spires) n++;
+      sum += t.mul * n;
     }
   }
   return sum;
@@ -1047,7 +1066,8 @@ describe('expansion story content (EXPANSION §8)', () => {
     // The expansion's lasting choices: perm bonuses, timed penalties.
     const perm: string[] = [];
     eachEffect((e, site) => e.t === 'mod' && e.days === 'perm' && perm.push(site.where.split(' ')[0]));
-    expect([...new Set(perm)].sort()).toEqual(['ex.convoy', 'ex.glassshore', 'ex.lounge', 'ex.nightschool', 'ex.rights', 'ex.stringlights']);
+    const expansion = [...new Set(perm)].filter((id) => id.startsWith('ex.')).sort();
+    expect(expansion).toEqual(['ex.convoy', 'ex.glassshore', 'ex.lounge', 'ex.nightschool', 'ex.rights', 'ex.stringlights']);
   });
 
   it('adds the §8.2 mood drivers', () => {
@@ -1056,9 +1076,9 @@ describe('expansion story content (EXPANSION §8)', () => {
     expect(row('basalt', 'Seaports')).toEqual({ label: 'Seaports', m: 'count.seaport', mul: 3, min: 0, max: 6 });
     expect(row('nacre', 'Glass towers')).toEqual({ label: 'Glass towers', m: 'wealth.high', offset: 0.05, mul: 50, min: 0, max: 8 });
     expect(row('undertow', 'Back alleys')).toEqual({ label: 'Back alleys', m: 'roads.alley', mul: 1 / 15, min: 0, max: 5 });
-    // Kites (6) and Tuning (5) get cards and power terms instead.
+    // Kites (6) and Tuning (5 then; 6 with MEGACITY §8.4's "Lamps on the hill") get cards and power terms instead.
     expect(C.FACTIONS.kites.mood.length).toBe(6);
-    expect(C.FACTIONS.tuning.mood.length).toBe(5);
+    expect(C.FACTIONS.tuning.mood.filter((d) => d.label !== 'Lamps on the hill').length).toBe(5);
   });
 
   it('caps the cheap-tile power terms, and POWER_TERMS sums exactly what powerWeight does live', () => {
@@ -1167,5 +1187,500 @@ describe('expansion story content (EXPANSION §8)', () => {
     lv[w.idx(43, 30)] = 0.9;
     lv[w.idx(41, 40)] = 0.9;
     expect(pick(w, 'shore')).toEqual([true, w.idx(41, 20)]);
+  });
+});
+
+// ── Megacity content (docs/MEGACITY.md §8, §3.7) ────────────────────────────
+//
+// The eleven megacity deck cards (§8.3), the district verbs and the slot target they use (§8.4), the mood and
+// power rows (§8.4), the lobby lines (§8.2), the glossary (§8.4), the neighbourhood names of every district and
+// variant (§3.7's naming lint) and the spoiler guard over every new player-facing string (§8.6).
+
+const MEGACITY_IDS = ['ds.shoals', 'ds.sunk', 'ds.flats', 'ds.terraces', 'ds.reedmere', 'ds.skeleton', 'ds.tarmac', 'ds.bazaar', 'lm.arena', 'lm.beacon', 'lm.halo'];
+
+/** §8.6: no new text names the gates, the sealing, the reply, the toll (one rule for all new copy, epilogue included). */
+const SPOILER_ANY = /\bgates?\b|\bseal(ed|s|ing)?\b|complying|eleven thousand|11,000/i;
+/** §8.6: text that can show before `ch4.drain` never names the pump station (only "Old pump hall"). */
+const SPOILER_PRE_DRAIN = /pump station|\bPS6\b|02:17/i;
+
+/** The megacity building types (config BUILDING_ORDER, Floodwatch Station .. the old pump hall). */
+function megacityTypes(): BuildingType[] {
+  const a = BUILDING_ORDER.indexOf('floodwatch');
+  const b = BUILDING_ORDER.indexOf('pumphall');
+  return BUILDING_ORDER.slice(a, b + 1);
+}
+
+/** Sunk-only copy: shows only once the Sunk opens after `ch4.brine` (§3.7), so it may speak to a player who knows. */
+const SUNK_BUILDINGS = new Set<BuildingType>(['pumphall', 'hullhouse']);
+
+interface Copy {
+  where: string;
+  text: string;
+  /** Can show before `ch4.drain` (everything except the Sunk's own copy and §9's flag-keyed copy). */
+  early: boolean;
+}
+
+/** Every new player-facing string this update adds that lives in data (§8.6's list, data part). */
+function megacityCopy(): Copy[] {
+  const out: Copy[] = [];
+  const add = (where: string, text: string | undefined, early = true) => text && out.push({ where, text, early });
+  for (const [kind, d] of Object.entries(DISTRICTS)) {
+    const early = kind !== 'sunk';
+    add(`${kind} name`, d.name, early);
+    add(`${kind} short`, d.short, early);
+    add(`${kind} tagline`, d.tagline, early);
+    d.perks.forEach((p, i) => add(`${kind} perk ${i}`, p, early));
+    d.hazards.forEach((p, i) => add(`${kind} hazard ${i}`, p, early));
+    for (const [f, q] of Object.entries(d.quote)) add(`${kind} quote ${f}`, q, early);
+    d.goals.forEach((g) => add(`${kind} goal ${g.id}`, g.label, early));
+    if (d.lease) add(`${kind} lease`, d.lease.prompt, early);
+    neighbourhoodsOf(d.kind, 0).forEach((n) => add(`${kind} neighbourhood`, n, early));
+    d.variants.forEach((v, i) => {
+      add(`${kind}.v${i + 1} name`, v.name);
+      add(`${kind}.v${i + 1} short`, v.short);
+      add(`${kind}.v${i + 1} tagline`, v.tagline);
+      add(`${kind}.v${i + 1} goal`, v.goal.label);
+      for (const [f, q] of Object.entries(v.quote ?? {})) add(`${kind}.v${i + 1} quote ${f}`, q);
+      neighbourhoodsOf(d.kind, (i + 1) as DistrictVariant).forEach((n) => add(`${kind}.v${i + 1} neighbourhood`, n));
+    });
+  }
+  for (const t of megacityTypes()) {
+    const b = BUILDINGS[t];
+    const early = !SUNK_BUILDINGS.has(t);
+    add(`${t} name`, b.name, early);
+    add(`${t} desc`, b.desc, early);
+    add(`${t} meta`, b.meta, early);
+  }
+  for (const id of ['salvage', 'lamp'] as const) {
+    add(`crown ${id} name`, CROWNS[id].name);
+    add(`crown ${id} summary`, CROWNS[id].summary);
+  }
+  for (const ms of MILESTONES) add(`milestone ${ms.pop}`, ms.title);
+  for (const c of C.MEGACITY_CARDS) eachString(c, `card ${c.id}`, (s, p) => add(p, s, c.id !== 'ds.sunk'));
+  for (const e of C.GLOSSARY) if (['Skybridge', 'Sky Lobby', 'Districts and grants'].includes(e.term)) add(`glossary ${e.term}`, `${e.term} ${e.text}`);
+  // §9's copy that lives in data: WP-8's epilogue cards (keyed on chapter ≥ 7, so only the universal rule).
+  for (const c of C.EPILOGUE_DECK) eachString(c, `card ${c.id}`, (s, p) => add(p, s, false));
+  return out;
+}
+
+/** Player-facing string literals in a source text (AST: string, template and template-part text; imports skipped). */
+function sourceStrings(file: string, source: string): { line: number; text: string }[] {
+  const sf = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true);
+  const out: { line: number; text: string }[] = [];
+  const visit = (n: ts.Node): void => {
+    if (ts.isImportDeclaration(n) || ts.isExportDeclaration(n)) return;
+    if (ts.isStringLiteral(n) || ts.isNoSubstitutionTemplateLiteral(n)) out.push({ line: sf.getLineAndCharacterOfPosition(n.getStart()).line + 1, text: n.text });
+    else if (ts.isTemplateExpression(n))
+      out.push({ line: sf.getLineAndCharacterOfPosition(n.getStart()).line + 1, text: n.head.text + n.templateSpans.map((sp) => `{x}${sp.literal.text}`).join('') });
+    ts.forEachChild(n, visit);
+  };
+  visit(sf);
+  return out;
+}
+
+/**
+ * Files whose strings §8.6 scans, with whether they may show before `ch4.drain`: the skybridge reasons and news
+ * (vertical.ts, actions.ts), inspect notes and toasts (game.ts), advisor lines, district goals and annex copy, City
+ * life lines, the City map, tips and the inspect sheet's story rows; and §9's copy (WP-8: the marks, the review
+ * lines, the epilogue deck), which is flag-keyed and so only takes the universal rule.
+ */
+const SCANNED_SOURCES: Record<string, string> = import.meta.glob(
+  [
+    '../../src/game/story/vertical.ts',
+    '../../src/game/actions.ts',
+    '../../src/game/game.ts',
+    '../../src/game/sim/advisor.ts',
+    '../../src/game/cityEvents.ts',
+    '../../src/game/districts/goals.ts',
+    '../../src/game/districts/annex.ts',
+    '../../src/game/districts/daily.ts',
+    '../../src/game/districts/names.ts',
+    '../../src/ui/citymap.ts',
+    '../../src/ui/tips.ts',
+    '../../src/ui/inspect.ts',
+    '../../src/ui/story/inspectStory.ts',
+    '../../src/game/story/content/cards/megacity.ts',
+    '../../src/game/marks.ts',
+    '../../src/render/art/marks.ts',
+    '../../src/game/story/content/epilogue.ts',
+    '../../src/game/story/content/cards/epilogue.ts',
+  ],
+  { query: '?raw', import: 'default', eager: true },
+);
+/** Scanned sources whose copy is flag-keyed or shows only after the reveal: the universal rule only. */
+const LATE_SOURCES = ['cards/megacity.ts', 'game/marks.ts', 'art/marks.ts', 'content/epilogue.ts', 'cards/epilogue.ts'];
+
+/** The neighbourhood names §9.3's marks give an 8×8 cell (WP-8 owns them; listed here so no list reuses one). */
+const MARK_CELL_NAMES = ['Projection Yards', 'Delight Row', 'Four-Four Square', 'Glass Yard', 'Truce Row', 'Low Water', 'High Line'];
+/** Words two district or variant names may share (§3.7). */
+const GENERIC_NAME_WORDS = new Set(['the', 'flats', 'marsh', 'isles', 'banks', 'heights', 'fields', 'bazaar', 'towers', 'steps', 'docks', 'row', 'rise', 'fen', 'strip', 'strand', 'grove', 'arcade', 'reach', 'shore', 'shoals', 'terraces']);
+const nameWords = (s: string) => s.toLowerCase().split(/[\s-]+/).filter(Boolean);
+
+describe('megacity story content (MEGACITY §8)', () => {
+  const mc = C.MEGACITY_CARDS;
+
+  it('adds the eleven §8.3 cards to the deck only, each a once faction card with the listed shape', () => {
+    expect(mc.map((c) => c.id)).toEqual(MEGACITY_IDS);
+    const bad: string[] = [];
+    const inFactionDecks = new Set(Object.values(C.FACTION_DECKS).flatMap((cards) => cards.map((c) => c.id)));
+    const deck = new Set(C.DECK.map((c) => c.id));
+    for (const c of mc) {
+      if (!deck.has(c.id) || !CARD_BY_ID.has(c.id)) bad.push(`${c.id}: not in DECK and CARD_LIST`);
+      if (inFactionDecks.has(c.id)) bad.push(`${c.id}: must stay out of FACTION_DECKS`);
+      if (c.kind !== 'faction') bad.push(`${c.id}: kind ${c.kind}`);
+      if (!c.when) bad.push(`${c.id}: no when`);
+      if (!c.brief) bad.push(`${c.id}: no brief`);
+      if (c.weight !== 10 || c.cooldown !== 720 || !c.once) bad.push(`${c.id}: weight 10, cooldown 720, once`);
+      if (c.star || c.queuedOnly || c.seasonal || c.onDemand || c.spot || c.onShow) bad.push(`${c.id}: no ★, follow-up, seasonal, on-demand, spot or onShow`);
+      if (c.choices.filter((ch) => ch.default).length !== 1) bad.push(`${c.id}: exactly one default`);
+      for (const ch of c.choices) for (const e of ch.fx) if (e.t === 'queue' || e.t === 'log' || e.t === 'charterNight') bad.push(`${c.id}: ${e.t} (no megacity card queues, logs or opens a beat)`);
+    }
+    expect(bad).toEqual([]);
+    expect(Object.fromEntries(mc.map((c) => [c.id, c.with ? `${c.speaker}+${c.with}` : c.speaker]))).toEqual({
+      'ds.shoals': 'nacre',
+      'ds.sunk': 'undertow',
+      'ds.flats': 'basalt',
+      'ds.terraces': 'tuning',
+      'ds.reedmere': 'board',
+      'ds.skeleton': 'kites',
+      'ds.tarmac': 'board',
+      'ds.bazaar': 'undertow+kites',
+      'lm.arena': 'nacre',
+      'lm.beacon': 'undertow',
+      'lm.halo': 'kites',
+    });
+    // Their conditions read what the player annexed and built (§8.3), nothing else.
+    const metricsOf = (c: Condition | undefined): string[] => {
+      const out: string[] = [];
+      const walk = (k: Condition) => {
+        if ('m' in k) out.push(...(typeof k.m === 'string' ? [k.m] : k.m));
+        else if ('flag' in k) out.push(`flag:${k.flag}`);
+        else if ('all' in k) k.all.forEach(walk);
+        else if ('any' in k) k.any.forEach(walk);
+        else if ('not' in k) walk(k.not);
+        else if ('hold' in k) walk(k.hold);
+      };
+      if (c) walk(c);
+      return out;
+    };
+    expect(Object.fromEntries(mc.map((c) => [c.id, metricsOf(c.when)]))).toEqual({
+      'ds.shoals': ['district.shoals'],
+      'ds.sunk': ['district.sunk', 'turf.undertow'],
+      'ds.flats': ['district.flats'],
+      'ds.terraces': ['district.terraces', 'flag:tuningActive'],
+      'ds.reedmere': ['district.reedmere'],
+      'ds.skeleton': ['district.skeleton', 'turf.kites'],
+      'ds.tarmac': ['district.tarmac'],
+      'ds.bazaar': ['district.bazaar', 'turf.undertow', 'turf.kites'],
+      'lm.arena': ['count.arena'],
+      'lm.beacon': ['count.beacon'],
+      'lm.halo': ['count.halolookout'],
+    });
+  });
+
+  it('keeps every physical promise with an effect (§8.4): the district verbs and the slot:skeleton turf target', () => {
+    const verbsUsed: string[] = [];
+    const bad: string[] = [];
+    eachEffect((e, site) => {
+      if (e.t === 'flag' && Object.values(DISTRICT_VERBS).some((d) => d.key === e.key)) {
+        const verb = districtVerb(e.key, e.v);
+        if (!verb) bad.push(`${site.where}: flag ${e.key}=${String(e.v)} is no district verb`);
+        else verbsUsed.push(`${site.card?.id} "${site.where.split('"')[1]}" ${e.key}=${String(e.v)}`);
+      }
+      if ('at' in e && typeof e.at === 'string' && e.at.startsWith('slot:') && site.card?.id !== 'ds.skeleton') bad.push(`${site.where}: slot target outside ds.skeleton`);
+    });
+    expect(bad).toEqual([]);
+    expect(verbsUsed.sort()).toEqual(
+      [
+        'ds.flats "Clean it first: 9,000." brownfield=cleared',
+        'ds.reedmere "Drain the south bank." reeds=drained',
+        'ds.sunk "Clear the ruins." ruins=cleared',
+        'ds.tarmac "Clear the apron." apron=cleared',
+        'ds.tarmac "Rehouse them: 6,000." apron=rehoused',
+      ].sort(),
+    );
+    expect(Object.keys(DISTRICT_VERBS).sort()).toEqual(['apron=cleared', 'apron=rehoused', 'brownfield=cleared', 'reeds=drained', 'ruins=cleared']);
+    const skeleton = CARD_BY_ID.get('ds.skeleton')!.choices.find((ch) => ch.label === 'Clear the frames.')!;
+    expect(skeleton.fx).toContainEqual({ t: 'turf', gang: 'kites', op: 'str', at: 'slot:skeleton', v: -60 });
+  });
+
+  it('adds the §8.4 mood drivers (every faction keeps 4–6)', () => {
+    const row = (f: FactionId, label: string) => C.FACTIONS[f].mood.find((d) => d.label === label);
+    expect(row('board', 'Green lung')).toEqual({ label: 'Green lung', m: 'district.reedmere', mul: 3, min: 0, max: 3 });
+    expect(row('basalt', 'The Flats')).toEqual({ label: 'The Flats', m: 'district.flats', mul: 3, min: 0, max: 3 });
+    expect(row('tuning', 'Lamps on the hill')).toEqual({ label: 'Lamps on the hill', m: 'district.terraces', mul: 3, min: 0, max: 3 });
+    expect(Object.fromEntries(FACTION_IDS.map((f) => [f, C.FACTIONS[f].mood.length]))).toEqual({ board: 6, basalt: 6, nacre: 6, undertow: 6, kites: 6, tuning: 6 });
+  });
+
+  it('adds the §8.4 power terms, and POWER_TERMS still sums exactly what powerWeight does live', () => {
+    const W = POWER_WEIGHTS;
+    const has = (f: keyof typeof C.POWER_TERMS, t: C.PowerTerm) => expect(C.POWER_TERMS[f], JSON.stringify(t)).toContainEqual(t);
+    has('board', { m: 'count.charterhall', mul: W.board.perCharterHall });
+    has('basalt', { m: 'count.hexworks', mul: W.basalt.perHexworks });
+    has('basalt', { spires: 'basalt', mul: W.basalt.perSpireBasalt });
+    has('basalt', { m: 'count.gantry', mul: W.basalt.perGantry, ending: 'ironwork' });
+    has('nacre', { spires: 'nacre', mul: W.nacre.perSpire });
+    has('nacre', { m: 'count.pearlatrium', mul: W.nacre.perPearlAtrium });
+    has('nacre', { m: 'count.glasssmile', mul: W.nacre.perGlassSmile, ending: 'pearl' });
+    has('undertow', { m: 'count.hullhouse', mul: W.undertow.perHullhouse });
+    has('undertow', { m: 'crowns.salvage', mul: W.undertow.perCrownSalvage });
+    has('kites', { m: 'count.kitemast', mul: W.kites.perKiteMast });
+    // `count.spire` is gone: Nacre counts its own and the unsponsored Spires only (§6.2).
+    expect(Object.values(C.POWER_TERMS).flat().some((t) => 'm' in t && t.m === 'count.spire')).toBe(false);
+
+    const w = flatWorld(78);
+    let x = 0;
+    const put = (t: BuildingType, y = 2) => {
+      const b = w.addBuilding(t, x, y);
+      expect(b, t).not.toBeNull();
+      x += BUILDINGS[t].size + 1;
+      return b!;
+    };
+    for (const t of ['charterhall', 'hexworks', 'pearlatrium', 'hullhouse', 'kitemast', 'gantry', 'glasssmile'] as const) put(t);
+    x = 0;
+    const spires = [put('spire', 20), put('spire', 20), put('spire', 20), put('spire', 20)];
+    spires[0].sponsor = 'basalt';
+    spires[1].sponsor = 'nacre';
+    spires[2].sponsor = 'none';
+    // spires[3] keeps no sponsor: a pre-Megacity Spire, Nacre's.
+    w.vertical.metrics.crowns.salvage = 2;
+    w.stats.approval = 58;
+    w.stats.jobsInd = 1200;
+    w.stats.jobsCom = 900;
+    const same = () => {
+      for (const f of ['board', 'basalt', 'nacre', 'undertow', 'kites'] as const) expect(termWeight(w, C.POWER_TERMS[f]), f).toBeCloseTo(powerWeight(w, f), 6);
+    };
+    for (const ending of [null, 'ironwork', 'pearl', 'ledger'] as const) {
+      w.story.ending = ending;
+      same();
+    }
+    // The ending terms count only while their ending holds.
+    w.story.ending = null;
+    const base = termWeight(w, C.POWER_TERMS.basalt);
+    w.story.ending = 'ironwork';
+    expect(termWeight(w, C.POWER_TERMS.basalt) - base).toBe(W.basalt.perGantry);
+  });
+
+  it('pins the §8.2 lobby lines, in voice and within 110 characters, the two variant lines included', () => {
+    const lines: Record<string, Partial<Record<FactionId, string>>> = Object.fromEntries(Object.entries(DISTRICTS).map(([k, d]) => [k, d.quote]));
+    expect(lines).toEqual({
+      shore: {},
+      shoals: { nacre: 'Islands, partner! Every window a sea view! I can sell them before you pour the bridges!' },
+      sunk: { undertow: 'You know what lies under these streets now, little light. Build on them gently. My people still live here.' },
+      flats: { basalt: 'The Flats pay for themselves, Operations. Flat land, a dock, nobody next door to complain.' },
+      terraces: {
+        tuning: 'On the hill the lamps can see each other, Hum. Let the city climb.',
+        board: 'Resolved: homes with a view. Proposed: for once, for everyone.',
+      },
+      reedmere: { board: 'Minutes: the marsh filters more smog than four plazas. The Board would like to keep it.' },
+      skeleton: { kites: "the frames are the best climbing in the city, moth. finish them. we'll mind the roofs." },
+      tarmac: {
+        nacre: "A runway that's already there, partner! Imagine the terminal!",
+        basalt: 'Cargo, Operations. Cargo pays by the tonne. Terminals pay by the smile.',
+      },
+      bazaar: {
+        undertow: 'The night stalls run on tides, little light. I know their tides.',
+        kites: 'verdigris is the best market in town. we sell signal there. let us keep selling.',
+      },
+    });
+    const SALLOW_REPEAT = 'Cheap ground and a deep basin, Operations. Two fabs here pay for one anywhere else. I have checked.';
+    const LARK_REPEAT = "another market, moth? good. more stalls, more signal. we'll sell there too, if you let us.";
+    const variantLines = Object.values(DISTRICTS).flatMap((d) => d.variants.map((v) => [`${d.kind}:${v.name}`, v.quote ?? {}] as const));
+    expect(Object.fromEntries(variantLines.filter(([, q]) => Object.keys(q).length))).toEqual({
+      'flats:Ironside Docks': { basalt: SALLOW_REPEAT },
+      'flats:Cokeworth Flats': { basalt: SALLOW_REPEAT },
+      'bazaar:Saffron Arcade': { kites: LARK_REPEAT },
+      'bazaar:Moonbrass Bazaar': { kites: LARK_REPEAT },
+    });
+
+    // Voice (STORY.md §1.4, MEGACITY §8.5): Marrow in minutes, Sallow calls MOTH "Operations", Oduya alone uses "!",
+    // Brine calls MOTH "little light", lark types lowercase, Ohm calls MOTH "the Hum".
+    const voice: Record<FactionId, (s: string) => boolean> = {
+      board: (s) => /^(Minutes|Resolved|Proposed|Noted|Item)\b/.test(s),
+      basalt: (s) => s.includes('Operations'),
+      nacre: (s) => s.includes('!') && s.includes('partner'),
+      undertow: (s) => s.includes('little light'),
+      kites: (s) => s === s.toLowerCase(),
+      tuning: (s) => /\bHum\b/.test(s),
+    };
+    const bad: string[] = [];
+    const check = (where: string, kind: string, f: FactionId, s: string) => {
+      const def = DISTRICTS[kind as keyof typeof DISTRICTS];
+      if (s.length > 110) bad.push(`${where}: ${s.length} > 110`);
+      if (!def.lobby.includes(f) && def.lobbyFallback !== f) bad.push(`${where}: ${f} does not lobby for ${kind}`);
+      if (!voice[f](s)) bad.push(`${where}: not in ${f}'s voice`);
+      if (f !== 'nacre' && s.includes('!')) bad.push(`${where}: '!' outside Nacre`);
+      const hit = C.BANNED_RE.exec(s);
+      if (hit) bad.push(`${where}: banned "${hit[0]}"`);
+    };
+    for (const d of Object.values(DISTRICTS)) {
+      for (const [f, q] of Object.entries(d.quote)) check(`${d.kind} ${f}`, d.kind, f as FactionId, q ?? '');
+      for (const v of d.variants) for (const [f, q] of Object.entries(v.quote ?? {})) check(`${v.name} ${f}`, d.kind, f as FactionId, q ?? '');
+    }
+    // The hidden Tuning lobbies only for the Terraces, with Marrow speaking until it is active (and never naming it).
+    for (const d of Object.values(DISTRICTS)) if (d.kind !== 'terraces' && d.lobby.includes('tuning')) bad.push(`${d.kind}: the Tuning lobbies`);
+    expect(DISTRICTS.terraces.lobbyFallback).toBe('board');
+    if (TUNING_WORDS.test(DISTRICTS.terraces.quote.board ?? '')) bad.push('terraces: the Board line names the Tuning');
+    expect(bad).toEqual([]);
+  });
+
+  it('keeps the district copy within §8.5 (taglines 60, perks and hazards 48, goals 40, no banned terms, no "!" outside Nacre)', () => {
+    const bad: string[] = [];
+    const banned = (where: string, s: string) => {
+      const hit = C.BANNED_RE.exec(s);
+      if (hit) bad.push(`${where}: banned "${hit[0]}"`);
+    };
+    for (const d of Object.values(DISTRICTS)) {
+      if (d.name.length > 18 || d.short.length > 12) bad.push(`${d.kind}: name or short too long`);
+      if (d.tagline.length > 60) bad.push(`${d.kind}: tagline ${d.tagline.length}`);
+      for (const l of [...d.perks, ...d.hazards]) if (l.length > 48) bad.push(`${d.kind}: "${l}" ${l.length} > 48`);
+      for (const g of d.goals) if (g.label.length > 40) bad.push(`${d.kind}: goal ${g.id} ${g.label.length}`);
+      for (const s of [d.name, d.short, d.tagline, ...d.perks, ...d.hazards, ...d.goals.map((g) => g.label), d.lease?.prompt ?? '']) {
+        banned(d.kind, s);
+        if (s.includes('!')) bad.push(`${d.kind}: '!' in "${s}"`);
+      }
+      for (const v of d.variants) {
+        if (v.name.length > 18 || v.short.length > 12) bad.push(`${v.name}: name or short too long`);
+        if (v.tagline.length > 60) bad.push(`${v.name}: tagline ${v.tagline.length}`);
+        if (v.goal.label.length > 40) bad.push(`${v.name}: goal ${v.goal.label.length}`);
+        for (const s of [v.name, v.short, v.tagline, v.goal.label]) {
+          banned(v.name, s);
+          if (s.includes('!')) bad.push(`${v.name}: '!' in "${s}"`);
+        }
+      }
+    }
+    for (const t of megacityTypes()) for (const s of [BUILDINGS[t].name, BUILDINGS[t].desc, BUILDINGS[t].meta ?? '']) banned(t, s);
+    expect(bad).toEqual([]);
+    // The Sunk is "the drowned wards", drowned in the official storm; never what the logs said (§8.6).
+    expect(DISTRICTS.sunk.tagline).toMatch(/the drowned wards/i);
+  });
+
+  it('names every neighbourhood once (§3.7 naming lint): 12 per district, ≤ 15 chars, no district names inside, no banned terms', () => {
+    const lists: { where: string; names: readonly string[]; mine: boolean }[] = [{ where: 'Charter Shore', names: START_NEIGHBOURHOODS, mine: false }];
+    for (const d of Object.values(DISTRICTS)) {
+      if (d.kind === 'shore') continue;
+      lists.push({ where: d.name, names: neighbourhoodsOf(d.kind, 0), mine: false });
+      d.variants.forEach((v, i) => lists.push({ where: v.name, names: neighbourhoodsOf(d.kind, (i + 1) as DistrictVariant), mine: true }));
+    }
+    // 1 start list, 8 kinds, 16 variants; every variant has a list of its own (the Step 0b placeholder is filled).
+    expect(lists.length).toBe(1 + 8 + 16);
+    const bad: string[] = [];
+    for (const d of Object.values(DISTRICTS)) {
+      const own = VARIANT_NEIGHBOURHOODS[d.kind] ?? [];
+      if (own.length !== d.variants.length) bad.push(`${d.kind}: ${own.length} variant lists for ${d.variants.length} variants`);
+    }
+    const districtNames = Object.values(DISTRICTS).flatMap((d) => [d.name, ...d.variants.map((v) => v.name)]);
+    const distinctive = new Set(districtNames.flatMap(nameWords).filter((wd) => !GENERIC_NAME_WORDS.has(wd)));
+    const seen = new Map<string, string>(MARK_CELL_NAMES.map((n) => [n.toLowerCase(), 'a §9.3 mark']));
+    for (const { where, names, mine } of lists) {
+      if (where !== 'Charter Shore' && names.length !== 12) bad.push(`${where}: ${names.length} names`);
+      for (const n of names) {
+        const key = n.toLowerCase();
+        if (n.length > 15) bad.push(`${where}: "${n}" ${n.length} > 15`);
+        if (seen.has(key)) bad.push(`${where}: "${n}" also in ${seen.get(key)}`);
+        seen.set(key, where);
+        for (const dn of districtNames) if (key.includes(dn.toLowerCase())) bad.push(`${where}: "${n}" contains the district name ${dn}`);
+        // The new lists also keep every district's own word out ("Gannet", "Kessel"…), so a name never points elsewhere.
+        if (mine) for (const wd of nameWords(n)) if (distinctive.has(wd)) bad.push(`${where}: "${n}" uses the district word "${wd}"`);
+        const hit = C.BANNED_RE.exec(n);
+        if (hit) bad.push(`${where}: "${n}" banned "${hit[0]}"`);
+        if (SPOILER_ANY.test(n) || SPOILER_PRE_DRAIN.test(n)) bad.push(`${where}: "${n}" spoils`);
+        if (/\blamps?\b|\blanterns?\b/i.test(n) && where !== 'Charter Shore') bad.push(`${where}: "${n}" uses the Tuning's word`);
+        if (/[{}$!]/.test(n)) bad.push(`${where}: "${n}" has a token or symbol`);
+      }
+    }
+    // No two district or variant names share a word other than a generic one.
+    const owner = new Map<string, string>();
+    for (const dn of districtNames)
+      for (const wd of nameWords(dn)) {
+        if (GENERIC_NAME_WORDS.has(wd)) continue;
+        if (owner.has(wd) && owner.get(wd) !== dn) bad.push(`"${dn}" and "${owner.get(wd)}" share "${wd}"`);
+        owner.set(wd, dn);
+      }
+    // A renamed name replaces one that config still holds (Step 9 may move the fix into config and drop the row).
+    for (const [from, to] of Object.entries(RENAMED_NEIGHBOURHOODS)) {
+      if (!Object.values(DISTRICTS).some((d) => d.neighbourhoods.includes(from))) bad.push(`rename "${from}": no list holds it any more`);
+      if (!C.BANNED_RE.test(from)) bad.push(`rename "${from}" → "${to}": only banned names are renamed`);
+    }
+    expect(bad).toEqual([]);
+  });
+
+  it('keeps "Lamp" and "Lantern" for the Tuning in every new name (§3.7): districts, landmarks, milestones, Sky Lobbies, crowns', () => {
+    const bad: string[] = [];
+    const LAMP = /\blamps?\b|\blanterns?\b/i;
+    const tuningTypes = new Set<BuildingType>(['lampchoir']);
+    for (const d of Object.values(DISTRICTS)) for (const n of [d.name, d.short, ...d.variants.flatMap((v) => [v.name, v.short])]) if (LAMP.test(n)) bad.push(`district ${n}`);
+    for (const t of megacityTypes()) if (LAMP.test(BUILDINGS[t].name) && !tuningTypes.has(t)) bad.push(`building ${BUILDINGS[t].name}`);
+    // 'Thousand Lamps' is today's milestone (STORY.md §1.6) and stays.
+    for (const ms of MILESTONES) if (LAMP.test(ms.title) && ms.title !== 'Thousand Lamps') bad.push(`milestone ${ms.title}`);
+    for (const c of Object.values(CROWNS)) if (LAMP.test(c.name) && c.id !== 'lamp') bad.push(`crown ${c.name}`);
+    expect(CROWNS.lamp.favor).toHaveProperty('tuning');
+    const fake = { seed: 0 } as World;
+    for (let seed = 0; seed < 40; seed++) {
+      fake.seed = seed;
+      for (let i = 0; i < 400; i += 7) {
+        const n = lobbyName(fake, i);
+        if (LAMP.test(n)) bad.push(`Sky Lobby ${n}`);
+      }
+    }
+    expect(bad).toEqual([]);
+  });
+
+  it('keeps the glossary entries of §5.7 and §8.4 verbatim', () => {
+    const text = (term: string) => C.GLOSSARY.find((e) => e.term === term)?.text;
+    expect(text('Skybridge')).toBe('A walkway for people between two tall towers that line up. Anything lower than the bridge passes under. It cuts car trips and lifts land value. Three linked towers form a Sky Lobby.');
+    expect(text('Sky Lobby')).toBe('Three or more towers linked by skybridges. Fewer car trips, higher land value nearby, and visitors who come to walk it.');
+    expect(text('Districts and grants')).toBe(
+      'A District is one 64×64 part of the region. Each chapter brings a land grant: spend it on the City map to annex a district next to yours. After Charter Night, grants keep coming and credits buy more.',
+    );
+    expect(text('The Sunk')).toMatch(/built at its edge/);
+    expect(C.GLOSSARY.length).toBe(22);
+  });
+
+  it('spoiler guard (§8.6): no new copy names the gates, the sealing, the reply or the toll, and nothing before ch4.drain names the pump station', () => {
+    // The rules match what they guard against, and not the words the update chose instead.
+    for (const s of ['the lower gates', 'Gate', 'sealed', 'Seals', 'sealing', 'Complying.', 'eleven thousand', '11,000']) expect(SPOILER_ANY.test(s), s).toBe(true);
+    for (const s of ['Skybridge dark: an anchor dropped below the skyline.', 'Hexgate', 'Old pump hall', 'the drowned wards']) expect(SPOILER_ANY.test(s), s).toBe(false);
+    for (const s of ['Pump Station 6', 'the old pump station', 'PS6', '02:17']) expect(SPOILER_PRE_DRAIN.test(s), s).toBe(true);
+    expect(SPOILER_PRE_DRAIN.test('Old pump hall') || SPOILER_PRE_DRAIN.test('Pump House')).toBe(false);
+
+    const copy = megacityCopy();
+    expect(copy.length).toBeGreaterThan(600);
+    const bad: string[] = [];
+    for (const { where, text, early } of copy) {
+      let hit = SPOILER_ANY.exec(text);
+      if (hit) bad.push(`${where}: "${hit[0]}"`);
+      if (!early) continue;
+      hit = SPOILER_PRE_DRAIN.exec(text) ?? GATES_SECRET.exec(text);
+      if (hit) bad.push(`${where} (shows before ch4.drain): "${hit[0]}"`);
+    }
+    expect(Object.keys(SCANNED_SOURCES).length).toBeGreaterThanOrEqual(15);
+    for (const [file, source] of Object.entries(SCANNED_SOURCES)) {
+      const early = !LATE_SOURCES.some((f) => file.endsWith(f));
+      for (const { line, text } of sourceStrings(file, source)) {
+        let hit = SPOILER_ANY.exec(text);
+        if (hit) bad.push(`${file}:${line}: "${hit[0]}"`);
+        if (!early) continue;
+        hit = SPOILER_PRE_DRAIN.exec(text);
+        if (hit) bad.push(`${file}:${line} (shows before ch4.drain): "${hit[0]}"`);
+      }
+    }
+    expect(bad).toEqual([]);
+  });
+
+  it('spoiler guard (§8.6): §9 copy loaded from WP-8\'s modules (review lines, marks, epilogue cards) takes the universal rule', async () => {
+    const bad: string[] = [];
+    const scan = (where: string, v: unknown) =>
+      eachString(v, where, (s, p) => {
+        const hit = SPOILER_ANY.exec(s);
+        if (hit) bad.push(`${p}: "${hit[0]}"`);
+      });
+    const mods = import.meta.glob('../../src/game/story/content/epilogue.ts');
+    for (const load of Object.values(mods)) {
+      const m = (await load()) as Record<string, unknown>;
+      for (const [k, v] of Object.entries(m)) if (typeof v !== 'function') scan(`epilogue.${k}`, v);
+    }
+    for (const c of C.EPILOGUE_DECK) scan(`card ${c.id}`, c);
+    expect(bad).toEqual([]);
   });
 });
