@@ -94,6 +94,20 @@ function rand(): number {
   return Math.random();
 }
 
+/** Set bits in a 4-bit road mask. */
+function bits(m: number): number {
+  return (m & 1) + ((m >> 1) & 1) + ((m >> 2) & 1) + ((m >> 3) & 1);
+}
+
+/** The direction of the k-th set bit of a 4-bit road mask. */
+function nthBit(m: number, k: number): number {
+  for (let d = 0; d < 4; d++) if (m & (1 << d) && k-- === 0) return d;
+  return 0;
+}
+
+/** Fade levels a figure's alpha snaps to while it fades in or out (each a batched fill per colour). */
+const FADE_STEPS = 4;
+
 /** People out at this time of day: an evening peak, a busy day, a quiet night. */
 export function crowdTime(tod: number): number {
   if (tod >= 0.7 && tod < 0.9) return 1;
@@ -120,6 +134,13 @@ export class Crowds {
   private pv = 0;
   /** Figures drawn last frame (tests, diagnostics). */
   drawn = 0;
+  /** Screen spots and colour × fade buckets of this frame's figures (draw scratch). */
+  private px = new Float32Array(0);
+  private py = new Float32Array(0);
+  private key = new Int16Array(0);
+  private order = new Int16Array(0);
+  private bucketStart = new Int32Array(BODY.length * (FADE_STEPS + 1) + 1);
+  private bucketFill = new Int32Array(BODY.length * (FADE_STEPS + 1));
 
   constructor(private readonly index: StreetIndex) {}
 
@@ -158,7 +179,11 @@ export class Crowds {
     if (this.recount <= 0) {
       this.recount = 0.5;
       this.count(world, b, f);
-      this.list = this.list.filter((a) => world.isRoad(a.x, a.y));
+      // Walkers on a tile that is no longer a road drop (in place: no new array every recount).
+      const list = this.list;
+      let n = 0;
+      for (let i = 0; i < list.length; i++) if (world.isRoad(list[i].x, list[i].y)) list[n++] = list[i];
+      list.length = n;
     }
     this.step(dt, world, b);
     let spawn = Math.min(8, this.target - this.list.length);
@@ -320,12 +345,10 @@ export class Crowds {
     const y = (i / N) | 0;
     const mask = world.roadMask(x, y);
     if (!mask) return;
-    const dirs: number[] = [];
-    for (let d = 0; d < 4; d++) if (mask & (1 << d)) dirs.push(d);
     const n = grp ? 3 + ((rand() * 4) | 0) : 1;
-    const dout = dirs[(rand() * dirs.length) | 0];
-    const others = dirs.filter((d) => d !== dout);
-    const sideIn = others.length ? others[(rand() * others.length) | 0] : dout;
+    const dout = nthBit(mask, (rand() * bits(mask)) | 0);
+    const others = mask & ~(1 << dout);
+    const sideIn = others ? nthBit(others, (rand() * bits(others)) | 0) : dout;
     const t0 = rand();
     const stand = grp ? 8 + rand() * 14 : 0;
     for (let k = 0; k < n && this.list.length < CROWD_CAP; k++) {
@@ -392,56 +415,74 @@ export class Crowds {
   draw(ctx: CanvasRenderingContext2D, night: number, rain: number, time: number) {
     this.drawn = 0;
     const list = this.list;
-    if (!this.on || !list.length) return;
+    const n = list.length;
+    if (!this.on || !n) return;
     this.colours(night);
     ctx.globalCompositeOperation = 'source-over';
     const nc = BODY.length;
-    // Fading figures one by one; the rest batched by colour.
-    for (let i = 0; i < list.length; i++) {
+    // Each figure's screen spot once a frame, and its bucket: colour × fade step (fading figures snap to one of
+    // FADE_STEPS alphas), so the whole crowd costs ≤ nc × (FADE_STEPS + 1) body fills plus the heads.
+    if (this.px.length < n) {
+      const m = Math.max(n, CROWD_CAP);
+      this.px = new Float32Array(m);
+      this.py = new Float32Array(m);
+      this.key = new Int16Array(m);
+      this.order = new Int16Array(m);
+    }
+    const px = this.px;
+    const py = this.py;
+    const key = this.key;
+    for (let i = 0; i < n; i++) {
       const a = list[i];
+      this.pos(a);
+      px[i] = (this.pu - this.pv) * HALF_W;
+      py[i] = (this.pu + this.pv) * HALF_H;
       const alpha = Math.min(1, a.age * 1.5) * (a.dying > 0 ? a.dying / 0.8 : 1);
-      if (alpha >= 0.99 || alpha <= 0.02) continue;
-      ctx.globalAlpha = alpha;
+      const step = alpha >= 0.99 ? FADE_STEPS : Math.round(alpha * FADE_STEPS);
+      key[i] = step <= 0 ? -1 : (a.col % nc) * (FADE_STEPS + 1) + step;
+    }
+    // Counting sort by bucket, then one fill per run of a bucket.
+    const nk = nc * (FADE_STEPS + 1);
+    const start = this.bucketStart;
+    start.fill(0);
+    for (let i = 0; i < n; i++) if (key[i] >= 0) start[key[i] + 1]++;
+    for (let k = 0; k < nk; k++) start[k + 1] += start[k];
+    const order = this.order;
+    const fillAt = this.bucketFill;
+    fillAt.set(start.subarray(0, nk));
+    for (let i = 0; i < n; i++) if (key[i] >= 0) order[fillAt[key[i]]++] = i;
+    for (let k = 0; k < nk; k++) {
+      const a0 = start[k];
+      const a1 = start[k + 1];
+      if (a1 <= a0) continue;
+      const step = k % (FADE_STEPS + 1);
+      ctx.globalAlpha = step / FADE_STEPS;
       ctx.beginPath();
-      this.figure(ctx, a, time);
-      ctx.fillStyle = this.bodyCss[a.col % nc];
+      for (let j = a0; j < a1; j++) {
+        const i = order[j];
+        const a = list[i];
+        const bob = a.stand > 0 ? Math.sin(time * 1.3 + a.col) * 0.15 : Math.abs(Math.sin(time * 9 + a.col)) * 0.35;
+        ctx.rect(px[i] - 1, py[i] - 2 - bob, 2, 2);
+      }
+      ctx.fillStyle = this.bodyCss[(k / (FADE_STEPS + 1)) | 0];
       ctx.fill();
-      this.drawn++;
+      this.drawn += a1 - a0;
     }
     ctx.globalAlpha = 1;
-    for (let c = 0; c < nc; c++) {
-      ctx.beginPath();
-      let any = false;
-      for (let i = 0; i < list.length; i++) {
-        const a = list[i];
-        if (a.col % nc !== c) continue;
-        const alpha = Math.min(1, a.age * 1.5) * (a.dying > 0 ? a.dying / 0.8 : 1);
-        if (alpha < 0.99) continue;
-        this.figure(ctx, a, time);
-        any = true;
-        this.drawn++;
-      }
-      if (any) {
-        ctx.fillStyle = this.bodyCss[c];
-        ctx.fill();
-      }
-    }
     // Heads (or umbrellas in rain), batched.
     if (rain > 0.2) {
       const nu = this.umbCss.length;
       for (let c = 0; c < nu; c++) {
-        ctx.beginPath();
         let any = false;
-        for (let i = 0; i < list.length; i++) {
-          const a = list[i];
-          if (a.col % nu !== c) continue;
-          this.pos(a);
-          const x = (this.pu - this.pv) * HALF_W;
-          const y = (this.pu + this.pv) * HALF_H - 3.1;
+        for (let i = 0; i < n; i++) {
+          if (key[i] < 0 || list[i].col % nu !== c) continue;
+          if (!any) ctx.beginPath();
+          any = true;
+          const x = px[i];
+          const y = py[i] - 3.1;
           ctx.moveTo(x + 1.5, y);
           ctx.arc(x, y, 1.5, 0, Math.PI, true);
           ctx.closePath();
-          any = true;
         }
         if (any) {
           ctx.fillStyle = this.umbCss[c];
@@ -450,24 +491,9 @@ export class Crowds {
       }
     } else {
       ctx.beginPath();
-      for (let i = 0; i < list.length; i++) {
-        const a = list[i];
-        this.pos(a);
-        const x = (this.pu - this.pv) * HALF_W;
-        const y = (this.pu + this.pv) * HALF_H;
-        ctx.rect(x - 0.55, y - 3.1, 1.1, 1.1);
-      }
+      for (let i = 0; i < n; i++) if (key[i] >= 0) ctx.rect(px[i] - 0.55, py[i] - 3.1, 1.1, 1.1);
       ctx.fillStyle = this.headCss;
       ctx.fill();
     }
-  }
-
-  /** Add one figure's body (2 × 2 px, a step bob while walking) to the current path. */
-  private figure(ctx: CanvasRenderingContext2D, a: Walker, time: number) {
-    this.pos(a);
-    const x = (this.pu - this.pv) * HALF_W;
-    const y = (this.pu + this.pv) * HALF_H;
-    const bob = a.stand > 0 ? Math.sin(time * 1.3 + a.col) * 0.15 : Math.abs(Math.sin(time * 9 + a.col)) * 0.35;
-    ctx.rect(x - 1, y - 2 - bob, 2, 2);
   }
 }

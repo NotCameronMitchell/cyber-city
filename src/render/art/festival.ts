@@ -597,11 +597,12 @@ export class Festival {
             const py = (u + v) * HALF_H - LIFT + SAG * 4 * f * (1 - f);
             const c = (seed + j) % WARM.length;
             if (pass === 0) {
-              // One wide glow a span, round its middle lantern (a third of the draws of a glow a lantern).
-              if (j !== 1) continue;
+              // One wide glow every other span, round its middle lantern (a sixth of the draws of a glow a lantern;
+              // the glow is wide enough to warm the spans either side).
+              if (j !== 1 || (k >> 2) & 1) continue;
               const flick = 0.8 + 0.2 * Math.sin(time * 3 + seed * 1.7);
-              ctx.globalAlpha = env * (0.5 + 0.5 * night) * flick;
-              ctx.drawImage(this.glows[c], px - 12, py - 6, 24, 12);
+              ctx.globalAlpha = Math.min(1, env * (0.55 + 0.45 * night) * flick);
+              ctx.drawImage(this.glows[c], px - 17, py - 7.5, 34, 15);
             } else if (c === pass - 1) {
               ctx.rect(px - 1, py - 1.2, 2, 2.6);
               this.drawn++;

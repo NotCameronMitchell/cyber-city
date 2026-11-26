@@ -330,6 +330,8 @@ export class StreetTraffic {
   /** Scratch outputs of pos() / heading() (avoids per-agent allocations). */
   private pu = 0;
   private pv = 0;
+  /** Head and tail lamp spots of the cars at full alpha this frame (x, y head, x, y tail), drawn in two fills. */
+  private lamps: number[] = [];
   private cu = new Float64Array(4);
   private cv = new Float64Array(4);
   private hu = 1;
@@ -736,27 +738,94 @@ export class StreetTraffic {
     const cars = this.cars;
     ctx.globalCompositeOperation = 'source-over';
 
-    // Pass 1: bodies.
+    // Pass 0: the shadows of every car at full alpha in one fill (under every body, so never over one).
+    if (!far) {
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = this.shadowCss;
+      ctx.beginPath();
+      for (let i = 0; i < cars.length; i++) {
+        const a = cars[i];
+        if (Math.min(1, a.age * 2) * (a.dying > 0 ? a.dying / 0.6 : 1) < 0.99) continue;
+        this.footprint(a);
+        this.quad(ctx, 0);
+      }
+      ctx.fill();
+    }
+    // Pass 1: bodies (a fading car brings its own shadow).
     for (let i = 0; i < cars.length; i++) {
       const a = cars[i];
       const alpha = Math.min(1, a.age * 2) * (a.dying > 0 ? a.dying / 0.6 : 1);
       if (alpha <= 0.02) continue;
       ctx.globalAlpha = alpha;
-      this.drawBody(ctx, a, far);
+      this.drawBody(ctx, a, far, alpha < 0.99);
     }
-    // Pass 2: lights.
+    // Pass 2: lights. 'lighter' adds, so the order does not matter: the head and tail lamps of every car at full
+    // alpha go in two fills; the glows stay one draw each.
     if (lights || quality === 'high') {
       ctx.globalCompositeOperation = 'lighter';
       const t = performance.now() / 1000;
+      const lamps = this.lamps;
+      lamps.length = 0;
       for (let i = 0; i < cars.length; i++) {
         const a = cars[i];
         const alpha = Math.min(1, a.age * 2) * (a.dying > 0 ? a.dying / 0.6 : 1);
         if (alpha <= 0.02) continue;
         this.drawLights(ctx, a, far, night, alpha, quality, t);
       }
+      if (lamps.length) {
+        const n = night;
+        for (let pass = 0; pass < 2; pass++) {
+          ctx.globalAlpha = n;
+          ctx.fillStyle = pass === 0 ? (far ? '#fff2c8' : '#fff4d0') : far ? '#ff3050' : '#ff2a48';
+          ctx.beginPath();
+          const hs = pass === 0 ? (far ? 0.6 : 0.7) : far ? 0.5 : 0.6;
+          for (let k = 0; k < lamps.length; k += 4) {
+            const x = lamps[k + pass * 2];
+            const y = lamps[k + pass * 2 + 1];
+            ctx.rect(x - hs, y - hs, hs * 2, hs * 2);
+          }
+          ctx.fill();
+        }
+      }
     }
     ctx.globalAlpha = 1;
     ctx.globalCompositeOperation = 'source-over';
+  }
+
+  /** The car's footprint corners on the road (tile space) → this.cu / this.cv; position and heading as pos/heading. */
+  private footprint(a: Agent) {
+    this.pos(a);
+    this.heading(a);
+    const u = this.pu;
+    const v = this.pv;
+    const L = DIM_L[a.kind];
+    const W = DIM_W[a.kind];
+    const fu = this.hu * L;
+    const fv = this.hv * L;
+    const su = -this.hv * W;
+    const sv = this.hu * W;
+    const cu = this.cu;
+    const cv = this.cv;
+    cu[0] = u + fu - su;
+    cu[1] = u + fu + su;
+    cu[2] = u - fu + su;
+    cu[3] = u - fu - su;
+    cv[0] = v + fv - sv;
+    cv[1] = v + fv + sv;
+    cv[2] = v - fv + sv;
+    cv[3] = v - fv - sv;
+  }
+
+  /** Add the footprint quad, raised by `lift` px, to the current path. */
+  private quad(ctx: CanvasRenderingContext2D, lift: number) {
+    const cu = this.cu;
+    const cv = this.cv;
+    for (let k = 0; k < 4; k++) {
+      const px = (cu[k] - cv[k]) * HALF_W;
+      const py = (cu[k] + cv[k]) * HALF_H - lift;
+      if (k === 0) ctx.moveTo(px, py);
+      else ctx.lineTo(px, py);
+    }
   }
 
   /** Position on the in-tile path → this.pu / this.pv (tile space). */
@@ -799,51 +868,35 @@ export class StreetTraffic {
     }
   }
 
-  private drawBody(ctx: CanvasRenderingContext2D, a: Agent, far: boolean) {
-    this.pos(a);
-    const u = this.pu;
-    const v = this.pv;
-    const x = (u - v) * HALF_W;
-    const y = (u + v) * HALF_H;
+  private drawBody(ctx: CanvasRenderingContext2D, a: Agent, far: boolean, shadow: boolean) {
     const col = this.bodyColour(a);
     if (far) {
+      this.pos(a);
+      const x = (this.pu - this.pv) * HALF_W;
+      const y = (this.pu + this.pv) * HALF_H;
       ctx.fillStyle = col;
       if (a.kind === Kind.Bus) ctx.fillRect(x - 2, y - 2, 4, 2);
       else ctx.fillRect(x - 1.2, y - 1.6, 2.4, 1.6);
       return;
     }
-    this.heading(a);
-    const hu = this.hu;
-    const hv = this.hv;
+    // Footprint corners in tile space: front-left, front-right, back-right, back-left.
+    this.footprint(a);
+    const u = this.pu;
+    const v = this.pv;
     const L = DIM_L[a.kind];
-    const W = DIM_W[a.kind];
+    const fu = this.hu * L;
+    const fv = this.hv * L;
     const H = DIM_H[a.kind];
     const lift = 1.6; // hover height
-    // Footprint corners in tile space: front-left, front-right, back-right, back-left.
-    const fu = hu * L;
-    const fv = hv * L;
-    const su = -hv * W;
-    const sv = hu * W;
     const cu = this.cu;
     const cv = this.cv;
-    cu[0] = u + fu - su;
-    cu[1] = u + fu + su;
-    cu[2] = u - fu + su;
-    cu[3] = u - fu - su;
-    cv[0] = v + fv - sv;
-    cv[1] = v + fv + sv;
-    cv[2] = v - fv + sv;
-    cv[3] = v - fv - sv;
-    // Shadow on the road.
-    ctx.fillStyle = this.shadowCss;
-    ctx.beginPath();
-    for (let k = 0; k < 4; k++) {
-      const px = (cu[k] - cv[k]) * HALF_W;
-      const py = (cu[k] + cv[k]) * HALF_H;
-      if (k === 0) ctx.moveTo(px, py);
-      else ctx.lineTo(px, py);
+    // Shadow on the road (a car at full alpha had its shadow in the batched pass).
+    if (shadow) {
+      ctx.fillStyle = this.shadowCss;
+      ctx.beginPath();
+      this.quad(ctx, 0);
+      ctx.fill();
     }
-    ctx.fill();
     // Body slab (side) then roof.
     ctx.fillStyle = col;
     ctx.beginPath();
@@ -860,12 +913,7 @@ export class StreetTraffic {
     }
     ctx.fill();
     ctx.beginPath();
-    for (let k = 0; k < 4; k++) {
-      const px = (cu[k] - cv[k]) * HALF_W;
-      const py = (cu[k] + cv[k]) * HALF_H - lift - H * 0.6;
-      if (k === 0) ctx.moveTo(px, py);
-      else ctx.lineTo(px, py);
-    }
+    this.quad(ctx, lift + H * 0.6);
     ctx.fill();
     // Cabin / roof highlight (trucks and vans: a cab at the front; buses: the whole roof, a light stripe).
     const cab = a.kind === Kind.Truck || a.kind === Kind.Van;
@@ -902,8 +950,13 @@ export class StreetTraffic {
     const y = (u + v) * HALF_H - 2.4;
     const fx = (hu - hv) * HALF_W * L;
     const fy = (hu + hv) * HALF_H * L;
+    const steady = alpha >= 0.99;
     if (far) {
       if (night < 0.3) return;
+      if (steady) {
+        this.lamps.push(x + fx, y + fy, x - fx, y - fy);
+        return;
+      }
       ctx.globalAlpha = alpha * night;
       ctx.fillStyle = '#fff2c8';
       ctx.fillRect(x + fx - 0.6, y + fy - 0.6, 1.2, 1.2);
@@ -926,11 +979,14 @@ export class StreetTraffic {
         ctx.drawImage(this.headGlow!, x + fx - 1.6, y + fy + 0.6, 3.2, 11);
         ctx.drawImage(this.tailGlow!, x - fx - 1.4, y - fy + 0.6, 2.8, 8);
       }
-      ctx.globalAlpha = alpha * n;
-      ctx.fillStyle = '#fff4d0';
-      ctx.fillRect(x + fx - 0.7, y + fy - 0.7, 1.4, 1.4);
-      ctx.fillStyle = '#ff2a48';
-      ctx.fillRect(x - fx - 0.6, y - fy - 0.6, 1.2, 1.2);
+      if (steady) this.lamps.push(x + fx, y + fy, x - fx, y - fy);
+      else {
+        ctx.globalAlpha = alpha * n;
+        ctx.fillStyle = '#fff4d0';
+        ctx.fillRect(x + fx - 0.7, y + fy - 0.7, 1.4, 1.4);
+        ctx.fillStyle = '#ff2a48';
+        ctx.fillRect(x - fx - 0.6, y - fy - 0.6, 1.2, 1.2);
+      }
       if (quality === 'high') {
         ctx.globalAlpha = alpha * n * 0.5;
         ctx.drawImage(this.tailGlow!, x - fx - 3, y - fy - 3, 6, 6);

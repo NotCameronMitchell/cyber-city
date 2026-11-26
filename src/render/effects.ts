@@ -119,7 +119,8 @@ export class Effects {
   readonly ms = { update: 0, ground: 0, sky: 0, screen: 0 };
   /**
    * The §6.4 items' ms this frame, update and draws together (§11.1: crowds 0.6, weather 0.5, boats 0.2, City life
-   * 0.4): weather is the rain, gloom, fog bands and haze, the ripples, reflections and fog patches. Reset by update().
+   * 0.4): weather is the rain, gloom, fog bands and haze, the ripples, reflections and fog patches (not the vignette
+   * and scanlines, which predate it and draw with the weather off). Reset by update().
    */
   readonly itemMs = { crowds: 0, weather: 0, boats: 0, cityLife: 0 };
 
@@ -321,7 +322,8 @@ export class Effects {
     const t0 = performance.now();
     this.screen.draw(ctx, width, height, env.night, env.quality);
     this.ms.screen = performance.now() - t0;
-    this.itemMs.weather += this.ms.screen;
+    // The weather item leaves out the vignette and scanlines (the game's base look, drawn with the weather off too).
+    this.itemMs.weather += Math.max(0, this.ms.screen - this.screen.baseMs);
   }
 
   /**

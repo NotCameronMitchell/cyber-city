@@ -62,6 +62,8 @@ export interface CityLifeDef {
   line: string;
   /** Core (4) or optional (2) in §6.4.1. */
   core: boolean;
+  /** Noise v within Chebyshev r of the Arena while daysLeft > 0 (arena night; the sim's noise pass reads arenaNightNoise). */
+  noise?: { v: number; r: number };
 }
 
 /** The six happenings (§6.4.1, Appendix B). */
@@ -97,6 +99,7 @@ export const CITY_LIFE_DEFS: Record<CityEventId, CityLifeDef> = {
     demandCom: 0,
     line: 'Match night at the Arc Arena. The stations are full and the streets are louder.',
     core: true,
+    noise: { v: 0.5, r: 6 },
   },
   kiteday: {
     sec: 120,
@@ -115,6 +118,15 @@ export const CITY_LIFE_DEFS: Record<CityEventId, CityLifeDef> = {
     core: false,
   },
 };
+
+/**
+ * The arena night's noise term (§6.3 Arc Arena: "noise 0.5 r6 only during an event"; §6.4.1): the def's noise while an
+ * arena night's gameplay terms run (daysLeft > 0), else null. The sim's noise pass stamps it around the Arena.
+ */
+export function arenaNightNoise(world: World): { v: number; r: number } | null {
+  const ev = world.cityEvent;
+  return ev && ev.id === 'arenanight' && ev.daysLeft > 0 ? (CITY_LIFE_DEFS.arenanight.noise ?? null) : null;
+}
 
 /** Thresholds of the "When" column (§6.4.1). */
 export const CITY_LIFE_RULES = {
@@ -556,7 +568,7 @@ export class CityEvents {
 
   private start(world: World, id: CityEventId, p: Place): void {
     const def = CITY_LIFE_DEFS[id];
-    const terms = def.visitors !== 0 || def.approval !== 0 || def.demandCom !== 0;
+    const terms = def.visitors !== 0 || def.approval !== 0 || def.demandCom !== 0 || !!def.noise;
     const ev: CityEventState = {
       id,
       until: def.sec,

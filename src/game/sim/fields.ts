@@ -35,6 +35,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { blankStats, buildingStats } from '../buildingStats';
+import { arenaNightNoise } from '../cityEvents';
 import { AIRPORT, BUILDINGS, NOISE, ROAD_FLOW, SEAPORT, SKYWAY, SLICE, WEALTH } from '../config';
 import { ZoneType, type Building, type ServiceEffect } from '../types';
 import type { World } from '../world';
@@ -901,6 +902,7 @@ export class FieldSystem {
     for (const b of g.buildings) {
       const nd = NOISE_OF[b.type];
       if (nd && b.offline <= 0 && (b.buildDays ?? 0) <= 0) this.stamp(b, nd.r, 0, nd.v, out, w0);
+      if (b.type === 'arena' && b.offline <= 0) { const an = arenaNightNoise(world); if (an) this.stamp(b, an.r, 0, an.v, out, w0); }
       if (b.offline > 0 || !b.powered) continue;
       if (b.type === 'airport') this.stamp(b, HUB.hubFade, 1, 1, hub, w0);
       else if (b.type === 'seaport') this.stamp(b, SEA_R, 2, 1, sea, w0);

@@ -130,6 +130,8 @@ export class ScreenFx {
   /** Smoothed fog 0..1 (fog mornings, storms) and haze alpha. */
   fog = 0;
   haze = 0;
+  /** Ms of the last draw spent on the vignette and scanlines (the base look, not weather; §11.1 item timing). */
+  baseMs = 0;
   private level: WeatherLevel = 1;
   private steep = 0;
   private flash = 0;
@@ -275,7 +277,9 @@ export class ScreenFx {
       ctx.fillRect(0, 0, w, h);
       ctx.globalCompositeOperation = 'source-over';
     }
-    // Vignette + colour grade.
+    // Vignette + colour grade, then scanlines: the game's base look (with or without weather), timed apart so the
+    // weather item of the §11.1 life budget counts only the weather (baseMs).
+    const tb = performance.now();
     if (this.vignette) {
       ctx.globalAlpha = 0.65 + 0.35 * night;
       ctx.drawImage(this.vignette, 0, 0, w, h);
@@ -287,6 +291,7 @@ export class ScreenFx {
       ctx.fillRect(0, 0, w, h);
     }
     ctx.globalAlpha = 1;
+    this.baseMs = performance.now() - tb;
   }
 
   private init(ctx: CanvasRenderingContext2D) {

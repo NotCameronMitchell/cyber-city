@@ -2,13 +2,14 @@
 // none in the first 600 s, never two at once, exactly one ticker line each; gameplay terms last ≤ 60 sim days at
 // any speed (the sim counts them down per day), then the visuals continue alone.
 import { describe, expect, it } from 'vitest';
-import { CityEvents, CITY_LIFE_DEFS, CITY_LIFE_RULES, LandSurvey, longestAvenue, placeName, SURVEY_TILES, type CityEventsHost } from '../src/game/cityEvents';
+import { arenaNightNoise, CityEvents, CITY_LIFE_DEFS, CITY_LIFE_RULES, LandSurvey, longestAvenue, placeName, SURVEY_TILES, type CityEventsHost } from '../src/game/cityEvents';
 import { CITY_LIFE, DAY_CYCLE_SECONDS, DISTRICTS } from '../src/game/config';
 import { slotRect } from '../src/game/districts/slots';
 import { DEFAULT_SETTINGS, Game } from '../src/game/game';
 import { RoadKind, type CityEventId, type Settings } from '../src/game/types';
 import type { World } from '../src/game/world';
 import { cachedMegacity, megacitySim } from './megacity-fixture';
+import { flatWorld, makeSim } from './helpers';
 
 /** A fake Game for City life: the world, settings, a speed and the visual daylight on a fake clock. */
 class FakeHost implements CityEventsHost {
@@ -214,6 +215,34 @@ describe('the per-sim-day cap (§6.4.1): terms last ≤ 60 sim days at any speed
     const again = approval();
     expect(again - off).toBeCloseTo(Math.min(1, 100 - off), 6);
     void on;
+  });
+
+  it("arena night: noise 0.5 within r6 of the Arena while its terms run, none before or after (§6.3, §6.4.1)", () => {
+    const w = flatWorld(31);
+    const arena = w.addBuilding('arena', 30, 30)!; // footprint 30..33
+    expect(arena).not.toBeNull();
+    const N = w.N;
+    const noise = (x: number, y: number) => w.fields.noise[y * N + x];
+    const sim = makeSim(w);
+    expect(noise(31, 31)).toBe(0);
+    expect(arenaNightNoise(w)).toBeNull();
+    const def = CITY_LIFE_DEFS.arenanight;
+    expect(def.noise).toEqual({ v: 0.5, r: 6 });
+    w.cityEvent = { id: 'arenanight', until: def.sec, daysLeft: CITY_LIFE.capDays, visitors: def.visitors, approval: 0, demandCom: 0 };
+    expect(arenaNightNoise(w)).toEqual(def.noise);
+    sim.recomputeAll();
+    expect(noise(31, 31)).toBeCloseTo(0.5, 5);
+    for (const k of [1, 3, 6]) expect(noise(33 + k, 31)).toBeCloseTo(0.5 * (1 - k / 7), 5);
+    expect(noise(33 + 7, 31)).toBe(0);
+    // Once the sim has counted the terms down, the Arena is quiet again (the visuals may still run).
+    w.cityEvent.daysLeft = 0;
+    expect(arenaNightNoise(w)).toBeNull();
+    sim.recomputeAll();
+    expect(noise(31, 31)).toBe(0);
+    // Other happenings make no noise.
+    w.cityEvent = { id: 'parade', until: 90, daysLeft: CITY_LIFE.capDays, visitors: 0, approval: 1, demandCom: 0 };
+    sim.recomputeAll();
+    expect(noise(31, 31)).toBe(0);
   });
 
   it.each([1, 3])('in a running Game at speed %i: the terms apply for 60 sim days, the visuals run on', async (speed) => {
