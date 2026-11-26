@@ -312,6 +312,8 @@ export class StoryDirector implements EffectHost {
   private marksDirty = true;
   private marksAt = -1;
   private marksSec = 0;
+  /** localsKey() at the last local layer write (onMonth skips an unchanged rewrite). */
+  private localsAt = '';
   /** COMMS and Silt Log rows, rebuilt only when the log changes (stable identity for the UI). */
   private commsMemo: { key: string; rows: StoryView['comms'] } | null = null;
   private logsMemo: { key: string; rows: StoryView['logs'] } | null = null;
@@ -494,8 +496,11 @@ export class StoryDirector implements EffectHost {
     this.pulses();
     // 5. Trace: −1 if nothing raised it this month, then traceMonthly.
     this.monthlyTrace();
-    // 6. Mods, layers, ledger.
-    this.writeLocalLayer();
+    // 6. Mods, layers, ledger. The local layer part is rewritten only when its inputs changed since the last write
+    //    (MEGACITY §11.1 month-end frame: at 25 districts the rewrite is ≈ 2 ms of the month's story parts); the one
+    //    compose of the month (turf.update left its merge to this step) runs either way.
+    if (this.localsKey() !== this.localsAt) this.writeLocalLayer();
+    else composeLayers(w);
     this.refreshMods();
     this.refreshLedger();
     this.outages();
@@ -1808,9 +1813,19 @@ export class StoryDirector implements EffectHost {
    * kept after a swap): the Glass Smile +0.04 r14, the Record Tower +0.03 r12. Derived: they ride along for this one
    * write and are never saved.
    */
+  /** What the local layer part is written from: the live locals and the ending landmarks' land value terms. */
+  private localsKey(): string {
+    const w = this.world;
+    let k = `${w.area}`;
+    for (const l of w.story.locals) if (l.until < 0 || l.until > w.tick) k += `|${l.id}:${l.x},${l.y},${l.r},${l.crimeAdd},${l.lvAdd}`;
+    for (const l of this.landmarks()) if (l.type === 'glasssmile' || l.type === 'recordtower') k += `|${l.type}:${l.b.x},${l.b.y}`;
+    return k;
+  }
+
   private writeLocalLayer(): void {
     const w = this.world;
     const st = w.story;
+    this.localsAt = this.localsKey();
     let n = 0;
     for (const l of this.landmarks()) {
       const lv = l.type === 'glasssmile' ? 0.04 : l.type === 'recordtower' ? 0.03 : 0;
