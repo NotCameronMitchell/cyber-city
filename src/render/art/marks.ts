@@ -36,7 +36,7 @@ import { isActive } from '../../game/story/factions';
 import type { FactionId, Mark, Marks } from '../../game/story/types';
 import { RoadKind, Terrain, ZoneType } from '../../game/types';
 import type { World } from '../../game/world';
-import type { ArtEnv } from '../buildings';
+import { serviceBuildingHeight, type ArtEnv } from '../buildings';
 import { HALF_H, HALF_W } from '../camera';
 import type { Rect } from '../ground';
 import { css, glowSprite, type RGB } from '../palette';
@@ -225,13 +225,23 @@ function hidden(world: World, x: number, y: number, lift: number): boolean {
   return false;
 }
 
+/** A tile's drawn top: a building's art height (a mast is taller than its sim height), else heights.ts'. */
+function drawnTop(world: World, x: number, y: number): number {
+  const t = world.tileAt(x, y);
+  if (t && t.buildingId >= 0) {
+    const b = world.buildings.get(t.buildingId);
+    if (b) return Math.max(heightOf(world, x, y), serviceBuildingHeight(b.type, b));
+  }
+  return heightOf(world, x, y);
+}
+
 /** The roof height of the tallest tile of a mark's rect (the host a kite flies over), and that tile. */
 function hostTop(world: World, m: Mark): { x: number; y: number; h: number } {
-  let best = { x: m.x, y: m.y, h: heightOf(world, m.x, m.y) };
+  let best = { x: m.x, y: m.y, h: drawnTop(world, m.x, m.y) };
   if (m.w * m.h > 1)
     for (let y = m.y; y < m.y + m.h; y++)
       for (let x = m.x; x < m.x + m.w; x++) {
-        const h = heightOf(world, x, y);
+        const h = drawnTop(world, x, y);
         if (h > best.h) best = { x, y, h };
       }
   return best;
@@ -627,19 +637,23 @@ function skyMark(ctx: CanvasRenderingContext2D, world: World, m: Mark, env: ArtE
       // lark's kite over the tallest building on Kites turf; by night its tail blinks. A second, smaller one after ep.kite.
       const h = hostTop(world, m);
       const cx = wx(h.x + 0.5, h.y + 0.5);
-      const top = wy(h.x + 0.5, h.y + 0.5, h.h);
-      if (hidden(world, h.x, h.y, h.h + 30)) return;
+      const roof = wy(h.x + 0.5, h.y + 0.5, h.h);
+      // It flies above the local skyline (the towers in front of its host included), on a long string from the roof.
+      let sky = h.h;
+      for (let d = 1; d <= 5; d++)
+        for (let e = -1; e <= 1; e++) sky = Math.max(sky, heightOf(world, h.x + d + e, h.y + d - e) - 2 * d * HALF_H);
+      const top = Math.min(roof, wy(h.x + 0.5, h.y + 0.5, sky));
       const spr = mothKite();
       const n2 = arg === '2' ? 2 : 1;
       for (let k = 0; k < n2; k++) {
-        const s = k ? 0.65 : 1;
+        const s = k ? 0.9 : 1.4;
         const kx = cx + (k ? -26 : 18) + Math.sin(t * 0.7 + k * 2) * 5;
         const ky = top - (k ? 34 : 46) + Math.sin(t * 1.1 + k) * 3;
         ctx.strokeStyle = css([235, 230, 245], 0.55);
         ctx.lineWidth = 0.5;
         ctx.beginPath();
-        ctx.moveTo(cx, top);
-        ctx.quadraticCurveTo(cx + (kx - cx) * 0.3, top - 6, kx, ky + 9 * s);
+        ctx.moveTo(cx, roof);
+        ctx.quadraticCurveTo(cx + (kx - cx) * 0.3, (roof + top) / 2 - 6, kx, ky + 9 * s);
         ctx.stroke();
         if (spr) ctx.drawImage(spr, kx - 14 * s, ky - 11 * s, 28 * s, 22 * s);
         // The tail.
