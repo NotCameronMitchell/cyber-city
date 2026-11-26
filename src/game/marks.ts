@@ -43,6 +43,19 @@ const BODY_SALT = 0x5c1e9;
 /** Ending names inside a plaque line ("Built under the Low Crown."), as inspect's notes write them. */
 const ENDING_NAMES: Record<EndingId, string> = { ironwork: 'Ironwork', pearl: 'Pearlescence', lowcrown: 'the Low Crown', ledger: 'Open Ledger', quiet: 'the Quiet Hand' };
 const LANDMARK_OF: Record<EndingId, BuildingType> = { ironwork: 'gantry', pearl: 'glasssmile', lowcrown: 'breadpier', ledger: 'recordtower', quiet: 'stillsquare' };
+const ENDING_ORDER: readonly EndingId[] = ['ironwork', 'pearl', 'lowcrown', 'ledger', 'quiet'];
+/** The ten landmarks of §6.3 (a type still hidden in this build does not count) for the sandbox's landmark set (§3.8). */
+export const SET_LANDMARKS: readonly BuildingType[] = ['charterhall', 'hexworks', 'pearlatrium', 'kitemast', 'beacon', 'arena', 'halolookout', 'hullhouse', 'lampchoir', 'terminal'];
+
+/** The sandbox's landmark set (§3.8, §9.2): the landmarks and ending landmarks standing, of those this build has. */
+export interface LandmarkSet {
+  landmarks: number;
+  of: number;
+  endings: number;
+  endingsOf: number;
+  /** Every landmark of the set and all five ending landmarks stand. */
+  done: boolean;
+}
 
 /** One band of [0, 1): bodies whose hash falls below `end` (and above the band before) draw in `lang`. */
 interface Band {
@@ -74,6 +87,8 @@ interface Derived {
   tagline: string | null;
   marks: Marks;
   sig: string;
+  /** The sandbox's landmark set as it stands (§3.8, §9.2). */
+  set: LandmarkSet;
 }
 
 const derived = new WeakMap<World, Derived>();
@@ -224,6 +239,43 @@ export function markTitle(m: Mark): string {
   if (m.id === 'landmark.stillsquare' && m.decal === 'landmark:lamp') return 'The Lamp Square';
   if (m.id.startsWith('landmark.')) return BUILDINGS[m.id.slice(9) as BuildingType]?.name ?? 'Landmark';
   return MARK_COPY[m.id]?.title ?? m.id;
+}
+
+/** How an ending landmark reads (§9.2): the ending it was built under (Lamplight for the Quiet Hand held as Lamplight), dormant, the Lamp Square. */
+function landmarkState(world: World, e: EndingId): { held: string; dormant: boolean; lamp: boolean } {
+  const st = world.story;
+  const dormant = st.ending !== e;
+  let held = ENDING_NAMES[e];
+  if (e === 'quiet' && (dormant ? [...historyOf(st, world.tick)].reverse().find((h) => h.id === 'quiet')?.variant : st.endingVariant) === 'lamplight') held = 'Lamplight';
+  return { held, dormant, lamp: !dormant && e === 'quiet' && st.endingVariant === 'lamplight' };
+}
+
+/**
+ * Inspect's name and note for an ending landmark (game.ts, §9.2), or null for any other type: while Lamplight holds the
+ * Still Square is "The Lamp Square", and the note names the ending it was built under ("Built under Lamplight").
+ */
+export function landmarkInspect(world: World, type: BuildingType): { title: string | null; built: string } | null {
+  const e = ENDING_ORDER.find((k) => LANDMARK_OF[k] === type);
+  if (!e) return null;
+  const s = landmarkState(world, e);
+  return { title: s.lamp ? 'The Lamp Square' : null, built: `Built under ${s.held}` };
+}
+
+function countSet(world: World): LandmarkSet {
+  const have = new Set<BuildingType>();
+  for (const b of world.buildings.values()) have.add(b.type);
+  const counted = SET_LANDMARKS.filter((t) => !BUILDINGS[t]?.hidden);
+  const landmarks = counted.filter((t) => have.has(t)).length;
+  const endings = ENDING_ORDER.filter((e) => have.has(LANDMARK_OF[e])).length;
+  return { landmarks, of: counted.length, endings, endingsOf: ENDING_ORDER.length, done: landmarks === counted.length && endings === ENDING_ORDER.length };
+}
+
+/**
+ * The sandbox's landmark set (§3.8, §9.2: "all ten landmarks and, through Charter Reviews, all five ending landmarks"),
+ * as the last deriveMarks counted it (the Keepsakes list, the director's one ticker line when it is whole).
+ */
+export function landmarkSet(world: World): LandmarkSet {
+  return derived.get(world)?.set ?? countSet(world);
 }
 
 /** Make the renderer's world the one skylineLang and the names read (art/marks.ts, once a frame). */
@@ -520,17 +572,14 @@ export function deriveMarks(world: World): Marks {
 
   // The ending landmarks the city has built (§9.2): built under their ending, dormant while another is current.
   // The Quiet Hand's landmark names Lamplight when the city last held the Quiet Hand as Lamplight.
-  const hist = historyOf(st, world.tick);
-  for (const e of ['ironwork', 'pearl', 'lowcrown', 'ledger', 'quiet'] as EndingId[]) {
+  for (const e of ENDING_ORDER) {
     const b = oldestOf(world, LANDMARK_OF[e]);
     if (!b) continue;
-    const dormant = st.ending !== e;
-    let held = ENDING_NAMES[e];
-    if (e === 'quiet' && (dormant ? [...hist].reverse().find((h) => h.id === 'quiet')?.variant : st.endingVariant) === 'lamplight') held = 'Lamplight';
+    const { held, dormant, lamp } = landmarkState(world, e);
     const plaque = dormant ? `Built under ${held}. Dormant while another ending holds.` : `Built under ${held}.`;
-    const lamp = !dormant && e === 'quiet' && st.endingVariant === 'lamplight';
     add(`landmark.${LANDMARK_OF[e]}`, rectOf(b), dormant ? 'landmark:past' : lamp ? 'landmark:lamp' : 'landmark', plaque);
   }
+  const set = countSet(world);
 
   // Version: bumps when the set (or a name, or the tagline) changes.
   const prev = derived.get(world);
@@ -555,6 +604,7 @@ export function deriveMarks(world: World): Marks {
     tagline,
     marks,
     sig,
+    set,
   };
   refreshBands(d);
   derived.set(world, d);

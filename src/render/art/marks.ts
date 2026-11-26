@@ -40,6 +40,7 @@ import { serviceBuildingHeight, type ArtEnv } from '../buildings';
 import { HALF_H, HALF_W } from '../camera';
 import type { Rect } from '../ground';
 import { css, glowSprite, type RGB } from '../palette';
+import { noteView } from './landmarkLive';
 import { sigilSprite } from './sigils';
 
 const LIME: RGB = [182, 255, 46];
@@ -984,6 +985,7 @@ export function draw(ctx: CanvasRenderingContext2D, world: World, marks: Marks, 
   MARKS_STATS.decals = 0;
   MARKS_STATS.skyDecals = 0;
   clock = env.time;
+  noteView(ctx, world, tiles, env.zoom);
   if (env.zoom < MARKS_MIN_ZOOM) return;
   const st = world.story;
   const p = env.zoom >= PROPS_MIN_ZOOM ? listProps(world, tiles, env.quality) : null;

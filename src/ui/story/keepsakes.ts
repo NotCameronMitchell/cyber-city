@@ -6,7 +6,8 @@
 // list only follows the derived marks (rebuilt when their version changes).
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { markTitle } from '../../game/marks';
+import { landmarkSet, markTitle, type LandmarkSet } from '../../game/marks';
+import { LANDMARK_SET_COPY } from '../../game/story/content/epilogue';
 import type { Mark } from '../../game/story/types';
 import { tileCenterWorld } from '../../render/camera';
 import { highlight } from '../../render/highlight';
@@ -36,8 +37,16 @@ function injectStyle(): void {
 .cc-keep-title { font-size: 13px; letter-spacing: 0.04em; color: var(--cc-ink); overflow-wrap: anywhere; }
 .cc-keep-plaque { font-style: italic; color: #f2d89a; overflow-wrap: anywhere; }
 .cc-keep-show { flex: none; min-width: 64px; min-height: 44px; padding: 0 12px; font-size: 13px; }
+.cc-keep-set { margin: 2px 0 0; padding: 8px 10px; font-size: 12px; line-height: 17px; color: var(--cc-ink-2); border: 1px solid rgba(242, 216, 154, 0.25); }
+.cc-keep-set.is-done { color: #f2d89a; border-color: rgba(242, 216, 154, 0.6); }
 `;
   document.head.append(s);
+}
+
+/** The landmark set's line (§3.8): how much of it stands, or that it is whole. */
+export function setLine(s: LandmarkSet): string {
+  if (s.done) return LANDMARK_SET_COPY.whole;
+  return LANDMARK_SET_COPY.progress.replace('{n}', String(s.landmarks)).replace('{of}', String(s.of)).replace('{e}', String(s.endings)).replace('{eOf}', String(s.endingsOf));
 }
 
 export class Keepsakes {
@@ -68,13 +77,16 @@ export class Keepsakes {
   sync(): void {
     const ctx = this.ctx;
     if (!ctx) return;
+    const w = ctx.game.world;
     const marks = ctx.game.story.visual.marks;
     const list = marks.list.filter((m) => !!m.plaque);
-    const key = `${marks.version}|${list.length}|${ctx.game.world.seed}`;
+    // After the ending, the sandbox's landmark set (§3.8, §9.2): what stands of it, as one line under the list.
+    const set = w.story.ending ? landmarkSet(w) : null;
+    const key = `${marks.version}|${list.length}|${w.seed}|${set ? `${set.landmarks}/${set.of}:${set.endings}/${set.endingsOf}` : ''}`;
     if (key === this.key) return;
     this.key = key;
     this.shown = list;
-    if (!list.length) {
+    if (!list.length && !set) {
       this.el.innerHTML = '';
       setHidden(this.el, true);
       return;
@@ -88,6 +100,7 @@ export class Keepsakes {
         `<button class="cc-btn cc-keep-show" type="button" data-mark="${i}" aria-label="Show ${esc(title)} on the map">Show</button></li>`;
     });
     s += '</ol>';
+    if (set) s += `<p class="cc-keep-set${set.done ? ' is-done' : ''}">${esc(setLine(set))}</p>`;
     this.el.innerHTML = s;
     setHidden(this.el, false);
   }

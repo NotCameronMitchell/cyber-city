@@ -838,3 +838,218 @@ describe('§9.2 street look: each ending draws its props on the streets in view,
     }
   });
 });
+
+// ── WP-8c: the Lamp Square in inspect, the landmark set, the landmarks' live extras, the sky walkers' note ──
+
+describe('§9.2 the Lamp Square in inspect, and the ending each landmark was built under', () => {
+  const texts = (g: Game, x: number, y: number) => (g.getTileInfo(x, y)!.notes ?? []).map((n) => n.text);
+  it('the Still Square reads "The Lamp Square" / "Built under Lamplight" while Lamplight holds, and remembers it after a swap', () => {
+    const g = gameOn(city.w);
+    const w = g.world;
+    const st = w.story;
+    st.chapter = 7;
+    st.phase = 'ended';
+    st.ending = 'quiet';
+    st.endingVariant = 'lamplight';
+    st.endingTick = w.tick;
+    st.endingHistory = [{ id: 'quiet', variant: 'lamplight', from: w.tick, to: null }];
+    g.story.markDirty();
+    const site = freeSquare(w, startSlotOf(w), 3, new Set())!;
+    const sq = w.addBuilding('stillsquare', site.x, site.y)!;
+    expect(g.getTileInfo(sq.x, sq.y)!.title).toBe('The Lamp Square');
+    expect(texts(g, sq.x, sq.y)).toContain('Built under Lamplight');
+    expect(texts(g, sq.x, sq.y)).not.toContain('Dormant: its ending is not current');
+    // The plain Quiet Hand: the Still Square.
+    st.endingVariant = null;
+    st.endingHistory = [{ id: 'quiet', variant: null, from: w.tick, to: null }];
+    expect(g.getTileInfo(sq.x, sq.y)!.title).toBe('The Still Square');
+    expect(texts(g, sq.x, sq.y)).toContain('Built under the Quiet Hand');
+    // Lamplight, then a review swap to Open Ledger: the square stands dormant and remembers Lamplight.
+    st.endingHistory = [
+      { id: 'quiet', variant: 'lamplight', from: 0, to: w.tick },
+      { id: 'ledger', variant: null, from: w.tick, to: null },
+    ];
+    st.ending = 'ledger';
+    st.endingVariant = null;
+    expect(g.getTileInfo(sq.x, sq.y)!.title).toBe('The Still Square');
+    expect(texts(g, sq.x, sq.y)).toEqual(expect.arrayContaining(['Built under Lamplight', 'Dormant: its ending is not current']));
+    // The other ending landmarks keep inspect's names.
+    const gs = freeSquare(w, startSlotOf(w), 4, new Set([...Array(9)].map((_, k) => (sq.y + ((k / 3) | 0)) * w.N + sq.x + (k % 3))))!;
+    const gantry = w.addBuilding('gantry', gs.x, gs.y)!;
+    expect(g.getTileInfo(gantry.x, gantry.y)!.title).toBe('Foreman\'s Gantry');
+    expect(texts(g, gantry.x, gantry.y)).toEqual(expect.arrayContaining(['Built under Ironwork', 'Dormant: its ending is not current']));
+  });
+});
+
+describe('§3.8 / §9.2 the landmark set: counted in Keepsakes after the ending; whole, one ticker line and a late goal\'s pay, once', () => {
+  it('every landmark of this build and all five ending landmarks', async () => {
+    const { SET_LANDMARKS, landmarkSet } = await import('../src/game/marks');
+    const { goalPay } = await import('../src/game/districts/goals');
+    const { setLine } = await import('../src/ui/story/keepsakes');
+    const { BUILDINGS } = await import('../src/game/config');
+    const g = gameOn(city.w);
+    const w = g.world;
+    const st = w.story;
+    const counted = SET_LANDMARKS.filter((t) => !BUILDINGS[t].hidden);
+    expect(counted.length).toBeGreaterThanOrEqual(7);
+    const used = new Set<number>();
+    const place = (type: BuildingType) => {
+      if ([...w.buildings.values()].some((b) => b.type === type)) return;
+      const size = BUILDINGS[type].size;
+      for (let s = 0; s < 9; s++) {
+        const at = freeSquare(w, s, size, used);
+        if (!at) continue;
+        w.addBuilding(type, at.x, at.y);
+        for (let dy = -1; dy <= size; dy++) for (let dx = -1; dx <= size; dx++) used.add((at.y + dy) * w.N + at.x + dx);
+        return;
+      }
+      throw new Error(`no room for ${type}`);
+    };
+    for (const t of counted) place(t);
+    for (const t of ['gantry', 'glasssmile', 'breadpier', 'recordtower'] as BuildingType[]) place(t);
+    // Four of five ending landmarks: not whole.
+    deriveMarks(w);
+    let set = landmarkSet(w);
+    expect(set).toMatchObject({ landmarks: counted.length, of: counted.length, endings: 4, endingsOf: 5, done: false });
+    expect(setLine(set)).toBe(`The landmark set: ${counted.length} of ${counted.length} landmarks, 4 of 5 ending landmarks. A Charter Review can open another ending's landmark.`);
+    place('stillsquare');
+    // Before an ending the director says nothing.
+    const news0 = w.news.length;
+    const funds0 = w.funds;
+    g.story.markDirty();
+    g.story.update(1 / 60, false);
+    expect(landmarkSet(w).done).toBe(true);
+    expect(st.flags.landmarkSet).toBeUndefined();
+    expect(w.funds).toBe(funds0);
+    // After the ending: once.
+    st.chapter = 7;
+    st.phase = 'ended';
+    st.ending = 'ledger';
+    st.endingTick = w.tick;
+    st.endingHistory = [{ id: 'ledger', variant: null, from: w.tick, to: null }];
+    const pay = goalPay(w, 0);
+    expect(pay).toBeGreaterThan(0);
+    g.story.markDirty();
+    g.story.update(1 / 60, false);
+    expect(st.flags.landmarkSet).toBe(true);
+    expect(w.funds).toBe(funds0 + pay);
+    const lines = w.news.slice(news0).filter((n) => n.text.startsWith('The landmark set is whole'));
+    expect(lines.map((n) => n.text)).toEqual([`The landmark set is whole: every landmark stands, and all five ending landmarks with them. +${pay.toLocaleString('en-US')} CR`]);
+    expect(lines[0].kind).toBe('good');
+    g.story.markDirty();
+    g.story.update(1 / 60, false);
+    expect(w.news.filter((n) => n.text.startsWith('The landmark set is whole')).length).toBe(1);
+    expect(w.funds).toBe(funds0 + pay);
+    set = landmarkSet(w);
+    expect(setLine(set)).toBe('The landmark set is whole: every landmark stands, and all five ending landmarks with them.');
+    // The flag is an ordinary saved flag.
+    const back = gameOn(w);
+    expect(back.world.story.flags.landmarkSet).toBe(true);
+  });
+});
+
+describe('§9.2 optional: the Glass Smile follows the camera, the Record Tower scrolls the city\'s real budget lines', () => {
+  it('the smile\'s gaze eases toward the middle of the view, a little each frame', async () => {
+    const { installCanvasMock, mockContext, mockStats } = await import('./canvas-mock');
+    const restore = installCanvasMock();
+    try {
+      const live = await import('../src/render/art/landmarkLive');
+      const w = new World(77, 'Smile Test', undefined, 3);
+      const ctx = mockContext();
+      const W = ctx.canvas.width;
+      const H = ctx.canvas.height;
+      const tiles = { x0: 0, y0: 0, x1: 10, y1: 10 };
+      // The view's centre 300 px right of the sphere: the face turns right.
+      ctx.setTransform(1, 0, 0, 1, W / 2 - 300, H / 2);
+      live.noteView(ctx, w, tiles, 1);
+      expect(live.smileFace(ctx, 0, 0, 38, [255, 198, 241], 1, 10)).toBe(true);
+      const right = live.smileGaze();
+      expect(right.x).toBeGreaterThan(5);
+      expect(Math.abs(right.y)).toBeLessThan(1);
+      // The view moves left of it: one frame later the face has only begun to turn; three seconds later it looks left.
+      ctx.setTransform(1, 0, 0, 1, W / 2 + 300, H / 2);
+      live.noteView(ctx, w, tiles, 1);
+      live.smileFace(ctx, 0, 0, 38, [255, 198, 241], 1, 10.05);
+      const mid = live.smileGaze();
+      expect(mid.x).toBeLessThan(right.x);
+      expect(mid.x).toBeGreaterThan(0);
+      for (let k = 1; k <= 300; k++) live.smileFace(ctx, 0, 0, 38, [255, 198, 241], 1, 10.05 + k / 60);
+      const left = live.smileGaze();
+      expect(left.x).toBeCloseTo(-right.x, 1);
+      // Centred on it: the face looks straight out.
+      ctx.setTransform(1, 0, 0, 1, W / 2, H / 2);
+      live.noteView(ctx, w, tiles, 1);
+      for (let k = 1; k <= 240; k++) live.smileFace(ctx, 0, 0, 38, [255, 198, 241], 1, 14 + k / 60);
+      expect(Math.hypot(live.smileGaze().x, live.smileGaze().y)).toBeLessThan(0.5);
+      expect(mockStats.errors).toEqual([]);
+    } finally {
+      restore();
+    }
+  });
+
+  it('the ledger reads world.budget: income, upkeep, the net; live at the street zoom, the static ticker far out and when frozen', async () => {
+    const { installCanvasMock, mockContext, mockStats } = await import('./canvas-mock');
+    const restore = installCanvasMock();
+    try {
+      const live = await import('../src/render/art/landmarkLive');
+      expect(live.ledgerAmount(1_240_000)).toBe('+1.24M');
+      expect(live.ledgerAmount(12_500_000)).toBe('+12.5M');
+      expect(live.ledgerAmount(-412_300)).toBe('−412K');
+      expect(live.ledgerAmount(950)).toBe('+950');
+      const w = new World(78, 'Ledger Test', undefined, 3);
+      w.budget = {
+        income: 1_500_000,
+        expenses: 420_000,
+        incomeLines: [
+          { label: 'Hab Block tax', amount: 1_200_000 },
+          { label: 'Tourism', amount: 300_000 },
+        ],
+        expenseLines: [
+          { label: 'Roads', amount: 120_000 },
+          { label: 'Power plants', amount: 300_000 },
+        ],
+        history: [],
+      };
+      expect(live.ledgerLines(w)).toEqual([
+        { label: 'HAB BLOCK TAX', amount: '+1.20M', up: true },
+        { label: 'TOURISM', amount: '+300K', up: true },
+        { label: 'ROADS', amount: '−120K', up: false },
+        { label: 'POWER PLANTS', amount: '−300K', up: false },
+        { label: 'NET', amount: '+1.08M', up: true },
+      ]);
+      const ctx = mockContext();
+      const tiles = { x0: 0, y0: 0, x1: 10, y1: 10 };
+      live.noteView(ctx, w, tiles, 1);
+      // The first face builds the text sprite once (the budget's lines); after that a face is one clipped drawImage.
+      expect(live.ledgerFace(ctx, 10, 10, 46, 23, 108, [150, 220, 255], false, 2)).toBe(true);
+      const canvases = mockStats.canvases;
+      live.noteView(ctx, w, tiles, 1);
+      const before = mockStats.draws;
+      // Both faces: one running down-right, one running down-left (read from its left end).
+      expect(live.ledgerFace(ctx, 10, 10, 46, 23, 108, [150, 220, 255], false, 3)).toBe(true);
+      expect(live.ledgerFace(ctx, 60, 10, -46, 23, 108, [150, 220, 255], false, 3)).toBe(true);
+      expect(mockStats.draws - before).toBeLessThanOrEqual(6);
+      expect(mockStats.canvases).toBe(canvases);
+      expect(live.LIVE_STATS.ledgers).toBe(2);
+      // Frozen (the past look) or far out: the static ticker draws instead.
+      expect(live.ledgerFace(ctx, 10, 10, 46, 23, 108, [150, 220, 255], true, 3)).toBe(false);
+      live.noteView(ctx, w, tiles, live.LEDGER_TEXT_ZOOM - 0.1);
+      expect(live.ledgerFace(ctx, 10, 10, 46, 23, 108, [150, 220, 255], false, 3)).toBe(false);
+      expect(mockStats.errors).toEqual([]);
+    } finally {
+      restore();
+    }
+  });
+});
+
+describe('the sky walkers\' whisper note counts the people inspect counts (vertical.walkersToday)', () => {
+  it('{n} is walkersToday, or the flat rate per bridge when the payoff counts none', async () => {
+    const vertical = await import('../src/game/story/vertical');
+    const { NOTE_CROSSINGS_PER_BRIDGE } = await import('../src/game/story/content');
+    const g = gameOn(city.w);
+    const w = g.world;
+    const fill = (t: string) => (g.story as unknown as { fillNote(t: string): string }).fillNote(t);
+    const want = vertical.walkersToday(w) || NOTE_CROSSINGS_PER_BRIDGE * w.vertical.metrics.skybridges;
+    expect(fill('{n}')).toBe(want.toLocaleString('en-US'));
+  });
+});

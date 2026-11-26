@@ -59,7 +59,7 @@ import { districtShort, districtTitle, goalViews, type GoalView } from './distri
 import { neighbourhoodAt } from './districts/names';
 import { adjacentLocked, slotRect, validSlot } from './districts/slots';
 import { isRuin } from './districts/annex';
-import { plaquesAt, sunkTagline } from './marks';
+import { landmarkInspect, plaquesAt, sunkTagline } from './marks';
 import { FrameGuard, frameCapMs } from './frameGuard';
 import { heightOf } from './heights';
 import { parcelAt } from './parcels';
@@ -2580,7 +2580,9 @@ export class Game {
     }
     const end = def.gate?.ending;
     if (end) {
-      notes.push({ text: `Built under ${ENDING_NAMES[end]}` });
+      const lm = landmarkInspect(w, b.type); // MEGACITY §9.2: the Lamp Square under Lamplight, and "Built under Lamplight"
+      if (lm?.title) info.title = lm.title;
+      notes.push({ text: lm?.built ?? `Built under ${ENDING_NAMES[end]}` });
       if (w.story.ending !== end) notes.push({ text: 'Dormant: its ending is not current', tone: 'warn' });
     }
     const lobby = this.lobbyNote(b.x, b.y);

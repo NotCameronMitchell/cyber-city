@@ -149,3 +149,12 @@ export const MARK_NAMES = {
   lowWater: 'Low Water',
   highLine: 'High Line',
 } as const;
+
+// ── The landmark set (§3.8, §9.2: a sandbox goal; the Keepsakes line and one ticker line) ──
+
+/** The landmark set's copy: Keepsakes' progress line ({n} {of} {e} {eOf}), its whole line, the ticker line when it is whole ({pay}). */
+export const LANDMARK_SET_COPY = {
+  progress: 'The landmark set: {n} of {of} landmarks, {e} of {eOf} ending landmarks. A Charter Review can open another ending\'s landmark.',
+  whole: 'The landmark set is whole: every landmark stands, and all five ending landmarks with them.',
+  news: 'The landmark set is whole: every landmark stands, and all five ending landmarks with them. +{pay} CR',
+} as const;

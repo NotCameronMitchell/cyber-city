@@ -25,6 +25,7 @@
 import type { FactionId } from '../../game/story/types';
 import { HALF_H, HALF_W } from '../camera';
 import { NEON, css, glowSprite, mix, type RGB } from '../palette';
+import { ledgerFace, smileFace } from './landmarkLive';
 import { GLASS, mat, type ArtPal, type Mat, type Painter, type Sig, type WinSpec } from './painter';
 import { clockFace, coil, crane, flag, hexPrism, hull, lampString, lanternRoof, lattice, pole, pyramid, sail } from './parts';
 
@@ -981,6 +982,7 @@ export function drawSigs(ctx: CanvasRenderingContext2D, sigs: readonly Sig[], wx
       }
       case 'ledger': {
         if (s.lod) break;
+        if (ledgerFace(ctx, x + g.ox, y + g.oy, g.ex, g.ey, g.h, g.c, !!g.frozen, t)) break; // MEGACITY §9.2: the live ledger text (WP-8)
         // Lines of figures rising up the face; frozen ones stay put and dim.
         const rows = Math.max(3, Math.floor(g.h / 7));
         const off = g.frozen ? 0 : (t * 6) % 7;
@@ -1012,6 +1014,7 @@ export function drawSigs(ctx: CanvasRenderingContext2D, sigs: readonly Sig[], wx
       }
       case 'smile': {
         if (n < 0.25) break;
+        if (smileFace(ctx, x, y, g.r, g.c, n, t)) break; // MEGACITY §9.2: the smile follows the camera (WP-8)
         // MOTH's smile: an original pearl disc with two dots and an arc.
         ctx.globalCompositeOperation = 'lighter';
         ctx.globalAlpha = n * 0.75;

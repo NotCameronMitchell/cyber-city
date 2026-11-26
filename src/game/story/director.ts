@@ -106,8 +106,9 @@ import {
 } from './factions';
 import { NOTE_CROSSINGS_PER_BRIDGE, STORY_CONTENT } from './content';
 import { LANDMARK_CARD_ENDING } from './content/cards/epilogue';
-import { epilogueTokens, GENERIC_REVIEW_LINE, nextReviewLine, reviewLine } from './content/epilogue';
-import { deriveMarks } from '../marks';
+import { epilogueTokens, GENERIC_REVIEW_LINE, LANDMARK_SET_COPY, nextReviewLine, reviewLine } from './content/epilogue';
+import { goalPay } from '../districts/goals';
+import { deriveMarks, landmarkSet } from '../marks';
 import { clampMods, combine, composeLayers } from './mods';
 import { cardEligible, cardFaction, deckGate, defaultChoice, drawCard, FRONT_KINDS, pendingExpired, URGENT_SYSTEM } from './pacing';
 import { resolveMods, tierPatches } from './resolve';
@@ -1715,7 +1716,9 @@ export class StoryDirector implements EffectHost {
       pop: num(w.stats.population),
       crime: String(Math.round((worst >= 0 ? w.fields.crime[worst] : 0) * 100)),
       trace: String(Math.round(w.story.trace)),
-      n: num(NOTE_CROSSINGS_PER_BRIDGE * w.vertical.metrics.skybridges),
+      // The people who walked the sky today, as inspect counts them (vertical.walkersToday); the flat rate per bridge
+      // when the payoff counts none (bridges not yet active).
+      n: num(vertical.walkersToday(w) || NOTE_CROSSINGS_PER_BRIDGE * w.vertical.metrics.skybridges),
     });
   }
 
@@ -1751,6 +1754,21 @@ export class StoryDirector implements EffectHost {
 
   // ── Choices that last (MEGACITY §9) ───────────────────────────────────────
 
+  /**
+   * The sandbox's landmark set (MEGACITY §3.8, §9.2): once every landmark and, through Charter Reviews, all five ending
+   * landmarks stand after the ending, one ticker line and a late goal's pay (§3.7's rule), once a city (flag
+   * `landmarkSet`). Read from the marks' count, so it runs when they re-derive, never on the month tick; nothing opens.
+   */
+  private checkLandmarkSet(): void {
+    const w = this.world;
+    const st = w.story;
+    if (!st.ending || st.flags.landmarkSet || !landmarkSet(w).done) return;
+    st.flags.landmarkSet = true;
+    const pay = goalPay(w, 0);
+    w.funds += pay;
+    w.addNews(LANDMARK_SET_COPY.news.replace('{pay}', pay.toLocaleString('en-US')), 'good');
+  }
+
   /** Re-derive the marks (never saved); a changed set re-resolves the landmark terms that ride on it. */
   private refreshMarks(): void {
     const w = this.world;
@@ -1760,6 +1778,7 @@ export class StoryDirector implements EffectHost {
     this.marksDirty = false;
     this.marksAt = w.version;
     this.marksSec = 0;
+    this.checkLandmarkSet();
     if (was !== this.visual.marks && before !== 0 && this.visual.marks.version !== before) {
       this.writeLocalLayer();
       this.refreshMods();

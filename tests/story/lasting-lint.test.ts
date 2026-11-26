@@ -9,6 +9,7 @@ import * as C from '../../src/game/story/content';
 import { EPILOGUE_DECK, LANDMARK_CARD_ENDING } from '../../src/game/story/content/cards/epilogue';
 import {
   GENERIC_REVIEW_LINE,
+  LANDMARK_SET_COPY,
   LOGS_PAST,
   MARK_COPY,
   MARK_NAMES,
@@ -43,6 +44,9 @@ function lastingTexts(): { where: string; text: string }[] {
   for (const [k, v] of Object.entries(MARK_NAMES)) out.push({ where: `name ${k}`, text: v });
   // The ending landmarks' plaque templates (marks.ts), at their longest.
   out.push({ where: 'landmark plaque', text: 'Built under The Quiet Hand. Dormant while another ending holds.' });
+  // The landmark set (§3.8): Keepsakes' line and the one ticker line when it is whole; inspect's Lamp Square.
+  for (const [k, v] of Object.entries(LANDMARK_SET_COPY)) out.push({ where: `landmark set ${k}`, text: v });
+  out.push({ where: 'inspect title', text: 'The Lamp Square' }, { where: 'inspect note', text: 'Built under Lamplight' });
   for (const c of EPILOGUE_DECK) for (const f of cardTexts(c)) out.push(f);
   return out;
 }
