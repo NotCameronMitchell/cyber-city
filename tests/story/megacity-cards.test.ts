@@ -24,6 +24,7 @@ import * as turf from '../../src/game/story/turf';
 import type { Card, Effect } from '../../src/game/story/types';
 import { DAYS_PER_MONTH, Ground, SLOT, Terrain, ZoneType, type DistrictKind, type Region, type SlotId, type StoryPace } from '../../src/game/types';
 import { World } from '../../src/game/world';
+import { MegaMayor } from '../megacity-fixture';
 
 afterEach(() => {
   useStoryContent(STORY_CONTENT);
@@ -545,4 +546,95 @@ describe('the megacity cards add variety, not frequency (MEGACITY §8.3 cadence)
       expect(arrived.length).toBeLessThanOrEqual(Math.floor(g.story.activeSec / gap) + 1);
     }, 120_000);
   }
+});
+
+describe('a 3×3 city that annexes on every grant plays through Game to the ending (MEGACITY §8.3, WP-7 acceptance)', () => {
+  /**
+   * The story playthrough with districts: a MegaMayor builds every owned district and annexes as each land grant
+   * arrives, through Game, on real seconds at Brisk (the fastest pace, so the tightest deck gaps). It reaches Chapter
+   * VI and an ending; the deck never delivers closer than the pace's floor (so never closer than at 3aff4ea, which
+   * had the same floor); the megacity cards it earns come through COMMS and none opens by itself. Normal and Relaxed
+   * were measured the same way against 3aff4ea (docs/STORY.md §7.8b) and run too long for the suite.
+   */
+  it('brisk: Chapter VII on a 3×3 region, deck gaps at or above the floor, megacity cards only through COMMS', () => {
+    const pace: StoryPace = 'brisk';
+    const g = new Game();
+    g.settings.storyPace = pace;
+    g.settings.lowerDetail = false;
+    if (!g.restore(JSON.parse(JSON.stringify(regionWorld().serialize())))) throw new Error('restore failed');
+    const w = g.world;
+    w.funds = 2_000_000;
+    const d = g.story;
+    const rng = new Rng(2091 ^ 0x51a7);
+    const deck = new Set(DECK.map((c) => c.id));
+    const mega = new Set(MEGACITY_CARDS.map((c) => c.id));
+    const arrived: { id: string; sec: number }[] = [];
+    const delivered = new Set<string>();
+    const forcedMega: string[] = [];
+    let ch6 = -1;
+    w.events.on('incoming', (c) => {
+      delivered.add(c.id);
+      if (deck.has(c.id)) arrived.push({ id: c.id, sec: d.activeSec });
+    });
+    w.events.on('card', (c) => {
+      if (!c || delivered.delete(c.id)) return;
+      if (mega.has(c.id)) forcedMega.push(c.id);
+    });
+    w.events.on('chapter', (c) => {
+      if (c.n === 6 && ch6 < 0) ch6 = d.activeSec;
+    });
+    const mm = new MegaMayor(w, g.sim, { annex: (s) => g.annex(s, 'nacre').ok, opens: () => true });
+    mm.opening();
+    const answer = () => {
+      for (let guard = 0; guard < 40 && d.blocking; guard++) {
+        const st = w.story;
+        if (st.flags.charterNightOpen && !st.open) {
+          const ok = d.view().claims.filter((c) => c.ok).map((c) => c.id);
+          if (!d.chooseEnding(ok[Math.floor(rng.next() * ok.length)] ?? 'quiet').ok) d.chooseEnding('quiet');
+          continue;
+        }
+        const v = d.view().card;
+        if (!v) break;
+        const open = v.choices.map((c, k) => (c.locked ? -1 : k)).filter((k) => k >= 0);
+        d.choose(open[Math.floor(rng.next() * open.length)] ?? 0);
+      }
+    };
+    let msg = '';
+    let msgAt = 0;
+    for (let day = 0; day < 30 * 360 && !(w.story.chapter >= 7 && !d.blocking); day++) {
+      d.update(0.5, false);
+      answer();
+      // Story messages are read after 20 s; COMMS cards are opened now and then, as a player would.
+      const wt = w.story.waiting;
+      if (wt && wt.card !== msg) {
+        msg = wt.card;
+        msgAt = d.activeSec;
+      } else if (!wt) msg = '';
+      if (wt && !w.story.open && d.activeSec - msgAt >= 20) {
+        d.openWaiting();
+        answer();
+      }
+      if (w.story.pending && !w.story.open && rng.next() < 0.02) {
+        d.openPending();
+        answer();
+      }
+      g.sim.step();
+      d.onDay();
+      answer();
+      if (w.tick % DAYS_PER_MONTH === 0) {
+        mm.turn();
+        while (w.districts.grants > 0 && mm.annexNext() >= 0);
+      }
+    }
+    expect(ch6, 'Chapter VI reached').toBeGreaterThan(0);
+    expect(w.story.chapter).toBe(7);
+    expect(w.districts.owned.length).toBeGreaterThanOrEqual(6);
+    const gap = STORY_PACE[pace].minActiveSecBetween;
+    for (let k = 1; k < arrived.length; k++) {
+      const need = URGENT_SYSTEM.has(arrived[k].id) ? STORY_PACING.systemGapSec : gap;
+      expect(arrived[k].sec - arrived[k - 1].sec, `${arrived[k - 1].id} → ${arrived[k].id}`).toBeGreaterThanOrEqual(need - 1e-6);
+    }
+    expect(arrived.filter((a) => mega.has(a.id)).length, 'the city earned megacity cards').toBeGreaterThan(0);
+    expect(forcedMega).toEqual([]);
+  }, 180_000);
 });
