@@ -689,6 +689,38 @@ function skyMark(ctx: CanvasRenderingContext2D, world: World, m: Mark, env: ArtE
       }
       break;
     }
+    case 'landmark': {
+      // Bread Pier while the Low Crown holds (§9.2: "half nets and green lamps, half kites and string lights"): a
+      // string of lamps along the canopy's two street edges, the Undertow's green on one, the Kites' lilac on the other.
+      // Shuttered (no lamps) while dormant; the other ending landmarks carry their own light (art/legacy.ts).
+      if (arg || m.id !== 'landmark.breadpier' || n < 0.15) break;
+      const x1 = m.x + m.w;
+      const y1 = m.y + m.h;
+      if (hidden(world, x1 - 1, y1 - 1, 6)) break;
+      const z = Math.max(4, drawnTop(world, m.x + (m.w >> 1), m.y + (m.h >> 1)) - 2);
+      const pts: [number, number, RGB][] = [];
+      for (let k = 0; k <= 8; k++) pts.push([m.x + (m.w * k) / 8, y1, LIME]);
+      for (let k = 0; k < 8; k++) pts.push([x1, m.y + (m.h * k) / 8, LILAC]);
+      ctx.strokeStyle = css([40, 40, 50], 0.8);
+      ctx.lineWidth = 0.5;
+      ctx.beginPath();
+      ctx.moveTo(wx(m.x, y1), wy(m.x, y1, z));
+      ctx.lineTo(wx(x1, y1), wy(x1, y1, z));
+      ctx.lineTo(wx(x1, m.y), wy(x1, m.y, z));
+      ctx.stroke();
+      for (const [u, v, c] of pts) {
+        ctx.fillStyle = css(c);
+        ctx.fillRect(wx(u, v) - 1.2, wy(u, v, z) - 0.6, 2.4, 2.4);
+      }
+      if (env.quality !== 'low') {
+        ctx.globalCompositeOperation = 'lighter';
+        for (let k = 0; k < pts.length; k += 2) glow(ctx, pts[k][2], wx(pts[k][0], pts[k][1]), wy(pts[k][0], pts[k][1], z), 9, n * 0.75);
+        ctx.globalCompositeOperation = 'source-over';
+        ctx.globalAlpha = 1;
+      }
+      MARKS_STATS.skyDecals++;
+      break;
+    }
     case 'mast': {
       // The Clean Glass mast: a floodlit precinct mast at the Seam, its searchlight sweeping at night.
       const x = m.x + (m.w >> 1);
