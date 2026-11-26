@@ -445,7 +445,7 @@ describe('the skybridge view while a source is selected (§5.4, §5.6)', () => {
     }
   });
 
-  it('partner badges: ≤ 8 of each colour, nearest the source first, never overlapping; routes only with Show routes; the route ghost draws both spans', async () => {
+  it('partner badges: ≤ 8 in all, nearest the source first, never overlapping; routes only with Show routes; the route ghost draws both spans', async () => {
     const { g, a } = skyScene();
     g.skybridgeSource(a.x, a.y);
     const { r, cam } = await renderer(g);
@@ -461,8 +461,7 @@ describe('the skybridge view while a source is selected (§5.4, §5.6)', () => {
       const on = partnerBadges(g, cam);
       expect(on.some((b) => b.kind === 'route')).toBe(true);
       for (const list of [off, on]) {
-        expect(list.filter((b) => b.kind !== 'bad').length).toBeLessThanOrEqual(BADGE_MAX);
-        expect(list.filter((b) => b.kind === 'bad').length).toBeLessThanOrEqual(BADGE_MAX);
+        expect(list.length).toBeLessThanOrEqual(BADGE_MAX);
         for (let i = 0; i < list.length; i++) {
           expect(list[i].r).toBe(list[i].kind === 'bad' ? 8 : 22);
           if (i > 0) {

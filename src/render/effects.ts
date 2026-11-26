@@ -223,8 +223,10 @@ export class Effects {
       steep: kind === 'shoals',
     });
     im.weather += performance.now() - t;
-    // A storm the player can see makes a storm watch eligible (City life).
-    game.cityEvents.noteSky(lv.weather > 0 && this.screen.kind === Sky.Storm ? 2 : lv.weather > 0 && this.screen.kind === Sky.Drizzle ? 1 : 0);
+    // The sky's spans run whatever the Weather setting draws: a storm makes a storm watch eligible (City life, §6.4.1),
+    // also with Weather Off or in lower detail (the setting hides rain and fog, not the storm; City life Off is the
+    // only switch that stops happenings, and its own visuals follow lifeLevers).
+    game.cityEvents.noteSky(this.screen.kind === Sky.Storm ? 2 : this.screen.kind === Sky.Drizzle ? 1 : 0);
     // Crowds (City life doubles them in its district: Market streets on a night market, stations on an arena night).
     const ev = world.cityEvent;
     this.cf.tod = tod;

@@ -48,7 +48,7 @@ export interface CityEventsHost {
   readonly daylight: number;
 }
 
-/** The sky the weather layer shows (art/weather.ts Sky: 0 clear, 1 drizzle, 2 storm). */
+/** The sky the weather layer runs (art/weather.ts Sky: 0 clear, 1 drizzle, 2 storm), whatever the Weather setting draws. */
 export type CitySky = 0 | 1 | 2;
 
 export interface CityLifeDef {
@@ -118,6 +118,16 @@ export const CITY_LIFE_DEFS: Record<CityEventId, CityLifeDef> = {
     core: false,
   },
 };
+
+/** Is this news text a City life line (§6.4.1: each happening's one ticker line)? The ticker keeps these from its drop rule. */
+export function isCityLifeLine(text: string): boolean {
+  for (const id in CITY_LIFE_DEFS) {
+    const line = CITY_LIFE_DEFS[id as CityEventId].line;
+    const at = line.indexOf('{district}');
+    if (at < 0 ? text === line : text.startsWith(line.slice(0, at)) && text.endsWith(line.slice(at + '{district}'.length))) return true;
+  }
+  return false;
+}
 
 /**
  * The arena night's noise term (§6.3 Arc Arena: "noise 0.5 r6 only during an event"; §6.4.1): the def's noise while an
@@ -356,6 +366,8 @@ export class CityEvents {
   private gaps = 0;
   /** What the open gap is reserved for (lantern night waits for its month; arena night for its turn), or null. */
   private reserved: CityEventId | null = null;
+  /** The sim month (year × 12 + month) the reservation was made: a lantern reservation lapses after a year of waiting. */
+  private reservedAt = 0;
   private lastId: CityEventId | null = null;
   private lastStart = -Infinity;
   /** Sim year of the last lantern night. */
@@ -375,7 +387,7 @@ export class CityEvents {
 
   constructor(private readonly host: CityEventsHost) {}
 
-  /** The weather layer's sky (art/weather.ts): a storm makes a storm watch eligible. */
+  /** The weather layer's sky (art/weather.ts; passed whatever the Weather setting draws): a storm makes a storm watch eligible. */
   noteSky(sky: CitySky): void {
     this.sky = sky;
   }
@@ -411,6 +423,7 @@ export class CityEvents {
       this.gaps++;
       this.checkIn = 0;
       this.reserved = this.reserveFor(world);
+      this.reservedAt = world.year * 12 + world.month;
       this.survey.restart(world);
       this.surveyed = false;
     }
@@ -461,8 +474,15 @@ export class CityEvents {
     if (this.sec - this.lastStart < MIN_SPACING) return;
     const r = this.reserved;
     if (r) {
-      // A reserved gap waits for its own happening (lantern night: the next month 10; arena night: at once).
-      if (r === 'lanterns' && world.year === this.lanternYear) this.reserved = null;
+      // A reserved gap waits for its own happening (lantern night: the next month 10; arena night: at once). It gives
+      // the gap back when its happening can no longer come: lantern night already ran this year, the city fell below
+      // its residents, or a whole sim year went by waiting; the Arena is gone.
+      const month = world.year * 12 + world.month;
+      if (
+        r === 'lanterns' &&
+        (world.year === this.lanternYear || world.stats.population < CITY_LIFE_RULES.lanternPop || month - this.reservedAt > 12)
+      )
+        this.reserved = null;
       else if (r === 'arenanight' && !this.arena(world)) this.reserved = null;
       else {
         const p = this.eligible(world, r, this.survey);

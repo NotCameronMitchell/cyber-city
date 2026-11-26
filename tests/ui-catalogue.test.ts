@@ -543,6 +543,51 @@ function fakeDocument(): { createElement(tag: string): FakeEl } {
   };
 }
 
+// ── The ticker and City life lines (MEGACITY §6.4.1) ─────────────────────────
+import { Ticker } from '../src/ui/ticker';
+import { CITY_LIFE_DEFS } from '../src/game/cityEvents';
+import type { NewsItem } from '../src/game/types';
+import type { UIContext } from '../src/ui/context';
+
+describe('the ticker keeps City life lines (§6.4.1: a happening posts one line and nothing else)', () => {
+  const saved = { document: (globalThis as { document?: unknown }).document, window: (globalThis as { window?: unknown }).window };
+  beforeEach(() => {
+    (globalThis as { document?: unknown }).document = fakeDocument();
+    (globalThis as { window?: unknown }).window = { addEventListener: () => undefined, matchMedia: () => ({ matches: false }), setTimeout, clearTimeout };
+  });
+  afterEach(() => {
+    (globalThis as { document?: unknown }).document = saved.document;
+    (globalThis as { window?: unknown }).window = saved.window;
+  });
+
+  function ticker(): { t: Ticker; shown: () => string } {
+    const ctx = { game: { world: { news: [] as NewsItem[], dateLabel: () => 'JAN 2091', maxPopulation: 0 } }, actions: { openNews: () => undefined } };
+    const t = new Ticker(ctx as unknown as UIContext);
+    const text = (t as unknown as { text: { textContent: string } }).text;
+    return { t, shown: () => text.textContent };
+  }
+
+  it('a City life line arriving in a burst of warnings is shown next and never dropped; a queued repeat is not queued twice', () => {
+    const { t, shown } = ticker();
+    const item = (text: string, kind: NewsItem['kind']): NewsItem => ({ tick: 1, text, kind });
+    t.push(item('Goal met: Kessel Flats housing', 'good'));
+    const life = CITY_LIFE_DEFS.nightmarket.line.replace('{district}', 'Paper Lane, Verdigris');
+    t.push(item(life, 'info'));
+    // A burst behind it: district goals, tags, the monthly brownout twice.
+    for (let i = 0; i < 5; i++) t.push(item(`District goal ${i} met`, 'good'));
+    t.push(item('Brownout! Not enough power.', 'warn'));
+    t.push(item('Brownout! Not enough power.', 'warn'));
+    t.push(item('Tag on the overpass', 'bad'));
+    const queue = (t as unknown as { queue: NewsItem[] }).queue;
+    expect(queue.length).toBeLessThanOrEqual(4);
+    expect(queue[0].text).toBe(life);
+    expect(queue.filter((n) => n.text.startsWith('Brownout')).length).toBeLessThanOrEqual(1);
+    // After the current line's hold, the City life line is on the strip.
+    t.update(performance.now() + 60_000);
+    expect(shown()).toBe(life);
+  });
+});
+
 // ── Megacity trays (MEGACITY §7.1) ───────────────────────────────────────────
 import { SECTIONS, cardCondition, cardState, sectionOf, traySections } from '../src/ui/tools';
 import { adjacentLocked } from '../src/game/districts/slots';

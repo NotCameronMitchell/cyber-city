@@ -5,6 +5,7 @@
 // Tap → news log.
 // ─────────────────────────────────────────────────────────────────────────────
 
+import { isCityLifeLine } from '../game/cityEvents';
 import type { NewsItem } from '../game/types';
 import type { UIContext } from './context';
 import { h, prefersReducedMotion, replayClass, setClass, setStyle, setText } from './dom';
@@ -59,16 +60,24 @@ export class Ticker {
     this.reset();
   }
 
-  /** A new item arrived. */
+  /**
+   * A new item arrived. A City life line (§6.4.1: a happening's only notice) goes to the front of the queue and is
+   * never dropped; a line already waiting in the queue is not queued twice (a repeated monthly warning). Under a burst
+   * the oldest flavour chatter goes first, then the oldest of anything but a City life line.
+   */
   push(item: NewsItem): void {
     if (!this.current) {
       this.show(item, true);
       return;
     }
-    this.queue.push(item);
-    // Under a burst, drop the oldest flavor chatter first, then the oldest anything.
+    if (this.queue.some((n) => n.text === item.text && n.kind === item.kind)) return;
+    if (isCityLifeLine(item.text)) {
+      const at = this.queue.findIndex((n) => !isCityLifeLine(n.text));
+      this.queue.splice(at < 0 ? this.queue.length : at, 0, item);
+    } else this.queue.push(item);
     while (this.queue.length > QUEUE_MAX) {
-      const i = this.queue.findIndex((n) => n.kind === 'flavor');
+      let i = this.queue.findIndex((n) => n.kind === 'flavor');
+      if (i < 0) i = this.queue.findIndex((n) => !isCityLifeLine(n.text));
       this.queue.splice(i >= 0 ? i : 0, 1);
     }
   }

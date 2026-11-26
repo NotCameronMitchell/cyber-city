@@ -838,7 +838,24 @@ export function drawPreviewTop(ctx: CanvasRenderingContext2D, game: Game, env: A
 /** The route ghost's colour (a two-bridge route, the blue "2"). */
 const ROUTE: RGB = [90, 170, 255];
 /** The UI's "Show routes" chip in the pill (WP-5) turns the blue "2" badges on (§5.4 step 2). */
-export const skybridgeView = { showRoutes: false };
+/** A screen rect in CSS px (inclusive edges). */
+export interface ScreenRect {
+  x0: number;
+  y0: number;
+  x1: number;
+  y1: number;
+}
+export const skybridgeView = {
+  showRoutes: false,
+  /**
+   * The UI rects over the map while a source is selected (the HUD, ticker, pill, tool chip, story rail, toolbar; CSS
+   * px). The UI root keeps it current; a badge whose 44 px tap circle would fall under one is moved or left out, so
+   * every badge drawn can be tapped (§5.4, §7.8).
+   */
+  avoid: [] as ScreenRect[],
+  /** The map area those leave open (CSS px), for the ease that frames a source and its reach (§5.4 step 2); null = the camera insets. */
+  frame: null as ScreenRect | null,
+};
 /** The placement ghost's picked look (WP-5's Spire sponsor row and crown picker, MEGACITY §6.2): empty = today's ghost. */
 export const ghostPick: { sponsor?: 'basalt' | 'nacre' | 'none'; look?: 0 | 1 | 2 | 3; crown?: import('../game/story/types').CrownId } = {};
 
@@ -953,6 +970,8 @@ export function drawSkybridgeGhosts(ctx: CanvasRenderingContext2D, game: Game, e
   ctx.restore();
 }
 
+type Partner = ReturnType<Game['skybridgePartners']>[number];
+
 /** Partner badges cache: recomputed when the source, the world or the routes chip changed (§5.4). */
 const badges = { key: '', list: [] as ReturnType<Game['skybridgePartners']> };
 
@@ -970,14 +989,26 @@ export interface PartnerBadge {
   cost: number;
 }
 
-/** Most badges of each colour on screen at once (§5.4: decluttered, nearest the source first). */
+/** Most badges on screen at once, of all kinds together (§5.4: at most 8, nearest the source first). */
 export const BADGE_MAX = 8;
+/** Places of the 8 that two-bridge routes keep while Show routes is on (§5.4). */
+export const ROUTE_SLOTS = 4;
+
+/** Is a badge's tap circle (at least 44 px, §7.4) clear of the UI, with its centre on the canvas (an edge may clip it)? */
+function badgeClear(x: number, y: number, r: number, cam: Camera): boolean {
+  const t = Math.max(r, 22);
+  if (x < 8 || y < 8 || x > cam.width - 8 || y > cam.height - 8) return false;
+  for (const a of skybridgeView.avoid) if (x + t > a.x0 && x - t < a.x1 && y + t > a.y0 && y - t < a.y1) return false;
+  return true;
+}
 
 /**
  * The partner badges to show now (§5.4 step 2), pure geometry from the game and the camera (input hit-tests the same
- * list): valid partners a green 44 px badge with the price, invalid ones a 16 px red dot, at most BADGE_MAX of each,
- * nearest the source first, nudged up to avoid overlap (a badge that still overlaps is dropped); two-bridge routes as
- * a blue "2" only after the pill's Show routes chip (`skybridgeView.showRoutes`).
+ * list): valid partners a green 44 px badge with the price, invalid ones a 16 px red dot, two-bridge routes a blue "2"
+ * only after the pill's Show routes chip (`skybridgeView.showRoutes`). At most BADGE_MAX badges of all kinds together,
+ * nearest the source first. Each sits above its tower's roof, nudged up (then down over the tower) until it overlaps
+ * no badge placed before it, its tap circle is clear of the UI over the map (`skybridgeView.avoid`) and its centre is
+ * on the canvas; a badge with no such spot is left out, and the next nearest takes its place.
  */
 export function partnerBadges(game: Game, cam: Camera): PartnerBadge[] {
   const src = game.bridgeSource;
@@ -993,21 +1024,42 @@ export function partnerBadges(game: Game, cam: Camera): PartnerBadge[] {
     .map((p) => ({ p, d: Math.abs(p.x - src.x) + Math.abs(p.y - src.y) }))
     .sort((a, b) => a.d - b.d);
   const out: PartnerBadge[] = [];
-  let green = 0;
-  let red = 0;
-  for (const { p } of list) {
+  const free = (x: number, y: number, r: number) => !out.some((q) => Math.hypot(q.x - x, q.y - y) < q.r + r + 2) && badgeClear(x, y, r, cam);
+  // With Show routes on, the routes the player asked for keep up to ROUTE_SLOTS of the 8 places (they are farther than
+  // the direct partners, so nearest-first alone would crowd them out); a place they leave goes to the next nearest.
+  const routes = list.filter((q) => q.p.route && q.p.ok).length;
+  const directMax = BADGE_MAX - Math.min(ROUTE_SLOTS, routes);
+  const tried = new Set<Partner>();
+  let direct = 0;
+  for (const pass of [0, 1])
+    for (const { p } of list) {
+      if (out.length >= BADGE_MAX) break;
+      if (tried.has(p)) continue;
+      const isRoute = !!p.route && p.ok;
+      if (pass === 0 && !isRoute && direct >= directMax) continue;
+      tried.add(p);
+      if (place(p)) direct += isRoute ? 0 : 1;
+    }
+  // Nearest the source first.
+  const d = (b: PartnerBadge) => Math.abs(b.tx - src.x) + Math.abs(b.ty - src.y);
+  return out.sort((a, b) => d(a) - d(b));
+
+  function place(p: Partner): boolean {
     const ok = p.ok && !p.route;
     const route = !!p.route && p.ok;
-    if ((ok || route) && green >= BADGE_MAX) continue;
-    if (!ok && !route && red >= BADGE_MAX) continue;
     const s = cam.tileToScreen(p.x, p.y);
-    let y = s.y - roofOf(world, p.x, p.y) * cam.zoom - (ok || route ? 26 : 10);
     const r = ok || route ? 22 : 8;
-    // Nudge upward until it overlaps nothing placed (a few steps at most).
-    for (let k = 0; k < 4 && out.some((q) => Math.hypot(q.x - s.x, q.y - y) < q.r + r + 2); k++) y -= r + 4;
-    if (out.some((q) => Math.hypot(q.x - s.x, q.y - y) < q.r + r + 2)) continue;
-    if (ok || route) green++;
-    else red++;
+    const y0 = s.y - roofOf(world, p.x, p.y) * cam.zoom - (ok || route ? 26 : 10);
+    // Above the roof first, then a few steps up, then down over the tower's own body.
+    let y = NaN;
+    for (const k of [0, -1, -2, -3, -4, 1, 2, 3]) {
+      const yy = y0 + k * (r + 4);
+      if (free(s.x, yy, r)) {
+        y = yy;
+        break;
+      }
+    }
+    if (Number.isNaN(y)) return false;
     out.push({
       kind: route ? 'route' : ok ? 'ok' : 'bad',
       tx: p.x,
@@ -1018,8 +1070,8 @@ export function partnerBadges(game: Game, cam: Camera): PartnerBadge[] {
       label: route ? '2' : ok ? p.cost.toLocaleString('en-US') : (p.reason ?? ''),
       cost: p.cost,
     });
+    return true;
   }
-  return out;
 }
 
 /** Partner badges over their towers (screen space: DPR × CSS px transform), as `partnerBadges` lays them out. */

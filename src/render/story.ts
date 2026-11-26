@@ -79,8 +79,8 @@ function tallAt(world: World, x: number, y: number): boolean {
   return (t.zone === ZoneType.Residential || t.zone === ZoneType.Commercial) && t.level >= 3 && !t.abandoned;
 }
 
-/** How far a tower's wall sits inside its footprint edge (tiles), so the tube meets the facade. */
-function anchorInset(world: World, x: number, y: number): number {
+/** How far a tower's wall sits inside its footprint edge (tiles), so the tube meets the facade (input picks the same reach). */
+export function anchorInset(world: World, x: number, y: number): number {
   const N = world.N;
   const t = world.tiles[y * N + x];
   if (t.buildingId < 0) return 0.12;
@@ -101,7 +101,7 @@ function anchorInset(world: World, x: number, y: number): number {
 }
 
 /** Sweep key at which a footprint's building is drawn (its front corner). */
-function frontKey(world: World, x: number, y: number): number {
+export function frontKey(world: World, x: number, y: number): number {
   const N = world.N;
   const t = world.tiles[y * N + x];
   if (t.buildingId >= 0) {

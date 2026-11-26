@@ -22,7 +22,7 @@ import type { Game } from '../game/game';
 import { pointerActivity } from '../input/gestures';
 import type { Camera } from '../render/camera';
 import { mapBus, skyBus } from '../input/mapbus';
-import { partnerBadges } from '../render/overlay';
+import { partnerBadges, skybridgeView, type ScreenRect } from '../render/overlay';
 import { BudgetPanel } from './budget';
 import { CityMap } from './citymap';
 import { Coach } from './coach';
@@ -472,6 +472,58 @@ export class UI {
     cam.setInsets({ top: Math.round(top), bottom: Math.round(bottom), left: Math.round(left) });
   }
 
+  /** The pill's height the last time it showed (a frame for the reach ease is needed before it shows). */
+  private pillH = 54;
+
+  /**
+   * While the Skybridge tool is active (§5.4, §7.4): the UI rects over the map (badges stay clear of them, so every
+   * badge drawn can be tapped) and the map area they leave open (the ease that frames a source and its badges). The
+   * pill is counted even before it shows, at its last height: the ease starts on the tap that shows it.
+   */
+  private syncSkyAvoid(): void {
+    if (this.game.tool !== 'skybridge' || this.cityMap.isOpen) {
+      if (skybridgeView.frame) {
+        skybridgeView.avoid = [];
+        skybridgeView.frame = null;
+      }
+      return;
+    }
+    const cam = this.ctx.camera;
+    const W = cam.width;
+    const H = cam.height;
+    const avoid: ScreenRect[] = [];
+    let top = 0;
+    let bottom = H;
+    let left = 0;
+    let right = W;
+    const add = (r: { left: number; top: number; right: number; bottom: number; width: number; height: number }) => {
+      if (!(r.width > 0 && r.height > 0) || r.bottom <= 0 || r.top >= H || r.right <= 0 || r.left >= W) return;
+      avoid.push({ x0: r.left, y0: r.top, x1: r.right, y1: r.bottom });
+      // A wide strip at the top or bottom bounds the frame; a tall one at a side (the landscape rail) bounds it there.
+      if (r.width >= W / 2) {
+        if (r.top < H / 2) top = Math.max(top, r.bottom);
+        else bottom = Math.min(bottom, r.top);
+      } else if (r.height >= H / 2) {
+        if (r.left < W / 2) left = Math.max(left, r.right);
+        else right = Math.min(right, r.left);
+      } else if (r.top < H * 0.4) top = Math.max(top, r.bottom);
+      else if (r.bottom > H * 0.6) bottom = Math.min(bottom, r.top);
+    };
+    for (const el of this.root.querySelectorAll<HTMLElement>('.cc-hud, .cc-ticker, .cc-toast, .cc-toolchip, .cc-hint, .cc-legend, .cc-tip, .cc-bar, .cc-storyrail > *, .cc-banner, .cc-fps'))
+      add(el.getBoundingClientRect());
+    const pill = this.pill.el.getBoundingClientRect();
+    if (pill.height > 0) {
+      this.pillH = pill.height;
+      add(pill);
+    } else {
+      // Not shown yet: where it will show (the top stack's top, at its last height and the stack's width).
+      const st = this.topStack.getBoundingClientRect();
+      add({ left: st.left, top: st.top, right: st.right, bottom: st.top + this.pillH, width: st.width, height: this.pillH });
+    }
+    skybridgeView.avoid = avoid;
+    skybridgeView.frame = { x0: left, y0: top, x1: right, y1: Math.max(top + 1, bottom) };
+  }
+
   private applySettings(): void {
     const s = this.game.settings;
     setClass(this.root, 'cc-lowfx', s.quality === 'low');
@@ -556,6 +608,7 @@ export class UI {
     if (!(dt >= 0) || dt > 1) dt = 0;
     this.spire.sync(this.game);
     this.pill.update(this.game);
+    this.syncSkyAvoid();
     // A chapter title, Charter Night or the ending covers the map: a plan waiting for ✓ waits behind it.
     setClass(this.topStack, 'is-story', this.story.fullscreen);
     this.fps.update(dt, this.game.settings.showFps, this.game.sim.resting | 0);

@@ -181,6 +181,34 @@ describe('caps and LOD (§6.4)', () => {
     }
   }, 60_000);
 
+  it('§6.4.1: a storm reaches City life whatever the Weather setting draws (Off, Light, Full), so a storm watch can start', async () => {
+    const { r, fx, frames, g } = await scene(busy(), { zoom: 1, night: true });
+    try {
+      const screen = (fx as unknown as { screen: { kind: number; spanEnd: number } }).screen;
+      const sky = () => (g.cityEvents as unknown as { sky: number }).sky;
+      const force = (k: number) => () => {
+        screen.kind = k;
+        screen.spanEnd = g.clock + 1000;
+      };
+      for (const weather of ['off', 'light', 'full'] as const) {
+        g.updateSettings({ weather, rain: weather !== 'off' });
+        frames(3, force(2));
+        expect(sky(), weather).toBe(2);
+        frames(3, force(1));
+        expect(sky(), weather).toBe(1);
+        frames(3, force(0));
+        expect(sky(), weather).toBe(0);
+      }
+      // Weather Off still draws no rain for that storm.
+      g.updateSettings({ weather: 'off', rain: false });
+      frames(600, force(2));
+      expect(fx.lifeStats().rain).toBeLessThan(0.05);
+      expect(sky()).toBe(2);
+    } finally {
+      r.destroy();
+    }
+  }, 60_000);
+
   it('car lights on a wet night: a straight car draws its pool, tail glow and streaks from 2 pre-composed sprites, not 4 glows', async () => {
     const { r, fx, frames, g } = await scene(busy(), { zoom: 1.4, night: true });
     try {

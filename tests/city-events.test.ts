@@ -195,6 +195,41 @@ describe('E1: City life on a fake clock (§6.4.1, §11.3)', () => {
   });
 });
 
+describe('E1 robustness: a reserved gap never blocks City life', () => {
+  it('a lantern reservation is given back when the city falls below 50,000 residents before month 10', () => {
+    const w = lifeCity();
+    w.stats.population = 60000;
+    const host = new FakeHost(w);
+    host.clock = DAY_CYCLE_SECONDS * 0.85;
+    const life = new CityEvents(host);
+    const priv = life as unknown as { reserved: CityEventId | null };
+    // Run until the third gap opens with its lantern reservation, away from month 10.
+    let t = 0;
+    while (t < 4 * 3600 && !(priv.reserved === 'lanterns' && w.month !== CITY_LIFE_RULES.lanternMonth)) {
+      drive(host, life, 0.5);
+      t += 0.5;
+      if (priv.reserved === 'lanterns' && w.month === CITY_LIFE_RULES.lanternMonth) drive(host, life, 0.5);
+    }
+    expect(priv.reserved).toBe('lanterns');
+    // The city shrinks below the lantern threshold: the gap must go to another happening.
+    w.stats.population = 45000;
+    const run = drive(host, life, 3600);
+    expect(priv.reserved).not.toBe('lanterns');
+    expect(run.starts.length).toBeGreaterThanOrEqual(2);
+    expect(run.starts.some((s) => s.id === 'lanterns')).toBe(false);
+  });
+
+  it('isCityLifeLine knows every happening\'s line, with or without a place name, and nothing else', async () => {
+    const { isCityLifeLine } = await import('../src/game/cityEvents');
+    for (const id of Object.keys(CITY_LIFE_DEFS) as CityEventId[]) {
+      const line = CITY_LIFE_DEFS[id].line.replace('{district}', 'Paper Lane, Verdigris');
+      expect(isCityLifeLine(line), id).toBe(true);
+    }
+    expect(isCityLifeLine('Brownout! Not enough power.')).toBe(false);
+    expect(isCityLifeLine('Night market')).toBe(false);
+  });
+});
+
 describe('the per-sim-day cap (§6.4.1): terms last ≤ 60 sim days at any speed', () => {
   it('the sim counts daysLeft down once a day; census adds approval only while daysLeft > 0', () => {
     const w = lifeCity();

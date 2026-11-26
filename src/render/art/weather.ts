@@ -7,8 +7,9 @@
 // reflections on wet roads beside lit Market tiles at night.
 //
 // Settings › Weather: Full, Light (half the rain, half the fog alpha, no
-// lightning) or Off (no rain, fog or lightning; the sky's spans still run so a
-// storm watch can follow them). District bias: Reedmere and the Sunk fog on 60%
+// lightning) or Off (no rain, fog or lightning; the sky's spans still run, and
+// Effects passes their kind to City life whatever the setting, so a storm
+// watch follows the sky with Weather Off and in lower detail too). District bias: Reedmere and the Sunk fog on 60%
 // of mornings (config DISTRICTS[kind].fog), Kessel Flats' haze ×1.5, the
 // Shoals' rain driven at a steeper slant. Everything is pre-rendered into
 // small canvases and blitted / pattern-filled, so the per-frame cost is a

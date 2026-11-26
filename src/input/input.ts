@@ -35,7 +35,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { snapSeaport } from '../game/actions';
-import { heightOf } from '../game/heights';
+import { heightOf, roofOf } from '../game/heights';
 import * as vertical from '../game/story/vertical';
 import { BUILDINGS, isBuildingTool } from '../game/config';
 import type { Game } from '../game/game';
@@ -98,7 +98,7 @@ import { HAPTIC_CONFIRM_MS, HAPTIC_TICK_MS, haptic } from './haptics';
 import { KeyboardInput, isTypingTarget } from './keyboard';
 import { MAP_PINCH_IN, MAP_PINCH_OUT, SKY_FLASH_MS, mapBus, pinchMayLeaveMap, skyBus } from './mapbus';
 import { badgeAt, pickAnchor, pickTube, reachView, snapPartner, tubeBeatsFront } from './skybridge';
-import { ghostPick, partnerBadges } from '../render/overlay';
+import { BADGE_MAX, ghostPick, partnerBadges, skybridgeView } from '../render/overlay';
 import { ZoneType as Z } from '../game/types';
 
 type PointerKind = 'mouse' | 'touch' | 'pen';
@@ -1120,11 +1120,24 @@ export class InputController {
     if (s) this.buildBridge(s.x, s.y);
   }
 
-  /** §5.4 step 2: ease (0.3 s) so the source and its 10-tile reach show (never while pinching: a tap can't pinch). */
+  /**
+   * §5.4 step 2: ease (0.3 s) so the source and its partners' badges show in the map area the HUD, ticker, pill and
+   * toolbar leave open (`skybridgeView.frame`), never while pinching (a tap can't pinch). The badges fitted are the
+   * nearest BADGE_MAX, as `partnerBadges` shows them.
+   */
   private easeToReach(x: number, y: number): void {
-    const a = vertical.anchorAt(this.game.world, x, y);
+    const world = this.game.world;
+    const a = vertical.anchorAt(world, x, y);
     if (!a || this.mode === 'pinch') return;
-    const v = reachView(this.camera, a);
+    const tops = this.game
+      .skybridgePartners()
+      .filter((p) => skybridgeView.showRoutes || !p.route)
+      .map((p) => ({ x: p.x, y: p.y, d: Math.abs(p.x - x) + Math.abs(p.y - y) }))
+      .sort((p, q) => p.d - q.d)
+      .slice(0, BADGE_MAX)
+      .map((p) => ({ x: p.x, y: p.y, roof: roofOf(world, p.x, p.y) }));
+    tops.push({ x, y, roof: roofOf(world, x, y) });
+    const v = reachView(this.camera, a, 10, skybridgeView.frame, tops);
     this.camera.easeTo(v.x, v.y, v.zoom, 0.3);
   }
 

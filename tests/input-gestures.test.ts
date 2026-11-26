@@ -21,7 +21,7 @@ import {
   type PickHit,
 } from '../src/input/gestures';
 import { SKYWAY } from '../src/game/config';
-import { Camera, HALF_W, tileCenterWorld } from '../src/render/camera';
+import { Camera, HALF_H, HALF_W, tileCenterWorld } from '../src/render/camera';
 import { LEGACY_SIZE } from '../src/game/types';
 
 function camera(w = 390, h = 844, zoom = 1.3): Camera {
@@ -338,7 +338,7 @@ import { ZoneType } from '../src/game/types';
 import { World } from '../src/game/world';
 import { ANCHOR_SLOP_PX, BADGE_TAP_R, badgeAt, inReach, pickAnchor, pickTube, reachView, silhouetteDistance, snapPartner, tubeBeatsFront } from '../src/input/skybridge';
 import { annexPins, pinAt } from '../src/render/districts';
-import { partnerBadges, BADGE_MAX } from '../src/render/overlay';
+import { partnerBadges, BADGE_MAX, ROUTE_SLOTS, skybridgeView } from '../src/render/overlay';
 import { startWorld, sx, sy } from './helpers';
 import { screenToTileF } from '../src/input/gestures';
 
@@ -411,7 +411,7 @@ describe('skybridge tool: the first tap hits the whole silhouette (§7.4)', () =
 });
 
 describe('skybridge tool: badges, snap, reach (§5.4, §7.4)', () => {
-  it('green badges are 44 px; a red dot draws at 16 px but takes a 44 px tap; at most 8 of each, none overlapping', () => {
+  it('green badges are 44 px; a red dot draws at 16 px but takes a 44 px tap; at most 8 in all, none overlapping', () => {
     const w = skyWorld();
     const a = { x: sx(20), y: sy(20) };
     tower(w, a.x, a.y);
@@ -429,8 +429,7 @@ describe('skybridge tool: badges, snap, reach (§5.4, §7.4)', () => {
     const cam = cityCam(g.world, a.x, a.y, 0.6);
     const badges = partnerBadges(g, cam);
     expect(badges.length).toBeGreaterThan(0);
-    expect(badges.filter((b) => b.kind !== 'bad').length).toBeLessThanOrEqual(BADGE_MAX);
-    expect(badges.filter((b) => b.kind === 'bad').length).toBeLessThanOrEqual(BADGE_MAX);
+    expect(badges.length).toBeLessThanOrEqual(BADGE_MAX);
     for (let i = 0; i < badges.length; i++)
       for (let j = i + 1; j < badges.length; j++) expect(Math.hypot(badges[i].x - badges[j].x, badges[i].y - badges[j].y)).toBeGreaterThanOrEqual(badges[i].r + badges[j].r);
     for (const b of badges) {
@@ -440,6 +439,149 @@ describe('skybridge tool: badges, snap, reach (§5.4, §7.4)', () => {
     }
     expect(BADGE_TAP_R * 2).toBe(44);
     expect(inReach(g.skybridgePartners())).toBe(badges.filter((b) => b.kind === 'ok').length);
+  });
+
+  /** A downtown with partners in all four lanes at gaps 2..10 (more than 8 badges' worth), Show routes on or off. */
+  function denseSource(routes: boolean): { g: Game; a: { x: number; y: number } } {
+    const w = skyWorld();
+    const a = { x: sx(24), y: sy(24) };
+    tower(w, a.x, a.y);
+    for (let d = 3; d <= 11; d += 2) {
+      tower(w, a.x + d, a.y);
+      tower(w, a.x, a.y + d);
+      tower(w, a.x - d, a.y);
+      tower(w, a.x, a.y - d);
+      tower(w, a.x + d, a.y + 3);
+    }
+    vertical.refresh(w);
+    const g = new Game();
+    expect(g.restore(JSON.parse(JSON.stringify(w.serialize())))).toBe(true);
+    g.setTool('skybridge');
+    g.skybridgeSource(a.x, a.y);
+    skybridgeView.showRoutes = routes;
+    return { g, a };
+  }
+
+  it('§5.4: at most 8 badges in all (green, red and blue together), nearest the source first', () => {
+    const saved = { routes: skybridgeView.showRoutes, avoid: skybridgeView.avoid };
+    try {
+      for (const routes of [false, true]) {
+        const { g, a } = denseSource(routes);
+        const shown = g.skybridgePartners().filter((p) => routes || !p.route);
+        // The scene has more partners than the cap, so the shared cap is what limits it.
+        expect(shown.length).toBeGreaterThan(BADGE_MAX);
+        const cam = cityCam(g.world, a.x, a.y, 0.6, 1280, 1600);
+        skybridgeView.avoid = [];
+        const badges = partnerBadges(g, cam);
+        expect(badges.length).toBe(BADGE_MAX);
+        // Nearest first (within the direct partners, and within the routes): none left out is nearer than the
+        // farthest of its kind shown. With Show routes on, routes keep up to ROUTE_SLOTS places.
+        const d = (p: { x: number; y: number }) => Math.abs(p.x - a.x) + Math.abs(p.y - a.y);
+        const isRoute = (p: { route?: unknown; ok: boolean }) => !!p.route && p.ok;
+        for (const kind of [false, true]) {
+          const mine = badges.filter((b) => (b.kind === 'route') === kind);
+          if (!mine.length) continue;
+          const far = Math.max(...mine.map((b) => d({ x: b.tx, y: b.ty })));
+          const left = shown.filter((p) => isRoute(p) === kind && !badges.some((b) => b.tx === p.x && b.ty === p.y));
+          for (const p of left) expect(d(p)).toBeGreaterThanOrEqual(far);
+        }
+        const nRoutes = shown.filter(isRoute).length;
+        expect(badges.filter((b) => b.kind === 'route').length).toBe(routes ? Math.min(ROUTE_SLOTS, nRoutes) : 0);
+        if (routes) expect(nRoutes).toBeGreaterThan(0);
+        // The list itself runs nearest first.
+        for (let i = 1; i < badges.length; i++) expect(d({ x: badges[i].tx, y: badges[i].ty })).toBeGreaterThanOrEqual(d({ x: badges[i - 1].tx, y: badges[i - 1].ty }));
+      }
+    } finally {
+      skybridgeView.showRoutes = saved.routes;
+      skybridgeView.avoid = saved.avoid;
+    }
+  });
+
+  it('§5.4, §7.8: no badge sits under the pill or the HUD; a covered badge moves or gives its place to the next nearest', () => {
+    const saved = { routes: skybridgeView.showRoutes, avoid: skybridgeView.avoid };
+    try {
+      const { g, a } = denseSource(false);
+      const cam = cityCam(g.world, a.x, a.y, 0.6, 844, 390);
+      skybridgeView.avoid = [];
+      const open = partnerBadges(g, cam);
+      // The landscape HUD and ticker (top 70 px), the pill across the middle of the top, the side rail, the tool chip.
+      const ui = [
+        { x0: 0, y0: 0, x1: 844, y1: 70 },
+        { x0: 311, y0: 78, x1: 594, y1: 130 },
+        { x0: 0, y0: 0, x1: 62, y1: 390 },
+        { x0: 70, y0: 282, x1: 350, y1: 326 },
+      ];
+      skybridgeView.avoid = ui;
+      const badges = partnerBadges(g, cam);
+      expect(badges.length).toBeGreaterThan(0);
+      expect(badges.length).toBeLessThanOrEqual(BADGE_MAX);
+      for (const b of badges) {
+        const t = Math.max(b.r, BADGE_TAP_R);
+        for (const r of ui) expect(b.x + t <= r.x0 || b.x - t >= r.x1 || b.y + t <= r.y0 || b.y - t >= r.y1).toBe(true);
+        expect(b.y - t).toBeGreaterThanOrEqual(0);
+        expect(b.x + t).toBeLessThanOrEqual(844);
+      }
+      // Something was covered in the open layout, so the UI changed the answer.
+      const covered = (b: { x: number; y: number; r: number }) => ui.some((r) => b.x + 22 > r.x0 && b.x - 22 < r.x1 && b.y + 22 > r.y0 && b.y - 22 < r.y1);
+      expect(open.some(covered)).toBe(true);
+      // A tap where a covered badge was drawn finds no badge now (the pill's DOM takes it).
+      for (const b of open.filter(covered)) {
+        const hit = badgeAt(badges, b.x, b.y);
+        if (hit) expect(hit.tx === b.tx && hit.ty === b.ty && hit.y === b.y).toBe(false);
+      }
+    } finally {
+      skybridgeView.showRoutes = saved.routes;
+      skybridgeView.avoid = saved.avoid;
+    }
+  });
+
+  it('§5.4 step 2: the reach ease fits the source and its badges inside the frame the HUD, pill and toolbar leave', () => {
+    const w = skyWorld();
+    const a = { x: 100, y: 100 };
+    const cam = cityCam(w, a.x, a.y, 1.2, 1440, 900);
+    cam.streetMinZoom = 0.2;
+    cam.minZoom = 0.2;
+    const frame = { x0: 0, y0: 150, x1: 1440, y1: 760 };
+    // Partners up to 6 tiles out, roofs up to 220 px: their badges stand well above the ground box.
+    const tops = [
+      { x: a.x, y: a.y, roof: 180 },
+      { x: a.x + 6, y: a.y, roof: 220 },
+      { x: a.x - 5, y: a.y, roof: 200 },
+      { x: a.x, y: a.y - 6, roof: 210 },
+      { x: a.x, y: a.y + 4, roof: 160 },
+    ];
+    const v = reachView(cam, { x0: a.x, y0: a.y, x1: a.x, y1: a.y }, 10, frame, tops);
+    expect(v.zoom).toBeLessThanOrEqual(1.2);
+    const view = new Camera(w.N);
+    view.setViewport(1440, 900);
+    view.x = v.x;
+    view.y = v.y;
+    view.zoom = v.zoom;
+    for (const t of tops) {
+      const s = view.tileToScreen(t.x, t.y);
+      const by = s.y - t.roof * v.zoom - 26;
+      // The whole badge (44 px) and the tower's base are inside the frame.
+      expect(by - 22).toBeGreaterThanOrEqual(frame.y0 - 0.5);
+      expect(s.y).toBeLessThanOrEqual(frame.y1 + 0.5);
+      expect(s.x - 22).toBeGreaterThanOrEqual(frame.x0 - 0.5);
+      expect(s.x + 22).toBeLessThanOrEqual(frame.x1 + 0.5);
+    }
+    // On a phone the street floor wins: the fit cannot hold, but the source stays in the frame.
+    const phone = cityCam(w, a.x, a.y, 0.6, 844, 390);
+    phone.streetMinZoom = 0.4;
+    const pf = { x0: 62, y0: 130, x1: 844, y1: 282 };
+    const pv = reachView(phone, { x0: a.x, y0: a.y, x1: a.x, y1: a.y }, 10, pf, tops);
+    expect(pv.zoom).toBeGreaterThanOrEqual(0.45);
+    const pc = new Camera(w.N);
+    pc.setViewport(844, 390);
+    pc.x = pv.x;
+    pc.y = pv.y;
+    pc.zoom = pv.zoom;
+    const s = pc.tileToScreen(a.x, a.y);
+    expect(s.x).toBeGreaterThanOrEqual(pf.x0);
+    expect(s.x).toBeLessThanOrEqual(pf.x1);
+    expect(s.y).toBeGreaterThanOrEqual(pf.y0);
+    expect(s.y).toBeLessThanOrEqual(pf.y1);
   });
 
   it('a drag snaps to the nearest green partner within 2 tiles of the finger, never to a red one or a route', () => {
@@ -492,6 +634,39 @@ describe('skybridge tube pick (§7.4, §5.5): a slab at the tube height selects 
     // On the ground under it: no tube.
     const g0 = screenToTileF(cam, c.x, c.y, { x: 0, y: 0 });
     expect(pickTube(w, g0.x, g0.y)).toBeNull();
+  });
+
+  it('a short bridge out of a Stratablock: a tap on the tube drawn over the tower\'s face picks the tube, not the tower', () => {
+    const w = skyWorld();
+    w.story.unlocks.push('stack');
+    const b0 = w.addBuilding('stack', sx(20), sy(20))!;
+    expect(b0).toBeTruthy();
+    b0.stage = 3;
+    b0.buildDays = 0;
+    // A partner tower one gap tile beyond the Stratablock's +x face.
+    const ax = b0.x + 3;
+    const ay = b0.y;
+    const bx = ax + 2;
+    tower(w, bx, ay);
+    vertical.refresh(w);
+    w.links.push({ id: 1, ax, ay, bx, by: ay });
+    const { top, bottom } = vertical.tubeOf(vertical.linkRoof(w, w.links[0]));
+    const cam = cityCam(w, ax + 1, ay, 0.8);
+    const z = (top + bottom) / 2;
+    const front = { x: ax, y: ay, size: 4, depth: b0.x + b0.y + 2 * (4 - 1), height: heightOf(w, ax, ay), zone: false };
+    // Along the drawn tube, from inside the Stratablock's footprint (the collar end) across the gap tile.
+    for (const along of [-0.45, -0.25, -0.05, 0.3, 0.7]) {
+      const p = cam.worldToScreen((ax + 1 + along - (ay + 0.5)) * HALF_W, (ax + 1 + along + ay + 0.5) * HALF_H - z);
+      const f = screenToTileF(cam, p.x, p.y, { x: 0, y: 0 });
+      const hit = pickTube(w, f.x, f.y);
+      expect(hit?.link, `along ${along}`).toBe(1);
+      // The tube draws after its back anchor (render/story.ts), so it wins over the tower there.
+      expect(tubeBeatsFront(cam, front, hit!, p.x), `along ${along}`).toBe(true);
+    }
+    // The Stratablock's own body away from the tube: no tube.
+    const body = cam.worldToScreen((b0.x + 2 - (b0.y + 2)) * HALF_W, (b0.x + 2 + b0.y + 2) * HALF_H - 60);
+    const fb = screenToTileF(cam, body.x, body.y, { x: 0, y: 0 });
+    expect(pickTube(w, fb.x, fb.y)).toBeNull();
   });
 
   it('a tower in front keeps a tap on its body, but the tube wins beside a narrow zone tower and over anything lower', () => {

@@ -19,6 +19,7 @@ import * as vertical from '../game/story/vertical';
 import type { World } from '../game/world';
 import { HALF_H, HALF_W, TILE_H, type Camera } from '../render/camera';
 import type { PartnerBadge } from '../render/overlay';
+import { anchorInset, frontKey } from '../render/story';
 
 /** The first tap takes the nearest tall anchor within this many CSS px of the finger (§7.4). */
 export const ANCHOR_SLOP_PX = 24;
@@ -127,24 +128,53 @@ export interface TubeHit {
   link: number;
   x: number;
   y: number;
-  /** Draw depth (x + y of the gap tile) and the tube's bottom (world px), to weigh against a tower in front. */
+  /**
+   * The sweep key the tube draws at (render/story.ts: the gap tile's x + y, or the back anchor's front corner when
+   * that sorts later, so the tube draws over its own tower), to weigh against what pickTile found in front of it.
+   */
   depth: number;
+  /** The tube's bottom (world px). */
   bottom: number;
 }
 
+/**
+ * The tube a screen ray at ground point (u, v) crosses (§7.4): the slab over each gap tile between the tube's bottom
+ * and top, reaching into the anchors' footprints as far as the art draws the tube and its collars (`anchorInset`).
+ * The front-most tube wins.
+ */
 export function pickTube(world: World, u: number, v: number): TubeHit | null {
   let best: TubeHit | null = null;
   for (const l of world.links) {
+    if (!world.inBounds(l.ax, l.ay) || !world.inBounds(l.bx, l.by)) continue;
     const { top, bottom } = vertical.tubeOf(vertical.linkRoof(world, l));
     const b = Math.max(0, bottom) / TILE_H;
     const t = Math.max(0, top) / TILE_H;
-    vertical.forEachGapTile(l, (gx, gy) => {
-      const enter = Math.max(gx - u, gy - v, b);
-      const exit = Math.min(gx + 1 - u, gy + 1 - v, t);
-      if (enter >= exit) return;
-      const depth = gx + gy;
+    const axisX = l.ay === l.by;
+    // A = the back anchor (smaller coordinate along the axis), as render/story.ts draws the tube.
+    const flip = axisX ? l.bx < l.ax : l.by < l.ay;
+    const ax = flip ? l.bx : l.ax;
+    const ay = flip ? l.by : l.ay;
+    const bx = flip ? l.ax : l.bx;
+    const by = flip ? l.ay : l.by;
+    const n = Math.abs(bx - ax) + Math.abs(by - ay);
+    const eA = anchorInset(world, ax, ay);
+    const eB = anchorInset(world, bx, by);
+    const after = frontKey(world, ax, ay);
+    for (let k = 1; k < n; k++) {
+      const gx = axisX ? ax + k : ax;
+      const gy = axisX ? ay : ay + k;
+      const s0 = k === 1 ? -eA : 0;
+      const s1 = k === n - 1 ? 1 + eB : 1;
+      const x0 = axisX ? gx + s0 : gx;
+      const x1 = axisX ? gx + s1 : gx + 1;
+      const y0 = axisX ? gy : gy + s0;
+      const y1 = axisX ? gy + 1 : gy + s1;
+      const enter = Math.max(x0 - u, y0 - v, b);
+      const exit = Math.min(x1 - u, y1 - v, t);
+      if (enter >= exit) continue;
+      const depth = Math.max(gx + gy, after);
       if (!best || depth > best.depth) best = { link: l.id, x: gx, y: gy, depth, bottom };
-    });
+    }
   }
   return best;
 }
@@ -171,28 +201,78 @@ export function tubeBeatsFront(
   return Math.abs(sx - c.x) > HALF_W * cam.zoom * TOWER_BODY_SHARE;
 }
 
+/** Screen px a green badge stands above its roof point (its centre 26 px up, plus its 22 px radius), §5.4. */
+const BADGE_HEAD_PX = 48;
+/** Screen px a badge reaches to either side of its tower's centre line. */
+const BADGE_SIDE_PX = 24;
+
 /**
- * The view that shows anchor A and its 10-tile reach (§5.4 step 2): A's centre in the uncovered area at the zoom that
- * fits A ± 10 tiles, never zooming in and never below REACH_MIN_ZOOM (or the street view's floor).
+ * The view that shows anchor A and its reach (§5.4 step 2) inside `frame`, the map area the HUD, ticker, pill and
+ * toolbar leave open (CSS px; the camera insets when null). With partner roof points (`tops`: the tile and its roof
+ * height), it fits A and the badges that stand above them, so none lands under the pill or the HUD; without, A ±
+ * `reach` tiles. Never zooms in and never below REACH_MIN_ZOOM (or the street view's floor); when the floor wins, the
+ * fit's centre moves only as far as keeps A itself in the frame.
  */
 export function reachView(
   cam: Pick<Camera, 'zoom' | 'width' | 'height' | 'insets' | 'streetMinZoom' | 'minZoom'>,
   a: { x0: number; y0: number; x1: number; y1: number },
   reach = 10,
+  frame?: { x0: number; y0: number; x1: number; y1: number } | null,
+  tops?: readonly { x: number; y: number; roof: number }[],
 ): { x: number; y: number; zoom: number } {
-  const w = a.x1 - a.x0 + 1 + 2 * reach;
-  const h = a.y1 - a.y0 + 1 + 2 * reach;
   const ins = cam.insets;
-  const vw = Math.max(1, cam.width - ins.left - ins.right);
-  const vh = Math.max(1, cam.height - ins.top - ins.bottom);
-  const fit = Math.min(vw / (((w + h) / 2) * HALF_W * 2), vh / (((w + h) / 2) * HALF_H * 2));
+  const f = frame ?? { x0: ins.left, y0: ins.top, x1: cam.width - ins.right, y1: cam.height - ins.bottom };
+  const vw = Math.max(1, f.x1 - f.x0);
+  const vh = Math.max(1, f.y1 - f.y0);
+  const P = (x: number, y: number) => ({ x: (x - y) * HALF_W, y: (x + y) * HALF_H });
+  // World-px box of what must show; `head` is the extra screen px above its top (a badge over the highest roof).
+  let x0 = Infinity;
+  let x1 = -Infinity;
+  let y0 = Infinity;
+  let y1 = -Infinity;
+  const add = (p: { x: number; y: number }) => {
+    x0 = Math.min(x0, p.x);
+    x1 = Math.max(x1, p.x);
+    y0 = Math.min(y0, p.y);
+    y1 = Math.max(y1, p.y);
+  };
+  const r = tops && tops.length ? 0 : reach;
+  for (const [x, y] of [
+    [a.x0 - r, a.y0 - r],
+    [a.x1 + 1 + r, a.y0 - r],
+    [a.x1 + 1 + r, a.y1 + 1 + r],
+    [a.x0 - r, a.y1 + 1 + r],
+  ])
+    add(P(x, y));
+  let head = 0;
+  let side = 0;
+  if (tops && tops.length) {
+    head = BADGE_HEAD_PX;
+    side = BADGE_SIDE_PX;
+    for (const t of tops) {
+      const c = P(t.x + 0.5, t.y + 0.5);
+      add({ x: c.x, y: c.y - t.roof });
+      add(c);
+    }
+  }
+  const fit = Math.min((vw - 2 * side) / Math.max(1, x1 - x0), (vh - head) / Math.max(1, y1 - y0));
   const floor = Math.max(REACH_MIN_ZOOM, cam.streetMinZoom, cam.minZoom);
   const zoom = Math.min(cam.zoom, Math.max(floor, fit));
-  const cx = (a.x0 + a.x1 + 1) / 2;
-  const cy = (a.y0 + a.y1 + 1) / 2;
-  const dx = (ins.left - ins.right) / 2;
-  const dy = (ins.top - ins.bottom) / 2;
-  return { x: (cx - cy) * HALF_W - dx / zoom, y: (cx + cy) * HALF_H - dy / zoom, zoom };
+  // The box (with its head room) centred in the frame.
+  const fcx = (f.x0 + f.x1) / 2;
+  const fcy = (f.y0 + f.y1) / 2;
+  let x = (x0 + x1) / 2 - (fcx - cam.width / 2) / zoom;
+  let y = (y0 + y1) / 2 - (head / 2) / zoom - (fcy - cam.height / 2) / zoom;
+  // A's footprint centre stays in the frame (60 px in from its edges) when the box did not fit.
+  const ac = P((a.x0 + a.x1 + 1) / 2, (a.y0 + a.y1 + 1) / 2);
+  const sxA = (ac.x - x) * zoom + cam.width / 2;
+  const syA = (ac.y - y) * zoom + cam.height / 2;
+  const m = 60;
+  const cx = Math.max(f.x0 + Math.min(m, vw / 2), Math.min(f.x1 - Math.min(m, vw / 2), sxA));
+  const cy = Math.max(f.y0 + Math.min(m, vh / 2), Math.min(f.y1 - Math.min(m, vh / 2), syA));
+  x += (sxA - cx) / zoom;
+  y += (syA - cy) / zoom;
+  return { x, y, zoom };
 }
 
 /** How many green partners the source has (the pill's "3 in reach"). */
