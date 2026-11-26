@@ -215,6 +215,20 @@ describe('SidePanels: one panel at a time (§14.1)', () => {
     expect(p.current).toBe('report');
   });
 
+  it('a panel and a story card that open in the same frame: the card takes the panel, the other comes back after it', () => {
+    const { p, s } = host();
+    s.report.open = true;
+    s.card.open = true;
+    p.update();
+    expect(p.current).toBe('card');
+    expect(s.report.open).toBe(false);
+    expect(p.ret).toBe('report');
+    s.card.open = false;
+    p.update();
+    expect(s.report.reopened).toBe(1);
+    expect(p.current).toBe('report');
+  });
+
   it('a card read from the Goals drawer (the drawer closed as it opened) shows Back; Back returns to the drawer', () => {
     const { p, s } = host();
     s.goals.open = true;

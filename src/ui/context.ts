@@ -507,6 +507,9 @@ export class SidePanels {
           nested = true;
         }
         if (!ret && this.parked && this.parked !== id) ret = this.parked;
+        // A panel and a story card that opened within the same frame (a slow frame, or the player's click as the card
+        // arrived): the card takes the panel and the other comes back after it, as if it had opened first.
+        if (!ret && id === 'card') ret = fresh.find((f) => f !== 'card' && f !== 'citymap' && open.has(f) && !!this.surfaces.get(f)?.reopen) ?? null;
         if (id === 'citymap') {
           // The City map replaces everything and gives nothing back (a parked card waits on).
           ret = this.parked;
