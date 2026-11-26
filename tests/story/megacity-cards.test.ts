@@ -478,6 +478,49 @@ describe('the {district} token inside a district (MEGACITY §3.7)', () => {
     expect(variants).toBe(16);
   }, 60_000);
 
+  it('the inspect sheet names the neighbourhood a tile lies in: a 5×5 repeat from its variant\'s list; a one-district city as before', () => {
+    const g = new Game();
+    g.settings.lowerDetail = false;
+    if (!g.restore(JSON.parse(JSON.stringify(regionWorld(5, 77).serialize())))) throw new Error('restore failed');
+    const w = g.world;
+    const open = (s: SlotId) =>
+      landIn(w, s).filter((i) => {
+        const t = w.tiles[i];
+        return t.buildingId < 0 && !t.road && t.zone === ZoneType.None && w.sky[i] === 0;
+      });
+    // One district owned: no District row and no neighbourhood note (the start city's inspect is unchanged).
+    const shore = slotOf(w, 'shore');
+    const [i0] = open(shore);
+    const lone = g.getTileInfo(i0 % w.N, Math.floor(i0 / w.N))!;
+    expect(lone.rows.some(([k]) => k === 'District')).toBe(false);
+    expect(lone.notes?.some((n) => n.text.startsWith('Neighbourhood')) ?? false).toBe(false);
+    // A repeat (variant > 0) annexed: its tiles name a neighbourhood from the variant's own list.
+    const rep = w.districts.kinds.findIndex((k, i) => k === 'bazaar' && w.variantOf(i as SlotId) > 0) as SlotId;
+    expect(rep).toBeGreaterThanOrEqual(0);
+    w.annex(rep);
+    const v = w.variantOf(rep);
+    const list = neighbourhoodsOf('bazaar', v);
+    expect(list).not.toEqual(neighbourhoodsOf('bazaar', 0));
+    const seen = new Set<string>();
+    for (const i of open(rep).filter((_, k) => k % 97 === 0)) {
+      const x = i % w.N;
+      const y = Math.floor(i / w.N);
+      const info = g.getTileInfo(x, y)!;
+      expect(info.rows).toContainEqual(['District', DISTRICTS.bazaar.variants[v - 1].short]);
+      const note = info.notes?.find((n) => n.text.startsWith('Neighbourhood: '));
+      expect(note, `${x},${y}`).toBeDefined();
+      const name = note!.text.slice('Neighbourhood: '.length);
+      expect(list).toContain(name);
+      expect(name).toBe(neighbourhoodAt(w, x, y));
+      expect(note!.text.length).toBeLessThanOrEqual(60); // the note rule (≤ 60 chars, two lines at 360 px)
+      seen.add(name);
+    }
+    expect(seen.size).toBeGreaterThan(2);
+    // Charter Shore, now one of two districts, names its cells from today's start list.
+    const shoreInfo = g.getTileInfo(i0 % w.N, Math.floor(i0 / w.N))!;
+    expect(shoreInfo.notes).toContainEqual({ text: `Neighbourhood: ${districtName(i0 % w.N, Math.floor(i0 / w.N), w.seed, artOffset(w))}` });
+  }, 30_000);
+
   it('a cell a story choice renamed (§9.3) answers with its new name inside an annexed district too', () => {
     const w = regionWorld();
     const s = own(w, 'bazaar');

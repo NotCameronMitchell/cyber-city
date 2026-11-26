@@ -56,6 +56,7 @@ import { deviceClass } from './device';
 import { districtDayUnit, pumpRings } from './districts/daily';
 import { isFloodplain, updateDistrictLayers, isWildReed } from './districts/effects';
 import { districtShort, districtTitle, goalViews, type GoalView } from './districts/goals';
+import { neighbourhoodAt } from './districts/names';
 import { adjacentLocked, slotRect, validSlot } from './districts/slots';
 import { isRuin } from './districts/annex';
 import { plaquesAt, sunkTagline } from './marks';
@@ -2297,12 +2298,15 @@ export class Game {
     return Math.max(1, Math.round(heightOf(this.world, x, y) / 6.5));
   }
 
-  /** District rows and notes every owned tile can carry (§7.5): the district, terraces, ground, floodplain. */
+  /** District rows and notes every owned tile can carry (§7.5): the district and its neighbourhood, terraces, ground, floodplain. */
   private districtNotes(x: number, y: number, rows: [string, string][], notes: NonNullable<TileInfo['notes']>): void {
     const w = this.world;
     const t = w.tiles[y * w.N + x];
     const s = w.slotAt(x, y);
-    if (w.districts.owned.length > 1) rows.push(['District', districtShort(w, s)]);
+    if (w.districts.owned.length > 1) {
+      rows.push(['District', districtShort(w, s)]);
+      notes.push({ text: `Neighbourhood: ${neighbourhoodAt(w, x, y)}` }); // MEGACITY §3.7: where the feed's names are
+    }
     const mods = DISTRICTS[w.districts.kinds[s]]?.mods;
     if (t.terrain !== Terrain.Land || !mods) return;
     if (mods.lvPerElev && t.elev > 0) notes.push({ text: `Terrace ${t.elev}: views +${Math.round(mods.lvPerElev * t.elev * 1000) / 10}%`, tone: 'good' });
