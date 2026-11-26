@@ -985,7 +985,7 @@ export function draw(ctx: CanvasRenderingContext2D, world: World, marks: Marks, 
   MARKS_STATS.decals = 0;
   MARKS_STATS.skyDecals = 0;
   clock = env.time;
-  noteView(ctx, world, tiles, env.zoom);
+  noteView(ctx, world, tiles, env.zoom, env.quality === 'low');
   if (env.zoom < MARKS_MIN_ZOOM) return;
   const st = world.story;
   const p = env.zoom >= PROPS_MIN_ZOOM ? listProps(world, tiles, env.quality) : null;

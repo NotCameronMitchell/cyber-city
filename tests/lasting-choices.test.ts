@@ -1035,6 +1035,9 @@ describe('§9.2 optional: the Glass Smile follows the camera, the Record Tower s
       expect(live.ledgerFace(ctx, 10, 10, 46, 23, 108, [150, 220, 255], true, 3)).toBe(false);
       live.noteView(ctx, w, tiles, live.LEDGER_TEXT_ZOOM - 0.1);
       expect(live.ledgerFace(ctx, 10, 10, 46, 23, 108, [150, 220, 255], false, 3)).toBe(false);
+      // Low quality keeps the static ticker too.
+      live.noteView(ctx, w, tiles, 1, true);
+      expect(live.ledgerFace(ctx, 10, 10, 46, 23, 108, [150, 220, 255], false, 3)).toBe(false);
       expect(mockStats.errors).toEqual([]);
     } finally {
       restore();

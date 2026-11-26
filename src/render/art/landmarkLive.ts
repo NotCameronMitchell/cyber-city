@@ -28,7 +28,7 @@ const wy = (u: number, v: number) => (u + v) * HALF_H;
 export const LIVE_STATS = { smiles: 0, ledgers: 0 };
 
 /** What the last draw() saw: the view's centre and half width in world px, the zoom and the world (for its budget). */
-const view = { x: 0, y: 0, r: 200, set: false, zoom: 1, world: null as World | null };
+const view = { x: 0, y: 0, r: 200, set: false, zoom: 1, low: false, world: null as World | null };
 /** The Glass Smile's eased gaze (world px off the sphere's centre; one Smile a city, maxCount 1). */
 const gaze = { x: 0, y: 0, t: -1 };
 /** Seconds the face takes to settle on a new view (it "turns slowly"). */
@@ -37,9 +37,10 @@ const GAZE_SEC = 1.8;
 export const LEDGER_TEXT_ZOOM = 0.85;
 
 /** The marks pass's frame: where the view is (the Smile's gaze) and which world's budget the Record Tower reads. */
-export function noteView(ctx: CanvasRenderingContext2D, world: World, tiles: Rect, zoom: number): void {
+export function noteView(ctx: CanvasRenderingContext2D, world: World, tiles: Rect, zoom: number, low = false): void {
   view.world = world;
   view.zoom = zoom;
+  view.low = low;
   const m = typeof ctx.getTransform === 'function' ? ctx.getTransform() : null;
   if (m && m.a > 0 && ctx.canvas) {
     view.x = (ctx.canvas.width / 2 - m.e) / m.a;
@@ -184,7 +185,7 @@ function ledgerSprite(world: World, c: RGB): HTMLCanvasElement | null {
  */
 export function ledgerFace(ctx: CanvasRenderingContext2D, ox: number, oy: number, ex: number, ey: number, h: number, c: RGB, frozen: boolean, t: number): boolean {
   const w = view.world;
-  if (frozen || !w || view.zoom < LEDGER_TEXT_ZOOM) return false;
+  if (frozen || !w || view.low || view.zoom < LEDGER_TEXT_ZOOM) return false;
   const spr = ledgerSprite(w, c);
   if (!spr) return false;
   const L = Math.hypot(ex, ey);
