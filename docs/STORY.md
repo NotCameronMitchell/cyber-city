@@ -1407,13 +1407,17 @@ The Megacity update grows the city past its first 64×64 map and gives every new
 | `ds.terraces` LAMPS ON THE HILL | Tuning | `district.terraces >= 1 & tuningActive` | Light every step · Keep the stairs dark ‡ · Let each block decide |
 | `ds.reedmere` THE GREEN LUNG | Board | `district.reedmere >= 1` | Protect the reeds ‡ · Drain the south bank (`reeds drain`) · Sell the drainage rights |
 | `ds.skeleton` THE FRAMES | Kites | `district.skeleton >= 1 & turf.kites >= 10` | Leave them the top floors ‡ · Clear the frames (`turf kites −60 slot:skeleton`) · Charge them rent |
-| `ds.tarmac` FAMILIES ON THE APRON | Board | `district.tarmac >= 1` | Rehouse them: 6,000 (`apron rehouse`) · Let them stay ‡ · Clear the apron (`apron clear`) |
+| `ds.tarmac` FAMILIES ON THE APRON | Board | `district.tarmac >= 1 & apronFamilies` (Tarmac Reach itself) | Rehouse them: 6,000 (`apron rehouse`) · Let them stay ‡ · Clear the apron (`apron clear`) |
 | `ds.bazaar` WHO RUNS THE STALLS | Undertow + Kites | `district.bazaar >= 1 & turf.undertow >= 10 & turf.kites >= 10` | Give it to the Undertow · Give it to the Kites · Split it down the middle ‡ · Send in the inspectors |
 | `lm.arena` HOME GAME | Nacre | `count.arena >= 1` | Let the cameras pick · No faces on the screen ‡ · Only people who opt in |
 | `lm.beacon` A LAMP ON THE WATER | Undertow | `count.beacon >= 1` | Dim it on dark nights · Keep it lit ‡ · Dim it, and log every boat |
 | `lm.halo` THE BEST VIEW | Kites | `count.halolookout >= 1` | Let them hide it · No relays on the Lookout ‡ · Allow it, and file a report |
 
-- Copy, effects and briefs are MEGACITY §8.3's. One brief differs: `ds.sunk`'s no longer says the clearing "angers the Tuning", because the card can show while the Tuning is still hidden (Trace under 40 and the logs buried or leashed) and the clarity lint keeps the Tuning unnamed until it shows itself (§2.2); its Tuning −6 still applies, and its chip stays hidden the same way.
+- Copy, effects and briefs are MEGACITY §8.3's, with these changes:
+  - `ds.sunk`'s brief no longer says the clearing "angers the Tuning", because the card can show while the Tuning is still hidden (Trace under 40 and the logs buried or leashed) and the clarity lint keeps the Tuning unnamed until it shows itself (§2.2); its Tuning −6 still applies, and its chip stays hidden the same way.
+  - **A card comes with the first district of its kind, whichever that is.** On a 5×5 region that is often a repeat: annexing in a random order, Halfway Towers comes before Skeleton Row (or Saffron Arcade before Verdigris Bazaar) in 16–31% of cities, depending on the kind. So the cards never name a district of their kind they cannot be sure of: lark speaks of "the empty frames you took", Brine of "the bazaar" and its night stalls, and the Green Lung's brief of "the marsh reeds". "The Shoals", "the Flats" and "the terraces" were already plain words. The lint checks every `ds.*` card against every district and variant name of its kind.
+  - **`ds.tarmac` waits for Tarmac Reach itself**, the only Tarmac district with families on its apron (§3.7: variant 0 only). Game sets the flag `apronFamilies` when it annexes Tarmac Reach, so a city whose first Tarmac district is Cargo Fields or Windmark Strip hears nothing about families that are not there.
+  - **The popover names the districts an effect acts on** (`effects.ts` `districtPlace`): the one owned district of that kind by its own name ("Kites turf −60 in Halfway Towers"), or a count when there are several ("brownfield cleared in 2 Flats districts"). The apron verbs always say Tarmac Reach.
 - Lasting choices are permanent only as pure bonuses (`[approvalAdd +2, perm]` on *Light every step*, `+1` on *Protect the reeds*, *Let each block decide* and *Rehouse them*); every penalty is timed (§2.3 rule 3).
 - **Cadence:** they add variety, not frequency. The pace's deck gaps set the rate (Relaxed ≥ 15 min between deck cards), each card asks once, their conditions arrive spread over the campaign (one per annexed district, the landmarks late), and none opens by itself. `tests/story/megacity-cards.test.ts` holds the pace's gap with every card eligible from day one. Measured on a 3×3 city whose districts are annexed as grants arrive (seeds 2091, 7, 31, 99, 1234; every pace, to the ending), with and without the eleven cards: the shortest gap stays the pace's floor (120 / 540 / 900 s), deck cards an hour stay within run-to-run noise (Brisk 23.5 → 23.3, Normal 5.2 → 5.3, Relaxed 2.9 → 3.0), none opens by itself, and in every month with COMMS open the rest of the deck already had a drawable card, so the new cards never fill a slot that would have stayed empty: they change which card comes, not how often.
 
@@ -1421,13 +1425,13 @@ The Megacity update grows the city past its first 64×64 map and gives every new
 
 | Written as | Effect | Popover |
 |---|---|---|
-| `flag brownfield=cleared` | `brownfield clear`: every brownfield tile of every owned Flats district turns Plain | brownfield cleared in Kessel Flats |
+| `flag brownfield=cleared` | `brownfield clear`: every brownfield tile of every owned Flats district turns Plain | brownfield cleared in Kessel Flats (or the Flats districts owned) |
 | `flag ruins=cleared` | `ruins clear`: the Sunk's ruins become empty zoned lots | ruins cleared for builders in the Sunk |
-| `flag reeds=drained` | `reeds drain`: reed ground turns Plain on the half of every owned marsh nearer the start district | south bank reeds drained in Reedmere |
+| `flag reeds=drained` | `reeds drain`: reed ground turns Plain on the half of every owned marsh nearer the start district | south bank reeds drained in Reedmere (or the marsh districts owned) |
 | `flag apron=rehoused` | `apron rehouse`: the 24 apron Hab tiles step to level 2 at $$ | apron homes rebuilt in Tarmac Reach |
 | `flag apron=cleared` | `apron clear`: the apron block is bulldozed and its zoning removed | apron cleared in Tarmac Reach |
 
-The target **`slot:<kind>`** (Step 0b's `Target`) is every tile of the owned districts of that kind; a turf effect keeps its own gang's tiles, so `turf kites −60 slot:skeleton` dims the Kites' string lights on every owned Skeleton Row district and nowhere else. It needs no radius.
+The target **`slot:<kind>`** (Step 0b's `Target`) is every tile of the owned districts of that kind; a turf effect keeps its own gang's tiles, so `turf kites −60 slot:skeleton` dims the Kites' string lights on every owned Skeleton Row district (its repeats included) and nowhere else. It needs no radius.
 
 **Mood rows and power** (§2.2, §2.4, additive; every faction keeps 4–6 drivers): Board *Green lung* (`district.reedmere` ×3, 0..3), Basalt *The Flats* (`district.flats` ×3, 0..3), Tuning *Lamps on the hill* (`district.terraces` ×3, 0..3). Power terms (`POWER_TERMS` mirrors the live sums in `story/factions.ts`): Board +100 per Charter Hall; Basalt +120 per Hexworks and per Basalt-sponsored Spire, +150 per Foreman's Gantry while Ironwork is the ending; Nacre's 120 per Spire now counts its own and every unsponsored (pre-Megacity) Spire, +120 per Pearl Atrium, +150 per Glass Smile while Pearlescence holds; Undertow +100 per Hullhouse, +80 per Salvage crown; Kites +100 per Kite Mast. Building reactions for the new types are in config `FACTION_BUILD_REACTIONS` (landmarks count once).
 
@@ -2405,7 +2409,7 @@ After this, nobody changes a shared interface without a note to all packages.
   - a choice label that doesn't end in a period (a closing quote may follow it), or a `queue` of a whisper id with no whisper card;
   - a bare `strongestTurf` target outside a `turf` effect;
   - an `Unlockable` with no fallback row (§5.0), or a goal or claim metric outside the §10.2 list;
-  - Megacity (§7.8b): a megacity card outside the §8.3 shape, a district verb or `slot:` target off its card, a mood or power row that drifts from the live sums, a lobby line out of voice or over 110, a neighbourhood list that is not 12 names ≤ 15 characters, a name in two lists or holding a district's name, a "Lamp" outside the Tuning, a glossary over 22 entries, and the §8.6 spoiler scans.
+  - Megacity (§7.8b): a megacity card outside the §8.3 shape, a district verb or `slot:` target off its card, a mood or power row that drifts from the live sums, a `ds.*` card that names a district of its kind it cannot be sure of (a 5×5 repeat may come first; only the Sunk and, behind `apronFamilies`, Tarmac Reach are named), a lobby line out of voice or over 110, a neighbourhood list that is not 12 names ≤ 15 characters, a name in two lists or holding a district's name, a "Lamp" outside the Tuning, a glossary over 22 entries, and the §8.6 spoiler scans.
 - **Conditions and effects:** a unit test per vocabulary member. Mods combine and clamp correctly.
 - **Save:** v1 → v2 migration; a v2 save with `story` deleted still loads; a saved `StoryState` missing a field loads with its default; the v2 round trip keeps turf (with `turfMeta`), rail, `railOut`, links, stages and story exactly.
 - **Turf:** deterministic for a seed; the cap holds; crackdown and scatter; truce freeze; pact blocks spread.

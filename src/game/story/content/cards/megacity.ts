@@ -1,9 +1,15 @@
 // Megacity deck cards (docs/MEGACITY.md §8.3, "Districts, Scale, Skybridges and Variety"). Eleven faction cards
 // that arise from what the player annexed and built: one per district kind (the eight `ds.*` cards, each drawable
 // once a district of that kind is owned) and three for the new landmarks (`lm.*`). Titles, bodies, labels and
-// effects are §8.3's; the briefs too, except that `ds.sunk`'s no longer names the Tuning (the card can show while
-// the Tuning is still hidden, STORY.md §2.2, and the clarity lint keeps it a mystery: the Tuning −6 chip stays
-// hidden the same way).
+// effects are §8.3's, with these changes:
+// - `ds.sunk`'s brief no longer names the Tuning (the card can show while the Tuning is still hidden, STORY.md §2.2,
+//   and the clarity lint keeps it a mystery: the Tuning −6 chip stays hidden the same way);
+// - on a 5×5 region the first district of a kind is often a repeat (16–31% of cities by kind, annexing in a
+//   random order: Halfway Towers before Skeleton Row, Saffron Arcade before Verdigris Bazaar), so `ds.skeleton`,
+//   `ds.bazaar` and `ds.reedmere` speak of "the frames", "the bazaar" and "the marsh" rather than naming the
+//   kind's own district;
+// - `ds.tarmac` waits for Tarmac Reach itself, the only Tarmac district with apron families (flag `apronFamilies`,
+//   set by Game.annex).
 //
 // They join DECK (and so CARD_LIST) but not FACTION_DECKS, as the expansion cards do. Every one is a weight-10
 // faction card on a 720 d cooldown, `once`, with one ‡ default, a brief and no ⚑, ★, beat or queue: they add
@@ -12,7 +18,8 @@
 // The physical promises are kept by effects (§8.4): `ruins clear`, `brownfield clear`, `reeds drain` and
 // `apron rehouse` / `apron clear` are reserved flags that run their district verb once (story/effects.ts
 // DISTRICT_VERBS, since the frozen Effect union has no member for them), and `ds.skeleton` dims the Kites'
-// turf on the frames with the `slot:skeleton` target. District names are written literally (no spot rule).
+// turf on the frames with the `slot:skeleton` target. Only the districts a card is sure of are named (the Sunk is
+// unique; ds.tarmac waits for Tarmac Reach); no card has a spot rule.
 
 import type { Card } from '../../types';
 import { all, card, choice, dflt, favor, flagIs, funds, income, m, mod, setFlag, trace, turfStr } from '../dsl';
@@ -93,7 +100,7 @@ export const MEGACITY_CARDS: readonly Card[] = [
     title: 'THE GREEN LUNG',
     when: m('district.reedmere', '>=', 1),
     body: "Marrow: 'Minutes. Item: the reed marsh filters more smog than four plazas and costs nothing. Item: developers want it drained. The Board asks you to protect it. Noted: the Board asked politely.'",
-    brief: 'The Board wants the Reedmere reeds protected: free parkland and a happy Board, but Basalt wants the land. Drain the south bank for homes instead, or sell the drainage rights for cash.',
+    brief: 'The Board wants the marsh reeds protected: free parkland and a happy Board, but Basalt wants the land. Drain the south bank for homes instead, or sell the drainage rights for cash.',
     choices: [
       dflt('Protect the reeds.', favor('board', 8), favor('basalt', -3), mod('perm', { approvalAdd: 1 })),
       choice('Drain the south bank.', favor('board', -4), favor('basalt', 3), mod(360, { demandRes: 0.05 }), setFlag('reeds', 'drained')),
@@ -106,8 +113,8 @@ export const MEGACITY_CARDS: readonly Card[] = [
     speaker: 'kites',
     title: 'THE FRAMES',
     when: all(m('district.skeleton', '>=', 1), m('turf.kites', '>=', 10)),
-    body: "lark: 'the frames in skeleton row are the best climbing in the city, moth. we live up there now. finish them if you want. just leave us the top floors. we keep the wasps off your cranes.'",
-    brief: "The Glass Kites live in Skeleton Row's unfinished towers. Let them keep the top floors (Kites pleased, Nacre not), clear them out for your building crews, or charge them rent.",
+    body: "lark: 'the empty frames you took are the best climbing in the city, moth. we live up there now. finish them if you want. just leave us the top floors. we keep the wasps off your cranes.'",
+    brief: 'The Glass Kites live in the unfinished tower frames you annexed. Let them keep the top floors (Kites pleased, Nacre not), clear them out for your building crews, or charge them rent.',
     choices: [
       dflt('Leave them the top floors.', favor('kites', 10), favor('nacre', -4)),
       // The Kites' string lights go dark on the frames: their turf in every owned Skeleton Row district weakens.
@@ -120,7 +127,9 @@ export const MEGACITY_CARDS: readonly Card[] = [
     id: 'ds.tarmac',
     speaker: 'board',
     title: 'FAMILIES ON THE APRON',
-    when: m('district.tarmac', '>=', 1),
+    // The apron families live only in Tarmac Reach itself, never in a 5×5 repeat (§3.7): Game sets the flag when it
+    // annexes it, so a city whose first Tarmac district is Cargo Fields or Windmark Strip never hears about them.
+    when: all(m('district.tarmac', '>=', 1), flagIs('apronFamilies')),
     body: "Marrow: 'Resolved: the old airfield is open again. Noted: the families who moved onto the apron in the dark years would like to know if they are part of the plan. The Board would also like to know.'",
     brief: 'Families live on the old Tarmac Reach apron. Rehouse them properly (costs money, Board pleased), let them stay as an affordable quarter, or clear them out for the leaseholder.',
     choices: [
@@ -136,8 +145,8 @@ export const MEGACITY_CARDS: readonly Card[] = [
     with: 'kites',
     title: 'WHO RUNS THE STALLS',
     when: all(m('district.bazaar', '>=', 1), m('turf.undertow', '>=', 10), m('turf.kites', '>=', 10)),
-    body: "Brine and lark, on one call for once. Brine: 'Verdigris ran its night stalls before the Seam had a name, little light. Now they want one set of rules.' lark: 'ours.' Brine: 'Ours.' Then both of them wait, very politely, for you to pick a word.",
-    brief: "Both gangs want to run the Verdigris Bazaar's night stalls. Pick one (the other gang is angry), split the stalls down the middle, or send in the Board's inspectors (both gangs dislike that).",
+    body: "Brine and lark, on one call for once. Brine: 'The bazaar ran its night stalls before the Seam had a name, little light. Now they want one set of rules.' lark: 'ours.' Brine: 'Ours.' Then both of them wait, very politely, for you to pick a word.",
+    brief: "Both gangs want to run the bazaar's night stalls. Pick one (the other gang is angry), split the stalls down the middle, or send in the Board's inspectors (both gangs dislike that).",
     choices: [
       choice('Give it to the Undertow.', favor('undertow', 10), favor('kites', -8)),
       choice('Give it to the Kites.', favor('kites', 10), favor('undertow', -8)),

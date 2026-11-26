@@ -6,7 +6,7 @@
 // token inside a district, and a city where every district is owned staying within the pace's deck gaps.
 
 import { afterEach, describe, expect, it } from 'vitest';
-import { STORY_PACE, STORY_PACING } from '../../src/game/config';
+import { DISTRICTS, STORY_PACE, STORY_PACING } from '../../src/game/config';
 import { isRuin, tarmacSites } from '../../src/game/districts/annex';
 import { countGround } from '../../src/game/districts/effects';
 import { neighbourhoodAt, neighbourhoodsOf } from '../../src/game/districts/names';
@@ -119,7 +119,10 @@ const SETUP: Record<string, (w: World) => void> = {
   },
   'ds.reedmere': (w) => void own(w, 'reedmere'),
   'ds.skeleton': (w) => void gangTurf(w, 2, own(w, 'skeleton')),
-  'ds.tarmac': (w) => void own(w, 'tarmac'),
+  'ds.tarmac': (w) => {
+    own(w, 'tarmac');
+    w.story.flags.apronFamilies = true; // Game.annex sets it for Tarmac Reach itself (structural own() does not)
+  },
   'ds.bazaar': (w) => {
     const s = own(w, 'bazaar');
     gangTurf(w, 1, s);
@@ -148,6 +151,7 @@ const PARTIAL: Record<string, (w: World) => void> = {
   'ds.terraces': (w) => void own(w, 'terraces'), // the Tuning still hidden
   'ds.skeleton': (w) => void own(w, 'skeleton'), // no Kites turf
   'ds.bazaar': (w) => void gangTurf(w, 1, own(w, 'bazaar')), // only one gang there
+  'ds.tarmac': (w) => void own(w, 'tarmac'), // owned without Game.annex: no apronFamilies flag (a 5×5 repeat's case)
   'lm.arena': (w) => void own(w, 'flats'), // a district, no Arena
 };
 
@@ -383,6 +387,50 @@ describe('the physical promises of the megacity cards (MEGACITY §8.4)', () => {
     );
     // An ordinary flag still says nothing.
     expect(effectsText(w, [{ t: 'flag', key: 'ruins', v: 'kept' }])).toBe('No effect.');
+  });
+
+  it('ds.tarmac waits for Tarmac Reach itself: Game.annex of it sets apronFamilies; a 5×5 Tarmac repeat does not', () => {
+    // 3×3: annex Tarmac Reach through Game (its neighbours owned first, so it is next to the city), lease and all.
+    const g = game();
+    const w = g.world;
+    const card = MEGACITY_CARDS.find((c) => c.id === 'ds.tarmac')!;
+    const t = slotOf(w, 'tarmac');
+    for (const n of [0, 1, 2, 3, 5, 6, 7, 8] as SlotId[]) if (n !== t && Math.abs((n % 3) - (t % 3)) + Math.abs(Math.floor(n / 3) - Math.floor(t / 3)) === 1) w.annex(n);
+    w.districts.grants = 1;
+    expect(w.story.flags.apronFamilies).toBeUndefined();
+    expect(g.annex(t, 'basalt').ok).toBe(true);
+    expect(w.story.flags.apronFamilies).toBe(true);
+    expect(cardEligible(w, card)).toBe(true);
+    // 5×5: a Tarmac repeat (Cargo Fields or Windmark Strip) annexed through Game leaves the card waiting.
+    const g5 = new Game();
+    g5.settings.lowerDetail = false;
+    if (!g5.restore(JSON.parse(JSON.stringify(regionWorld(5, 77).serialize())))) throw new Error('restore failed');
+    const w5 = g5.world;
+    const rep = w5.districts.kinds.findIndex((k, i) => k === 'tarmac' && w5.variantOf(i as SlotId) > 0) as SlotId;
+    expect(rep).toBeGreaterThanOrEqual(0);
+    for (let s = 0; s < 25; s++) if (s !== rep && w5.districts.kinds[s] !== 'tarmac' && w5.districts.kinds[s] !== 'sunk' && !w5.slotOwned[s]) w5.annex(s as SlotId);
+    w5.districts.grants = 1;
+    expect(g5.annex(rep).ok).toBe(true);
+    expect(w5.districts.kinds.filter((k, i) => k === 'tarmac' && w5.slotOwned[i]).length).toBe(1);
+    expect(w5.story.flags.apronFamilies).toBeUndefined();
+    expect(cardEligible(w5, card)).toBe(false);
+  }, 30_000);
+
+  it('the popover names the districts an effect acts on: a 5×5 repeat by its own name, several by count', () => {
+    const w5 = regionWorld(5, 77);
+    const kinds = w5.districts.kinds;
+    const of = (kind: DistrictKind) => kinds.map((k, i) => (k === kind ? (i as SlotId) : -1)).filter((i) => i >= 0) as SlotId[];
+    const skeletonRepeat = of('skeleton').find((s) => w5.variantOf(s) > 0)!;
+    w5.annex(skeletonRepeat);
+    const repeatName = DISTRICTS.skeleton.variants[w5.variantOf(skeletonRepeat) - 1].name;
+    const flats = of('flats');
+    for (const s of flats) w5.annex(s);
+    const fx: Effect[] = [
+      { t: 'turf', gang: 'kites', op: 'str', at: 'slot:skeleton', v: -60 },
+      { t: 'flag', key: 'brownfield', v: 'cleared' },
+      { t: 'flag', key: 'apron', v: 'rehoused' },
+    ];
+    expect(effectsText(w5, fx)).toBe(`Kites turf −60 in ${repeatName} · brownfield cleared in ${flats.length} Flats districts · apron homes rebuilt in Tarmac Reach`);
   });
 
   it('a grant effect shows the ✦ hint with its count (carry item 25)', () => {

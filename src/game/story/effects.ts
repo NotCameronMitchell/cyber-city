@@ -20,7 +20,7 @@
 import { apron, clearBrownfield, clearRuins, drainReeds, ownedOfKind } from '../districts/effects';
 import { neighbourhoodAt } from '../districts/names';
 import { artOffset, slotRect } from '../districts/slots';
-import { BUILDINGS, FACTION_IDS, FACTION_LABELS, GANG_IDS, GANG_NEWS_NAME, STANDING, TRACE, TURF, TURF_OWNER } from '../config';
+import { BUILDINGS, DISTRICTS, FACTION_IDS, FACTION_LABELS, GANG_IDS, GANG_NEWS_NAME, STANDING, TRACE, TURF, TURF_OWNER } from '../config';
 import { capitalizeFirst, districtName } from '../news';
 import type { Rng } from '../rng';
 import { scratchFor } from '../frame';
@@ -845,6 +845,65 @@ export function grantLand(world: World, n: number, why: 'chapter' | 'ending' | '
   world.events.emit('grant', { grants: world.districts.grants, why });
 }
 
+// ── Popover places (§8.2, MEGACITY §8.4) ──────────────────────────────────────
+
+const TARGET_TEXT: Record<Target, string> = {
+  city: 'city-wide',
+  spot: 'here',
+  seam: 'at the Seam',
+  strongestTurf: 'at its strongest turf',
+  'strongestTurf:undertow': 'on Undertow turf',
+  'strongestTurf:kites': 'on Kites turf',
+  largestAbandoned: 'in the dark lots',
+  rail: 'along the ribbon',
+  // Megacity (MEGACITY §8.4): the target `slot:<kind>`, every owned district of that kind (slotTiles).
+  'slot:shore': 'in Charter Shore',
+  'slot:shoals': 'in the Shoals',
+  'slot:sunk': 'in the Sunk',
+  'slot:flats': 'in Kessel Flats',
+  'slot:terraces': 'in the Terraces',
+  'slot:reedmere': 'in Reedmere',
+  'slot:skeleton': 'in Skeleton Row',
+  'slot:tarmac': 'in Tarmac Reach',
+  'slot:bazaar': 'in Verdigris',
+};
+
+/** Several owned districts of one kind, as a popover place ("in 2 Flats districts"). */
+const KIND_GROUP: Record<DistrictKind, string> = {
+  shore: 'Shore districts',
+  shoals: 'Shoals districts',
+  sunk: 'Sunk districts',
+  flats: 'Flats districts',
+  terraces: 'Terraces districts',
+  reedmere: 'marsh districts',
+  skeleton: 'frame districts',
+  tarmac: 'airfield districts',
+  bazaar: 'bazaar districts',
+};
+
+/**
+ * Where an effect on a kind's districts lands, as popover text (MEGACITY §8.4: every owned district of that kind):
+ * the one owned district by name ("in Halfway Towers": a 5×5 repeat by its own name), "in 2 Flats districts" for
+ * several, else the kind's own district (TARGET_TEXT; the effect is then skipped, §8.4).
+ */
+export function districtPlace(world: World, kind: DistrictKind): string {
+  const slots = ownedOfKind(world, kind);
+  if (slots.length > 1) return `in ${slots.length} ${KIND_GROUP[kind]}`;
+  if (slots.length === 1) {
+    const def = DISTRICTS[kind];
+    const v = world.variantOf(slots[0]);
+    const name = v > 0 ? def.variants[v - 1]?.name ?? def.name : def.name;
+    return kind === 'sunk' ? 'in the Sunk' : `in ${name}`;
+  }
+  return TARGET_TEXT[`slot:${kind}`];
+}
+
+/** A target as popover text: a `slot:<kind>` target names the districts it acts on (districtPlace). */
+function targetText(world: World, at: Target): string {
+  const kind = slotKindOf(at);
+  return kind ? districtPlace(world, kind) : TARGET_TEXT[at];
+}
+
 // ── District verbs (MEGACITY §8.4) ──────────────────────────────────────────
 //
 // The closed Effect union (story/types.ts, frozen since Step 0b) has no member for the story verbs that change a
@@ -856,24 +915,33 @@ export interface DistrictVerb {
   key: string;
   v: string;
   kind: DistrictKind;
-  /** Popover text (effectText). */
+  /** What it does, before the place ('brownfield cleared'). */
+  what: string;
+  /** Popover text with the kind's own district as the place (effectText names the districts it acts on). */
   text: string;
+  /** Only the kind's own district (variant 0) has what it changes: Tarmac Reach's apron families (§3.7). */
+  ownOnly?: boolean;
   /** Applies the change; returns the tiles changed. */
   run: (world: World) => number;
 }
 
+const verb = (d: Omit<DistrictVerb, 'text'>): DistrictVerb => ({ ...d, text: `${d.what} ${TARGET_TEXT[`slot:${d.kind}`]}` });
+
 /** The five verbs of §8.4, by `key=value`. */
 export const DISTRICT_VERBS: Readonly<Record<string, DistrictVerb>> = Object.fromEntries(
-  (
-    [
-      { key: 'brownfield', v: 'cleared', kind: 'flats', text: 'brownfield cleared in Kessel Flats', run: clearBrownfield },
-      { key: 'ruins', v: 'cleared', kind: 'sunk', text: 'ruins cleared for builders in the Sunk', run: clearRuins },
-      { key: 'reeds', v: 'drained', kind: 'reedmere', text: 'south bank reeds drained in Reedmere', run: drainReeds },
-      { key: 'apron', v: 'rehoused', kind: 'tarmac', text: 'apron homes rebuilt in Tarmac Reach', run: (w: World) => apron(w, 'rehouse') },
-      { key: 'apron', v: 'cleared', kind: 'tarmac', text: 'apron cleared in Tarmac Reach', run: (w: World) => apron(w, 'clear') },
-    ] satisfies DistrictVerb[]
-  ).map((d) => [`${d.key}=${d.v}`, d]),
+  [
+    verb({ key: 'brownfield', v: 'cleared', kind: 'flats', what: 'brownfield cleared', run: clearBrownfield }),
+    verb({ key: 'ruins', v: 'cleared', kind: 'sunk', what: 'ruins cleared for builders', run: clearRuins }),
+    verb({ key: 'reeds', v: 'drained', kind: 'reedmere', what: 'south bank reeds drained', run: drainReeds }),
+    verb({ key: 'apron', v: 'rehoused', kind: 'tarmac', what: 'apron homes rebuilt', ownOnly: true, run: (w: World) => apron(w, 'rehouse') }),
+    verb({ key: 'apron', v: 'cleared', kind: 'tarmac', what: 'apron cleared', ownOnly: true, run: (w: World) => apron(w, 'clear') }),
+  ].map((d) => [`${d.key}=${d.v}`, d]),
 );
+
+/** A district verb's popover text, naming the owned districts it acts on now (districtPlace). */
+export function districtVerbText(world: World, d: DistrictVerb): string {
+  return d.ownOnly ? d.text : `${d.what} ${districtPlace(world, d.kind)}`;
+}
 
 /** The district verb a flag write runs, or null for an ordinary flag. */
 export function districtVerb(key: string, v: FlagValue | '+1' | '$patron'): DistrictVerb | null {
@@ -1082,26 +1150,6 @@ export function describePatch(p: ModPatch | undefined): string {
   return parts.join(' · ');
 }
 
-const TARGET_TEXT: Record<Target, string> = {
-  city: 'city-wide',
-  spot: 'here',
-  seam: 'at the Seam',
-  strongestTurf: 'at its strongest turf',
-  'strongestTurf:undertow': 'on Undertow turf',
-  'strongestTurf:kites': 'on Kites turf',
-  largestAbandoned: 'in the dark lots',
-  rail: 'along the ribbon',
-  // Megacity (MEGACITY §8.4): the target `slot:<kind>`, every owned district of that kind (slotTiles).
-  'slot:shore': 'in Charter Shore',
-  'slot:shoals': 'in the Shoals',
-  'slot:sunk': 'in the Sunk',
-  'slot:flats': 'in Kessel Flats',
-  'slot:terraces': 'in the Terraces',
-  'slot:reedmere': 'in Reedmere',
-  'slot:skeleton': 'in Skeleton Row',
-  'slot:tarmac': 'in Tarmac Reach',
-  'slot:bazaar': 'in Verdigris',
-};
 
 const short = (f: FactionId) => FACTION_LABELS[f]?.short ?? f;
 const months = (days: number) => `${Math.max(1, Math.round(days / DAYS_PER_MONTH))} mo`;
@@ -1126,19 +1174,19 @@ export function effectText(world: World, e: Effect): string {
       const p: string[] = [];
       if (e.crimeAdd) p.push(`crime ${signed(e.crimeAdd, 2)}`);
       if (e.lvAdd) p.push(`land value ${signed(e.lvAdd, 2)}`);
-      return `${p.join(', ')} ${TARGET_TEXT[e.at]} for ${months(e.days)}`;
+      return `${p.join(', ')} ${targetText(world, e.at)} for ${months(e.days)}`;
     }
     case 'turf': {
       const g = e.gang === 'all' ? 'all turf' : `${short(e.gang)} turf`;
       switch (e.op) {
         case 'seed':
-          return `${short(e.gang === 'all' ? 'undertow' : e.gang)} tags ${TARGET_TEXT[e.at]}`;
+          return `${short(e.gang === 'all' ? 'undertow' : e.gang)} tags ${targetText(world, e.at)}`;
         case 'str':
-          return `${g} ${signed(e.v ?? 0)} ${TARGET_TEXT[e.at]}`;
+          return `${g} ${signed(e.v ?? 0)} ${targetText(world, e.at)}`;
         case 'clear':
-          return `${g} cleared ${TARGET_TEXT[e.at]}`;
+          return `${g} cleared ${targetText(world, e.at)}`;
         case 'flip':
-          return `${g} flips to ${short(e.to ?? 'kites')} ${TARGET_TEXT[e.at]}`;
+          return `${g} flips to ${short(e.to ?? 'kites')} ${targetText(world, e.at)}`;
         case 'freeze':
           return `turf frozen for ${months(e.days ?? 0)}`;
       }
@@ -1150,9 +1198,9 @@ export function effectText(world: World, e: Effect): string {
       return `${e.n === 'all' ? 'all ' : e.what === 'district' || e.what === 'rail' ? '' : `${e.n} `}${what} offline ${Math.min(MAX_OFFLINE, e.days)}d`;
     }
     case 'abandon':
-      return `${e.n} blocks abandoned ${TARGET_TEXT[e.at]}`;
+      return `${e.n} blocks abandoned ${targetText(world, e.at)}`;
     case 'renew':
-      return `dark lots renewed ${TARGET_TEXT[e.at]}`;
+      return `dark lots renewed ${targetText(world, e.at)}`;
     case 'unlock':
       return `Unlock: ${BUILDINGS[e.what as BuildingType]?.name ?? e.what}`;
     case 'credit': {
@@ -1160,8 +1208,10 @@ export function effectText(world: World, e: Effect): string {
       const name = BUILDINGS[what]?.name ?? what;
       return e.mul === 0 ? `next ${name} free` : `next ${name} ${signed(Math.round((e.mul - 1) * 100))}%`;
     }
-    case 'flag':
-      return districtVerb(e.key, e.v)?.text ?? '';
+    case 'flag': {
+      const d = districtVerb(e.key, e.v);
+      return d ? districtVerbText(world, d) : '';
+    }
     case 'floor':
       return `${short(e.f)} never below ${e.v}`;
     case 'ceil':

@@ -27,7 +27,7 @@ import { powerWeight } from '../../src/game/story/factions';
 import { lobbyName } from '../../src/game/story/vertical';
 import { DEFAULT_MODS } from '../../src/game/story/mods';
 import type { Card, Condition, Effect, FactionId, FlagValue, ModPatch, SpotRule } from '../../src/game/story/types';
-import { RoadKind, Terrain, ZoneType, type BuildingType, type DistrictVariant } from '../../src/game/types';
+import { RoadKind, Terrain, ZoneType, type BuildingType, type DistrictKind, type DistrictVariant } from '../../src/game/types';
 import type { World } from '../../src/game/world';
 import { flatWorld } from '../helpers';
 
@@ -238,6 +238,8 @@ function flagsSet(): Map<string, Set<FlagValue>> {
   add('revealed', true);
   add('tuningActive', true);
   add('migrated', true);
+  // Set by Game.annex when it annexes Tarmac Reach itself, the only Tarmac district with apron families (ds.tarmac).
+  add('apronFamilies', true);
   return out;
 }
 
@@ -1283,7 +1285,7 @@ function sourceStrings(file: string, source: string): { line: number; text: stri
  * Files whose strings §8.6 scans, with whether they may show before `ch4.drain`: the skybridge reasons and news
  * (vertical.ts, actions.ts), inspect notes and toasts (game.ts), advisor lines, district goals and annex copy, City
  * life lines, the City map, tips and the inspect sheet's story rows; and §9's copy (WP-8: the marks, the review
- * lines, the epilogue deck), which is flag-keyed and so only takes the universal rule.
+ * lines, the epilogue deck, the Keepsakes list), which is flag-keyed and so only takes the universal rule.
  */
 const SCANNED_SOURCES: Record<string, string> = import.meta.glob(
   [
@@ -1305,11 +1307,12 @@ const SCANNED_SOURCES: Record<string, string> = import.meta.glob(
     '../../src/render/art/marks.ts',
     '../../src/game/story/content/epilogue.ts',
     '../../src/game/story/content/cards/epilogue.ts',
+    '../../src/ui/story/keepsakes.ts',
   ],
   { query: '?raw', import: 'default', eager: true },
 );
 /** Scanned sources whose copy is flag-keyed or shows only after the reveal: the universal rule only. */
-const LATE_SOURCES = ['cards/megacity.ts', 'game/marks.ts', 'art/marks.ts', 'content/epilogue.ts', 'cards/epilogue.ts'];
+const LATE_SOURCES = ['cards/megacity.ts', 'game/marks.ts', 'art/marks.ts', 'content/epilogue.ts', 'cards/epilogue.ts', 'story/keepsakes.ts'];
 
 /** The neighbourhood names §9.3's marks give an 8×8 cell (WP-8's content/epilogue.ts): no list may reuse one. */
 const MARK_CELL_NAMES: readonly string[] = Object.values(MARK_NAMES);
@@ -1371,12 +1374,36 @@ describe('megacity story content (MEGACITY §8)', () => {
       'ds.terraces': ['district.terraces', 'flag:tuningActive'],
       'ds.reedmere': ['district.reedmere'],
       'ds.skeleton': ['district.skeleton', 'turf.kites'],
-      'ds.tarmac': ['district.tarmac'],
+      'ds.tarmac': ['district.tarmac', 'flag:apronFamilies'],
       'ds.bazaar': ['district.bazaar', 'turf.undertow', 'turf.kites'],
       'lm.arena': ['count.arena'],
       'lm.beacon': ['count.beacon'],
       'lm.halo': ['count.halolookout'],
     });
+  });
+
+  it('names only the districts a card is sure of: a 5×5 repeat can be the first of its kind', () => {
+    // `district.<kind> >= 1` counts every district of a kind, so on a 5×5 region a ds.* card can come for Halfway
+    // Towers before Skeleton Row is owned (16–31% of cities by kind with a random annex order). Its copy names no
+    // district of its kind, except the unique Sunk and Tarmac Reach, which ds.tarmac waits for (flag apronFamilies).
+    const generic = new Set(['Shoals', 'Terraces', 'Flats', 'Marsh', 'Isles', 'Banks', 'Heights', 'Fields', 'Bazaar', 'Towers', 'Steps', 'Docks']);
+    const names = (k: DistrictKind): string[] => {
+      const d = DISTRICTS[k];
+      return [d.name, d.short, ...d.variants.flatMap((v) => [v.name, v.short])].filter((n) => !generic.has(n));
+    };
+    const bad: string[] = [];
+    for (const c of C.MEGACITY_CARDS.filter((x) => x.id.startsWith('ds.'))) {
+      const kind = c.id.slice(3) as DistrictKind;
+      if (kind === 'sunk') continue;
+      const texts = [c.title, c.body, c.brief ?? '', ...c.choices.map((ch) => ch.label)];
+      for (const n of names(kind)) {
+        if (kind === 'tarmac' && n === DISTRICTS.tarmac.name) continue;
+        const re = new RegExp(`\\b${n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i');
+        if (texts.some((t) => re.test(t))) bad.push(`${c.id}: names "${n}"`);
+      }
+    }
+    expect(bad).toEqual([]);
+    expect(CARD_BY_ID.get('ds.tarmac')!.when).toEqual({ all: [{ m: 'district.tarmac', op: '>=', v: 1 }, { flag: 'apronFamilies' }] });
   });
 
   it('keeps every physical promise with an effect (§8.4): the district verbs and the slot:skeleton turf target', () => {

@@ -1683,6 +1683,7 @@ export class Game {
     const repeat = w.districts.owned.some((s) => w.districts.kinds[s] === kind);
     const leased = this.needsLease(slot) ? lease : undefined;
     if (leased) w.districts.leases = { ...w.districts.leases, tarmac: leased };
+    if (kind === 'tarmac' && w.variantOf(slot) === 0) w.story.flags.apronFamilies = true; // ds.tarmac's families live only here (§3.7)
     // Rivals: the lobbyists of the other current candidates (director.onAnnex skips kinds already owned).
     const rivals = adjacentLocked(w)
       .filter((s) => s !== slot)
