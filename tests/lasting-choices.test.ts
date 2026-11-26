@@ -187,6 +187,42 @@ describe('§9.6 item 1: every key choice leaves exactly its mark, at its place; 
     expect(plaquesAt(w, ids[0] % w.N, (ids[0] / w.N) | 0)).toContain('Something hums here after midnight.');
   });
 
+  it('the dark blocks stay when the strongest gang tile sits where nothing is built (a map corner): the gang\'s turf nearest it', () => {
+    const w = city.w;
+    const N = w.N;
+    w.story.flags.wentToGround = true;
+    const saved = { stats: w.turf.stats, owner: w.turf.owner.slice() };
+    try {
+      // The Undertow's turf: Charter Shore's developed blocks, and an empty owned corner as its strongest tile.
+      const r = slotRect(w, startSlotOf(w));
+      const corner = r.y0 * N + r.x0;
+      w.turf.owner.fill(0);
+      w.turf.owner[corner] = 1;
+      let blocks = 0;
+      for (let y = r.y0; y <= r.y1; y++)
+        for (let x = r.x0; x <= r.x1; x++) {
+          const t = w.tiles[y * N + x];
+          if (t.zone !== ZoneType.None && t.level > 0 && t.buildingId < 0) {
+            w.turf.owner[y * N + x] = 1;
+            blocks++;
+          }
+        }
+      expect(blocks).toBeGreaterThanOrEqual(3);
+      w.turf.stats = { ...(saved.stats ?? ({} as NonNullable<typeof saved.stats>)), tiles: { undertow: blocks + 1, kites: 0 }, strongest: { undertow: corner, kites: -1 } } as typeof w.turf.stats;
+      const d = find(w, 'darkBlocks')!;
+      expect(d).toBeDefined();
+      const ids = d.decal.slice(5).split('.').map(Number);
+      expect(ids.length).toBe(3);
+      for (const k of ids) {
+        expect(w.tiles[k].level).toBeGreaterThan(0);
+        expect(w.turf.owner[k]).toBe(1);
+      }
+    } finally {
+      w.turf.stats = saved.stats;
+      w.turf.owner.set(saved.owner);
+    }
+  });
+
   it('the Clean Glass mast stands on the nearest street when the Seam falls on water', () => {
     const w = city.w;
     const N = w.N;

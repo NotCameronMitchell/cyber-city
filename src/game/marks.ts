@@ -397,25 +397,38 @@ function mastSite(world: World, seam: number): number {
   return best;
 }
 
-/** Three developed blocks on the strongest gang's turf, nearest its strongest tile (§9.3 wentToGround). */
+/**
+ * Three developed blocks on the strongest gang's turf, nearest its strongest tile (§9.3 wentToGround). The strongest
+ * tile can sit where nothing is built (a map corner, the water's edge): then the gang's developed turf nearest it, then
+ * any developed land nearest Charter Shore's centre, so the mark never goes missing while the city has blocks.
+ */
 function darkBlocks(world: World, startRect: { x0: number; y0: number; x1: number; y1: number }): number[] {
   const N = world.N;
   const s = world.turf.stats;
   const g = (s?.tiles.kites ?? 0) > (s?.tiles.undertow ?? 0) ? 2 : 1;
+  const centre = ((startRect.y0 + startRect.y1) >> 1) * N + ((startRect.x0 + startRect.x1) >> 1);
   let at = s?.strongest[g === 2 ? 'kites' : 'undertow'] ?? -1;
-  if (at < 0) at = ((startRect.y0 + startRect.y1) >> 1) * N + ((startRect.x0 + startRect.x1) >> 1);
-  const ax = at % N;
-  const ay = (at / N) | 0;
-  const picks: { i: number; d: number }[] = [];
-  const R = 12;
-  for (let y = Math.max(0, ay - R); y <= Math.min(N - 1, ay + R); y++)
-    for (let x = Math.max(0, ax - R); x <= Math.min(N - 1, ax + R); x++) {
-      const i = y * N + x;
-      const t = world.tiles[i];
-      if (t.buildingId >= 0 || t.zone === ZoneType.None || t.level < 1 || t.abandoned || !world.ownedAt(i)) continue;
-      if (s && world.turf.owner[i] !== g && world.turf.owner[at] === g) continue;
-      picks.push({ i, d: Math.max(Math.abs(x - ax), Math.abs(y - ay)) + hash2(x, y, 0x0da7) * 0.5 });
-    }
+  if (at < 0) at = centre;
+  const onTurf = !!s && world.turf.owner[at] === g;
+  const developed = (i: number) => {
+    const t = world.tiles[i];
+    return t.buildingId < 0 && t.zone !== ZoneType.None && t.level >= 1 && !t.abandoned && world.ownedAt(i);
+  };
+  const collect = (from: number, r: number, test: (i: number) => boolean) => {
+    const ax = from % N;
+    const ay = (from / N) | 0;
+    const picks: { i: number; d: number }[] = [];
+    for (let y = Math.max(0, ay - r); y <= Math.min(N - 1, ay + r); y++)
+      for (let x = Math.max(0, ax - r); x <= Math.min(N - 1, ax + r); x++) {
+        const i = y * N + x;
+        if (developed(i) && test(i)) picks.push({ i, d: Math.max(Math.abs(x - ax), Math.abs(y - ay)) + hash2(x, y, 0x0da7) * 0.5 });
+      }
+    return picks;
+  };
+  const gang = (i: number) => !onTurf || world.turf.owner[i] === g;
+  let picks = collect(at, 12, gang);
+  if (picks.length < 3 && onTurf) picks = collect(at, N, (i) => world.turf.owner[i] === g);
+  if (picks.length < 3) picks = collect(centre, N, () => true);
   picks.sort((a, b) => a.d - b.d || a.i - b.i);
   // Three apart from one another (not a single block's three tiles).
   const out: number[] = [];
