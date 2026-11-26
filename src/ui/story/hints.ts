@@ -16,19 +16,13 @@ function chip(cls: string, inner: string, title: string, style = ''): string {
   return `<span class="cc-hc ${cls}"${style ? ` style="${style}"` : ''} title="${title}">${inner}</span>`;
 }
 
-/**
- * A land grant (MEGACITY §8.2, §8.4): the ✦ chip. The Hint union (story/types.ts, frozen) has no 'grant' member yet;
- * the renderer is ready for `{ k: 'grant', n }` once story/effects.ts emits it (hand-off), and ignores it until then.
- */
-function grantHint(h: Hint): number | null {
-  const g = h as unknown as { k: string; n?: number };
-  return g.k === 'grant' ? Math.max(1, g.n ?? 1) : null;
+/** A land grant's count (MEGACITY §8.2, §8.4: the Hint union's `{ k: 'grant', n }`, emitted by story/effects.ts). */
+function grants(n: number): number {
+  return Math.max(1, n | 0);
 }
 
 /** HTML for one hint chip. */
 export function hintChip(h: Hint): string {
-  const grant = grantHint(h);
-  if (grant !== null) return chip('is-grant', `<b>✦${grant > 1 ? ` ${grant}` : ''}</b>`, grant > 1 ? `${grant} land grants` : 'A land grant');
   switch (h.k) {
     case 'favor': {
       const arrow = h.dir > 0 ? '▲' : '▼';
@@ -65,7 +59,11 @@ export function hintChip(h: Hint): string {
       return chip('is-misc', icon('star'), 'Opens Charter Night');
     case 'follow':
       return chip('is-misc', icon('comms'), 'Leads to a follow-up');
-    case 'grant': return ''; // drawn by grantHint above (the Hint union carries 'grant' since WP-7)
+    case 'grant': {
+      // The ✦ chip: one land grant, or how many.
+      const n = grants(h.n);
+      return chip('is-grant', `<b>✦${n > 1 ? ` ${n}` : ''}</b>`, n > 1 ? `${n} land grants` : 'A land grant');
+    }
   }
 }
 
@@ -87,11 +85,6 @@ export function hintSummary(hints: readonly Hint[] | undefined): string {
   if (!hints || !hints.length) return '';
   const parts: string[] = [];
   for (const h of hints) {
-    const grant = grantHint(h);
-    if (grant !== null) {
-      parts.push(`<span class="cc-sum-misc is-grant">${grant > 1 ? `${grant} land grants` : 'a land grant'}</span>`);
-      continue;
-    }
     switch (h.k) {
       case 'favor': {
         const l = FACTION_LABELS[h.f];
@@ -135,6 +128,11 @@ export function hintSummary(hints: readonly Hint[] | undefined): string {
       case 'follow':
         parts.push('<span class="cc-sum-misc">leads to a follow-up</span>');
         break;
+      case 'grant': {
+        const n = grants(h.n);
+        parts.push(`<span class="cc-sum-misc is-grant">${n > 1 ? `${n} land grants` : 'a land grant'}</span>`);
+        break;
+      }
     }
   }
   return parts.join('<span class="cc-sum-sep" aria-hidden="true"> · </span>');

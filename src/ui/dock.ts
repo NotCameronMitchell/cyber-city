@@ -14,6 +14,7 @@ import type { UIContext } from './context';
 import { buzz, closestData, h, setAttr, setClass, setHidden, setHtml, setStyle, setText } from './dom';
 import { abbr } from './format';
 import { icon } from './icons';
+import { cardKey, categoryKey } from './shortcuts';
 import { factionSigil } from './story/sigils';
 import {
   CATEGORIES,
@@ -73,6 +74,8 @@ interface CatRefs {
   long: HTMLElement;
   short: HTMLElement;
   dot: HTMLElement;
+  /** The keycap in the button's top corner (§14.3; shown by .has-keys). */
+  key: HTMLElement;
   /** Current chrome key (label|icon), for the Infra relabel diff. */
   chrome: string;
 }
@@ -138,6 +141,8 @@ export class Dock {
 
   /** Called when the tray opens/closes so the coach can collapse. */
   onTrayChange: (() => void) | null = null;
+  /** Rich tooltips are on (a mouse that hovers, §14.2): the buttons drop their native `title`. */
+  private tipsOn = false;
 
   constructor(private readonly ctx: UIContext) {
     // ── Toolbar ────────────────────────────────────────────────────────────
@@ -147,6 +152,8 @@ export class Dock {
       const long = h('span', { class: 'is-long', text: c.label });
       const short = h('span', { class: 'is-short', text: c.short });
       const dot = h('span', { class: 'cc-tb-dot', 'aria-hidden': 'true' });
+      // §14.3: a keycap in the top corner (hidden until .has-keys: the desktop layout or a hardware key press).
+      const key = h('kbd', { class: 'cc-tb-key', 'aria-hidden': 'true', text: categoryKey(c.id) });
       const btn = h(
         'button',
         {
@@ -163,10 +170,11 @@ export class Dock {
         ico,
         h('span', { class: 'cc-tb-label' }, long, short),
         dot,
+        key,
       );
       setStyle(btn, '--accent', c.accent);
       this.catBtns.set(c.id, btn);
-      this.catRefs.set(c.id, { btn, ico, long, short, dot, chrome: `${c.label}|${c.icon}` });
+      this.catRefs.set(c.id, { btn, ico, long, short, dot, key, chrome: `${c.label}|${c.icon}` });
       this.bar.append(btn);
     }
     this.seen = this.loadSeen();
@@ -237,6 +245,60 @@ export class Dock {
 
   get trayOpen(): boolean {
     return this.openCat !== null;
+  }
+
+  /** The tray open now is this category's (the E V T F keys toggle, §14.3). */
+  trayOpenFor(id: CategoryId): boolean {
+    return this.openCat === id;
+  }
+
+  /** The Deals button shows (the factions are unlocked): F opens its tray only then (§14.3). */
+  get dealsShown(): boolean {
+    const b = this.catBtns.get('deals');
+    return !!b && !b.hidden;
+  }
+
+  /** Toolbar buttons on show (8, or 9 once Deals unlocks): the compact-dock rule counts them (§14.1). */
+  get visibleButtons(): number {
+    let n = 0;
+    for (const b of this.catBtns.values()) if (!b.hidden) n++;
+    return n;
+  }
+
+  /** The desktop layout (§14.1): nothing to rebuild; the keycaps and the compact form follow classes. */
+  setDesk(on: boolean): void {
+    if (!on) this.setCompact(false);
+  }
+
+  /** The compact dock (60 px buttons with the short labels), only where the full one does not fit beside a panel. */
+  setCompact(on: boolean): void {
+    setClass(this.el, 'is-compact', on);
+  }
+
+  /** Rich tooltips (§14.2) replace the native `title` on a mouse that hovers; touch keeps today's attributes. */
+  setTips(on: boolean): void {
+    if (on === this.tipsOn) return;
+    this.tipsOn = on;
+    for (const c of CATEGORIES) {
+      const refs = this.catRefs.get(c.id)!;
+      this.setTitle(refs.btn, c.key ? `${refs.long.textContent} (${c.key})` : refs.long.textContent ?? c.label);
+    }
+  }
+
+  /** A button's native tooltip: dropped while rich tooltips are on (no double tooltips, §14.2); aria-labels stay. */
+  private setTitle(el: HTMLElement, text: string): void {
+    if (this.tipsOn) el.removeAttribute('title');
+    else if (el.getAttribute('title') !== text) el.setAttribute('title', text);
+  }
+
+  /** Keycaps relabel when the browser tells the player's layout (navigator.keyboard, §14.3). */
+  relabelKeys(): void {
+    for (const c of CATEGORIES) setText(this.catRefs.get(c.id)!.key, categoryKey(c.id));
+    for (const c of this.cards) {
+      if (!c.tool) continue;
+      const k = c.el.querySelector<HTMLElement>('.cc-card-key');
+      if (k) setText(k, cardKey(c.tool));
+    }
   }
 
   /** The toolbar (bottom bar, or the side rail on a landscape phone): the UI root measures the camera insets from it. */
@@ -394,6 +456,8 @@ export class Dock {
         }),
         h('span', { class: 'cc-card-name', text: m.name }),
         cost,
+        // §14.3: Street R, Hab Blocks Z, Market Strip X, Fab Yards C, beside the cost (shown by .has-keys).
+        cardKey(tool) ? h('kbd', { class: 'cc-card-key', 'aria-hidden': 'true', text: cardKey(tool) }) : null,
         h('span', { class: 'cc-card-desc', text: m.desc }),
         meta.length ? h('span', { class: 'cc-card-meta', text: meta.join(' · ') }) : null,
         lock,
@@ -582,7 +646,7 @@ export class Dock {
         setText(refs.long, ch.label);
         setText(refs.short, ch.short);
         setAttr(refs.btn, 'aria-label', ch.label);
-        setAttr(refs.btn, 'title', c.key ? `${ch.label} (${c.key})` : ch.label);
+        this.setTitle(refs.btn, c.key ? `${ch.label} (${c.key})` : ch.label);
         if (this.openCat === c.id) setText(this.trayTitle, ch.label);
       }
       // "New" dot: an item unlocked since this tray was last open (opening it clears the dot).

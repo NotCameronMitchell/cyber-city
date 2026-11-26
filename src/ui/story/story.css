@@ -2709,6 +2709,92 @@
   align-self: flex-start;
 }
 
+/* ── Keepsakes (MEGACITY §9.6): the goal drawer's list of marks ──────────────── */
+
+.cc-gd-keep {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.cc-keep-lead {
+  margin: 0;
+  font-size: 12px;
+  line-height: 17px;
+  color: var(--cc-ink-2);
+}
+
+.cc-keep {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.cc-keep-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 48px;
+}
+
+.cc-keep-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  margin-left: 10px;
+  background: var(--cc-amber);
+  transform: rotate(45deg);
+}
+
+.cc-keep-main {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--cc-ink-2);
+}
+
+.cc-keep-title {
+  font-size: 13px;
+  letter-spacing: 0.04em;
+  color: var(--cc-ink);
+  overflow-wrap: anywhere;
+}
+
+.cc-keep-plaque {
+  font-style: italic;
+  color: #f2d89a;
+  overflow-wrap: anywhere;
+}
+
+.cc-keep-show {
+  flex: none;
+  min-width: 64px;
+  min-height: 44px;
+  padding: 0 12px;
+  font-size: 13px;
+}
+
+.cc-keep-set {
+  margin: 2px 0 0;
+  padding: 8px 10px;
+  font-size: 12px;
+  line-height: 17px;
+  color: var(--cc-ink-2);
+  border: 1px solid rgba(242, 216, 154, 0.25);
+}
+
+.cc-keep-set.is-done {
+  color: #f2d89a;
+  border-color: rgba(242, 216, 154, 0.6);
+}
+
 /* ── Wide screens ─────────────────────────────────────────────────────────── */
 
 @media (min-width: 640px) {
@@ -3497,4 +3583,75 @@ button.cc-scard-who[aria-expanded='true'] .cc-scard-whohint {
   .cc-chtitle.has-summary .cc-cht-skip {
     bottom: calc(var(--cc-sab) + 10px);
   }
+}
+
+/* ── Desktop layout (MEGACITY §14.1): the story card and sheets are the side panel ──
+   Docked right at the panel's width (ui.css --cc-panel-w), under the HUD, full height; no scrim (the city beside
+   the panel stays live, pannable and buildable); the card's choices and a sheet's footer stay pinned at the bottom
+   while the rest scrolls. A card parked under another panel (.is-parked) hides and comes back when that one closes. */
+
+.cc-desk .cc-st-scrim {
+  display: none;
+}
+
+.cc-desk .cc-scard,
+.cc-desk .cc-ss {
+  --c: 14px;
+  position: absolute;
+  top: calc(var(--cc-top) + 8px);
+  right: calc(var(--cc-sar) + 12px);
+  bottom: calc(var(--cc-sab) + 12px);
+  left: auto;
+  width: var(--cc-panel-w);
+  height: auto;
+  max-height: none;
+  margin: 0;
+  padding-bottom: 0;
+  clip-path: polygon(0 var(--c), var(--c) 0, 100% 0, 100% calc(100% - var(--c)), calc(100% - var(--c)) 100%, 0 100%);
+}
+
+.cc-desk .cc-ss[data-size='half'],
+.cc-desk .cc-ss[data-size='tall'],
+.cc-desk .cc-ss[data-size='tall'].is-expanded,
+.cc-desk .cc-ss[data-size='full'] {
+  height: auto;
+}
+
+.cc-desk .cc-ss::before {
+  clip-path: polygon(
+    evenodd,
+    0 var(--c),
+    var(--c) 0,
+    100% 0,
+    100% calc(100% - var(--c)),
+    calc(100% - var(--c)) 100%,
+    0 100%,
+    0 var(--c),
+    1px calc(var(--c) + 0.42px),
+    calc(var(--c) + 0.42px) 1px,
+    calc(100% - 1px) 1px,
+    calc(100% - 1px) calc(100% - var(--c) - 0.42px),
+    calc(100% - var(--c) - 0.42px) calc(100% - 1px),
+    1px calc(100% - 1px),
+    1px calc(var(--c) + 0.42px)
+  );
+}
+
+/* No grab handle or expand on a side panel: it is already full height and is not swiped. */
+.cc-desk .cc-ss-grab,
+.cc-desk .cc-ss-expand {
+  display: none;
+}
+
+.cc-desk .cc-scard.is-parked {
+  display: none;
+}
+
+.cc-desk .cc-scard.is-peek {
+  opacity: 1;
+}
+
+/* The card's choices sit at the bottom of the panel; the text above them scrolls. */
+.cc-desk .cc-scard-scroll {
+  flex: 1 1 auto;
 }

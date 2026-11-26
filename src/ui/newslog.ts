@@ -16,7 +16,7 @@ export class NewsLog {
   private renderedKey = '';
 
   constructor(private readonly ctx: UIContext) {
-    const d = buildDialog({ id: 'cc-news', title: 'City feed', icon: icon('news') });
+    const d = buildDialog({ id: 'cc-news', title: 'City feed', icon: icon('news'), side: true });
     this.el = d.el;
     this.sub = d.sub;
     d.el.classList.add('cc-newslog');

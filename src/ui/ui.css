@@ -5536,3 +5536,277 @@ body {
   width: auto;
   padding: 0 16px;
 }
+
+/* ── Desktop layout (MEGACITY §14) ────────────────────────────────────────────
+   .cc-desk: a mouse that hovers on a window of at least 1024×600 (context.ts DESK_QUERY), watched live by ui.ts.
+   One side panel docked right (non-modal: no scrim, the city stays live beside it): inspect, the story card and
+   sheets (story.css), the City report, Budget, City feed and the ? sheet (the side layer), the City map's sheet.
+   .has-panel: a panel is open; the dock, the top stack and the banners centre in the map area left of it.
+   .has-keys: the key hints (the desktop layout, or any device after a hardware key press). Phones never match. */
+
+.cc-desk {
+  /* clamp(360px, 28vw, 440px): 360 at 1280, 403 at 1440, 440 at 1920 (context.ts sidePanelWidth). */
+  --cc-panel-w: clamp(360px, 28vw, 440px);
+  /* What the map area leaves on the right with a panel open: the panel, its 12 px gap and 12 more. */
+  --cc-panel-r: 0px;
+}
+
+.cc-desk.has-panel {
+  --cc-panel-r: calc(var(--cc-panel-w) + 24px);
+}
+
+#game:focus {
+  outline: none;
+}
+
+/* The side layer: side dialogs dock right in it (Modals routes them there on the desktop layout). */
+.cc-side-layer {
+  position: absolute;
+  z-index: 40;
+  inset: 0;
+  pointer-events: none;
+}
+
+.cc-side-layer:empty {
+  display: none;
+}
+
+/* The one side panel's geometry: 12 px from the right edge, under the HUD, 12 px above the bottom. */
+.cc-desk .cc-dialog.is-side,
+.cc-desk .cc-sheet,
+.cc-desk .cc-citymap.is-side .cc-cm-sheet {
+  position: absolute;
+  top: calc(var(--cc-top) + 8px);
+  right: calc(var(--cc-sar) + 12px);
+  bottom: calc(var(--cc-sab) + 12px);
+  left: auto;
+  width: var(--cc-panel-w);
+  max-width: none;
+  height: auto;
+  max-height: none;
+  margin: 0;
+}
+
+.cc-desk .cc-dialog.is-side {
+  pointer-events: auto;
+}
+
+/* Inspect: today's side card, now full height; the header stays, the rows scroll. */
+.cc-desk .cc-sheet {
+  position: fixed;
+  z-index: 15;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  align-self: auto;
+}
+
+.cc-desk .cc-insp-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(34, 229, 255, 0.35) transparent;
+}
+
+.cc-desk .cc-insp-rows {
+  grid-template-columns: 1fr;
+}
+
+/* The Budget's tax slider stays pinned at the panel's bottom (budget.ts moves it into the footer). */
+.cc-desk .cc-dlg-foot.cc-bud-foot {
+  display: block;
+  padding: 8px 12px 12px;
+}
+
+.cc-desk .cc-dlg-foot.cc-bud-foot .cc-bud-tax {
+  margin: 0;
+}
+
+/* The City map's sheet is the side panel (the City map hides the HUD: its header takes the HUD's place). */
+.cc-desk .cc-citymap.is-side .cc-cm-sheet {
+  top: calc(var(--cc-sat) + 48px + 8px);
+}
+
+.cc-desk .cc-citymap.is-side .cc-cm-edge {
+  right: calc(var(--cc-sar) + var(--cc-panel-w) + 24px);
+}
+
+/* Back in a nested panel's header (one level): a card read from the Goals drawer or COMMS. */
+.cc-panel-back {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 32px;
+  margin-right: 6px;
+  padding: 0 10px 0 6px;
+  font: 600 11px/1 var(--cc-font);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--cc-cyan);
+  background: rgba(34, 229, 255, 0.08);
+  border: 1px solid rgba(34, 229, 255, 0.3);
+  pointer-events: auto;
+}
+
+.cc-panel-back .cc-i {
+  width: 16px;
+  height: 16px;
+}
+
+@media (hover: hover) {
+  .cc-panel-back:hover {
+    background: rgba(34, 229, 255, 0.16);
+  }
+}
+
+/* The map area beside an open panel: the dock (toolbar, tray, chips, rail), the top stack and the banners. */
+.cc-desk .cc-dock,
+.cc-desk .cc-topstack {
+  transition: right 0.2s var(--cc-ease);
+}
+
+.cc-desk.has-panel .cc-dock,
+.cc-desk.has-panel .cc-topstack {
+  right: calc(var(--cc-sar) + var(--cc-panel-r));
+}
+
+.cc-desk.has-panel .cc-banner,
+.cc-desk.has-panel .cc-incoming {
+  right: var(--cc-panel-r);
+}
+
+/* The compact dock: 60 px buttons with the short labels, only where the full dock does not fit (§14.1). */
+.cc-desk .cc-dock.is-compact .cc-tb {
+  width: 60px;
+}
+
+.cc-desk .cc-dock.is-compact .cc-tb-label .is-long {
+  display: none;
+}
+
+.cc-desk .cc-dock.is-compact .cc-tb-label .is-short {
+  display: inline;
+}
+
+/* ── Key hints (§14.3) ────────────────────────────────────────────────────── */
+
+.cc-kbd,
+.cc-tb-key,
+.cc-card-key {
+  display: inline-grid;
+  place-items: center;
+  min-width: 14px;
+  height: 14px;
+  padding: 0 3px;
+  font: 600 10px/1 var(--cc-mono);
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--cc-ink);
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  border-bottom-width: 2px;
+  border-radius: 3px;
+  box-sizing: content-box;
+}
+
+.cc-tb-key,
+.cc-card-key {
+  display: none;
+}
+
+.has-keys .cc-tb-key {
+  display: inline-grid;
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  opacity: 0.6;
+  pointer-events: none;
+  transition: opacity 0.15s;
+}
+
+.has-keys .cc-tb:hover .cc-tb-key,
+.has-keys .cc-tb:focus-visible .cc-tb-key {
+  opacity: 1;
+}
+
+/* The "new" and grant dots step to the icon's other shoulder, clear of the keycap. */
+.has-keys .cc-tb.has-new .cc-tb-dot,
+.has-keys .cc-tb.has-grant .cc-tb-dot {
+  left: calc(50% - 18px);
+}
+
+/* Phone toolbars (43 px buttons) and the landscape rail (52×40) after a hardware key press: a tighter corner. */
+@media (max-width: 639px), (orientation: landscape) and (max-height: 520px) {
+  .has-keys .cc-tb-key {
+    top: 2px;
+    right: 2px;
+    min-width: 10px;
+    height: 12px;
+    padding: 0 2px;
+    font-size: 9px;
+  }
+}
+
+.has-keys .cc-card-key {
+  display: inline-grid;
+  align-self: flex-end;
+  margin-top: -18px;
+  opacity: 0.6;
+}
+
+.has-keys .cc-card:hover .cc-card-key {
+  opacity: 1;
+}
+
+/* The ? sheet. */
+.cc-keys-group {
+  margin: 0 0 10px;
+  padding: 8px 12px 10px;
+}
+
+.cc-keys-list {
+  margin: 4px 0 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.cc-keys-row {
+  display: grid;
+  grid-template-columns: minmax(96px, auto) 1fr;
+  align-items: center;
+  gap: 10px;
+}
+
+.cc-keys-caps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 0;
+}
+
+.cc-keys-caps .cc-kbd {
+  height: 18px;
+  min-width: 18px;
+  padding: 0 5px;
+  font-size: 11px;
+}
+
+.cc-keys-what {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.35;
+  color: var(--cc-ink-2);
+}
+
+/* Menu › How to play: the Keyboard shortcuts row shows on the desktop layout only. */
+.cc-help-keys {
+  display: none;
+}
+
+.cc-desk .cc-help-keys {
+  display: flex;
+}

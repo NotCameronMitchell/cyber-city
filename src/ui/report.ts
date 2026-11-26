@@ -42,7 +42,7 @@ export class CityReport {
   private readonly tierNote: HTMLElement;
 
   constructor(private readonly ctx: UIContext) {
-    const d = buildDialog({ id: 'cc-report', title: 'City report', icon: icon('chart') });
+    const d = buildDialog({ id: 'cc-report', title: 'City report', icon: icon('chart'), side: true });
     this.el = d.el;
     this.sub = d.sub;
     d.el.classList.add('cc-report');

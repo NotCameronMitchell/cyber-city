@@ -26,7 +26,7 @@ export interface Category {
   /** ≤ 5-char label for narrow phones. */
   short: string;
   icon: IconName;
-  /** Desktop keyboard shortcut hint (handled by the input module). */
+  /** Desktop keyboard shortcut hint (handled by the input module; E V T F open the trays, MEGACITY §14.3). */
   key?: string;
   /** Single-tool categories select this tool directly. With `items` too, the category is a hybrid (Road, EXPANSION §7.2). */
   tool?: ToolId;
@@ -45,12 +45,13 @@ export const CATEGORIES: Category[] = [
   { id: 'zones', label: 'Zones', short: 'Zone', icon: 'zones', key: 'Z X C', items: ['res', 'com', 'ind'], accent: '#ff2bd6' },
   // Relabels to "Infra" ("Power & Ports" on wide screens) once the Seaport unlocks (categoryChrome, §7.1).
   // Megacity (§7.1): the trays keep their 9 buttons and gain section chips (SECTIONS below); items = every chip's cards.
-  { id: 'power', label: 'Power', short: 'Power', icon: 'power', items: ['solar', 'reactor', 'tidal', 'geothermal', 'seaport', 'airport', 'spaceport'], accent: '#4dff9a' },
+  { id: 'power', label: 'Power', short: 'Power', icon: 'power', key: 'E', items: ['solar', 'reactor', 'tidal', 'geothermal', 'seaport', 'airport', 'spaceport'], accent: '#4dff9a' },
   {
     id: 'services',
     label: 'Services',
     short: 'Civic',
     icon: 'services',
+    key: 'V',
     items: ['precinct', 'floodwatch', 'clinic', 'medtower', 'plaza', 'canopypark', 'markethall', 'memorial', 'academy', 'datahub', 'datavault', 'maglev', 'metro', 'reclaim', 'pumphouse'],
     accent: '#3d7bff',
   },
@@ -61,6 +62,7 @@ export const CATEGORIES: Category[] = [
     label: 'Sky',
     short: 'Sky',
     icon: 'sky',
+    key: 'T',
     items: ['stack', 'spire', 'arcology', 'skybridge', 'rail', 'skyway', 'beacon', 'arena', 'halolookout', 'terminal'],
     accent: '#a9b8ff',
   },
@@ -69,6 +71,7 @@ export const CATEGORIES: Category[] = [
     label: 'Deals',
     short: 'Deals',
     icon: 'deals',
+    key: 'F',
     items: [
       'commons',
       'foundry',

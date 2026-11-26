@@ -9,6 +9,10 @@
 //                plans that need confirming), milestone + city-first banner, FPS
 //   Tips         first-use tips for new tools and sim hints, one at a time
 //   Dialogs      Budget, CityReport, NewsLog, Menu (settings/help/about), Confirm
+//   Desktop      the desktop layout (cc-desk, DESK_QUERY, MEGACITY §14): one
+//                side panel docked right (SidePanels), the dock and the top
+//                stack centred in the map area beside it, the camera's right
+//                inset, the key hints (has-keys) and the ? sheet
 //
 // The root is pointer-events:none; only real panels take pointer events, so
 // map gestures fall through to the canvas. DOM writes are diffed and the HUD
@@ -19,17 +23,20 @@ import './ui.css';
 import { ambienceAt, NO_AMBIENCE, setAmbience } from '../audio/ambience';
 import type { ToastAction } from '../game/events';
 import type { Game } from '../game/game';
+import type { Selection } from '../game/types';
 import { pointerActivity } from '../input/gestures';
 import type { Camera } from '../render/camera';
 import { mapBus, skyBus } from '../input/mapbus';
+import { keyBus } from '../input/keyboard';
 import { partnerBadges, skybridgeView, type ScreenRect } from '../render/overlay';
 import { BudgetPanel } from './budget';
 import { CityMap } from './citymap';
 import { Coach } from './coach';
 import { ConfirmDialog } from './confirm';
-import { Modals, type UIActions, type UIContext } from './context';
+import { DESK_QUERY, Modals, SidePanels, openedByKeyboard, dockCompact, type PanelId, type UIActions, type UIContext } from './context';
 import { Dock } from './dock';
 import { buzz, h, setClass, setHidden } from './dom';
+import { icon } from './icons';
 import { SpirePicker } from './pickers';
 import { ActionPill, FpsMeter, MilestoneBanner, payoffToast, Toasts } from './feedback';
 import { gridLink } from './grid';
@@ -40,6 +47,8 @@ import { NewsLog } from './newslog';
 import { CityReport } from './report';
 import { StoryUI } from './story/storyUI';
 import './story/story.css';
+import { ShortcutSheet, loadKeyLayout } from './shortcuts';
+import { StoryRail } from './story/storyRail';
 import { Ticker } from './ticker';
 import { Tips, newsTip, type TipId } from './tips';
 import { traySections, type CategoryId } from './tools';
@@ -92,6 +101,16 @@ export class UI {
   /** City transfer and growing (MEGACITY §13, §3.11): the Export and Import sheets, the Grow flow. */
   readonly transfer: TransferUI;
   private insetAcc = INSET_INTERVAL;
+  /** The ? sheet (§14.3). */
+  readonly shortcuts: ShortcutSheet;
+  /** The side-panel host (§14.1): one panel at a time on the desktop layout. */
+  readonly panels = new SidePanels();
+  /** The Back button the host shows in a nested panel's header (one level, §14.1). */
+  private readonly backBtn: HTMLButtonElement;
+  /** Inspect's selection when another panel replaced it: Back (or the card that replaced it) brings it back. */
+  private inspectSel: Selection | null = null;
+  /** Last panel state the layout was synced for (current|ret|nested). */
+  private panelKey = '';
 
   private hudAcc = 0;
   private panelAcc = 0;
@@ -121,11 +140,13 @@ export class UI {
       openCityMap: (slot) => this.openCityMap(slot ?? null),
       openTransfer: (kind) => (kind === 'export' ? this.transfer.openExport() : this.transfer.openImport('menu')),
       growRegion: (from) => this.transfer.grow(from),
+      openShortcuts: () => this.shortcuts.open(),
       confirm: (opts) => this.confirm.open(opts),
       openTray: (cat) => this.dock.openTray(cat as CategoryId),
       closeTray: () => this.dock.closeTray(),
     };
     const mq = typeof matchMedia === 'function' ? matchMedia(COMPACT_QUERY) : null;
+    const dq = typeof matchMedia === 'function' ? matchMedia(DESK_QUERY) : null;
     this.ctx = {
       game,
       camera,
@@ -133,6 +154,7 @@ export class UI {
       modals: this.modals,
       actions,
       compact: mq ? mq.matches : false,
+      desk: false,
       sfx: (kind) => game.events.emit('sfx', kind),
     };
     if (mq) {
@@ -187,6 +209,12 @@ export class UI {
     this.story = new StoryUI(this.ctx);
     this.cityMap = new CityMap(this.ctx);
     this.transfer = new TransferUI(this.ctx, { mapView: () => ({ open: this.cityMap.isOpen, back: this.cityMap.returnView }) });
+    this.shortcuts = new ShortcutSheet(this.ctx);
+    this.backBtn = h('button', { class: 'cc-panel-back', type: 'button', 'data-act': 'panel-back', 'aria-label': 'Back' }, h('span', { html: icon('back') }), h('span', { text: 'Back' }));
+    this.backBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      this.panelBack();
+    });
     // §7.2: the annex banner follows the fly-in, so a banner waits while the City map is open and while the camera
     // flies in to a new district (a tap that skips the fly-in lets it show at once).
     this.banner.held = () => this.story.busy || this.modals.depth > 0 || this.cityMap.isOpen || mapBus.flyIn !== null;
@@ -198,10 +226,12 @@ export class UI {
     this.dock.sheetSlot.append(this.inspect.el);
     const topStack = (this.topStack = h('div', { class: 'cc-topstack' }, this.pill.el, this.toasts.el));
     root.prepend(this.dock.el, this.ticker.el, this.hud.el, this.fps.el, this.banner.el, topStack);
-    for (const dlg of [this.budget.el, this.report.el, this.news.el, this.menu.el, this.confirm.el]) this.modals.layer.append(dlg);
+    for (const dlg of [this.budget.el, this.report.el, this.news.el, this.menu.el, this.confirm.el, this.shortcuts.el]) this.modals.layer.append(dlg);
     this.dock.railSlot.append(this.story.rail.el);
     root.insertBefore(this.story.el, this.modals.layer);
     root.insertBefore(this.cityMap.el, this.story.el);
+    // The side layer sits with the story layer (a side dialog and a story card are both the one side panel).
+    root.insertBefore(this.modals.side.layer, this.modals.layer);
     this.cityMap.onToggle = (open) => this.onCityMap(open);
     mapBus.hooks = {
       isOpen: () => this.cityMap.isOpen,
@@ -217,11 +247,232 @@ export class UI {
     this.coach.onChange = () => this.syncCoach();
     this.modals.onChange = (open) => setClass(root, 'has-modal', open);
 
+    this.registerPanels();
+    this.wireKeys();
+    if (dq) {
+      const onDq = () => this.setDesk(dq.matches);
+      if (typeof dq.addEventListener === 'function') dq.addEventListener('change', onDq);
+      else dq.addListener(onDq);
+      this.setDesk(dq.matches);
+    }
+
     this.wireEvents();
     this.wireInput();
     this.applySettings();
     this.syncCoach();
     this.schedulePrewarm();
+  }
+
+  // ── Desktop layout (MEGACITY §14) ────────────────────────────────────────
+
+  /** The desktop layout turned on or off (DESK_QUERY, watched live): the class, the side layer, the hints. */
+  private setDesk(on: boolean): void {
+    if (this.ctx.desk === on && this.root.classList.contains('cc-desk') === on) return;
+    this.ctx.desk = on;
+    setClass(this.root, 'cc-desk', on);
+    this.modals.desk = on;
+    this.panels.desk = on;
+    this.dock.setDesk(on);
+    if (on) loadKeyLayout(() => this.dock.relabelKeys());
+    this.syncKeys();
+    this.syncPanelLayout(true);
+    this.statsDirty = true;
+  }
+
+  /** Key hints show on the desktop layout and, on any device, after a hardware key press (§14.3). */
+  private syncKeys(): void {
+    setClass(this.root, 'has-keys', this.ctx.desk || keyBus.hardware);
+  }
+
+  /** The keyboard's link to the UI (§14.3): trays, the City map, Goals, the ? sheet, and the hardware-key hints. */
+  private wireKeys(): void {
+    keyBus.onHardware = () => {
+      loadKeyLayout(() => this.dock.relabelKeys());
+      this.syncKeys();
+    };
+    keyBus.ui = {
+      toggleTray: (cat) => {
+        if (this.story.holding || this.story.fullscreen || this.modals.depth > 0 || this.cityMap.isOpen) return false;
+        if (cat === 'deals' && !this.dock.dealsShown) return false;
+        if (this.dock.trayOpenFor(cat)) this.dock.closeTray();
+        else this.dock.openTray(cat);
+        return true;
+      },
+      toggleMap: () => {
+        if (this.story.holding || this.story.fullscreen || this.modals.depth > 0 || this.game.world.region < 3) return false;
+        if (this.cityMap.isOpen) this.cityMap.close();
+        else if (mapBus.hooks) mapBus.hooks.open();
+        else this.openCityMap(null);
+        return true;
+      },
+      toggleGoals: () => {
+        if (this.story.holding || this.story.fullscreen || this.modals.depth > 0 || this.cityMap.isOpen) return false;
+        if (!StoryRail.hasStory(this.game.story.view())) return false;
+        const btn = this.story.rail.el.querySelector<HTMLButtonElement>('.cc-rail-goal');
+        if (!btn) return false;
+        btn.click();
+        return true;
+      },
+      toggleShortcuts: () => {
+        if (this.story.holding || this.story.fullscreen || this.modals.depth > 0) return false;
+        this.shortcuts.toggle();
+        return true;
+      },
+    };
+    this.offs.push(() => {
+      keyBus.ui = null;
+      keyBus.onHardware = null;
+    });
+  }
+
+  /** The story layer's surface element (card, a sheet) by selector. */
+  private storyEl(sel: string): HTMLElement | null {
+    return this.story.el.querySelector<HTMLElement>(sel);
+  }
+
+  /** The surfaces that open as the side panel (§14.1), as the host polls and drives them. */
+  private registerPanels(): void {
+    const p = this.panels;
+    p.register('inspect', {
+      isOpen: () => this.inspect.isOpen,
+      close: () => {
+        const s = this.game.selected;
+        this.inspectSel = s ? { ...s } : null;
+        this.game.select(null);
+      },
+      reopen: () => {
+        const s = this.inspectSel;
+        this.inspectSel = null;
+        if (s && this.game.world.inBounds(s.x, s.y)) this.game.select(s);
+      },
+    });
+    const card = () => this.storyEl('.cc-scard');
+    p.register('card', {
+      isOpen: () => {
+        const el = card();
+        return !!el && !el.hidden;
+      },
+      close: () => {
+        /* a card cannot be closed by another panel: it parks */
+      },
+      reopen: () => {
+        /* never returned to: it parks */
+      },
+      park: (on) => {
+        const el = card();
+        if (el) setClass(el, 'is-parked', on);
+      },
+    });
+    // The story sheets: closed by their own ✕ (the story UI's paths), reopened from the story rail.
+    const sheet = (id: PanelId, sel: string, close: string, rail: string) =>
+      p.register(id, {
+        isOpen: () => {
+          const el = this.storyEl(sel);
+          return !!el && !el.hidden;
+        },
+        close: () => this.storyEl(sel)?.querySelector<HTMLButtonElement>(close)?.click(),
+        reopen: () => this.story.rail.el.querySelector<HTMLButtonElement>(rail)?.click(),
+      });
+    sheet('goals', '.cc-goals', '.cc-ss-close', '.cc-rail-goal');
+    sheet('factions', '.cc-factions', '.cc-ss-close', '.cc-rail-fac');
+    sheet('comms', '.cc-comms', '.cc-comms-close', '.cc-rail-comms');
+    // The side dialogs.
+    const dialog = (id: PanelId, el: HTMLElement, open: () => void) =>
+      p.register(id, { isOpen: () => this.modals.side.isOpen(el), close: () => this.modals.close(el), reopen: open });
+    dialog('report', this.report.el, () => this.report.open());
+    dialog('budget', this.budget.el, () => this.budget.open());
+    dialog('news', this.news.el, () => this.news.open());
+    dialog('shortcuts', this.shortcuts.el, () => this.shortcuts.open());
+    p.register('citymap', {
+      isOpen: () => this.cityMap.isOpen,
+      close: () => this.cityMap.close(),
+      reopen: () => {
+        /* the City map gives nothing back and is never returned to */
+      },
+    });
+    p.onChange = () => this.syncPanelLayout(false);
+  }
+
+  /** The element showing as the side panel now (null: none, or the City map, whose sheet is its own). */
+  private panelEl(): HTMLElement | null {
+    switch (this.panels.current) {
+      case 'inspect':
+        return this.inspect.el;
+      case 'card':
+        return this.storyEl('.cc-scard');
+      case 'goals':
+        return this.storyEl('.cc-goals');
+      case 'factions':
+        return this.storyEl('.cc-factions');
+      case 'comms':
+        return this.storyEl('.cc-comms');
+      case 'report':
+      case 'budget':
+      case 'news':
+      case 'shortcuts':
+        return this.modals.side.current;
+      default:
+        return null;
+    }
+  }
+
+  /** A panel that is not the City map is open on the desktop layout: the dock, top stack and banners give it room. */
+  private get sidePanelOpen(): boolean {
+    const c = this.panels.current;
+    return this.ctx.desk && c !== null && c !== 'citymap';
+  }
+
+  /**
+   * The panel changed (§14.1): root classes, the compact dock, the Back button, the side-panel class (badges keep clear
+   * of it), focus (into a panel opened from the keyboard, back to the page when it closes) and the camera insets.
+   */
+  private syncPanelLayout(force: boolean): void {
+    const p = this.panels;
+    const key = `${this.ctx.desk}|${p.current}|${p.ret}|${p.nested}|${p.parked}`;
+    if (!force && key === this.panelKey) return;
+    const was = this.panelKey;
+    this.panelKey = key;
+    const open = this.sidePanelOpen;
+    setClass(this.root, 'has-panel', open);
+    for (const el of this.root.querySelectorAll('.cc-sidepanel')) el.classList.remove('cc-sidepanel');
+    const el = open ? this.panelEl() : null;
+    if (el) el.classList.add('cc-sidepanel');
+    this.syncDockCompact();
+    // Back: a nested panel (a card read from the Goals drawer or COMMS) goes back one level.
+    const later = p.current === 'card' ? this.storyEl('.cc-scard')?.querySelector<HTMLElement>('[data-act="later"]') : null;
+    const showBack = !!el && p.nested && p.ret !== null && (p.current !== 'card' || (!!later && !later.hidden));
+    if (showBack && el) {
+      const head = el.querySelector<HTMLElement>('.cc-scard-head, .cc-ss-head, .cc-dlg-head, .cc-insp-head');
+      if (head && this.backBtn.parentElement !== head) head.prepend(this.backBtn);
+    } else this.backBtn.remove();
+    // Focus follows the keyboard (§14.1): into a panel opened from it; back to the page when a focused panel closes.
+    const opened = was.split('|')[1] !== String(p.current);
+    if (el && opened && openedByKeyboard()) {
+      try {
+        el.focus({ preventScroll: true });
+      } catch {
+        /* old browsers */
+      }
+    } else if (!el) {
+      const a = document.activeElement as HTMLElement | null;
+      if (a && a !== document.body && this.root.contains(a) && !this.modals.layer.contains(a) && !a.closest('.cc-dock, .cc-hud, .cc-ticker, .cc-citymap')) a.blur();
+    }
+    this.syncInsets();
+  }
+
+  /** The dock uses its compact form only where the full one does not fit beside the panel (§14.1). */
+  private syncDockCompact(): void {
+    const cam = this.ctx.camera;
+    this.dock.setCompact(this.sidePanelOpen && dockCompact(cam.width, this.dock.visibleButtons, true));
+  }
+
+  /** Back in a nested panel's header (or Esc): the card waits again (Later) and the sheet it came from returns. */
+  private panelBack(): void {
+    if (this.panels.current === 'card') {
+      this.storyEl('.cc-scard')?.querySelector<HTMLButtonElement>('[data-act="later"]')?.click();
+      return;
+    }
+    this.panels.back();
   }
 
   // ── Game bus ──────────────────────────────────────────────────────────────
@@ -331,6 +582,7 @@ export class UI {
 
   private onWorld(): void {
     this.glide = null;
+    this.inspectSel = null;
     this.schedulePrewarm();
     // A world swap while the City map was open: leave it (the new city frames itself).
     const wasMap = this.cityMap.isOpen;
@@ -410,10 +662,33 @@ export class UI {
     this.offs.push(() => window.removeEventListener('keydown', onKey, true));
   }
 
-  /** Esc handling: dialog → inspect sheet → tray. Returns whether something closed. */
+  /**
+   * Esc handling: dialog → inspect sheet → tray. Returns whether something closed. On the desktop layout (§14.1): a
+   * centred dialog, a full-screen story surface, then a plan waiting for ✓ (keyboard.ts cancels it), then the side
+   * panel (Back first; a story card waits again with Later), then the City map, the tray and the tool.
+   */
   private closeTopPanel(): boolean {
     if (this.modals.closeTop()) return true;
-    if (this.story.closeTop()) return true;
+    if (this.ctx.desk) {
+      if (this.story.fullscreen) return this.story.closeTop();
+      if (this.game.pendingConfirm) return false;
+      const cur = this.panels.current;
+      if (cur === 'card') {
+        const later = this.storyEl('.cc-scard')?.querySelector<HTMLButtonElement>('[data-act="later"]');
+        if (later && !later.hidden) {
+          later.click();
+          return true;
+        }
+      } else if (cur && cur !== 'citymap') {
+        if (this.panels.nested && this.panels.ret) this.panels.back();
+        else this.panels.closeCurrent();
+        return true;
+      }
+      if (this.panels.parked) {
+        // A card waits under nothing: show it again rather than answer it.
+        this.panels.update();
+      } else if (this.story.closeTop()) return true;
+    } else if (this.story.closeTop()) return true;
     if (this.cityMap.isOpen) {
       this.cityMap.close();
       return true;
@@ -495,7 +770,14 @@ export class UI {
         if (rail.height > 0 && rail.top > H / 2) bottom = Math.max(bottom, H - rail.top);
       } else if (bar.height >= H / 2 && bar.left < W / 2) left = bar.right;
     }
-    cam.setInsets({ top: Math.round(top), bottom: Math.round(bottom), left: Math.round(left) });
+    // The desktop side panel (§14.1): the camera frames, centres and eases in the map area left of it.
+    let right = 0;
+    const pe = this.sidePanelOpen ? this.panelEl() : null;
+    if (pe) {
+      const r = pe.getBoundingClientRect();
+      if (r.width > 0 && r.left > W / 2) right = Math.max(0, W - r.left + 12);
+    }
+    cam.setInsets({ top: Math.round(top), bottom: Math.round(bottom), left: Math.round(left), right: Math.round(right) });
   }
 
   /** The pill's height the last time it showed (a frame for the reach ease is needed before it shows). */
@@ -535,7 +817,7 @@ export class UI {
       } else if (r.top < H * 0.4) top = Math.max(top, r.bottom);
       else if (r.bottom > H * 0.6) bottom = Math.min(bottom, r.top);
     };
-    for (const el of this.root.querySelectorAll<HTMLElement>('.cc-hud, .cc-ticker, .cc-toast, .cc-toolchip, .cc-hint, .cc-legend, .cc-tip, .cc-bar, .cc-storyrail > *, .cc-banner, .cc-fps'))
+    for (const el of this.root.querySelectorAll<HTMLElement>('.cc-hud, .cc-ticker, .cc-toast, .cc-toolchip, .cc-hint, .cc-legend, .cc-tip, .cc-bar, .cc-storyrail > *, .cc-banner, .cc-fps, .cc-sidepanel'))
       add(el.getBoundingClientRect());
     const pill = this.pill.el.getBoundingClientRect();
     if (pill.height > 0) {
@@ -646,11 +928,13 @@ export class UI {
     this.tips.update(dt);
     this.updateGlide(dt);
     this.cityMap.update();
+    this.panels.update();
     if (!this.ctx.camera.animating) mapBus.flyIn = null;
     this.insetAcc += dt;
     if (this.insetAcc >= INSET_INTERVAL) {
       this.insetAcc = 0;
       this.syncInsets();
+      this.syncDockCompact();
       this.cityMap.layout();
       // District ambience (§10): the district that fills the view, none on the title or the City map.
       setAmbience(this.story.holding || this.cityMap.isOpen ? NO_AMBIENCE : ambienceAt(this.game.world, this.ctx.camera));

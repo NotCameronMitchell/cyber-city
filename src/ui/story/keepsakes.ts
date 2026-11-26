@@ -2,8 +2,10 @@
 // Keepsakes (docs/MEGACITY.md §9.6): the goal drawer's "Story so far" lists
 // every mark the city's choices have left (game.story.visual.marks), each with
 // its plaque line and a Show button (44 px) that closes the drawer, eases the
-// camera to the mark and rings it for a moment. Nothing opens by itself; the
-// list only follows the derived marks (rebuilt when their version changes).
+// camera to the mark and rings it for a moment (on the desktop layout the
+// drawer is a side panel and stays). Nothing opens by itself; the list only
+// follows the derived marks (rebuilt when their version changes). Styles live
+// in story.css.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { landmarkSet, markTitle, type LandmarkSet } from '../../game/marks';
@@ -21,28 +23,6 @@ const RING_MS = 3500;
 const SHOW_ZOOM = { min: 0.9, max: 1.6 } as const;
 const RING_RGB: [number, number, number] = [255, 214, 120];
 
-let styled = false;
-/** The list's styles, beside the drawer's own (story.css is shared; these rows are only Keepsakes'). */
-function injectStyle(): void {
-  if (styled || typeof document === 'undefined') return;
-  styled = true;
-  const s = document.createElement('style');
-  s.textContent = `
-.cc-gd-keep { display: flex; flex-direction: column; gap: 6px; }
-.cc-keep-lead { margin: 0; font-size: 12px; line-height: 17px; color: var(--cc-ink-2); }
-.cc-keep { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
-.cc-keep-row { display: flex; align-items: center; gap: 10px; min-height: 48px; }
-.cc-keep-dot { flex: none; width: 8px; height: 8px; margin-left: 10px; background: var(--cc-amber); transform: rotate(45deg); }
-.cc-keep-main { flex: 1 1 auto; display: flex; flex-direction: column; gap: 1px; min-width: 0; font-size: 13px; line-height: 18px; color: var(--cc-ink-2); }
-.cc-keep-title { font-size: 13px; letter-spacing: 0.04em; color: var(--cc-ink); overflow-wrap: anywhere; }
-.cc-keep-plaque { font-style: italic; color: #f2d89a; overflow-wrap: anywhere; }
-.cc-keep-show { flex: none; min-width: 64px; min-height: 44px; padding: 0 12px; font-size: 13px; }
-.cc-keep-set { margin: 2px 0 0; padding: 8px 10px; font-size: 12px; line-height: 17px; color: var(--cc-ink-2); border: 1px solid rgba(242, 216, 154, 0.25); }
-.cc-keep-set.is-done { color: #f2d89a; border-color: rgba(242, 216, 154, 0.6); }
-`;
-  document.head.append(s);
-}
-
 /** The landmark set's line (§3.8): how much of it stands, or that it is whole. */
 export function setLine(s: LandmarkSet): string {
   if (s.done) return LANDMARK_SET_COPY.whole;
@@ -59,7 +39,7 @@ export class Keepsakes {
   onShow: (() => void) | null = null;
 
   constructor() {
-    injectStyle();
+    // Styles: story.css (Keepsakes).
     this.el.addEventListener('click', (e) => {
       const b = (e.target as HTMLElement).closest<HTMLElement>('[data-mark]');
       if (!b) return;
@@ -105,11 +85,14 @@ export class Keepsakes {
     setHidden(this.el, false);
   }
 
-  /** Close the drawer, ease the camera to the mark and ring it. */
+  /**
+   * Close the drawer, ease the camera to the mark and ring it. On the desktop layout the drawer is a side panel beside
+   * the map (§14.1), so it stays open and the mark centres in the map area left of it (the camera's right inset).
+   */
   show(m: Mark): void {
     const ctx = this.ctx;
     if (!ctx) return;
-    this.onShow?.();
+    if (!ctx.desk) this.onShow?.();
     const cam = ctx.camera;
     const cx = m.x + m.w / 2;
     const cy = m.y + m.h / 2;

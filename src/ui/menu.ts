@@ -60,6 +60,9 @@ export function toggleRow(s: Settings, t: Pick<Toggle, 'key' | 'desc'>): { on: b
   return { on: toggleOn(s, t.key), disabled: false, desc: t.desc };
 }
 
+/** Step 6's last sentence (MEGACITY §7.7, §14.3): the ? sheet lists every key. */
+export const HELP_SHORTCUTS_SENTENCE = 'Press ? for every shortcut.';
+
 /** How to play steps 15 and 16 (MEGACITY §7.7), verbatim. */
 export const HELP_MEGA: readonly { title: string; body: string }[] = [
   {
@@ -294,7 +297,8 @@ export class Menu {
           '#ff2bd6',
           '<span class="cc-help-rci" aria-hidden="true"><i class="is-r"></i><i class="is-c"></i><i class="is-i"></i></span>',
         ),
-        step('pinch', '6 · Move the map', 'One finger draws with the active tool. Two fingers pan; pinch to zoom. On desktop: drag with right mouse, scroll to zoom, WASD to pan.', '#22e5ff'),
+        // MEGACITY §14.3: step 6's desktop sentence ends with the ? sheet (WP-9).
+        step('pinch', '6 · Move the map', `One finger draws with the active tool. Two fingers pan; pinch to zoom. On desktop: drag with right mouse, scroll to zoom, WASD to pan. ${HELP_SHORTCUTS_SENTENCE}`, '#22e5ff'),
         step('data', '7 · Use data views', 'Open Data for wealth, land value, traffic, noise, power, crime, pollution and service coverage.', '#22e5ff'),
         // EXPANSION §7.6: two steps after step 7; the later steps renumber.
         step('avenue', '8 · Grow your roads', 'Avenues and Highways carry more traffic. Cross a highway with a street for on-ramps. Back alleys keep homes cheap.', '#6f9bff'),
@@ -311,6 +315,13 @@ export class Menu {
         step('save', HELP_TRANSFER.title, HELP_TRANSFER.body, '#22e5ff', TRANSFER_ICONS.export),
       ),
       h('p', { class: 'cc-help-foot', text: 'Watch the treasury: taxes come in monthly, upkeep goes out. Tap your credits to open the budget.' }),
+      // §14.3: the ? sheet from How to play, shown on the desktop layout only (ui.css .cc-help-keys).
+      h(
+        'button',
+        { class: 'cc-menu-item cc-help-keys', type: 'button', 'data-act': 'shortcuts' },
+        h('span', { class: 'cc-menu-ico', html: icon('key') }),
+        h('span', { class: 'cc-menu-text' }, h('strong', { text: 'Keyboard shortcuts' }), h('span', { text: 'Every key, in one list. Or press ?' })),
+      ),
     );
 
     // ── About ──────────────────────────────────────────────────────────────
@@ -467,6 +478,10 @@ export class Menu {
     if (act === 'back') {
       if (this.solo) modals.close(this.el);
       else this.show('main');
+    } else if (act === 'shortcuts') {
+      // The ? sheet (§14.3): a side panel beside the city, so the menu closes first.
+      modals.closeAll();
+      actions.openShortcuts();
     } else if (act === 'mainmenu') {
       const go = this.onMainMenu;
       this.resumeSpeed = 0; // the start screen holds the game; Continue resumes at 1×

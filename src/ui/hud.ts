@@ -35,6 +35,9 @@ export class Hud {
   private readonly mapDot: HTMLElement;
   /** Speed to resume at when un-pausing from the compact cycle button. */
   private resume = 1;
+  /** Rich tooltips are on (a mouse that hovers, §14.2): the HUD drops its native `title`s (no double tooltips). */
+  private tipsOn = false;
+  private readonly menuBtn: HTMLButtonElement;
   private lastFunds = NaN;
 
   constructor(private readonly ctx: UIContext) {
@@ -88,7 +91,7 @@ export class Hud {
     this.cycleBtn = h('button', { class: 'cc-speed-btn cc-speed-cycle is-narrowonly', type: 'button', 'data-act': 'speed-cycle', 'aria-label': 'Change speed' });
     speed.append(this.cycleBtn);
 
-    const menu = h('button', { class: 'cc-hud-menu', type: 'button', 'data-act': 'menu', 'aria-label': 'Menu', title: 'Menu', html: icon('menu') });
+    const menu = (this.menuBtn = h('button', { class: 'cc-hud-menu', type: 'button', 'data-act': 'menu', 'aria-label': 'Menu', title: 'Menu', html: icon('menu') }));
     this.mapDot = h('span', { class: 'cc-hud-mapdot', hidden: true });
     this.mapBtn = h(
       'button',
@@ -153,8 +156,26 @@ export class Hud {
     setClass(this.el, 'is-paused', s === 0);
     // Lower detail caps every speed (MEGACITY §3.11): the speed buttons say so.
     const cap = this.ctx.game.speedCapNote;
-    for (let i = 1; i < this.speedBtns.length; i++) setAttr(this.speedBtns[i], 'title', cap ? `${['Pause', 'Normal speed', 'Fast', 'Fastest'][i]} · ${cap}` : `${['Pause', 'Normal speed', 'Fast', 'Fastest'][i]} (${i})`);
-    setAttr(this.cycleBtn, 'title', cap ?? '');
+    for (let i = 1; i < this.speedBtns.length; i++) this.setTitle(this.speedBtns[i], cap ? `${['Pause', 'Normal speed', 'Fast', 'Fastest'][i]} · ${cap}` : `${['Pause', 'Normal speed', 'Fast', 'Fastest'][i]} (${i})`);
+    this.setTitle(this.cycleBtn, cap ?? '');
+  }
+
+  /** Rich tooltips on (§14.2): drop the native `title`s, keep the aria-labels; off: today's titles again. */
+  setTips(on: boolean): void {
+    if (on === this.tipsOn) return;
+    this.tipsOn = on;
+    this.setTitle(this.fundsBtn, 'Budget');
+    this.setTitle(this.popBtn, 'City report');
+    this.setTitle(this.speedBtns[0], 'Pause (Space)');
+    this.setTitle(this.mapBtn, 'City map');
+    this.setTitle(this.menuBtn, 'Menu');
+    this.syncSpeed();
+  }
+
+  /** A native tooltip, dropped while rich tooltips are on. */
+  private setTitle(el: HTMLElement, text: string): void {
+    if (this.tipsOn || !text) el.removeAttribute('title');
+    else if (el.getAttribute('title') !== text) el.setAttribute('title', text);
   }
 
   /** Throttled refresh of every figure. */

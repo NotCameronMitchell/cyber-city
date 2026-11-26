@@ -32,6 +32,9 @@ export class BudgetPanel {
   private readonly chart: SVGSVGElement;
   private readonly chartLabel: HTMLElement;
   private readonly chartEmpty: HTMLElement;
+  /** The tax section, and the dialog footer it moves to in the side panel (§14.1). */
+  private readonly taxBox: HTMLElement;
+  private readonly foot: HTMLElement;
   /** Tax rate world.budget's figures were last projected at (they scale linearly with rate). */
   private projRate = -1;
   private lastLines: BudgetLine[] | null = null;
@@ -40,7 +43,7 @@ export class BudgetPanel {
   private history: number[] = [];
 
   constructor(private readonly ctx: UIContext) {
-    const d = buildDialog({ id: 'cc-budget', title: 'Budget', icon: icon('coin') });
+    const d = buildDialog({ id: 'cc-budget', title: 'Budget', icon: icon('coin'), side: true });
     this.el = d.el;
     d.el.classList.add('cc-budget');
     setText(d.sub, 'Monthly projection');
@@ -87,17 +90,19 @@ export class BudgetPanel {
       this.drawLabel();
     });
 
+    this.taxBox = h(
+      'section',
+      { class: 'cc-bud-tax cc-subpanel' },
+      h('div', { class: 'cc-bud-taxrow' }, h('label', { class: 'cc-label', text: 'Tax rate' }), this.taxVal),
+      this.slider,
+      h('div', { class: 'cc-bud-taxscale', 'aria-hidden': 'true' }, h('span', { text: `${MIN_TAX}%` }), h('span', { text: '10%' }), h('span', { text: `${MAX_TAX}%` })),
+      h('div', { class: 'cc-bud-taxfoot' }, this.taxHint, this.projIncome),
+    );
+    this.foot = d.foot;
     d.body.append(
       h('div', { class: 'cc-bud-top' }, h('span', { class: 'cc-label', text: 'Treasury' }), this.funds),
       this.warn,
-      h(
-        'section',
-        { class: 'cc-bud-tax cc-subpanel' },
-        h('div', { class: 'cc-bud-taxrow' }, h('label', { class: 'cc-label', text: 'Tax rate' }), this.taxVal),
-        this.slider,
-        h('div', { class: 'cc-bud-taxscale', 'aria-hidden': 'true' }, h('span', { text: `${MIN_TAX}%` }), h('span', { text: '10%' }), h('span', { text: `${MAX_TAX}%` })),
-        h('div', { class: 'cc-bud-taxfoot' }, this.taxHint, this.projIncome),
-      ),
+      this.taxBox,
       h(
         'div',
         { class: 'cc-bud-cols' },
@@ -121,8 +126,26 @@ export class BudgetPanel {
     this.pick = -1;
     this.chartKey = '';
     this.slider.value = String(this.ctx.game.world.taxRate);
+    this.placeTax();
     this.ctx.modals.open(this.el);
     this.refresh();
+  }
+
+  /**
+   * The tax slider's place (§14.1): pinned at the bottom of the side panel on the desktop layout (the figures scroll
+   * above it), in the body under the treasury everywhere else (today's dialog, unchanged).
+   */
+  private placeTax(): void {
+    const side = this.ctx.desk;
+    if (side ? this.taxBox.parentElement === this.foot : this.taxBox.previousElementSibling === this.warn) return;
+    if (side) {
+      this.foot.append(this.taxBox);
+      this.foot.hidden = false;
+    } else {
+      this.warn.after(this.taxBox);
+      this.foot.hidden = true;
+    }
+    this.foot.classList.toggle('cc-bud-foot', side);
   }
 
   get isOpen(): boolean {

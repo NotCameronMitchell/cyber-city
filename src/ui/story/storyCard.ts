@@ -20,6 +20,9 @@
 // player can peek at the map. Swipe down = Later (faction cards only).
 // Long-press a choice for its exact effects; a tap on a locked choice shakes
 // it and repeats the reason as a toast. Choices ignore taps for 600 ms.
+// Desktop layout (MEGACITY §14.1): the card is the side panel (story.css):
+// not modal, no scrim, the peek and the swipe stay touch gestures; parked
+// (.is-parked, hidden but still open) while another panel takes its place.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { storageGet, storageSet } from '../../game/game';
@@ -160,6 +163,8 @@ export class StoryCard {
     // Hold anything that is not a button: peek at the map.
     this.el.addEventListener('pointerdown', (e) => {
       if ((e.target as HTMLElement).closest('button')) return;
+      // The side panel sits beside the map: nothing to peek at with a mouse (§14.1).
+      if (this.ctx.desk && e.pointerType === 'mouse') return;
       window.clearTimeout(this.peekTimer);
       this.peekTimer = window.setTimeout(() => this.setPeek(true), PEEK_MS);
     });
@@ -170,7 +175,8 @@ export class StoryCard {
     for (const t of ['pointerup', 'pointercancel', 'pointerleave']) this.el.addEventListener(t, endPeek);
 
     swipeDown(this.el, {
-      canStart: (t) => !!this.card?.canLater && !t.closest('button') && !(this.scroll.contains(t) && this.scroll.scrollTop > 0),
+      canStart: (t, e) =>
+        !(this.ctx.desk && e.pointerType === 'mouse') && !!this.card?.canLater && !t.closest('button') && !(this.scroll.contains(t) && this.scroll.scrollTop > 0),
       onSwipe: () => this.later(),
     });
   }
@@ -191,6 +197,8 @@ export class StoryCard {
     setStyle(this.el, '--accent', color);
     setStyle(this.el, '--fc', color);
     this.el.dataset.kind = card.kind;
+    // The side panel on the desktop layout keeps role="dialog" but is not modal (§14.1).
+    this.el.setAttribute('aria-modal', this.ctx.desk ? 'false' : 'true');
     let sig = sigilImg(mark.kind, mark.color, 48, 'cc-scard-sigimg');
     if (card.with) sig += factionSigil(card.with, 30, 'cc-scard-sigwith');
     this.sig.innerHTML = sig;

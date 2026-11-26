@@ -4,6 +4,9 @@
 // pinned in the thumb zone. Swipe down on the header (or the body when it is
 // scrolled to the top) closes it; so do the scrim, Esc and the close button.
 // Sizes: 'half' (50 %), 'tall' (60 %, expandable to full), 'full'.
+// On the desktop layout (.cc-desk, MEGACITY §14.1) the same sheet is the side
+// panel: docked right, full height, no scrim (story.css); the swipe stays a
+// touch gesture there and the sheet is not modal.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { h, replayClass, setClass, setText } from '../dom';
@@ -56,8 +59,10 @@ export class StorySheet {
       if ((e.target as HTMLElement).closest('[data-act="expand"]')) this.setExpanded(!this.expanded);
     });
     swipeDown(this.el, {
-      canStart: (t) => {
+      canStart: (t, e) => {
         if (t.closest('button, input, a')) return false;
+        // The side panel (§14.1): a mouse never drags it; touch keeps the swipe.
+        if (e.pointerType === 'mouse' && this.el.closest('.cc-desk')) return false;
         if (this.head.contains(t)) return true;
         return this.body.contains(t) && this.body.scrollTop <= 0 && this.size !== 'full';
       },
@@ -85,6 +90,8 @@ export class StorySheet {
     if (this._open) return;
     this._open = true;
     this.setExpanded(false);
+    // A side panel on the desktop layout is not modal: the city beside it stays live (§14.1).
+    this.el.setAttribute('aria-modal', this.el.closest('.cc-desk') ? 'false' : 'true');
     this.el.hidden = false;
     replayClass(this.el, 'is-in');
     try {
