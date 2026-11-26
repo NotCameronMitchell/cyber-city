@@ -392,6 +392,30 @@ describe('KeyboardInput (§14.3): the keys reach the game and the UI hooks', () 
     expect(zooms).toEqual([1 / 1.25]);
   });
 
+  it('under a takeover screen (a chapter title, Charter Night, an ending) the game keys wait and leave Space and Enter to its buttons', () => {
+    let covered = true;
+    keyBus.ui = { ...keyBus.ui!, covered: () => covered };
+    game.left = 8;
+    const evs = ['KeyB', 'KeyR', 'KeyZ', 'Space', 'Digit3', 'KeyO', 'KeyU', 'Escape', 'Enter', 'KeyE', 'KeyM'].map((c) => key(press('US', c)));
+    key(press('US', 'Minus'));
+    key(press('US', 'KeyW'));
+    expect(game.tool).toBe('inspect');
+    expect(game.speed).toBe(1);
+    expect(game.overlay).toBe('none');
+    expect(game.undos).toBe(0);
+    expect(zooms).toEqual([]);
+    expect(calls).toEqual(['hardware']);
+    expect(evs.filter((e) => e.defaultPrevented)).toEqual([]);
+    const v = { x: 0, y: 0 };
+    expect(kb.step(0.1, v)).toBe(false);
+    // Once it closes, the same keys reach the city again.
+    covered = false;
+    key(press('US', 'KeyB'));
+    key(press('US', 'Digit3'));
+    expect(game.tool).toBe('bulldoze');
+    expect(game.speed).toBe(3);
+  });
+
   it('a virtual keyboard keydown while typing a city name never shows key hints; a hardware key does, once', () => {
     key({ key: 'Unidentified', code: '', target: { tagName: 'INPUT' } });
     key({ key: 'a', code: 'KeyA', target: { tagName: 'INPUT' } });

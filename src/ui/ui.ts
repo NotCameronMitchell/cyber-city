@@ -335,6 +335,7 @@ export class UI {
         this.shortcuts.toggle();
         return true;
       },
+      covered: () => this.story.fullscreen,
     };
     this.offs.push(() => {
       keyBus.ui = null;
@@ -345,6 +346,12 @@ export class UI {
   /** The story layer's surface element (card, a sheet) by selector. */
   private storyEl(sel: string): HTMLElement | null {
     return this.story.el.querySelector<HTMLElement>(sel);
+  }
+
+  /** A chapter title is on screen (not leaving). */
+  private chapterTitleUp(): boolean {
+    const t = this.storyEl('.cc-chtitle');
+    return !!t && !t.hidden && !t.classList.contains('is-out');
   }
 
   /** The surfaces that open as the side panel (§14.1), as the host polls and drives them. */
@@ -652,6 +659,12 @@ export class UI {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape' || e.key === 'Esc') {
         if (this.closeTopPanel()) e.preventDefault();
+        return;
+      }
+      // A chapter title closes on Enter or Space as on a tap; the game keys wait under it (keyboard.ts covered()).
+      if ((e.key === 'Enter' || e.key === ' ') && this.modals.depth === 0 && this.chapterTitleUp()) {
+        if (!e.repeat) this.story.closeTop();
+        e.preventDefault();
         return;
       }
       // Enter = ✓ on the City map's annex confirm (§7.2), unless a dialog or a text field has the key.

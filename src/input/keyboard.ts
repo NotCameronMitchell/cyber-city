@@ -241,6 +241,11 @@ export interface KeyUIHooks {
   toggleGoals(): boolean;
   /** ?: the shortcut sheet. */
   toggleShortcuts(): boolean;
+  /**
+   * True while a screen meant to take over is up (a chapter title, Charter Night, an ending; §14.1): game keys wait
+   * under it, and a focused button there keeps Space and Enter. The UI closes a chapter title on Enter or Space itself.
+   */
+  covered?(): boolean;
 }
 
 /**
@@ -368,6 +373,8 @@ export class KeyboardInput {
     if (isTypingTarget(e.target) || isTypingTarget(document.activeElement)) return;
     const action = resolveKey(e);
     if (!action) return;
+    // Nothing reaches the city under a takeover screen; held pan keys still release on keyup.
+    if (keyBus.ui?.covered?.()) return;
     const code = e.code;
     const game = this.game;
 
