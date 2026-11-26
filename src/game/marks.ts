@@ -457,7 +457,6 @@ function ribbonStations(world: World): Building[] {
 
 // ── deriveMarks ────────────────────────────────────────────────────────────
 
-/** The marks the city's choices have left (§9.3), recomputed from saved state. Binds this world for skylineLang. */
 /** The flag that pins the Seam's marks (§9.3): the Seam's tile in art coordinates ("ax,ay"), saved by the director. */
 export const SEAM_MARK_FLAG = 'seamMark';
 
@@ -494,6 +493,7 @@ export function pinSeamMark(world: World): boolean {
   return true;
 }
 
+/** The marks the city's choices have left (§9.3), recomputed from saved state. Binds this world for skylineLang. */
 export function deriveMarks(world: World): Marks {
   const st = world.story;
   const f = st.flags;
