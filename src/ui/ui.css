@@ -5809,6 +5809,8 @@ body {
 
 .cc-desk .cc-help-keys {
   display: flex;
+  width: 100%;
+  margin-top: 4px;
 }
 
 /* ── Hover tooltips (§14.2): the game's panel style, at most 280 px wide, never on touch ── */

@@ -263,10 +263,12 @@ export class Modals {
     return true;
   }
 
+  /** Close every dialog, the side panel's dialog too (Main menu, New City, the City map, a world swap). */
   closeAll(): void {
     while (this.closeTop()) {
       /* drain */
     }
+    this.side.closeAll();
   }
 }
 
