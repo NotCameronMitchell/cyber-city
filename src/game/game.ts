@@ -58,6 +58,7 @@ import { isFloodplain, updateDistrictLayers, isWildReed } from './districts/effe
 import { districtShort, districtTitle, goalViews, type GoalView } from './districts/goals';
 import { adjacentLocked, slotRect, validSlot } from './districts/slots';
 import { isRuin } from './districts/annex';
+import { plaquesAt, sunkTagline } from './marks';
 import { FrameGuard, frameCapMs } from './frameGuard';
 import { heightOf } from './heights';
 import { parcelAt } from './parcels';
@@ -1826,7 +1827,7 @@ export class Game {
         name,
         short: vd?.short ?? def?.short ?? name,
         kindName: def?.name ?? name,
-        tagline: state === 'notOpen' ? 'Still flooded: opens later' : vd?.tagline ?? def?.tagline ?? '',
+        tagline: state === 'notOpen' ? 'Still flooded: opens later' : (kind === 'sunk' ? sunkTagline(w) : null) ?? vd?.tagline ?? def?.tagline ?? '',
         color: vd?.accent ?? def?.color ?? '#7f8aa8',
         state,
         land: 1 - water / (SLOT_TILES),
@@ -2412,6 +2413,7 @@ export class Game {
     }
     if (w.sky[i] !== 0) notes.push({ text: 'Skyway overhead: tap the deck' });
     this.storyRows(x, y, info.rows);
+    for (const text of plaquesAt(w, x, y)) notes.push({ text }); // MEGACITY §9.3: the marks' plaques
     if (notes.length) info.notes = notes;
     if (meter) info.meter = meter;
     return info;

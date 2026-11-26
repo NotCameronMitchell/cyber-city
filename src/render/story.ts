@@ -455,6 +455,7 @@ export class StoryRender {
   drawSkyFx(ctx: CanvasRenderingContext2D, world: World, b: Rect, env: ArtEnv, view: Rect): void {
     const v = this.visual;
     const t = env.time;
+    if (v) marks.drawSky(ctx, world, v.marks, b, env); // MEGACITY §9.3: tall and facade decals (art/marks.ts, WP-8)
     if (v && v.crackdowns.length) {
       for (let c = 0; c < v.crackdowns.length; c++) {
         const z = v.crackdowns[c];

@@ -10,7 +10,9 @@
 //   goals        one 64 px row per goal (label, live "now · need" value,
 //                progress bar; hold goals "12/20 days", waived goals "waived");
 //                in Chapter VI the Charter Claims instead (tap: preview)
-//   story so far finished chapters: recap and the key choice made
+//   story so far finished chapters: recap and the key choice made; then the
+//                Keepsakes (MEGACITY §9.6, keepsakes.ts): each mark with its
+//                plaque and a Show button that pans the camera to it
 //   pace         "Story pace: Relaxed" with a link to Settings
 //
 // The "?" in the header swaps the body for the glossary (Back returns).
@@ -22,6 +24,7 @@ import { esc, h, setHidden, setHtml } from '../dom';
 import { clock } from '../format';
 import { icon } from '../icons';
 import { pressGuard } from './gesture';
+import { Keepsakes } from './keepsakes';
 import { bannerKicker } from './incoming';
 import { MOTH_COLOR, SYSTEM_COLOR, factionColor, factionSigil, sigilImg } from './sigils';
 import { StorySheet } from './sheet';
@@ -39,6 +42,8 @@ export class GoalDrawer {
   private readonly closes = h('div', { class: 'cc-goal-lead cc-goal-closes', hidden: true });
   private readonly list = h('div', { class: 'cc-goal-body' });
   private readonly sofar = h('section', { class: 'cc-gd-sofar', hidden: true });
+  /** Story so far's Keepsakes: the marks the choices left, each with its plaque and Show (MEGACITY §9.6). */
+  readonly keepsakes = new Keepsakes();
   private readonly pace = h('button', { class: 'cc-gd-pace', type: 'button', 'data-act': 'pace' });
   private readonly gloss = h('div', { class: 'cc-gd-gloss', hidden: true });
   private readonly main: HTMLElement;
@@ -54,7 +59,8 @@ export class GoalDrawer {
   onPace: (() => void) | null = null;
 
   constructor() {
-    this.main = h('div', { class: 'cc-gd-main' }, this.msgs, this.summary, this.closes, this.list, this.sofar, this.pace);
+    this.main = h('div', { class: 'cc-gd-main' }, this.msgs, this.summary, this.closes, this.list, this.sofar, this.keepsakes.el, this.pace);
+    this.keepsakes.onShow = () => this.sheet.close();
     this.sheet.body.append(this.main, this.gloss);
     this.glossBtn = h('button', { class: 'cc-iconbtn cc-gd-glossbtn', type: 'button', 'data-act': 'glossary', 'aria-label': 'Glossary: what the words mean', html: '<b aria-hidden="true">?</b>' });
     this.sheet.head.insertBefore(this.glossBtn, this.sheet.closeBtn);
@@ -148,6 +154,7 @@ export class GoalDrawer {
       this.list.innerHTML = html;
     }
     this.syncSoFar(v);
+    this.keepsakes.sync();
     setHtml(this.pace, `<span>Story pace: <b>${PACE_LABEL[v.pace]}</b></span><span class="cc-gd-pace-go">Settings${icon('chevron')}</span>`);
     this.pace.setAttribute('aria-label', `Story pace: ${PACE_LABEL[v.pace]}. Change it in Settings.`);
   }

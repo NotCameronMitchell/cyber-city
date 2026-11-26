@@ -215,6 +215,8 @@ export const MEGA_LANDMARK_VISITORS: Readonly<Record<string, number>> = {
   arena: 25000,
   markethall: 1500,
   halolookout: 15000,
+  glasssmile: 30000, // MEGACITY §9.2 ending landmarks (kept after a Charter Review swap)
+  breadpier: 10000,
 };
 /** Approval while a Charter Hall / Lamp Choir stands. */
 export const CHARTER_HALL_APPROVAL = 3;

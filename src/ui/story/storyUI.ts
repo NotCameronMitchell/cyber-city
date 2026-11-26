@@ -135,6 +135,7 @@ export class StoryUI {
       this.layout();
     };
     this.goals.onRead = (slot) => this.openMessage(slot);
+    this.goals.keepsakes.bind(ctx); // MEGACITY §9.6: the Keepsakes list reads the marks and pans the camera
     this.goals.onPace = () => {
       this.closeSheets();
       this.layout();

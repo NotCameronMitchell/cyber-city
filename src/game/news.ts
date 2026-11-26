@@ -9,6 +9,7 @@
 
 import type { Rng } from './rng';
 import { hash2 } from './rng';
+import { markCellName } from './marks';
 
 export interface NewsContext {
   city: string;
@@ -77,7 +78,8 @@ export const DISTRICTS = [
 /** Stable district name for a tile (same 8×8 block, same name, per city seed). */
 export function districtName(x: number, y: number, seed = 0, artOffset = 0): string {
   // Art coordinates (MEGACITY §3.2 artXY: pass the world's art offset): the start slot keeps its names on either region.
-  return DISTRICTS[Math.floor(hash2((x - artOffset) >> 3, (y - artOffset) >> 3, seed ^ 0x51ed) * DISTRICTS.length)];
+  // A cell a story choice renamed (MEGACITY §9.3, marks.ts: "Truce Row", "Glass Yard"…) answers with its new name.
+  return markCellName(seed, (x - artOffset) >> 3, (y - artOffset) >> 3) ?? DISTRICTS[Math.floor(hash2((x - artOffset) >> 3, (y - artOffset) >> 3, seed ^ 0x51ed) * DISTRICTS.length)];
 }
 
 /** Ticker flavor. Keep them short enough to read while scrolling (~120 chars). */

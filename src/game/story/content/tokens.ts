@@ -3,8 +3,12 @@
 // worst-case lengths, used by the content lint and by the director's view().
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** Card / chapter tokens and their longest values (§0): city names ≤ 24, districts ≤ 15, corp names ≤ 19. */
-export const CARD_TOKEN_MAX = { city: 24, district: 15, patron: 19, rival: 19, year: 4, coherence: 3 } as const;
+/**
+ * Card / chapter tokens and their longest values (§0): city names ≤ 24, districts ≤ 15, corp names ≤ 19. The three
+ * epilogue tokens (MEGACITY §9.4, strings in content/epilogue.ts): `{seamPast}` ≤ 36 ('the night the Undertow took the
+ * Seam'), `{votePast}` ≤ 21 ('the Basalt projection'), `{logsPast}` ≤ 22 ('the logs you published').
+ */
+export const CARD_TOKEN_MAX = { city: 24, district: 15, patron: 19, rival: 19, year: 4, coherence: 3, seamPast: 36, votePast: 21, logsPast: 22 } as const;
 export type CardToken = keyof typeof CARD_TOKEN_MAX;
 
 /**

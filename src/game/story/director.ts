@@ -105,7 +105,10 @@ import {
   updateMoods,
 } from './factions';
 import { NOTE_CROSSINGS_PER_BRIDGE, STORY_CONTENT } from './content';
-import { composeLayers } from './mods';
+import { LANDMARK_CARD_ENDING } from './content/cards/epilogue';
+import { epilogueTokens, GENERIC_REVIEW_LINE, nextReviewLine, reviewLine } from './content/epilogue';
+import { deriveMarks } from '../marks';
+import { clampMods, combine, composeLayers } from './mods';
 import { cardEligible, cardFaction, deckGate, defaultChoice, drawCard, FRONT_KINDS, pendingExpired, URGENT_SYSTEM } from './pacing';
 import { resolveMods, tierPatches } from './resolve';
 import { CHAPTER_NUMERALS, coherenceFor, LONG_AGO_SEC } from './state';
@@ -121,6 +124,7 @@ import type {
   Ending,
   EndingId,
   FactionId,
+  ModPatch,
   FlagValue,
   GangId,
   MessageView,
@@ -238,6 +242,24 @@ const short = (f: FactionId) => FACTION_LABELS[f].short;
 
 /** The day of each month the director re-derives the skybridges and the Ribbon (MEGACITY §3.3: off the month tick). */
 const VERTICAL_DAY = 2;
+/** The Charter Review card, which gains one callback line (MEGACITY §9.4). */
+const REVIEW_CARD = 'ep.review';
+/**
+ * Choices that last (MEGACITY §9): the marks re-derive at once after a story change, and after tile changes at most
+ * every this many real seconds (growth changes tiles every frame at speed 3); never on the month tick.
+ */
+const MARKS_THROTTLE_SEC = 2;
+/** The ending each ending landmark belongs to (§9.2). */
+const LANDMARK_ENDING: Partial<Record<BuildingType, EndingId>> = { gantry: 'ironwork', glasssmile: 'pearl', breadpier: 'lowcrown', recordtower: 'ledger', stillsquare: 'quiet' };
+/** The Spire's build reaction by its sponsor (MEGACITY §6.2, §8.4); a Nacre (or old, unsponsored) Spire keeps today's row. */
+/** Bread Pier's stalls (§9.2): an untaxed monthly line while the Low Crown is current. */
+const PIER_STALLS = { label: 'Pier stalls', perMonth: 900 } as const;
+/** The Quiet Hand's Nudge cooldown with the Still Square standing under it (§9.2), against STORY_PACING.nudgeEvery. */
+const STILL_SQUARE_NUDGE_DAYS = 270;
+const SPIRE_REACTIONS: Record<'basalt' | 'none', Partial<Record<FactionId, number>>> = {
+  basalt: { basalt: 6, nacre: 2, undertow: -2 },
+  none: { board: 3 },
+};
 export class StoryDirector implements EffectHost {
   /** Everything story-specific the renderer reads, once per frame (§9). Mutated in place. */
   readonly visual: VisualState = {
@@ -286,6 +308,10 @@ export class StoryDirector implements EffectHost {
   private applying = 0;
   /** The Full Recall star was checked against the gallery this session. */
   private recallChecked = false;
+  /** Choices that last (§9): the marks need re-deriving (a story change), world.version they were derived at, seconds since. */
+  private marksDirty = true;
+  private marksAt = -1;
+  private marksSec = 0;
   /** COMMS and Silt Log rows, rebuilt only when the log changes (stable identity for the UI). */
   private commsMemo: { key: string; rows: StoryView['comms'] } | null = null;
   private logsMemo: { key: string; rows: StoryView['logs'] } | null = null;
@@ -305,11 +331,15 @@ export class StoryDirector implements EffectHost {
     // again once the mods are resolved (resolveMods itself reads the turf counts).
     turf.refreshStats(w);
     vertical.refresh(w);
-    writeLocals(w);
+    this.writeLocalLayer();
     this.refreshMods();
     turf.refreshStats(w);
     this.refreshLedger();
     this.refreshVisual();
+    // Choices that last (§9.6): the marks are derived on load, never saved; a Charter Review already delivered by a
+    // build without callback lines gets its line now.
+    this.refreshMarks();
+    if ((w.story.pending?.card === REVIEW_CARD || w.story.open?.card === REVIEW_CARD) && !w.story.callbacks?.length) this.pickReviewLine();
     // Ch1 on a city that already has roads (migrated save, or saved before boot): 20 s after load.
     if (w.story.chapter === 1 && w.story.phase === 'waiting' && w.tiles.some((t) => t.road)) {
       this.bootAt = Math.max(0, P.bootLoadDelaySec - TITLE_SEC);
@@ -396,6 +426,9 @@ export class StoryDirector implements EffectHost {
     }
     this.checkPending();
     this.tryOpenFront();
+    // Choices that last (§9): after a story change at once, after tile changes throttled; never on the month tick.
+    this.marksSec += dt;
+    if (this.marksDirty || (w.version !== this.marksAt && this.marksSec >= MARKS_THROTTLE_SEC)) this.refreshMarks();
     // MOTH breathing: presence eases toward 1 while a MOTH-speaker card is open.
     let target = 0;
     if (st.open) {
@@ -462,7 +495,7 @@ export class StoryDirector implements EffectHost {
     // 5. Trace: −1 if nothing raised it this month, then traceMonthly.
     this.monthlyTrace();
     // 6. Mods, layers, ledger.
-    writeLocals(w);
+    this.writeLocalLayer();
     this.refreshMods();
     this.refreshLedger();
     this.outages();
@@ -513,7 +546,7 @@ export class StoryDirector implements EffectHost {
           }
           break;
         case 'built':
-          this.buildReaction(s.type);
+          this.buildReaction(s.type, s.id);
           break;
         case 'bulldozed':
           if (s.fabTiles >= OTHER_REACTIONS.bulldozeFab.fabTiles) this.favorMap(OTHER_REACTIONS.bulldozeFab.favor);
@@ -536,14 +569,21 @@ export class StoryDirector implements EffectHost {
     for (const [f, v] of Object.entries(m) as [FactionId, number][]) changeFavor(this.world, f, v);
   }
 
-  /** One-off build reactions (§2.6): only the first N of a type count. The first memorial adds approval +3 for good. */
-  private buildReaction(type: BuildingType): void {
+  /**
+   * One-off build reactions (§2.6): only the first N of a type count. The first memorial adds approval +3 for good. A
+   * Spire's reaction follows its sponsor (MEGACITY §6.2): Basalt +6 / Nacre +2 / Undertow −2 for a Basalt Spire, Board
+   * +3 for an Independent one, today's row for a Nacre one; the per-type limit counts every Spire.
+   */
+  private buildReaction(type: BuildingType, id = -1): void {
     const st = this.world.story;
     const limit = BUILD_REACTION_LIMIT_BY_TYPE[type] ?? BUILD_REACTION_LIMIT;
     const n = st.builtCounts[type] ?? 0;
     st.builtCounts[type] = n + 1;
+    // An ending landmark or a memorial changes the landmark terms (§9.2) and the marks.
+    if (LANDMARK_ENDING[type] || type === 'memorial') this.marksDirty = true;
     if (n >= limit) return;
-    const r = FACTION_BUILD_REACTIONS[type];
+    const sponsor = type === 'spire' ? this.world.buildings.get(id)?.sponsor : undefined;
+    const r = sponsor === 'basalt' || sponsor === 'none' ? SPIRE_REACTIONS[sponsor] : FACTION_BUILD_REACTIONS[type];
     if (r) this.favorMap(r);
     if (type === 'memorial' && n === 0 && !st.mods.some((m) => m.id === 'memorial')) {
       st.mods.push({ id: 'memorial', label: 'Sunk Memorial', until: -1, mods: { approvalAdd: 3 } });
@@ -904,7 +944,19 @@ export class StoryDirector implements EffectHost {
       pace,
     });
     if (gate === 'none') return;
-    const { pick, drop } = drawCard(w, this.rng, isUnlocked(w, 'comms'), w.mods.cardRateMul * pace.cardChanceMul, gate === 'urgent');
+    // The optional epilogue cards of the ending landmarks (MEGACITY §9.4) draw only while their ending holds: for this
+    // one draw they read as just shown (their `once` keeps them out), then their record is put back.
+    const hidden: string[] = [];
+    if (st.chapter >= 7)
+      for (const [id, e] of Object.entries(LANDMARK_CARD_ENDING)) if (st.ending !== e && st.seen[id] === undefined) hidden.push(id);
+    for (const id of hidden) st.seen[id] = w.tick;
+    let res: ReturnType<typeof drawCard>;
+    try {
+      res = drawCard(w, this.rng, isUnlocked(w, 'comms'), w.mods.cardRateMul * pace.cardChanceMul, gate === 'urgent');
+    } finally {
+      for (const id of hidden) delete st.seen[id];
+    }
+    const { pick, drop } = res;
     const remove = [...drop];
     if (pick?.queueIndex !== undefined) remove.push(pick.queueIndex);
     remove.sort((a, b) => b - a);
@@ -917,6 +969,8 @@ export class StoryDirector implements EffectHost {
     const w = this.world;
     const st = w.story;
     const tick = w.tick;
+    // A Charter Review gains one callback line (MEGACITY §9.4), picked as it arrives so it never changes while it waits.
+    if (card.id === REVIEW_CARD) this.pickReviewLine();
     const spot = card.spot ? findSpot(w, card.spot, this.rng) : -1;
     st.seen[card.id] = tick;
     st.lastCardTick = tick;
@@ -1042,7 +1096,9 @@ export class StoryDirector implements EffectHost {
 
   private afterClose(): void {
     const w = this.world;
-    writeLocals(w);
+    // A choice may have set a flag a mark reads (§9.3): the marks re-derive on the next frame.
+    this.marksDirty = true;
+    this.writeLocalLayer();
     this.refreshMods();
     this.refreshLedger();
     this.refreshVisual();
@@ -1269,19 +1325,21 @@ export class StoryDirector implements EffectHost {
     return null;
   }
 
-  /** Quiet Hand Nudge: +15 favor to one faction, once per 360 d. */
+  /** Quiet Hand Nudge: +15 favor to one faction, once per 360 d (270 d with the Still Square standing, §9.2). */
   nudge(f: FactionId): Result {
     const w = this.world;
     const reason = this.nudgeReason(f);
     if (reason) return { ok: false, reason, cost: 0 };
     changeFavor(w, f, P.nudgeFavor);
-    w.story.nudgeReady = w.tick + P.nudgeEvery;
+    const square = w.story.ending === 'quiet' && this.landmarks().some((l) => l.type === 'stillsquare');
+    w.story.nudgeReady = w.tick + (square ? Math.min(P.nudgeEvery, STILL_SQUARE_NUDGE_DAYS) : P.nudgeEvery);
     this.afterAction();
     return { ok: true, cost: 0 };
   }
 
   private afterAction(): void {
-    writeLocals(this.world);
+    this.marksDirty = true;
+    this.writeLocalLayer();
     this.refreshMods();
     this.refreshLedger();
     this.refreshVisual();
@@ -1555,6 +1613,8 @@ export class StoryDirector implements EffectHost {
     L.expense.length = 0;
     const byLabel = new Map<string, number>();
     for (const inc of st.incomes) if (inc.until > w.tick) byLabel.set(inc.label, (byLabel.get(inc.label) ?? 0) + inc.perMonth);
+    // Bread Pier's stalls (MEGACITY §9.2): untaxed, only while the Low Crown holds the charter.
+    if (st.ending === 'lowcrown' && this.landmarks().some((l) => l.type === 'breadpier')) byLabel.set(PIER_STALLS.label, (byLabel.get(PIER_STALLS.label) ?? 0) + PIER_STALLS.perMonth);
     if (!endingRules(w)?.endOffLedger) {
       let off = turf.pactCut(w);
       for (const b of w.buildings.values()) if (b.type === 'tidemarket' && b.powered && b.offline <= 0) off += 250;
@@ -1658,7 +1718,8 @@ export class StoryDirector implements EffectHost {
 
   /** Re-resolve mods and rebuild the view (WP-C calls it after a crackdown, pact or stage change). */
   markDirty(): void {
-    writeLocals(this.world);
+    this.marksDirty = true;
+    this.writeLocalLayer();
     this.refreshMods();
     this.refreshLedger();
     this.refreshVisual();
@@ -1671,10 +1732,116 @@ export class StoryDirector implements EffectHost {
     this.world.events.emit('story');
   }
 
-  /** world.mods ← resolveMods; world.layers ← composeLayers(layerParts). */
+  /** world.mods ← resolveMods (+ the ending landmarks' terms, §9.2); world.layers ← composeLayers(layerParts). */
   private refreshMods(): void {
-    this.world.mods = resolveMods(this.world);
+    const m = resolveMods(this.world);
+    const lm = this.landmarkPatches();
+    if (lm.length) {
+      for (const p of lm) combine(m, p);
+      clampMods(m);
+    }
+    this.world.mods = m;
     composeLayers(this.world);
+  }
+
+  // ── Choices that last (MEGACITY §9) ───────────────────────────────────────
+
+  /** Re-derive the marks (never saved); a changed set re-resolves the landmark terms that ride on it. */
+  private refreshMarks(): void {
+    const w = this.world;
+    const before = this.visual.marks.version;
+    const was = this.visual.marks;
+    this.visual.marks = deriveMarks(w);
+    this.marksDirty = false;
+    this.marksAt = w.version;
+    this.marksSec = 0;
+    if (was !== this.visual.marks && before !== 0 && this.visual.marks.version !== before) {
+      this.writeLocalLayer();
+      this.refreshMods();
+      this.refreshLedger();
+      this.markChanged();
+    }
+  }
+
+  /** The ending landmarks that stand, and whether their ending is current (§9.2). */
+  private landmarks(): { type: BuildingType; b: { x: number; y: number }; current: boolean }[] {
+    const w = this.world;
+    const out: { type: BuildingType; b: { x: number; y: number }; current: boolean }[] = [];
+    for (const b of w.buildings.values()) {
+      const e = LANDMARK_ENDING[b.type];
+      if (e && !out.some((o) => o.type === b.type)) out.push({ type: b.type, b, current: w.story.ending === e });
+    }
+    return out;
+  }
+
+  /**
+   * The ending landmarks' city-wide terms (§9.2), derived each time the mods resolve. Kept after a review swap (the
+   * landmark is history): approval (Record Tower +3, Still Square +1, +2 under Lamplight) and, from the Lower Wards
+   * memorial row of §9.3, +1 for a Sunk Memorial inside the Sunk once Chapter IV's logs were read. Only while the
+   * landmark's ending is current: the Gantry's industrial demand and its reactor / Stratablock / Foundry Spine price
+   * cut, the Record Tower's upkeep cut. (Faction power is factions.ts', visitors sim/tuning.ts', the Pier's stalls
+   * the ledger's, land value the local layer's; the Nudge cooldown is nudge()'s.)
+   */
+  private landmarkPatches(): ModPatch[] {
+    const w = this.world;
+    const st = w.story;
+    const out: ModPatch[] = [];
+    for (const l of this.landmarks()) {
+      if (l.type === 'recordtower') {
+        out.push({ approvalAdd: 3 });
+        if (l.current) out.push({ upkeepMul: 0.98 });
+      } else if (l.type === 'stillsquare') out.push({ approvalAdd: l.current && st.endingVariant === 'lamplight' ? 2 : 1 });
+      else if (l.type === 'gantry' && l.current) out.push({ demandInd: 0.05, costMul: { reactor: 0.95, stack: 0.95, foundry: 0.95 } });
+    }
+    if (st.seen['ch4.logs'] !== undefined) {
+      for (const b of w.buildings.values())
+        if (b.type === 'memorial' && w.kindAt(b.x, b.y) === 'sunk' && w.isOwned(b.x, b.y)) {
+          out.push({ approvalAdd: 1 });
+          break;
+        }
+    }
+    return out;
+  }
+
+  /**
+   * The local layer part: the story's locals (effects.ts writeLocals) plus the ending landmarks' land value (§9.2,
+   * kept after a swap): the Glass Smile +0.04 r14, the Record Tower +0.03 r12. Derived: they ride along for this one
+   * write and are never saved.
+   */
+  private writeLocalLayer(): void {
+    const w = this.world;
+    const st = w.story;
+    let n = 0;
+    for (const l of this.landmarks()) {
+      const lv = l.type === 'glasssmile' ? 0.04 : l.type === 'recordtower' ? 0.03 : 0;
+      if (!lv) continue;
+      const size = BUILDINGS[l.type].size;
+      st.locals.push({ id: `lm.${l.type}`, x: l.b.x + size / 2, y: l.b.y + size / 2, r: l.type === 'glasssmile' ? 14 : 12, until: -1, crimeAdd: 0, lvAdd: lv });
+      n++;
+    }
+    try {
+      writeLocals(w);
+    } finally {
+      if (n) st.locals.splice(st.locals.length - n, n);
+    }
+  }
+
+  /** Pick the Charter Review's callback line (§9.4) and record it: one per review, never repeated; the generic last. */
+  private pickReviewLine(): void {
+    const st = this.world.story;
+    const line = nextReviewLine(st);
+    const cb = (st.callbacks ??= []);
+    const k = cb.indexOf(line.id);
+    if (k >= 0) cb.splice(k, 1); // only the generic line can come again: it moves to the end
+    cb.push(line.id);
+    if (cb.length > 64) cb.splice(0, cb.length - 64);
+  }
+
+  /** The line the current Charter Review shows: the last one picked. */
+  private currentReviewLine(): string | null {
+    const cb = this.world.story.callbacks;
+    const id = cb?.length ? cb[cb.length - 1] : GENERIC_REVIEW_LINE;
+    return reviewLine(id)?.text ?? null;
   }
 
   private refreshVisual(): void {
@@ -2029,11 +2196,18 @@ export class StoryDirector implements EffectHost {
     const card = this.cardFor(id);
     if (!card) return null;
     const f = cardFaction(w, card);
-    let body = fillTokens(w, card.body, spot);
+    // The epilogue tokens {seamPast} {votePast} {logsPast} (MEGACITY §9.4) resolve from the key choices.
+    const tok = st.chapter >= 7 ? epilogueTokens(st) : undefined;
+    let body = fillTokens(w, card.body, spot, tok);
     if (card.kind === 'ending' && st.endingVariant === 'lamplight') {
       const v = this.idx.ending.get(st.ending ?? 'quiet')?.rules.variant;
       const extra = v && v.card !== card.id ? this.idx.cards.get(v.card) : undefined;
       if (extra && this.idx.ending.get(st.ending!)?.card === card.id) body += `\n\n${fillTokens(w, extra.body, spot)}`;
+    }
+    // The Charter Review's second paragraph: the callback line this review picked (§9.4), the way Lamplight adds its own.
+    if (id === REVIEW_CARD) {
+      const line = this.currentReviewLine();
+      if (line) body += `\n\n${fillTokens(w, line, spot)}`;
     }
     const pending = st.pending?.card === id ? st.pending : null;
     const message = !!pending || st.waiting?.card === id;
@@ -2042,13 +2216,13 @@ export class StoryDirector implements EffectHost {
       kind: card.kind,
       faction: f,
       speakerName: this.speakerName(card, f),
-      title: fillTokens(w, card.title, spot),
+      title: fillTokens(w, card.title, spot, tok),
       body,
       canLater: message,
       choices: this.choicesOf(card).map((c) => {
-        const locked = c.requires && !evalCond(w, c.requires) ? fillTokens(w, c.lockedHint ?? 'Not available', spot) : undefined;
+        const locked = c.requires && !evalCond(w, c.requires) ? fillTokens(w, c.lockedHint ?? 'Not available', spot, tok) : undefined;
         return {
-          label: fillTokens(w, c.label, spot),
+          label: fillTokens(w, c.label, spot, tok),
           hints: hintsFor(w, c.fx),
           effectsText: effectsText(w, c.fx),
           ...(locked ? { locked } : {}),
@@ -2058,7 +2232,7 @@ export class StoryDirector implements EffectHost {
     };
     if (card.with) view.with = card.with;
     if (card.sys) view.sys = fillTokens(w, card.sys, spot);
-    if (card.brief) view.brief = fillTokens(w, card.brief, spot);
+    if (card.brief) view.brief = fillTokens(w, card.brief, spot, tok);
     if (this.meetCard === id) view.firstMeet = true;
     if (message) view.fromMessage = true;
     if (pending) {
