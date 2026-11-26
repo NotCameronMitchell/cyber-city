@@ -1386,10 +1386,13 @@ describe('megacity story content (MEGACITY §8)', () => {
     // `district.<kind> >= 1` counts every district of a kind, so on a 5×5 region a ds.* card can come for Halfway
     // Towers before Skeleton Row is owned (16–31% of cities by kind with a random annex order). Its copy names no
     // district of its kind, except the unique Sunk and Tarmac Reach, which ds.tarmac waits for (flag apronFamilies).
+    // A short name that is also a plain word ("Shoals", "Terraces") names a district only when capitalised: the City map
+    // prints "Shoals" for Saltglass Shoals, so "the Shoals" in a card read on Driftsand Banks points at the wrong place,
+    // while "the shoal water" or "on the terraces" does not.
     const generic = new Set(['Shoals', 'Terraces', 'Flats', 'Marsh', 'Isles', 'Banks', 'Heights', 'Fields', 'Bazaar', 'Towers', 'Steps', 'Docks']);
     const names = (k: DistrictKind): string[] => {
       const d = DISTRICTS[k];
-      return [d.name, d.short, ...d.variants.flatMap((v) => [v.name, v.short])].filter((n) => !generic.has(n));
+      return [d.name, d.short, ...d.variants.flatMap((v) => [v.name, v.short])];
     };
     const bad: string[] = [];
     for (const c of C.MEGACITY_CARDS.filter((x) => x.id.startsWith('ds.'))) {
@@ -1398,7 +1401,7 @@ describe('megacity story content (MEGACITY §8)', () => {
       const texts = [c.title, c.body, c.brief ?? '', ...c.choices.map((ch) => ch.label)];
       for (const n of names(kind)) {
         if (kind === 'tarmac' && n === DISTRICTS.tarmac.name) continue;
-        const re = new RegExp(`\\b${n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i');
+        const re = new RegExp(`\\b${n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, generic.has(n) ? '' : 'i');
         if (texts.some((t) => re.test(t))) bad.push(`${c.id}: names "${n}"`);
       }
     }
@@ -1421,7 +1424,7 @@ describe('megacity story content (MEGACITY §8)', () => {
     expect(verbsUsed.sort()).toEqual(
       [
         'ds.flats "Clean it first: 9,000." brownfield=cleared',
-        'ds.reedmere "Drain the south bank." reeds=drained',
+        'ds.reedmere "Drain the near bank." reeds=drained',
         'ds.sunk "Clear the ruins." ruins=cleared',
         'ds.tarmac "Clear the apron." apron=cleared',
         'ds.tarmac "Rehouse them: 6,000." apron=rehoused',
@@ -1598,6 +1601,7 @@ describe('megacity story content (MEGACITY §8)', () => {
       if (own.length !== d.variants.length) bad.push(`${d.kind}: ${own.length} variant lists for ${d.variants.length} variants`);
     }
     const districtNames = Object.values(DISTRICTS).flatMap((d) => [d.name, ...d.variants.map((v) => v.name)]);
+    const districtShorts = [...new Set(Object.values(DISTRICTS).flatMap((d) => [d.short, ...d.variants.map((v) => v.short)]))];
     const distinctive = new Set(districtNames.flatMap(nameWords).filter((wd) => !GENERIC_NAME_WORDS.has(wd)));
     const seen = new Map<string, string>(MARK_CELL_NAMES.map((n) => [n.toLowerCase(), 'a §9.3 mark']));
     expect(MARK_CELL_NAMES.length).toBe(7);
@@ -1610,6 +1614,8 @@ describe('megacity story content (MEGACITY §8)', () => {
         if (seen.has(key)) bad.push(`${where}: "${n}" also in ${seen.get(key)}`);
         seen.set(key, where);
         for (const dn of districtNames) if (key.includes(dn.toLowerCase())) bad.push(`${where}: "${n}" contains the district name ${dn}`);
+        // The short names too (the City map and inspect print them): "Reedmere" in Reedmere Marsh's own list was one.
+        for (const sn of districtShorts) if (new RegExp(`\\b${sn}\\b`, 'i').test(n)) bad.push(`${where}: "${n}" holds the district short name ${sn}`);
         // The new lists also keep every district's own word out ("Gannet", "Kessel"…), so a name never points elsewhere.
         if (mine) for (const wd of nameWords(n)) if (distinctive.has(wd)) bad.push(`${where}: "${n}" uses the district word "${wd}"`);
         const hit = C.BANNED_RE.exec(n);
@@ -1630,7 +1636,8 @@ describe('megacity story content (MEGACITY §8)', () => {
     // A renamed name replaces one that config still holds (Step 9 may move the fix into config and drop the row).
     for (const [from, to] of Object.entries(RENAMED_NEIGHBOURHOODS)) {
       if (!Object.values(DISTRICTS).some((d) => d.neighbourhoods.includes(from))) bad.push(`rename "${from}": no list holds it any more`);
-      if (!C.BANNED_RE.test(from)) bad.push(`rename "${from}" → "${to}": only banned names are renamed`);
+      if (!C.BANNED_RE.test(from) && !districtShorts.some((sn) => sn.toLowerCase() === from.toLowerCase()))
+        bad.push(`rename "${from}" → "${to}": only banned names and district names are renamed`);
     }
     expect(bad).toEqual([]);
   });

@@ -28,10 +28,9 @@
 // last finished pass.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { CITY_LIFE, DISTRICTS, STANDING } from './config';
-import { artOffset, slotRect } from './districts/slots';
-import { neighbourhoodsOf } from './districts/names';
-import { districtName } from './news';
+import { CITY_LIFE, STANDING } from './config';
+import { slotRect } from './districts/slots';
+import { placeAt } from './districts/names';
 import { hash2 } from './rng';
 import { cityLifeOn } from './settings';
 import { standing } from './story/factions';
@@ -164,22 +163,10 @@ const MIN_SPACING = 3600 / 7 + 1;
 
 /**
  * The `{district}` name for a tile (§6.4.1): the neighbourhood there and, in a city of more than one district, the
- * district's short name ("Paper Lane, Verdigris"). Charter Shore keeps today's names (news.ts districtName).
+ * district's short name ("Paper Lane, Verdigris"): districts/names.ts placeAt, the name the rest of the City Feed uses.
  */
 export function placeName(world: World, x: number, y: number): string {
-  const ao = artOffset(world);
-  const s = world.slotAt(x, y);
-  const kind = s >= 0 ? world.districts.kinds[s] : 'shore';
-  let name: string;
-  if (!kind || kind === 'shore') name = districtName(x, y, world.seed, ao);
-  else {
-    const list = neighbourhoodsOf(kind, world.variantOf(s));
-    name = list.length ? list[Math.floor(hash2((x - ao) >> 3, (y - ao) >> 3, world.seed ^ 0x51ed) * list.length)] : DISTRICTS[kind].name;
-  }
-  if (world.districts.owned.length <= 1 || s < 0 || !kind) return name;
-  const v = world.variantOf(s);
-  const short = v > 0 ? DISTRICTS[kind].variants[v - 1]?.short ?? DISTRICTS[kind].short : DISTRICTS[kind].short;
-  return `${name}, ${short}`;
+  return placeAt(world, x, y);
 }
 
 /** Where a happening is: its slot and the tile its {district} names. */

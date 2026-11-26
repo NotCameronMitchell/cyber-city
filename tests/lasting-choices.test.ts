@@ -15,6 +15,7 @@ import { districtName } from '../src/game/news';
 import { EPILOGUE_DECK, LANDMARK_CARD_ENDING } from '../src/game/story/content/cards/epilogue';
 import { GENERIC_REVIEW_LINE, REVIEW_LINES, SUNK_TAGLINES } from '../src/game/story/content/epilogue';
 import { cardEligible } from '../src/game/story/pacing';
+import { hintsFor } from '../src/game/story/effects';
 import type { Mark, StoryState } from '../src/game/story/types';
 import { Terrain, ZoneType, type BuildingType, type Region } from '../src/game/types';
 import { World } from '../src/game/world';
@@ -814,6 +815,88 @@ describe('§9.6 item 7: epilogue cards draw only in Chapter VII with their flags
     }
     expect(drawn).toBe(true);
   });
+
+  // Played, not forced: an ended city on Relaxed with a player who opens each COMMS card 20 s after it arrives. A Charter
+  // Review is queued every 1,080 sim days (67 s at speed 3, 540 s at speed 1), so one is always due when a deck slot
+  // opens; it must not take every slot (review fix w4fix: before it, 4 of 4 slots went to reviews at speed 3).
+  const playEnded = (secPerDay: number, slots: number, funds: number) => {
+    const g = new Game();
+    g.settings.storyPace = 'relaxed';
+    g.settings.lowerDetail = false;
+    expect(g.restore(JSON.parse(JSON.stringify(V3_ENDING)))).toBe(true);
+    const w = g.world;
+    const st = w.story;
+    const d = g.story;
+    w.funds = funds;
+    expect(st.flags.larkKnows && st.flags.cleanGlass).toBe(true); // ep.kite and ep.seam can come
+    const arrived: { id: string; sec: number }[] = [];
+    const forced: string[] = [];
+    let acting = false;
+    let sec = 0;
+    w.events.on('incoming', (e) => e && arrived.push({ id: e.id, sec }));
+    w.events.on('card', (e) => e && !acting && forced.push(e.id));
+    const answer = () => {
+      acting = true;
+      for (let k = 0; k < 8 && st.open; k++) g.choose(0);
+      acting = false;
+    };
+    let pendingSince = -1;
+    const pace = STORY_PACE.relaxed;
+    for (let day = 0; arrived.length < slots && sec < (slots + 1) * (pace.minActiveSecBetween + 60); day++) {
+      d.update(secPerDay, false);
+      sec += secPerDay;
+      answer();
+      if (st.pending && !st.open) {
+        if (pendingSince < 0) pendingSince = sec;
+        if (sec - pendingSince >= 20) {
+          acting = true;
+          g.openPending();
+          acting = false;
+          answer();
+          pendingSince = -1;
+        }
+      } else pendingSince = -1;
+      w.tick++;
+      d.onDay();
+      answer();
+      if (funds < 0) w.funds = Math.min(w.funds, funds); // still broke: the bailout's cash never catches up
+    }
+    const ids = arrived.map((a) => a.id);
+    expect(ids.length, ids.join(' ')).toBe(slots);
+    expect(forced).toEqual([]);
+    // Never two reviews running, and never faster than the pace's deck gap.
+    for (let k = 1; k < ids.length; k++) {
+      expect(ids[k] === 'ep.review' && ids[k - 1] === 'ep.review', ids.join(' ')).toBe(false);
+      expect(arrived[k].sec - arrived[k - 1].sec).toBeGreaterThanOrEqual(pace.minActiveSecBetween);
+    }
+    return ids;
+  };
+  for (const [speed, secPerDay] of [[1, 0.5], [3, 1 / 16]] as const) {
+    it(`an ended city on Relaxed at speed ${speed} receives epilogue cards and reviews, one per deck gap, none opening by itself`, () => {
+      const ids = playEnded(secPerDay, 4, 1e9);
+      expect(ids.filter((id) => id.startsWith('ep.') && id !== 'ep.review').length, ids.join(' ')).toBeGreaterThanOrEqual(speed === 3 ? 2 : 1);
+      if (speed === 3) expect(ids.filter((id) => id === 'ep.review').length, ids.join(' ')).toBeGreaterThanOrEqual(1);
+    }, 60_000);
+  }
+  it('ep.level\'s "pleases every faction a little" includes the Tuning (shown under Lamplight, hidden while the Tuning is)', () => {
+    const g = gameOn(city.w);
+    const w = g.world;
+    const st = w.story;
+    Object.assign(st, { chapter: 7, phase: 'ended', ending: 'quiet', endingVariant: 'lamplight' });
+    st.flags.tuningActive = true;
+    const level = EPILOGUE_DECK.find((c) => c.id === 'ep.level')!;
+    const favors = (fx: Parameters<typeof hintsFor>[1]) => hintsFor(w, fx).flatMap((h) => (h.k === 'favor' && 'f' in h ? [h.f] : []));
+    expect(favors(level.choices[0].fx)).toContain('tuning');
+    st.flags.tuningActive = false;
+    st.endingVariant = null;
+    expect(favors(level.choices[0].fx)).not.toContain('tuning');
+  });
+
+  it('a broke ended city gets the bailout in COMMS at the deck gap, never opening by itself, and its reviews still come', () => {
+    const ids = playEnded(1 / 16, 4, -1e7);
+    expect(ids, ids.join(' ')).toContain('sys.bailout');
+    expect(ids, ids.join(' ')).toContain('ep.review');
+  }, 60_000);
 });
 
 // ── 8. A v3 post-ending save ────────────────────────────────────────────────

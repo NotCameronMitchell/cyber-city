@@ -13,10 +13,10 @@
 // refresh ≤ 2 ms on a full map; every buffer here is reused.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { artOffset } from '../districts/slots';
+import { placeAt } from '../districts/names';
 import { completeStage } from '../buildingStats';
 import { BUILDINGS, CROWNS, GANG_IDS, GANG_NEWS_NAME, REGION, RIBBON, STANDING, TURF, TURF_OWNER } from '../config';
-import { capitalizeFirst, districtName } from '../news';
+import { capitalizeFirst } from '../news';
 import { Rng } from '../rng';
 import { scratchFor } from '../frame';
 import { DAYS_PER_MONTH, RoadKind, Terrain, ZoneType, type Building, type BuildingType, type DistrictKind } from '../types';
@@ -869,7 +869,7 @@ const SEED_NEWS: Record<GangId, string> = {
 
 function seedNews(world: World, gang: GangId, i: number, tagback: boolean): void {
   const N = world.N;
-  const d = districtName(i % N, (i / N) | 0, world.seed, artOffset(world));
+  const d = placeAt(world, i % N, (i / N) | 0);
   const text = tagback
     ? `Tagback in ${d}: ${GANG_NEWS_NAME[gang]} paint over the wasps' work.`
     : SEED_NEWS[gang].replace('{d}', d);

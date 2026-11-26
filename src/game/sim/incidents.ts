@@ -11,9 +11,9 @@
 // surge's turf strength (TURF.surge) is the signal consumer's job.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { artOffset } from '../districts/slots';
+import { placeAt } from '../districts/names';
 import { BUILDINGS, CURRENCY, GANG_IDS, GANG_NEWS_NAME, TURF, TURF_GANG } from '../config';
-import { CORPS, CREWS, EVENT_COPY, districtName, pickLine } from '../news';
+import { CORPS, CREWS, EVENT_COPY, pickLine } from '../news';
 import type { GangId } from '../story/types';
 import type { Building } from '../types';
 import type { World } from '../world';
@@ -101,7 +101,7 @@ export class IncidentSystem {
         world.addNews(
           pickLine(rng, EVENT_COPY.blackMarket, {
             city: world.cityName,
-            district: at >= 0 ? districtName(at % world.N, (at / world.N) | 0, world.seed, artOffset(world)) : 'the arcades',
+            district: at >= 0 ? placeAt(world, at % world.N, (at / world.N) | 0) : 'the arcades',
           }),
           'good',
         );
@@ -116,7 +116,7 @@ export class IncidentSystem {
     const cx = Math.min(N - 1, plant.x + (plant.size >> 1));
     const cy = Math.min(N - 1, plant.y + (plant.size >> 1));
     const security = world.fields.security[cy * N + cx];
-    const vars = { plant: BUILDINGS[plant.type].name, district: districtName(cx, cy, world.seed, artOffset(world)) };
+    const vars = { plant: BUILDINGS[plant.type].name, district: placeAt(world, cx, cy) };
     if (rng.next() < security * 0.85) {
       world.addNews(pickLine(rng, EVENT_COPY.gridHackFoiled, vars), 'good');
       return;
@@ -149,7 +149,7 @@ export class IncidentSystem {
     fields.addCrimeHotspot(x, y, 6, strength);
     const gang = surgeGang(world, x, y);
     const crew = gang ? GANG_NEWS_NAME[gang] : rng.pick(CREWS);
-    world.addNews(pickLine(rng, EVENT_COPY.gangSurge, { crew, district: districtName(x, y, world.seed, artOffset(world)) }), 'bad');
+    world.addNews(pickLine(rng, EVENT_COPY.gangSurge, { crew, district: placeAt(world, x, y) }), 'bad');
     if (gang) world.pushSignal({ t: 'gangSurge', x, y, gang });
     world.events.emit('sfx', 'alert');
   }

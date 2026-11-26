@@ -34,8 +34,8 @@ export const MEGACITY_CARDS: readonly Card[] = [
     speaker: 'nacre',
     title: 'GLASS ON THE WATER',
     when: m('district.shoals', '>=', 1),
-    body: "Oduya: 'Partner! The Shoals are the prettiest water in the city! A ferry with a glass bar, light shows on every island, and our logo on the tide tables. A tiny logo. Everyone reads tide tables!'",
-    brief: 'Nacre wants to brand the Shoals with a luxury ferry and island light shows. It pays and lifts land value but annoys the Board. Refuse, or make Nacre fund public ferries as well.',
+    body: "Oduya: 'Partner! The shoal water is the prettiest in the city! A ferry with a glass bar, light shows on every island, and our logo on the tide tables. A tiny logo. Everyone reads tide tables!'",
+    brief: 'Nacre wants to brand the islands with a luxury ferry and light shows. It pays and lifts land value but annoys the Board. Refuse, or make Nacre fund public ferries as well.',
     choices: [
       choice('Put the logo on the tides.', favor('nacre', 8), favor('board', -3), funds(4000), mod(360, { landValueAdd: 0.01 })),
       dflt('Keep the water plain.', favor('nacre', -4), favor('board', 2)),
@@ -50,7 +50,7 @@ export const MEGACITY_CARDS: readonly Card[] = [
     // The Sunk only opens for annexing after ch4.brine, so this card always comes after the reveal.
     when: all(m('district.sunk', '>=', 1), m('turf.undertow', '>=', 10)),
     body: "Brine, on a roof above a flooded street: 'You know what lies under these streets now, little light. My people still live in them. Your surveyors paint numbers on our doors. Tell me what the numbers mean, and say it kindly.'",
-    brief: "Old Brine's people live in the Sunk's ruins. Clearing them for builders pays but angers the Undertow. Giving them title turns the ruins into homes. Renting them the ruins pays quietly but raises Trace.",
+    brief: "Old Brine's people live in the Sunk's ruins. Clearing them for builders pays but angers the Undertow. Giving them title helps the ruins come back as homes. Renting them the ruins pays quietly but raises Trace.",
     choices: [
       choice(
         'Clear the ruins.',
@@ -100,10 +100,10 @@ export const MEGACITY_CARDS: readonly Card[] = [
     title: 'THE GREEN LUNG',
     when: m('district.reedmere', '>=', 1),
     body: "Marrow: 'Minutes. Item: the reed marsh filters more smog than four plazas and costs nothing. Item: developers want it drained. The Board asks you to protect it. Noted: the Board asked politely.'",
-    brief: 'The Board wants the marsh reeds protected: free parkland and a happy Board, but Basalt wants the land. Drain the south bank for homes instead, or sell the drainage rights for cash.',
+    brief: 'The Board wants the marsh reeds protected: free parkland and a happy Board, but Basalt wants the land. Drain the bank nearest the city for homes instead, or sell the drainage rights for cash.',
     choices: [
       dflt('Protect the reeds.', favor('board', 8), favor('basalt', -3), mod('perm', { approvalAdd: 1 })),
-      choice('Drain the south bank.', favor('board', -4), favor('basalt', 3), mod(360, { demandRes: 0.05 }), setFlag('reeds', 'drained')),
+      choice('Drain the near bank.', favor('board', -4), favor('basalt', 3), mod(360, { demandRes: 0.05 }), setFlag('reeds', 'drained')),
       choice('Sell the drainage rights.', funds(5000), favor('board', -6), favor('nacre', 2)),
     ],
   }),

@@ -186,7 +186,7 @@ export const EPILOGUE_DECK: readonly Card[] = [
     body: 'At 03:00 the great balance in the Still Square dips by a hair. Nobody sees it but you. Every faction still thinks it won a little. You could leave it. You could put it back before the sun comes up.',
     brief: 'The scales in the Still Square, the sign of your Quiet Hand, have tilted very slightly. Setting them level again pleases every faction a little. Leaving them changes nothing for now.',
     choices: [
-      choice('Set it level again.', favor('corps', 1), favor('gangs', 1), favor('board', 1)),
+      choice('Set it level again.', favor('corps', 1), favor('gangs', 1), favor('board', 1), favor('tuning', 1)),
       dflt('Leave it.'),
     ],
   }),

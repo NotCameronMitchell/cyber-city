@@ -932,7 +932,7 @@ export const DISTRICT_VERBS: Readonly<Record<string, DistrictVerb>> = Object.fro
   [
     verb({ key: 'brownfield', v: 'cleared', kind: 'flats', what: 'brownfield cleared', run: clearBrownfield }),
     verb({ key: 'ruins', v: 'cleared', kind: 'sunk', what: 'ruins cleared for builders', run: clearRuins }),
-    verb({ key: 'reeds', v: 'drained', kind: 'reedmere', what: 'south bank reeds drained', run: drainReeds }),
+    verb({ key: 'reeds', v: 'drained', kind: 'reedmere', what: 'near bank reeds drained', run: drainReeds }),
     verb({ key: 'apron', v: 'rehoused', kind: 'tarmac', what: 'apron homes rebuilt', ownOnly: true, run: (w: World) => apron(w, 'rehouse') }),
     verb({ key: 'apron', v: 'cleared', kind: 'tarmac', what: 'apron cleared', ownOnly: true, run: (w: World) => apron(w, 'clear') }),
   ].map((d) => [`${d.key}=${d.v}`, d]),

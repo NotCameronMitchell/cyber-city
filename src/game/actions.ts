@@ -1,6 +1,6 @@
 import { pumpHallSite } from './districts/annex';
 import { updateDistrictLayers } from './districts/effects';
-import { artOffset } from './districts/slots';
+import { placeAt } from './districts/names';
 import { buildingStats } from './buildingStats';
 import {
   BUILDINGS,
@@ -27,7 +27,6 @@ import {
   isBuildingTool,
   isZoneTool,
 } from './config';
-import { districtName } from './news';
 import { isBerthTile, noiseReach, shoreFacing } from './ports';
 import { ROAD_TOOL_KIND, dragResult, isRoadTool, lostAccess, roadPrice, type RoadTool } from './roads';
 import {
@@ -1385,7 +1384,7 @@ export function crackdown(world: World, precinctId: number): ActionResult {
   }
   s.precinctReady[precinctId] = tick + C.cooldown;
   world.funds -= st.cost;
-  world.addNews(`Wasps over ${districtName(Math.floor(x), Math.floor(y), world.seed, artOffset(world))}. Doors kicked, tags scrubbed, nobody sleeps.`, 'info');
+  world.addNews(`Wasps over ${placeAt(world, Math.floor(x), Math.floor(y))}. Doors kicked, tags scrubbed, nobody sleeps.`, 'info');
   world.pushSignal({ t: 'action', tool: 'crackdown', x: Math.floor(x), y: Math.floor(y) });
   turf.refreshStats(world);
   return { ok: true, cost: st.cost };

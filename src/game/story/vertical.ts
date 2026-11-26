@@ -13,11 +13,10 @@
 // refresh() runs monthly and after rail / link / building changes only.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { artOffset } from '../districts/slots';
+import { placeAt } from '../districts/names';
 import { buildingStats, completeStage } from '../buildingStats';
 import { BUILDINGS, CROWNS, RIBBON, SKYBRIDGE, STACK_SHADESIDE, STACK_STAGES, TURF_OWNER } from '../config';
 import { heightOf, roofOf } from '../heights';
-import { districtName } from '../news';
 import { parcelAt } from '../parcels';
 import { scratchFor } from '../frame';
 import { tierCapacity } from '../sim/tiers';
@@ -626,7 +625,7 @@ export function refresh(world: World, opts?: { quiet?: boolean }): void {
       deadNews = true;
       const i = order[0];
       world.addNews(
-        `Ribbon line dark near ${districtName(i % N, (i / N) | 0, world.seed, artOffset(world))}. It needs ${RIBBON.minStations} powered stations.`,
+        `Ribbon line dark near ${placeAt(world, i % N, (i / N) | 0)}. It needs ${RIBBON.minStations} powered stations.`,
         'warn',
       );
     }
@@ -688,7 +687,7 @@ function refreshLobbies(world: World, quiet: boolean): void {
       world.events.emit('moment', { id: 'region' as MomentId, title: `SKY LOBBY · ${name.toUpperCase()}`, sub: `${f.k} towers linked: visitors and land value` });
     } else {
       const at = f.anchors[0];
-      const where = districtName(at % N, (at / N) | 0, world.seed, artOffset(world));
+      const where = placeAt(world, at % N, (at / N) | 0);
       world.addNews(`${WORDS[f.k] ?? f.k} towers in ${where} are one Sky Lobby now: ${name}.`, 'good');
     }
   }
@@ -837,7 +836,7 @@ export function onDay(world: World): boolean {
     }
     const stage = b.stage ?? 1;
     world.setStage(b, stage, 0);
-    const where = districtName(b.x + (b.size >> 1), b.y + (b.size >> 1), world.seed, artOffset(world));
+    const where = placeAt(world, b.x + (b.size >> 1), b.y + (b.size >> 1));
     world.addNews(`${stageName(stage, b.crown)} complete in ${where}. The skyline steps up.`, 'good');
     done = true;
   }

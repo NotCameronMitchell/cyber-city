@@ -1,7 +1,7 @@
 // Megacity deck cards (docs/MEGACITY.md §8.3, WP-7), the way expansion-cards.test.ts checks EXPANSION's: each card
 // is ineligible on a fresh city and in a city that meets only part of its `when`, is drawn from the deck once the
 // city has annexed and built what it reads, arrives in COMMS (never opens by itself), shows what each choice does,
-// and keeps its physical promise (§8.4): brownfield cleared, ruins cleared, the south bank drained, the apron
+// and keeps its physical promise (§8.4): brownfield cleared, ruins cleared, the near bank drained, the apron
 // rehoused or cleared, the Kites' turf on the frames dimmed (slot:skeleton). Also the grant hint, the {district}
 // token inside a district, and a city where every district is owned staying within the pace's deck gaps.
 
@@ -279,7 +279,7 @@ describe('the physical promises of the megacity cards (MEGACITY §8.4)', () => {
     expect(ruins(g2.world, s2)).toBe(n);
   });
 
-  it('ds.reedmere "Drain the south bank": reeds turn Plain on the half nearer the start slot only', () => {
+  it('ds.reedmere "Drain the near bank": reeds turn Plain on the half nearer the start slot only', () => {
     const g = game();
     const w = g.world;
     const s = own(w, 'reedmere');
@@ -299,7 +299,7 @@ describe('the physical promises of the megacity cards (MEGACITY §8.4)', () => {
     const before = halves();
     expect(before.near).toBeGreaterThan(0);
     expect(before.far).toBeGreaterThan(0);
-    answer(g, 'ds.reedmere', 'Drain the south bank.');
+    answer(g, 'ds.reedmere', 'Drain the near bank.');
     expect(halves()).toEqual({ near: 0, far: before.far });
   });
 
@@ -384,7 +384,7 @@ describe('the physical promises of the megacity cards (MEGACITY §8.4)', () => {
       { t: 'turf', gang: 'kites', op: 'str', at: 'slot:skeleton', v: -60 },
     ];
     expect(effectsText(w, fx)).toBe(
-      'brownfield cleared in Kessel Flats · ruins cleared for builders in the Sunk · south bank reeds drained in Reedmere · apron homes rebuilt in Tarmac Reach · apron cleared in Tarmac Reach · Kites turf −60 in Skeleton Row',
+      'brownfield cleared in Kessel Flats · ruins cleared for builders in the Sunk · near bank reeds drained in Reedmere · apron homes rebuilt in Tarmac Reach · apron cleared in Tarmac Reach · Kites turf −60 in Skeleton Row',
     );
     // An ordinary flag still says nothing.
     expect(effectsText(w, [{ t: 'flag', key: 'ruins', v: 'kept' }])).toBe('No effect.');
@@ -416,6 +416,56 @@ describe('the physical promises of the megacity cards (MEGACITY §8.4)', () => {
     expect(w5.story.flags.apronFamilies).toBeUndefined();
     expect(cardEligible(w5, card)).toBe(false);
   }, 30_000);
+
+  it('the City Feed names a tile as inspect does: its neighbourhood, then the district short name (w4fix, §3.7)', async () => {
+    const { placeAt } = await import('../../src/game/districts/names');
+    const { placeName } = await import('../../src/game/cityEvents');
+    // 5×5, seed 2091: Saffron Arcade (a Bazaar repeat) owned. Before the fix the feed said "Old Copperline" where
+    // inspect said "Pepper Arch".
+    const w = regionWorld(5, 2091);
+    const s = w.districts.kinds.findIndex((k, i) => k === 'bazaar' && w.variantOf(i as SlotId) === 1) as SlotId;
+    expect(s).toBeGreaterThanOrEqual(0);
+    w.annex(s);
+    const r = slotRect(w, s);
+    const list = neighbourhoodsOf('bazaar', 1);
+    for (const [x, y] of [[r.x0 + 4, r.y0 + 4], [r.x0 + 36, r.y0 + 40], [r.x1 - 3, r.y1 - 3]]) {
+      const n = neighbourhoodAt(w, x, y);
+      expect(list).toContain(n);
+      expect(placeAt(w, x, y)).toBe(`${n}, Saffron`);
+      expect(placeName(w, x, y)).toBe(placeAt(w, x, y));
+    }
+    // A one-district city keeps today's names (news.ts districtName).
+    const one = regionWorld();
+    const c = slotRect(one, one.districts.owned[0]);
+    expect(placeAt(one, c.x0 + 9, c.y0 + 9)).toBe(districtName(c.x0 + 9, c.y0 + 9, one.seed, artOffset(one)));
+    // Every news line that names a tile goes through placeAt (gang seeding and tagbacks, crackdowns, the Ribbon, Sky
+    // Lobbies, crown stages, incidents).
+    const SRC = import.meta.glob(['../../src/game/story/turf.ts', '../../src/game/story/vertical.ts', '../../src/game/sim/incidents.ts', '../../src/game/actions.ts'], {
+      query: '?raw',
+      import: 'default',
+      eager: true,
+    }) as Record<string, string>;
+    expect(Object.keys(SRC).length).toBe(4);
+    for (const [f, src] of Object.entries(SRC)) {
+      expect(src, f).not.toMatch(/districtName\(/);
+      expect(src, f).toMatch(/placeAt\(world, /);
+    }
+  });
+
+  it('a save that owns Tarmac Reach without apronFamilies (annexed on an older build) gets the flag on load', () => {
+    const w = regionWorld();
+    const t = own(w, 'tarmac');
+    expect(w.variantOf(t)).toBe(0);
+    expect(w.story.flags.apronFamilies).toBeUndefined();
+    const g = new Game();
+    g.settings.lowerDetail = false;
+    if (!g.restore(JSON.parse(JSON.stringify(w.serialize())))) throw new Error('restore failed');
+    expect(g.world.story.flags.apronFamilies).toBe(true);
+    // A city without Tarmac Reach stays without it.
+    const g2 = new Game();
+    if (!g2.restore(JSON.parse(JSON.stringify(regionWorld().serialize())))) throw new Error('restore failed');
+    expect(g2.world.story.flags.apronFamilies).toBeUndefined();
+  });
 
   it('the popover names the districts an effect acts on: a 5×5 repeat by its own name, several by count', () => {
     const w5 = regionWorld(5, 77);

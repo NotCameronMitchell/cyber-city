@@ -105,7 +105,7 @@ import {
   updateMoods,
 } from './factions';
 import { NOTE_CROSSINGS_PER_BRIDGE, STORY_CONTENT } from './content';
-import { LANDMARK_CARD_ENDING } from './content/cards/epilogue';
+import { EPILOGUE_DECK, LANDMARK_CARD_ENDING } from './content/cards/epilogue';
 import { epilogueTokens, GENERIC_REVIEW_LINE, LANDMARK_SET_COPY, nextReviewLine, reviewLine } from './content/epilogue';
 import { goalPay } from '../districts/goals';
 import { deriveMarks, landmarkSet } from '../marks';
@@ -245,6 +245,8 @@ const short = (f: FactionId) => FACTION_LABELS[f].short;
 const VERTICAL_DAY = 2;
 /** The Charter Review card, which gains one callback line (MEGACITY §9.4). */
 const REVIEW_CARD = 'ep.review';
+/** The urgent bailout (docs/PACING.md), an ordinary COMMS card once an ending is held (drawDeck, deliver). */
+const BAILOUT_CARD = 'sys.bailout';
 /**
  * Choices that last (MEGACITY §9): the marks re-derive at once after a story change, and after tile changes at most
  * every this many real seconds (growth changes tiles every frame at speed 3); never on the month tick.
@@ -313,6 +315,8 @@ export class StoryDirector implements EffectHost {
   private marksDirty = true;
   private marksAt = -1;
   private marksSec = 0;
+  /** landmarkTermsKey() when the landmark terms were last re-resolved from refreshMarks (null before the first). */
+  private landmarkTermsAt: string | null = null;
   /** localsKey() at the last local layer write (onMonth skips an unchanged rewrite). */
   private localsAt = '';
   /** COMMS and Silt Log rows, rebuilt only when the log changes (stable identity for the UI). */
@@ -328,6 +332,9 @@ export class StoryDirector implements EffectHost {
     pruneUnknownCards(w.story, (id) => this.knownCard(id));
     // A save from before story.met: every faction that already spoke on a card counts as met.
     if (!Array.isArray(w.story.met)) w.story.met = this.metSoFar();
+    // ds.tarmac waits for Tarmac Reach itself (flag apronFamilies, set by Game.annex): a city that annexed it on a build
+    // without the flag owns its apron families all the same.
+    if (!w.story.flags.apronFamilies && w.districts.owned.some((s) => w.districts.kinds[s] === 'tarmac' && w.variantOf(s) === 0)) w.story.flags.apronFamilies = true;
     if (this.idx.endings.length) turf.setEndingRulesSource((world) => endingRules(world));
     // Derived on load (§10.8): turf stats, vertical caches, local layers, then mods, layers, ledger.
     // The turf layers read world.mods (turfCrimeMul) and standings, so they are written
@@ -955,18 +962,53 @@ export class StoryDirector implements EffectHost {
     const hidden: string[] = [];
     if (st.chapter >= 7)
       for (const [id, e] of Object.entries(LANDMARK_CARD_ENDING)) if (st.ending !== e && st.seen[id] === undefined) hidden.push(id);
+    // After the ending the bailout is an ordinary COMMS card (deliver): it waits for a full deck slot, never the urgent gate,
+    // so a broke post-ending city is not interrupted once a sim year and its queued Charter Review still comes.
+    if (st.ending && gate === 'urgent') hidden.push(BAILOUT_CARD);
+    const hiddenSeen = hidden.map((id) => st.seen[id]);
     for (const id of hidden) st.seen[id] = w.tick;
+    // A Charter Review is queued every 1,080 sim days (about a minute at speed 3), so one is always due when a Relaxed deck
+    // slot opens: alone it would take every slot after the ending and no epilogue card could come (MEGACITY §9.4). It never
+    // takes two slots running: after a slot that delivered one, it waits while another deck card can take this slot. That
+    // slot was the review's anyway, so the draw skips the chance roll and a callback card (EPILOGUE_DECK) that is ready
+    // goes first, unless a follow-up, a system card or a ⚑ claims the slot; one card a slot still, never more.
+    let held: { k: number; q: { card: string; tick: number } } | null = null;
+    if (gate === 'all' && st.seen[REVIEW_CARD] !== undefined && st.seen[REVIEW_CARD] === st.lastCardTick) {
+      const k = st.queue.findIndex((q) => q.card === REVIEW_CARD && q.tick <= w.tick);
+      if (k >= 0) held = { k, q: st.queue.splice(k, 1)[0] };
+    }
     let res: ReturnType<typeof drawCard>;
     try {
-      res = drawCard(w, this.rng, isUnlocked(w, 'comms'), w.mods.cardRateMul * pace.cardChanceMul, gate === 'urgent');
+      const rate = held ? 1 / P.cardChance : w.mods.cardRateMul * pace.cardChanceMul;
+      res = drawCard(w, this.rng, isUnlocked(w, 'comms'), rate, gate === 'urgent');
+      const step = res.pick?.step;
+      if (held && (!step || step === 'seasonal' || step === 'random') && w.tick - st.lastCardTick >= P.minDaysBetween) {
+        const ready: Card[] = [];
+        for (const c of EPILOGUE_DECK) {
+          const card = this.idx.cards.get(c.id);
+          if (card && cardEligible(w, card)) ready.push(card);
+        }
+        if (ready.length) res = { pick: { card: ready[Math.floor(this.rng.next() * ready.length)], step: 'random' }, drop: res.drop };
+      }
     } finally {
-      for (const id of hidden) delete st.seen[id];
+      hidden.forEach((id, k) => {
+        if (hiddenSeen[k] === undefined) delete st.seen[id];
+        else st.seen[id] = hiddenSeen[k]!;
+      });
     }
-    const { pick, drop } = res;
-    const remove = [...drop];
+    let { pick } = res;
+    const remove = [...res.drop];
     if (pick?.queueIndex !== undefined) remove.push(pick.queueIndex);
     remove.sort((a, b) => b - a);
     for (const k of remove) st.queue.splice(k, 1);
+    if (held) {
+      const before = remove.filter((k) => k < held!.k).length;
+      const at = Math.min(st.queue.length, held.k - before);
+      // Nothing else could take the slot (the 60 d gap aside): the review takes it after all.
+      const review = this.idx.cards.get(REVIEW_CARD);
+      if (!pick && review && w.tick - st.lastCardTick >= P.minDaysBetween && cardEligible(w, review, true)) pick = { card: review, step: 'queue' };
+      else st.queue.splice(at, 0, held.q);
+    }
     if (pick) this.deliver(pick.card);
   }
 
@@ -990,7 +1032,7 @@ export class StoryDirector implements EffectHost {
     this.applying++;
     applyEffects(this, card.onShow, { spot });
     this.applying--;
-    if (!(card.kind === 'system' && URGENT_SYSTEM.has(card.id))) {
+    if (!(card.kind === 'system' && URGENT_SYSTEM.has(card.id)) || (card.id === BAILOUT_CARD && st.ending)) {
       st.pending = { card: card.id, tick, spot };
       this.pendingSec = 0;
       this.banner = {
@@ -1769,7 +1811,12 @@ export class StoryDirector implements EffectHost {
     w.addNews(LANDMARK_SET_COPY.news.replace('{pay}', pay.toLocaleString('en-US')), 'good');
   }
 
-  /** Re-derive the marks (never saved); a changed set re-resolves the landmark terms that ride on it. */
+  /**
+   * Re-derive the marks (never saved). Only the ending landmarks (and the Lower Wards memorial) feed the mods, the
+   * local layer and the ledger, so those re-resolve only when that set or its current / dormant state changes, not on
+   * every changed mark (the dark blocks and the Seam marks move with turf and growth: at 25 districts that was a
+   * 5–10 ms re-resolve every 2 s outside the frame guard).
+   */
   private refreshMarks(): void {
     const w = this.world;
     const before = this.visual.marks.version;
@@ -1779,12 +1826,31 @@ export class StoryDirector implements EffectHost {
     this.marksAt = w.version;
     this.marksSec = 0;
     this.checkLandmarkSet();
-    if (was !== this.visual.marks && before !== 0 && this.visual.marks.version !== before) {
-      this.writeLocalLayer();
-      this.refreshMods();
-      this.refreshLedger();
-      this.markChanged();
+    const key = this.landmarkTermsKey();
+    if (key !== this.landmarkTermsAt) {
+      const first = this.landmarkTermsAt === null;
+      this.landmarkTermsAt = key;
+      if (!first) {
+        this.writeLocalLayer();
+        this.refreshMods();
+        this.refreshLedger();
+      }
     }
+    if (was !== this.visual.marks && before !== 0 && this.visual.marks.version !== before) this.markChanged();
+  }
+
+  /** What the ending landmarks' terms are derived from (landmarkPatches, writeLocalLayer, refreshLedger). */
+  private landmarkTermsKey(): string {
+    const w = this.world;
+    const st = w.story;
+    let k = `${st.ending}|${st.endingVariant}|${st.seen['ch4.logs'] !== undefined ? 1 : 0}`;
+    for (const l of this.landmarks()) k += `|${l.type}@${l.b.x},${l.b.y}`;
+    for (const b of w.buildings.values())
+      if (b.type === 'memorial' && w.kindAt(b.x, b.y) === 'sunk' && w.isOwned(b.x, b.y)) {
+        k += '|lowerWards';
+        break;
+      }
+    return k;
   }
 
   /** The ending landmarks that stand, and whether their ending is current (§9.2). */

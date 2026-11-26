@@ -70,11 +70,12 @@ export const VARIANT_NEIGHBOURHOODS: Partial<Record<DistrictKind, readonly (read
 };
 
 /**
- * Names in a kind's own list (config, Step 0b's copy of §3.7) that the banned-term list (STORY.md §1.4) forbids on
- * screen, with the name shown instead (same slot in the list, so every tile keeps its place). "Shell" is banned as a
- * whole word; Step 9 may write the replacement into config and drop the row.
+ * Names in a kind's own list (config, Step 0b's copy of §3.7) that may not show on screen, with the name shown instead
+ * (same slot in the list, so every tile keeps its place): "Shell" is banned as a whole word (STORY.md §1.4), and
+ * "Reedmere" is Reedmere Marsh's own short name (§3.7: no neighbourhood holds a district's name, or inspect would read
+ * "District: Reedmere · Neighbourhood: Reedmere"). Step 9 may write the replacements into config and drop the rows.
  */
-export const RENAMED_NEIGHBOURHOODS: Readonly<Record<string, string>> = { 'Shell Bar': 'Conch Bar' };
+export const RENAMED_NEIGHBOURHOODS: Readonly<Record<string, string>> = { 'Shell Bar': 'Conch Bar', Reedmere: 'Mere Hollow' };
 
 const ownLists = new Map<DistrictKind, readonly string[]>();
 
@@ -115,4 +116,19 @@ export function neighbourhoodAt(world: World, x: number, y: number): string {
   const list = neighbourhoodsOf(kind, world.variantOf(s));
   if (!list.length) return DISTRICTS[kind].short;
   return list[Math.floor(hash2((x - ao) >> 3, (y - ao) >> 3, world.seed ^ 0x51ed) * list.length)];
+}
+
+/**
+ * A tile's place name for the City Feed (MEGACITY §3.7, Appendix B): its neighbourhood, as inspect and the cards name it
+ * (neighbourhoodAt), and in a city of more than one district the district's short name after it ("Pepper Arch,
+ * Saffron"). A one-district city keeps today's names unchanged.
+ */
+export function placeAt(world: World, x: number, y: number): string {
+  const name = neighbourhoodAt(world, x, y);
+  const s = world.slotAt(x, y);
+  const kind = s >= 0 ? world.districts.kinds[s] : undefined;
+  if (world.districts.owned.length <= 1 || !kind) return name;
+  const v = world.variantOf(s);
+  const short = v > 0 ? (DISTRICTS[kind].variants[v - 1]?.short ?? DISTRICTS[kind].short) : DISTRICTS[kind].short;
+  return `${name}, ${short}`;
 }
