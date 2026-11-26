@@ -100,6 +100,14 @@ export function cardKey(tool: string): string {
   return k ? keyLabel(k.code, k.us) : '';
 }
 
+/**
+ * Key hints (§14.3) show on the desktop layout and, on any device, after a hardware key press in the session (an iPad
+ * with a keyboard); never after a virtual keyboard's keydown (keyboard.ts isHardwareKey keeps those out).
+ */
+export function keyHintsShown(desk: boolean, hardwareKey: boolean): boolean {
+  return desk || hardwareKey;
+}
+
 /** The ? sheet's model: groups in order with their rows (what the sheet prints and the tests read). */
 export function shortcutSheet(): { group: ShortcutGroup; rows: { keys: string[]; label: string }[] }[] {
   return SHORTCUT_GROUPS.map((group) => ({

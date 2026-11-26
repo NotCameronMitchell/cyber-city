@@ -707,3 +707,199 @@ describe('annex pins (§3.9): input hit-tests what is drawn', () => {
     expect(pinAt(pins, p.x + 60, p.y)).toBeNull();
   });
 });
+
+// ── MEGACITY §14.2 / §3.9 (WP-9): the hover pick for the tooltips; the wheel snap only on a new gesture past 240 px ──
+
+import { afterEach as afterEach9, beforeEach as beforeEach9, vi } from 'vitest';
+import { HOVER_PICK_MS, InputController, WHEEL_GESTURE_GAP_MS, WHEEL_LEAVE_PX, WHEEL_SNAP_PX, WheelSnap, hoverBus, type HoverPick } from '../src/input/input';
+import { mapBus } from '../src/input/mapbus';
+import { cachedMegacity } from './megacity-fixture';
+
+describe('WheelSnap (§3.9): the wheel snaps only on a new gesture past 240 px at the edge', () => {
+  it('a new gesture that began at minZoom snaps once it adds 240 px of out-delta', () => {
+    const w = new WheelSnap(WHEEL_SNAP_PX);
+    expect(WHEEL_SNAP_PX).toBe(240);
+    expect(w.feed(100, 0, true)).toBe(false);
+    expect(w.feed(100, 16, true)).toBe(false);
+    expect(w.feed(40, 32, true)).toBe(true);
+    // Once per gesture: the inertia that follows does nothing more.
+    expect(w.feed(100, 48, true)).toBe(false);
+  });
+
+  it('inertial scrolling that reaches minZoom mid-gesture never snaps; only a gesture ≥ 300 ms later does', () => {
+    const w = new WheelSnap(WHEEL_SNAP_PX);
+    let t = 0;
+    expect(w.feed(60, t, false)).toBe(false); // zooming out, not at the edge yet
+    for (let i = 0; i < 30; i++) expect(w.feed(60, (t += 16), true)).toBe(false); // arrived; inertia keeps going
+    t += WHEEL_GESTURE_GAP_MS - 1;
+    expect(w.feed(300, t, true)).toBe(false); // < 300 ms: still the same gesture
+    t += WHEEL_GESTURE_GAP_MS;
+    expect(w.feed(250, t, true)).toBe(true); // a new gesture at the edge
+  });
+
+  it('a delta the other way, or leaving the edge, disarms the gesture', () => {
+    const w = new WheelSnap(WHEEL_SNAP_PX);
+    expect(w.feed(200, 0, true)).toBe(false);
+    expect(w.feed(-20, 16, true)).toBe(false);
+    expect(w.feed(200, 32, true)).toBe(false);
+    const v = new WheelSnap(WHEEL_SNAP_PX);
+    expect(v.feed(200, 0, true)).toBe(false);
+    expect(v.feed(100, 16, false)).toBe(false);
+    expect(v.feed(100, 32, true)).toBe(false);
+  });
+
+  it('leaving the City map: a new wheel-in gesture from the map’s largest zoom (pinchMayLeaveMap), after 60 px', () => {
+    const w = new WheelSnap(WHEEL_LEAVE_PX);
+    expect(w.feed(40, 0, true)).toBe(false);
+    expect(w.feed(40, 16, true)).toBe(true);
+    // A 5×5 handheld map zoomed in by this very gesture (it began below 2×) stays on the map.
+    const z = new WheelSnap(WHEEL_LEAVE_PX);
+    expect(z.feed(100, 0, false)).toBe(false);
+    expect(z.feed(100, 16, true)).toBe(false);
+  });
+});
+
+/** A stub EventTarget with what InputController reads off the canvas, window and document. */
+function stubTarget(extra: Record<string, unknown> = {}): EventTarget & Record<string, unknown> {
+  return Object.assign(new EventTarget(), extra) as EventTarget & Record<string, unknown>;
+}
+
+function pointer(type: string, init: Record<string, unknown>): Event {
+  return Object.assign(new Event(type, { cancelable: true }), { pointerId: 1, pointerType: 'mouse', button: 0, buttons: 0, isPrimary: true, ...init });
+}
+
+describe('the hover pick for the tooltips (§14.2): input.ts, at most every 100 ms, only when the target changes', () => {
+  let now = 1000;
+  let canvas: EventTarget & Record<string, unknown>;
+  let input: InputController;
+  let game: Game;
+  let cam: Camera;
+  const picks: (HoverPick | null)[] = [];
+  const opened: (number | undefined)[] = [];
+
+  beforeEach9(() => {
+    now = 1000;
+    vi.spyOn(performance, 'now').mockImplementation(() => now);
+    vi.stubGlobal('window', stubTarget({ visualViewport: undefined }));
+    vi.stubGlobal('document', stubTarget({ activeElement: null, visibilityState: 'visible' }));
+    canvas = stubTarget({
+      style: { touchAction: '', cursor: '', setProperty: () => {} },
+      getBoundingClientRect: () => ({ left: 0, top: 0, width: 1440, height: 900 }),
+      setPointerCapture: () => {},
+    });
+    game = new Game();
+    expect(game.restore(JSON.parse(JSON.stringify(cachedMegacity(3, 4).serialize())))).toBe(true);
+    cam = new Camera(game.world.N);
+    cam.setViewport(1440, 900);
+    cam.zoom = 1;
+    cam.centerOnTile(96, 96);
+    input = new InputController(canvas as unknown as HTMLCanvasElement, game, cam);
+    picks.length = 0;
+    opened.length = 0;
+    hoverBus.onPick = (p) => picks.push(p ? { ...p } : null);
+    mapBus.hooks = { isOpen: () => false, open: (s) => opened.push(s), tap: () => {}, leave: () => {} };
+  });
+
+  afterEach9(() => {
+    input.destroy();
+    hoverBus.onPick = null;
+    mapBus.hooks = null;
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  const move = (x: number, y: number) => canvas.dispatchEvent(pointer('pointermove', { clientX: x, clientY: y }));
+
+  it('picks the tile under a resting mouse with Inspect, height-aware, and tells the tooltips once per target', () => {
+    const p = cam.tileToScreen(96, 96);
+    move(p.x, p.y);
+    input.update(1 / 60);
+    expect(picks.length).toBe(1);
+    const hit = picks[0]!;
+    expect(hit.mapView).toBe(false);
+    expect([hit.sx, hit.sy]).toEqual([p.x, p.y]);
+    // Height-aware: the same answer as a tap there.
+    const f = screenToTileF(cam, p.x, p.y, { x: 0, y: 0 });
+    expect(Math.abs(hit.x - f.x) + Math.abs(hit.y - f.y)).toBeLessThan(12);
+    // The same target again (the mouse rests): nothing new.
+    move(p.x, p.y);
+    now += HOVER_PICK_MS;
+    input.update(1 / 60);
+    expect(picks.length).toBe(1);
+  });
+
+  it('runs at most every 100 ms while the mouse moves', () => {
+    let count = 0;
+    hoverBus.onPick = () => count++;
+    const spy = vi.spyOn(game, 'getTileInfo');
+    for (let i = 0; i < 30; i++) {
+      move(200 + i * 30, 300 + i * 9);
+      now += 10;
+      input.update(0.01);
+    }
+    // 300 ms of moving: the first pick, then one per 100 ms at most.
+    expect(count).toBeLessThanOrEqual(4);
+    expect(count).toBeGreaterThanOrEqual(2);
+    // getTileInfo is the tooltips' job, on a target change (input never calls it).
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it('no map pick with a build tool (its hover preview says what a click does), during a press, or after the mouse leaves', () => {
+    const p = cam.tileToScreen(90, 100);
+    move(p.x, p.y);
+    input.update(0.016);
+    expect(picks.at(-1)).not.toBeNull();
+    game.setTool('road');
+    now += 200;
+    move(p.x + 40, p.y);
+    input.update(0.016);
+    expect(picks.at(-1)).toBeNull();
+    game.setTool('inspect');
+    now += 200;
+    move(p.x, p.y);
+    input.update(0.016);
+    expect(picks.at(-1)).not.toBeNull();
+    canvas.dispatchEvent(pointer('pointerdown', { clientX: p.x, clientY: p.y, buttons: 1 }));
+    expect(picks.at(-1)).toBeNull();
+    canvas.dispatchEvent(pointer('pointerup', { clientX: p.x, clientY: p.y }));
+    canvas.dispatchEvent(pointer('pointerleave', { clientX: -5, clientY: p.y }));
+    now += 200;
+    input.update(0.016);
+    expect(picks.at(-1)).toBeNull();
+  });
+
+  it('touch never picks; a wheel clears the pick', () => {
+    const p = cam.tileToScreen(96, 96);
+    canvas.dispatchEvent(pointer('pointermove', { clientX: p.x, clientY: p.y, pointerType: 'touch' }));
+    input.update(0.016);
+    expect(picks.length).toBe(0);
+    move(p.x, p.y);
+    input.update(0.016);
+    expect(picks.length).toBe(1);
+    canvas.dispatchEvent(Object.assign(new Event('wheel', { cancelable: true }), { deltaY: 30, deltaMode: 0, clientX: p.x, clientY: p.y, ctrlKey: false }));
+    expect(picks.at(-1)).toBeNull();
+  });
+
+  it('the wheel at minZoom opens the City map only on a new gesture past 240 px (input → mapBus.hooks.open)', () => {
+    cam.zoom = cam.minZoom;
+    const wheel = (d: number) => canvas.dispatchEvent(Object.assign(new Event('wheel', { cancelable: true }), { deltaY: d, deltaMode: 0, clientX: 700, clientY: 450, ctrlKey: false }));
+    wheel(100);
+    now += 16;
+    wheel(100);
+    expect(opened).toEqual([]);
+    now += 16;
+    wheel(100);
+    expect(opened).toEqual([undefined]);
+    // Inertia from a gesture that began above minZoom never opens it.
+    opened.length = 0;
+    cam.zoom = cam.minZoom * 1.5;
+    now += 1000;
+    for (let i = 0; i < 40; i++) {
+      wheel(60);
+      now += 16;
+      input.update(0.016);
+    }
+    expect(cam.zoom).toBeLessThanOrEqual(cam.minZoom * 1.01);
+    expect(opened).toEqual([]);
+  });
+});

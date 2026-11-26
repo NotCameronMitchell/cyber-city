@@ -5810,3 +5810,42 @@ body {
 .cc-desk .cc-help-keys {
   display: flex;
 }
+
+/* ── Hover tooltips (§14.2): the game's panel style, at most 280 px wide, never on touch ── */
+
+.cc-tooltip {
+  --c: 7px;
+  position: fixed;
+  z-index: 80;
+  left: 0;
+  top: 0;
+  max-width: 280px;
+  padding: 7px 10px 8px;
+  font-size: 12.5px;
+  line-height: 1.35;
+  color: var(--cc-ink-2);
+  background: rgba(9, 8, 22, 0.96);
+  border: 1px solid rgba(34, 229, 255, 0.32);
+  border-left: 2px solid var(--cc-cyan);
+  clip-path: polygon(0 0, 100% 0, 100% calc(100% - var(--c)), calc(100% - var(--c)) 100%, 0 100%);
+  pointer-events: none;
+  animation: cc-fade-in 0.12s both;
+}
+
+.cc-tooltip-title {
+  font-size: 12.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: var(--cc-ink);
+}
+
+.cc-tooltip-body:empty {
+  display: none;
+}
+
+.cc-tooltip-line {
+  margin-top: 2px;
+  font-family: var(--cc-mono);
+  font-size: 11.5px;
+  color: var(--cc-ink-2);
+}

@@ -24,7 +24,12 @@
 // Mouse
 //   left = one finger · right / middle drag = pan · wheel = smooth zoom at the
 //   cursor (ctrl+wheel trackpad pinch is applied 1:1) · hovering with a build
-//   tool previews the tile / footprint under the cursor
+//   tool previews the tile / footprint under the cursor · hovering with Inspect
+//   picks what is under the cursor for the tooltips (hoverBus, ≤ every 100 ms,
+//   MEGACITY §14.2) · a click on a locked district opens the City map on it
+//   · the wheel snaps to the City map only on a new gesture (≥ 300 ms since the
+//   last wheel event) that adds ≥ 240 px of further out-delta at minZoom, and a
+//   wheel-in on the City map leaves it, from its largest zoom only (§3.9)
 // Keyboard: see keyboard.ts.
 //
 // Only canvas pointer events are handled (UI panels sit above with their own
@@ -131,6 +136,68 @@ type Mode = 'idle' | 'pan' | 'build' | 'pinch' | 'tapzoom' | 'scrub' | 'void' | 
 
 const NO_TILE = -99999;
 
+/** What the mouse rests on (MEGACITY §14.2), for the tooltips: a tile (with its skyway deck or skybridge tube) or a City map slot. */
+export interface HoverPick {
+  /** The cursor, canvas CSS px. */
+  sx: number;
+  sy: number;
+  /** The tile under it (height-aware: a tower's body picks the tower). */
+  x: number;
+  y: number;
+  sky?: boolean;
+  link?: number;
+  /** The City map is open: `slot` is the slot under the cursor (-1: none). */
+  mapView: boolean;
+  slot: number;
+}
+
+/**
+ * Input's link to the tooltips (like mapBus): `onPick` hears the hover pick when its target changes (null when the
+ * mouse leaves the canvas, a build tool takes over or a gesture starts); `busy` is true while a gesture is under way.
+ */
+export const hoverBus: { onPick: ((p: HoverPick | null) => void) | null; busy: boolean } = { onPick: null, busy: false };
+
+/** The hover pick runs at most this often while the mouse moves (§14.2, §11.1: ≤ 0.2 ms a pick). */
+export const HOVER_PICK_MS = 100;
+/** A wheel gesture is new after this long without a wheel event (§3.9). */
+export const WHEEL_GESTURE_GAP_MS = 300;
+/** A new wheel gesture at minZoom snaps to the City map after this much further out-delta (§3.9). */
+export const WHEEL_SNAP_PX = 240;
+/** A new wheel gesture on the City map at its largest zoom leaves it after this much in-delta. */
+export const WHEEL_LEAVE_PX = 60;
+
+/**
+ * The wheel's snap rule (§3.9), one direction: the wheel and trackpad scroll keep sending deltas by inertia after the
+ * camera reaches its edge, so only a gesture that began at the edge (a new gesture: ≥ WHEEL_GESTURE_GAP_MS since the
+ * last wheel event) and adds `threshold` px toward it snaps. A delta the other way, or leaving the edge, disarms the
+ * gesture. Pure (tests/input-gestures.test.ts).
+ */
+export class WheelSnap {
+  private last = -Infinity;
+  private armed = false;
+  private acc = 0;
+
+  constructor(private readonly threshold: number) {}
+
+  /** One wheel event: `d` px toward the edge (negative: away), `atEdge` the camera sits at it now. True: snap now. */
+  feed(d: number, now: number, atEdge: boolean): boolean {
+    if (now - this.last >= WHEEL_GESTURE_GAP_MS) {
+      this.armed = atEdge;
+      this.acc = 0;
+    }
+    this.last = now;
+    if (!this.armed) return false;
+    if (d <= 0 || !atEdge) {
+      this.armed = false;
+      return false;
+    }
+    this.acc += d;
+    if (this.acc < this.threshold) return false;
+    this.armed = false;
+    return true;
+  }
+}
+
 /** Tools whose ghost is big and loud enough that picking them zooms out to fit (EXPANSION §5.4). */
 const FIT_TOOLS: ReadonlySet<ToolId> = new Set<ToolId>(['seaport', 'airport', 'spaceport']);
 /** Share of the screen the footprint + noise ring may fill after the fit zoom. */
@@ -215,6 +282,15 @@ export class InputController {
   private lastTapT = -Infinity;
   private lastTapX = 0;
   private lastTapY = 0;
+
+  // ── Wheel snap to and from the City map (§3.9)
+  private readonly wheelOut = new WheelSnap(WHEEL_SNAP_PX);
+  private readonly wheelIn = new WheelSnap(WHEEL_LEAVE_PX);
+
+  // ── Hover pick for the tooltips (§14.2)
+  private pickDue = false;
+  private pickAt0 = -Infinity;
+  private pickKey = '';
 
   // ── Mouse hover preview
   private hoverActive = false;
@@ -364,6 +440,10 @@ export class InputController {
       else this.updateHover(false);
     }
 
+    // The tooltips' hover pick (§14.2): at most every 100 ms while the mouse moves.
+    hoverBus.busy = this.session !== null;
+    if (this.pickDue && now - this.pickAt0 >= HOVER_PICK_MS) this.hoverPick(now);
+
     // Keep the preview honest as funds / tiles change under it.
     this.replanAcc += dt;
     if (this.replanAcc >= REPLAN_INTERVAL_S) {
@@ -421,6 +501,7 @@ export class InputController {
 
     blurTextFocus();
     this.refreshRect();
+    this.clearPick();
     // A tap during the annex fly-in skips to its end (§7.2).
     if (mapBus.flyIn && this.camera.animating) this.camera.easeToBox(mapBus.flyIn, 0, 0);
     mapBus.flyIn = null;
@@ -448,6 +529,7 @@ export class InputController {
         this.hoverPos.y = e.clientY - this.rect.top;
         this.hoverActive = true;
         this.updateHover(false);
+        this.pickDue = true;
       }
       return;
     }
@@ -533,6 +615,7 @@ export class InputController {
     if (e.pointerType !== 'mouse' || this.pointers.length > 0) return;
     this.hoverActive = false;
     this.clearHover();
+    this.clearPick();
   };
 
   private readonly onMouseDown = (e: MouseEvent) => {
@@ -547,10 +630,13 @@ export class InputController {
     const cam = this.camera;
     const d = wheelDeltaPx(e.deltaY, e.deltaMode, cam.height);
     if (d === 0) return;
+    this.clearPick();
+    if (this.wheelSnap(d, sx, sy)) return;
     if (e.ctrlKey && Math.abs(d) < PINCH_WHEEL_MAX_DELTA) {
       // Trackpad pinch arrives as ctrl+wheel with small fine-grained deltas: apply 1:1.
       this.zoomTarget = 0;
       cam.zoomAt(Math.exp(-d * PINCH_WHEEL_RATE), sx, sy);
+      this.wheelRefit();
       return;
     }
     // Mouse wheel / trackpad scroll: accumulate into a smoothed target.
@@ -559,7 +645,50 @@ export class InputController {
     this.zoomTarget = clamp(base * Math.exp(-clamp(d, -240, 240) * WHEEL_ZOOM_RATE), z.lo, z.hi);
     this.zoomAx = sx;
     this.zoomAy = sy;
+    // A 5×5 City map zoomed back out to its fit lands on the fitted framing (it does not pan there, §7.2).
+    if (cam.mapView && this.zoomTarget <= cam.mapZoom * 1.001 && cam.zoom > cam.mapZoom * 1.001) {
+      this.zoomTarget = 0;
+      this.wheelRefit(true);
+    }
   };
+
+  /**
+   * The City map snap by wheel (§3.9), wired here (WP-9) as pinch is in mapSnap: a new wheel gesture that began at
+   * minZoom and adds ≥ 240 px of further out-delta opens the City map (a multi-district city); on the map, a new
+   * wheel-in gesture that began at the map's largest zoom leaves it towards the cursor (pinchMayLeaveMap: a zoomed 5×5
+   * map first zooms in to 2×, then a new gesture leaves). Returns true when it snapped.
+   */
+  private wheelSnap(d: number, sx: number, sy: number): boolean {
+    const cam = this.camera;
+    const hooks = mapBus.hooks;
+    if (!hooks) return false;
+    const now = performance.now();
+    if (cam.mapView) {
+      const atTop = pinchMayLeaveMap(cam.zoom, cam.mapZoom, cam.mapHeadroom) && !(this.zoomTarget > cam.zoom * 1.001);
+      if (this.wheelIn.feed(-d, now, atTop)) {
+        this.zoomTarget = 0;
+        hooks.leave(sx, sy);
+        return true;
+      }
+      return false;
+    }
+    const w = this.game.world;
+    const atMin = cam.zoom <= cam.minZoom * 1.002 && !(this.zoomTarget > cam.minZoom * 1.002);
+    const may = w.region >= 3 && w.districts.owned.length >= 2;
+    if (this.wheelOut.feed(d, now, may && atMin)) {
+      this.zoomTarget = 0;
+      hooks.open();
+      return true;
+    }
+    return false;
+  }
+
+  /** A wheel that brought a zoomed 5×5 City map back to its fit eases to the fitted framing (mapBus.hooks.refit). */
+  private wheelRefit(force = false): void {
+    const cam = this.camera;
+    if (!cam.mapView) return;
+    if (force || cam.zoom <= cam.mapZoom * 1.001) mapBus.hooks?.refit?.();
+  }
 
   private readonly refreshRect = () => {
     this.rect = this.canvas.getBoundingClientRect();
@@ -586,6 +715,8 @@ export class InputController {
     this.fitTool(this.game.tool);
     this.updateHover(true);
     this.updateCursor();
+    this.clearPick();
+    this.pickDue = this.hoverActive;
   };
 
   private readonly onWorldChanged = () => {
@@ -604,6 +735,7 @@ export class InputController {
 
   private beginSession(ptr: TrackedPointer, now: number): void {
     this.session = ptr.kind === 'mouse' ? 'mouse' : 'touch';
+    hoverBus.busy = true;
     const caught = Math.hypot(this.flingVx, this.flingVy) > FLING_CATCH_SPEED;
     this.stopFling(); // a touch stops the map
     if (ptr.kind !== 'mouse') this.zoomTarget = 0;
@@ -849,7 +981,7 @@ export class InputController {
             this.lastTapY = ptr.y;
           } else this.startFling(now);
         } else if (this.pinSlot >= 0 && isTap) mapBus.hooks?.open(this.pinSlot);
-        else if (this.tapAllowed && isTap && this.game.tool === 'inspect') this.handleTap(ptr.x, ptr.y, now);
+        else if (this.tapAllowed && isTap && this.game.tool === 'inspect') this.handleTap(ptr.x, ptr.y, now, ptr.kind === 'mouse');
         else this.startFling(now);
         break;
       case 'build':
@@ -991,9 +1123,17 @@ export class InputController {
 
   // ── Inspect ───────────────────────────────────────────────────────────────
 
-  private handleTap(sx: number, sy: number, now: number): void {
+  private handleTap(sx: number, sy: number, now: number, mouse = false): void {
     const t = this.pickAt(sx, sy, this.tmpHit, true);
     const sel = this.game.selected;
+    // A mouse click on a locked district opens the City map on it (its tooltip says so, MEGACITY §14.2); a tap on a
+    // phone keeps today's district preview in inspect.
+    const w = this.game.world;
+    if (mouse && w.region >= 3 && w.inBounds(t.x, t.y) && !w.isOwned(t.x, t.y) && mapBus.hooks) {
+      mapBus.hooks.open(w.slotAt(t.x, t.y));
+      this.lastTapT = now;
+      return;
+    }
     const sky = !!t.sky;
     // A skybridge tube (§7.4): picked as a slab at its height, unless a tower in front of it hides it.
     const f = screenToTileF(this.camera, sx, sy, this.tmpF);
@@ -1341,6 +1481,73 @@ export class InputController {
     if (this.hoverShown && !this.game.pendingConfirm) this.game.setPreview(null);
     this.hoverShown = false;
     this.hoverTile.x = this.hoverTile.y = NO_TILE;
+  }
+
+  // ── Hover pick for the tooltips (§14.2) ──────────────────────────────────
+
+  /**
+   * What the mouse rests on: with Inspect, the height-aware tap pick (a tower's body, a skyway deck, a skybridge tube);
+   * on the City map, the slot under the cursor. A build tool's hover preview says what a click will do, so it has no
+   * map tooltip. The tooltips hear it only when the target changes (getTileInfo runs then, not per move).
+   */
+  private hoverPick(now: number): void {
+    this.pickDue = false;
+    this.pickAt0 = now;
+    const cb = hoverBus.onPick;
+    if (!cb) return;
+    if (!this.hoverActive || this.session || this.game.pendingConfirm) {
+      this.clearPick();
+      return;
+    }
+    const cam = this.camera;
+    const sx = this.hoverPos.x;
+    const sy = this.hoverPos.y;
+    const w = this.game.world;
+    let p: HoverPick;
+    if (cam.mapView) {
+      const t = cam.screenToTile(sx, sy);
+      p = { sx, sy, x: t.x, y: t.y, mapView: true, slot: w.inBounds(t.x, t.y) ? w.slotAt(t.x, t.y) : -1 };
+    } else {
+      if (this.game.tool !== 'inspect') {
+        this.clearPick();
+        return;
+      }
+      const t = this.pickAt(sx, sy, this.tmpHit, true);
+      if (!w.inBounds(t.x, t.y)) {
+        this.clearPick();
+        return;
+      }
+      const tube = t.sky ? null : this.frontTube(sx, sy, t);
+      if (tube) p = { sx, sy, x: tube.x, y: tube.y, link: tube.link, mapView: false, slot: -1 };
+      else p = { sx, sy, x: t.x, y: t.y, sky: t.sky || undefined, mapView: false, slot: w.slotAt(t.x, t.y) };
+    }
+    const key = p.mapView ? `s${p.slot}` : `${p.x},${p.y},${p.sky ? 1 : 0},${p.link ?? -1}`;
+    if (key === this.pickKey) return;
+    this.pickKey = key;
+    cb(p);
+  }
+
+  /** The skybridge tube a tap at (sx, sy) would pick over the ground hit `t` (handleTap's rule), or null. */
+  private frontTube(sx: number, sy: number, t: PickHit): { x: number; y: number; link: number } | null {
+    const w = this.game.world;
+    if (!w.links.length) return null;
+    const f = screenToTileF(this.camera, sx, sy, this.tmpF);
+    const tube = pickTube(w, f.x, f.y);
+    if (!tube) return null;
+    const front = w.tileAt(t.x, t.y);
+    const fb = front && front.buildingId >= 0 ? w.buildings.get(front.buildingId) : null;
+    const depth = fb ? fb.x + fb.y + 2 * (fb.size - 1) : t.x + t.y;
+    const tall = front ? heightOf(w, t.x, t.y) : 0;
+    const zone = !fb && !!front && front.zone !== Z.None && front.level > 0;
+    return tubeBeatsFront(this.camera, { x: t.x, y: t.y, size: fb ? fb.size : 1, depth, height: tall, zone }, tube, sx) ? tube : null;
+  }
+
+  /** The mouse left the canvas, pressed, scrolled or a tool took over: no map tooltip. */
+  private clearPick(): void {
+    this.pickDue = false;
+    if (this.pickKey === '') return;
+    this.pickKey = '';
+    hoverBus.onPick?.(null);
   }
 
   // ── Misc ──────────────────────────────────────────────────────────────────

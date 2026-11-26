@@ -47,10 +47,11 @@ import { NewsLog } from './newslog';
 import { CityReport } from './report';
 import { StoryUI } from './story/storyUI';
 import './story/story.css';
-import { ShortcutSheet, loadKeyLayout } from './shortcuts';
+import { ShortcutSheet, keyHintsShown, loadKeyLayout } from './shortcuts';
 import { StoryRail } from './story/storyRail';
 import { Ticker } from './ticker';
 import { Tips, newsTip, type TipId } from './tips';
+import { TIP_QUERY, Tooltips } from './tooltip';
 import { traySections, type CategoryId } from './tools';
 import { TransferUI } from './transfer';
 
@@ -103,6 +104,8 @@ export class UI {
   private insetAcc = INSET_INTERVAL;
   /** The ? sheet (§14.3). */
   readonly shortcuts: ShortcutSheet;
+  /** Hover tooltips (§14.2): a mouse that hovers only. */
+  readonly tooltips: Tooltips;
   /** The side-panel host (§14.1): one panel at a time on the desktop layout. */
   readonly panels = new SidePanels();
   /** The Back button the host shows in a nested panel's header (one level, §14.1). */
@@ -210,6 +213,7 @@ export class UI {
     this.cityMap = new CityMap(this.ctx);
     this.transfer = new TransferUI(this.ctx, { mapView: () => ({ open: this.cityMap.isOpen, back: this.cityMap.returnView }) });
     this.shortcuts = new ShortcutSheet(this.ctx);
+    this.tooltips = new Tooltips(this.ctx);
     this.backBtn = h('button', { class: 'cc-panel-back', type: 'button', 'data-act': 'panel-back', 'aria-label': 'Back' }, h('span', { html: icon('back') }), h('span', { text: 'Back' }));
     this.backBtn.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -226,6 +230,7 @@ export class UI {
     this.dock.sheetSlot.append(this.inspect.el);
     const topStack = (this.topStack = h('div', { class: 'cc-topstack' }, this.pill.el, this.toasts.el));
     root.prepend(this.dock.el, this.ticker.el, this.hud.el, this.fps.el, this.banner.el, topStack);
+    root.append(this.tooltips.el);
     for (const dlg of [this.budget.el, this.report.el, this.news.el, this.menu.el, this.confirm.el, this.shortcuts.el]) this.modals.layer.append(dlg);
     this.dock.railSlot.append(this.story.rail.el);
     root.insertBefore(this.story.el, this.modals.layer);
@@ -255,6 +260,18 @@ export class UI {
       else dq.addListener(onDq);
       this.setDesk(dq.matches);
     }
+    // Rich tooltips (§14.2) on a pointer that hovers; the HUD and toolbar then drop their native titles.
+    const tq = typeof matchMedia === 'function' ? matchMedia(TIP_QUERY) : null;
+    if (tq) {
+      const onTq = () => {
+        this.tooltips.setEnabled(tq.matches);
+        this.dock.setTips(tq.matches);
+        this.hud.setTips(tq.matches);
+      };
+      if (typeof tq.addEventListener === 'function') tq.addEventListener('change', onTq);
+      else tq.addListener(onTq);
+      onTq();
+    }
 
     this.wireEvents();
     this.wireInput();
@@ -281,7 +298,7 @@ export class UI {
 
   /** Key hints show on the desktop layout and, on any device, after a hardware key press (§14.3). */
   private syncKeys(): void {
-    setClass(this.root, 'has-keys', this.ctx.desk || keyBus.hardware);
+    setClass(this.root, 'has-keys', keyHintsShown(this.ctx.desk, keyBus.hardware));
   }
 
   /** The keyboard's link to the UI (§14.3): trays, the City map, Goals, the ? sheet, and the hardware-key hints. */
@@ -929,6 +946,7 @@ export class UI {
     this.updateGlide(dt);
     this.cityMap.update();
     this.panels.update();
+    this.tooltips.update();
     if (!this.ctx.camera.animating) mapBus.flyIn = null;
     this.insetAcc += dt;
     if (this.insetAcc >= INSET_INTERVAL) {

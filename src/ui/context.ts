@@ -104,6 +104,11 @@ export function mapAreaWidth(W: number): number {
   return W - sidePanelWidth(W) - PANEL_GAP;
 }
 
+/** The camera's right inset while a panel is open (§3.9, §14.1): the panel's width + 24 px. */
+export function panelInset(W: number): number {
+  return sidePanelWidth(W) + 2 * PANEL_GAP;
+}
+
 /** Toolbar buttons: 76 px, 60 px in the compact form, 2 px apart, 5 px padding each side (ui.css .cc-bar, .cc-tb). */
 export const DOCK_BUTTON = 76;
 export const DOCK_BUTTON_COMPACT = 60;
