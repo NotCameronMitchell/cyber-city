@@ -5802,6 +5802,16 @@ body {
   color: var(--cc-ink-2);
 }
 
+/* As a side panel the ? sheet fits a 900 px tall window without scrolling (it still scrolls on shorter ones). */
+.cc-desk .cc-keys-group {
+  margin-bottom: 8px;
+  padding-bottom: 8px;
+}
+
+.cc-desk .cc-keys-list {
+  gap: 4px;
+}
+
 /* Menu › How to play: the Keyboard shortcuts row shows on the desktop layout only. */
 .cc-help-keys {
   display: none;

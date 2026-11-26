@@ -66,6 +66,8 @@ export const TRANSFER_COPY = {
   paste: 'Paste text',
   open: 'Open',
   replace: 'Replace city',
+  /** The Import sheet's button when nothing on this device is replaced (a first launch): no confirm follows. */
+  openCity: 'Open city',
   replaceOlder: 'Replace with older copy',
   cancel: 'Cancel',
   close: 'Close',
@@ -138,8 +140,13 @@ export function isAppleMobile(nav: { userAgent?: string; platform?: string; maxT
 }
 
 export interface PreviewContext {
-  /** The city on this device (null on a first launch with nothing to replace). */
+  /** The city on this device (null on a first launch with nothing to replace, and while `blocked`). */
   current: { name: string; seed: number; day: number; keeps: boolean } | null;
+  /**
+   * This device holds a newer build's city (saveBlocked): the city in memory is a stand-in, but the import still
+   * replaces the stored newer city (kept aside in `.future`, §13.4 step 5), so it keeps its confirm.
+   */
+  blocked?: boolean;
   /** The city in the Previous city slot now (replaced by the current one). */
   backup: string | null;
   devicePace: StoryPace;
@@ -166,8 +173,11 @@ export interface ImportPreview {
   same: SameCity;
   /** The pace choice (the file's differs from the device's), with the file's selected. */
   pace: { file: StoryPace; device: StoryPace } | null;
-  /** The button and confirm; null for the same copy (only Close). */
-  action: { label: string; confirm: { title: string; body: string; label: string } } | null;
+  /**
+   * The button and confirm; null for the same copy (only Close). On a device with nothing to replace (a first launch:
+   * no current city, not blocked) the button reads "Open city" and opens it without a confirm: no city is at stake.
+   */
+  action: { label: string; confirm: { title: string; body: string; label: string } | null } | null;
 }
 
 /** The Import preview card (§13.1), from the checked file and this device; no World. */
@@ -195,6 +205,7 @@ export function importPreview(f: FileFacts, c: PreviewContext): ImportPreview {
   const label = same === 'older' ? TRANSFER_COPY.replaceOlder : TRANSFER_COPY.replace;
   const current = c.current?.name || 'Your city';
   const body = c.current?.keeps ? `${current} moves to Previous city. ${f.city} takes its place.` : `${f.city} takes its place.`;
+  const fresh = !c.current && !c.blocked;
   return {
     name: f.city,
     size: `${f.region}×${f.region} region · ${f.owned} of ${f.total} districts`,
@@ -204,7 +215,12 @@ export function importPreview(f: FileFacts, c: PreviewContext): ImportPreview {
     lines,
     same,
     pace,
-    action: same === 'same' ? null : { label, confirm: { title: 'Replace your city?', body, label: same === 'older' ? TRANSFER_COPY.replaceOlder : 'Replace' } },
+    action:
+      same === 'same'
+        ? null
+        : fresh
+          ? { label: TRANSFER_COPY.openCity, confirm: null }
+          : { label, confirm: { title: 'Replace your city?', body, label: same === 'older' ? TRANSFER_COPY.replaceOlder : 'Replace' } },
   };
 }
 
@@ -286,6 +302,12 @@ export interface TransferHooks {
   imported?(from: ImportFrom): void;
   /** Where a dropped file is imported from now (the title or the game); null while it can't be (a confirm is open). */
   dropSource?(): ImportFrom | null;
+  /**
+   * §13.4 step 2, "make room": the player has confirmed, so release what the swap doesn't need before the incoming city
+   * is built (the first-launch title's Showcase: a second World and its renderer). Game.importCity lets go of the
+   * outgoing Simulation itself once the incoming city is saved.
+   */
+  makeRoom?(): void;
 }
 
 export class TransferUI {
@@ -629,6 +651,7 @@ export class TransferUI {
     const facts = fileFacts(r);
     const view = importPreview(facts, {
       current,
+      blocked: game.saveBlocked,
       backup: game.previousSaveInfo()?.cityName ?? null,
       devicePace: game.settings.storyPace,
       handheld: deviceClass() === 'handheld',
@@ -699,6 +722,11 @@ export class TransferUI {
     const v = this.imView;
     if (!v?.action) return;
     const c = v.action.confirm;
+    // Nothing on this device is replaced (a first launch): open it straight away.
+    if (!c) {
+      this.runImport(false);
+      return;
+    }
     this.ctx.actions.confirm({ title: c.title, body: c.body, confirmLabel: c.label, onConfirm: () => this.runImport(false) });
   }
 
@@ -712,6 +740,7 @@ export class TransferUI {
     const token = this.imToken;
     afterPaint(() => {
       if (token !== this.imToken) return;
+      this.hooks.makeRoom?.();
       // The preview's pace choice; without one (the file's pace is this device's, or it has none) the city's own.
       const ok = game.importCity(r.save, this.imPace ?? undefined, { replaceWithoutCopy: withoutCopy });
       if (ok) {

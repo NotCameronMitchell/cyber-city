@@ -320,6 +320,8 @@ export class StartScreen {
     this.ui.menu.onNewCity = () => this.show(true);
     // City transfer (§13.1): an import frames the city; from the title it then leaves the title like Continue.
     this.ui.transfer.hooks.imported = (from) => this.afterImport(from);
+    // §13.4 step 2: a confirmed import from the first-launch title lets the Showcase go before the incoming city is built.
+    this.ui.transfer.hooks.makeRoom = () => this.dropShowcase();
     this.ui.transfer.hooks.dropSource = () => {
       const depth = this.ui.ctx.modals.depth;
       if (this.flow.phase === 'play') return depth === 0 || (depth === 1 && this.ui.menu.isOpen) ? 'menu' : null;

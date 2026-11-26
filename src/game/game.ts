@@ -2209,6 +2209,7 @@ export class Game {
       this.saveBlocked = false;
       for (let k = this.notices.length - 1; k >= 0; k--) if (this.notices[k].text === FUTURE_SAVE_TEXT) this.notices.splice(k, 1);
     }
+    this.releaseOutgoing();
     this.world = world;
     this.attachSystems();
     this.adoptCity();
@@ -2217,6 +2218,16 @@ export class Game {
     this.events.emit('world');
     this.events.emit('stats');
     return true;
+  }
+
+  /**
+   * §13.4 step 2, "make room": the incoming city is now the stored main save, so the outgoing city's Simulation (its
+   * field and cache arrays, and through it the outgoing World) is let go before attachSystems builds the incoming one.
+   * The outgoing World then has no reference left in Game, so a phone opening a 5×5 city over a 3×3 one never holds
+   * two Simulations. Nothing reads `sim` between here and attachSystems, which assigns the new one first thing.
+   */
+  private releaseOutgoing(): void {
+    (this as unknown as { sim: Simulation | null }).sim = null;
   }
 
   /**

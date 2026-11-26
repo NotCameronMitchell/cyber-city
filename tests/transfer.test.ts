@@ -363,6 +363,36 @@ describe('§13.8 item 5: save safety (§13.4)', () => {
     expect(g.world.cityName).toBe('Harbor Nine');
   });
 
+  it('§13.4 step 2, make room: once the imported city is saved, the outgoing Simulation is let go before the incoming one is built', async () => {
+    quotaStorage();
+    const { file } = await exportOf(playedCity('Neon Bay', 777));
+    const g = playedCity('Harbor Nine');
+    const outgoing = g.sim;
+    // Record every assignment to game.sim during the import (the field stays a plain value afterwards).
+    const seen: unknown[] = [];
+    let cur: unknown = g.sim;
+    Object.defineProperty(g, 'sim', {
+      configurable: true,
+      get: () => cur,
+      set: (v) => {
+        seen.push(v);
+        cur = v;
+      },
+    });
+    const r = okRead(await readCityFile(file.text));
+    expect(g.importCity(r.save)).toBe(true);
+    expect(seen[0]).toBeNull();
+    expect(seen[1]).toBeInstanceOf(outgoing.constructor as new (...a: never[]) => unknown);
+    expect(seen[1]).not.toBe(outgoing);
+    expect(seen).toHaveLength(2);
+    expect(g.world.cityName).toBe('Neon Bay');
+    // A refused swap (nothing changed) keeps the outgoing Simulation.
+    const h = playedCity('Old Lanthorn', 12);
+    const keep = h.sim;
+    expect(h.importCity({ version: 99 } as unknown as SaveData)).toBe(false);
+    expect(h.sim).toBe(keep);
+  });
+
   it('a failed .prev write changes nothing and offers Export and Replace without a copy', async () => {
     const st0 = quotaStorage();
     const other = playedCity('Neon Bay', 777);
@@ -615,6 +645,21 @@ describe('§13.8 item 12: preview lines', () => {
     expect(lowerDetailHere(undefined, 'pc')).toBe(false);
     expect(lowerDetailHere(false, 'handheld')).toBe(false);
     expect(lowerDetailHere(true, 'pc')).toBe(true);
+  });
+
+  it('a first launch (nothing on this device to replace) reads "Open city" and opens without a confirm; a blocked device keeps it', async () => {
+    quotaStorage();
+    const g = playedCity('Harbor Nine');
+    const facts = fileFacts(okRead(await readCityFile((await exportOf(playedCity('Neon Bay', 77))).file.text)));
+    const fresh = importPreview(facts, previewCtx(g, { current: null, backup: null }));
+    expect(fresh.action).toEqual({ label: 'Open city', confirm: null });
+    expect(fresh.lines.map((l) => l.text).join(' ')).not.toMatch(/replaces/);
+    // While saveBlocked the city in memory is a stand-in, but the stored newer city is still replaced (kept aside).
+    const blocked = importPreview(facts, previewCtx(g, { current: null, backup: null, blocked: true }));
+    expect(blocked.action?.label).toBe('Replace city');
+    expect(blocked.action?.confirm).toEqual({ title: 'Replace your city?', body: 'Neon Bay takes its place.', label: 'Replace' });
+    // A city in play keeps the spec's confirm.
+    expect(importPreview(facts, previewCtx(g)).action?.confirm?.title).toBe('Replace your city?');
   });
 
   it('the iPhone note shows only on Apple mobile platforms', () => {
