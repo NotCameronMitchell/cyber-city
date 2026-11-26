@@ -53,7 +53,7 @@ import {
   type StartButtons,
 } from './startModel';
 import { Showcase } from './showcase';
-import { TRANSFER_COPY, TRANSFER_ICONS } from '../transfer';
+import { TRANSFER_COPY, TRANSFER_ICONS, keptCityLine, keptConfirm } from '../transfer';
 
 export interface StartOptions {
   game: Game;
@@ -443,7 +443,7 @@ export class StartScreen {
     // The kept newer city (§3.10): offered back once this build can read it.
     const kept = game.keptCityInfo();
     setHidden(this.keptRow, !kept);
-    if (kept) setText(this.keptText, `A newer city was kept: ${kept.cityName || 'Unnamed city'} · ${abbrPop(kept.maxPopulation)}`);
+    if (kept) setText(this.keptText, keptCityLine(kept.cityName, kept.maxPopulation));
     if (b.previous) {
       const info = game.previousSaveInfo();
       // §7.9: "Neon Bay · 2.41M · 5×5".
@@ -766,11 +766,8 @@ export class StartScreen {
     if (!info) return;
     const w = game.world;
     const keeps = this.city && !game.saveBlocked && worthKeeping({ tick: w.tick, buildingCount: w.buildings.size, tiles: w.tiles });
-    const name = info.cityName || 'the kept city';
     this.ui.ctx.actions.confirm({
-      title: `Restore ${name}?`,
-      body: keeps ? `${w.cityName} moves to Previous city.` : `${name} becomes your city on this device.`,
-      confirmLabel: 'Restore',
+      ...keptConfirm(info.cityName, keeps ? w.cityName : null),
       onConfirm: () => {
         if (!this.flow.interactive) return;
         if (!game.restoreKept()) {

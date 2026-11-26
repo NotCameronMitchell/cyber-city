@@ -717,6 +717,7 @@ export class CityMap {
     setHidden(this.edgeEl, !v.edgeLine);
     if (v.edgeLine) setText(this.edgeEl.firstChild as HTMLElement, v.edgeLine);
     setClass(this.growSlot, 'is-wanted', v.canGrow);
+    setClass(this.edgeEl, 'has-grow', v.canGrow);
     if (v.canGrow !== (this.growSlot.firstChild !== null)) {
       if (v.canGrow) this.growSlot.append(this.growBtn, this.growNote);
       else this.growSlot.textContent = '';

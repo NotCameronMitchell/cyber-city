@@ -2125,6 +2125,14 @@ export class Game {
   }
 
   /**
+   * The city in play has any progress, so a replacement (New City, Restore, Import) keeps it as Previous city (§3.10);
+   * an untouched map is simply replaced. The Import preview and the kept-city confirm read it for their lines.
+   */
+  get hasProgress(): boolean {
+    return worthKeeping(this.world);
+  }
+
+  /**
    * Restore the city "New City" replaced. The current city (if it has any progress) takes its place in the backup
    * slot, so the swap can be undone. False when there is no readable backup, or nothing could change: the current city
    * doesn't fit in the backup slot (keepCopyFailed, the Export toast; `replaceWithoutCopy` is the second confirm), or

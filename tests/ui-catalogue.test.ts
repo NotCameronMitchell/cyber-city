@@ -710,3 +710,76 @@ describe('settings rows (MEGACITY §7.6)', () => {
     expect(newsTip('Night market in Paper Lane tonight.')).toBeNull();
   });
 });
+
+// ── City transfer and growing (MEGACITY §13.6, §7.7, §3.11, §3.10; WP-9) ─────
+import {
+  ABOUT_SAVE_LINE,
+  BLOCKED_TEXT,
+  HELP_TRANSFER,
+  TRANSFER_COPY,
+  TRANSFER_ICONS,
+  growConfirm,
+  keptCityLine,
+  keptConfirm,
+} from '../src/ui/transfer';
+import { TRANSFER_TEXT } from '../src/game/transfer';
+import { growNews } from '../src/game/game';
+import { BANNED_RE } from '../src/game/story/content/lexicon';
+
+describe('city transfer and Grow copy (MEGACITY §13.6, §7.7, §3.11)', () => {
+  it('the two Menu rows, the title button, the sheets and the About line are §13.6 verbatim', () => {
+    expect(TRANSFER_COPY.exportRow).toEqual({ label: 'Export city', desc: 'Save a copy to move or keep' });
+    expect(TRANSFER_COPY.importRow).toEqual({ label: 'Import city', desc: 'Open a city file from another device' });
+    expect(TRANSFER_COPY.titleImport).toBe('Import city');
+    expect([TRANSFER_COPY.exportTitle, TRANSFER_COPY.share, TRANSFER_COPY.download, TRANSFER_COPY.copy]).toEqual(['Export city', 'Share…', 'Download', 'Copy as text']);
+    expect(TRANSFER_COPY.frameNote).toBe('If nothing downloads, use Copy as text.');
+    expect([TRANSFER_COPY.importTitle, TRANSFER_COPY.choose, TRANSFER_COPY.paste, TRANSFER_COPY.open, TRANSFER_COPY.replace, TRANSFER_COPY.cancel]).toEqual([
+      'Import city',
+      'Choose file…',
+      'Paste text',
+      'Open',
+      'Replace city',
+      'Cancel',
+    ]);
+    expect(TRANSFER_COPY.drop).toBe('or drop a city file here');
+    expect(TRANSFER_COPY.reading).toBe('Reading city…');
+    expect(TRANSFER_COPY.iphone).toBe('On iPhone the Home Screen app keeps its own city: export in Safari, import in the app.');
+    expect(TRANSFER_COPY.shared).toBe('City shared.');
+    expect(TRANSFER_COPY.copied).toBe('City copied as text. Paste it into Import city on the other device.');
+    expect(ABOUT_SAVE_LINE).toBe('Your city is saved on this device. Menu › Export city makes a copy you can open anywhere.');
+  });
+
+  it('help step 17 is the §7.7 copy', () => {
+    expect(HELP_TRANSFER.title).toBe('17 · Take your city along');
+    expect(HELP_TRANSFER.body).toBe(
+      'Menu › Export city saves your city to a file. On another phone or computer, Menu › Import city opens it. On iPhone the Home Screen app keeps its own city: export in Safari, import in the app.',
+    );
+  });
+
+  it('the Grow buttons (Settings City line, City map edge line) and the blocked line', () => {
+    expect(TRANSFER_COPY.grow).toBe('Grow to 25 districts');
+    expect(BLOCKED_TEXT).toBe('Reload to update first: this device holds a city from a newer version.');
+    expect(growConfirm({ name: 'Neon Bay', prev: 'Old Lanthorn', lowerDetail: true }).title).toBe('Grow to 25 districts?');
+  });
+
+  it('the kept-city title row and its confirm (§3.10)', () => {
+    expect(keptCityLine('Neon Bay', 2_410_000)).toBe('A newer city was kept: Neon Bay · 2.41M');
+    expect(keptConfirm('Neon Bay', 'Harbor Nine')).toEqual({ title: 'Restore Neon Bay?', body: 'Harbor Nine moves to Previous city.', confirmLabel: 'Restore' });
+  });
+
+  it('every new string passes the banned-term list; icons are 24×24 strokes', () => {
+    const all = [
+      ...Object.values(TRANSFER_COPY).flatMap((v) => (typeof v === 'string' ? [v] : Object.values(v))),
+      ...Object.values(TRANSFER_TEXT),
+      ABOUT_SAVE_LINE,
+      HELP_TRANSFER.title,
+      HELP_TRANSFER.body,
+      BLOCKED_TEXT,
+      growConfirm({ name: 'X', prev: 'Y', lowerDetail: true }).body,
+      growNews('X'),
+      keptCityLine('X', 1),
+    ];
+    for (const s of all) expect(BANNED_RE.test(s), s).toBe(false);
+    for (const [k, svg] of Object.entries(TRANSFER_ICONS)) expect(svg, k).toContain('viewBox="0 0 24 24"');
+  });
+});

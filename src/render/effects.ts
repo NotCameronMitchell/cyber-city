@@ -150,6 +150,7 @@ export class Effects {
   }
 
   private reset() {
+    this.bounds = null; // the last view's tiles belong to the old world's frame (a 5×5 → 3×3 swap would read past it)
     this.street.reset();
     this.crowds.reset();
     this.boats.reset();

@@ -266,7 +266,7 @@ export function insideFrame(data: SaveData, region: number): boolean {
   const N = SLOT * region;
   const area = N * N;
   const R2 = region * region;
-  if (typeof data.cityName !== 'string' || !Number.isFinite(Number(data.seed)) || !isInt(data.tick) || data.tick < 0) return false;
+  if ((data.cityName !== undefined && typeof data.cityName !== 'string') || !Number.isFinite(Number(data.seed)) || !isInt(data.tick) || data.tick < 0) return false;
   if (!Number.isFinite(Number(data.funds))) return false;
   const d = data.districts as unknown;
   if (!isObj(d)) return false;

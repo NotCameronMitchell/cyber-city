@@ -43,7 +43,7 @@ import { STORY_PACES, type StoryPace } from '../game/types';
 import { HALF_H } from '../render/camera';
 import { buildDialog, type UIContext } from './context';
 import { h, setAttr, setClass, setHidden, setText } from './dom';
-import { abbr } from './format';
+import { abbr, tickDate, tickDay } from './format';
 
 /** Story pace labels (menu.ts PACE; kept here so the two modules don't import each other). */
 const PACE_LABEL: Record<StoryPace, string> = { relaxed: 'Relaxed', normal: 'Normal', brisk: 'Brisk' };
@@ -94,6 +94,15 @@ export const HELP_TRANSFER = {
 export function exportCityLine(name: string, population: number, region: number, owned: number): string {
   return `${name} · ${abbr(Math.max(0, population))} · ${region}×${region} · ${owned} ${owned === 1 ? 'district' : 'districts'}`;
 }
+/** The title's kept-city row (§3.10): "A newer city was kept: Neon Bay · 2.41M". */
+export function keptCityLine(name: string, population: number): string {
+  return `A newer city was kept: ${name || 'Unnamed city'} · ${abbr(Math.max(0, population))}`;
+}
+/** Its Restore confirm (§3.10): "Restore Neon Bay? Harbor Nine moves to Previous city." */
+export function keptConfirm(kept: string, current: string | null): { title: string; body: string; confirmLabel: string } {
+  const name = kept || 'the kept city';
+  return { title: `Restore ${name}?`, body: current ? `${current} moves to Previous city.` : `${name} becomes your city on this device.`, confirmLabel: 'Restore' };
+}
 /** A file size the way the sheet shows it: "86 KB". */
 export function kb(bytes: number): string {
   return `${Math.max(1, Math.round(bytes / 1024))} KB`;
@@ -120,11 +129,6 @@ export function storyLine(chapter: number, ending: EndingId | null): string {
   if (!ch) return chapter >= 7 ? 'After Charter Night' : '';
   return `Chapter ${CHAPTER_NUMERALS[chapter] ?? chapter} · ${ch.title}`;
 }
-/** Dates as the HUD writes them (`tickDate`), for the same-city lines. */
-function dateOf(tick: number): string {
-  const M = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
-  return `${M[Math.floor(tick / 30) % 12]} ${2091 + Math.floor(tick / 360)}`;
-}
 
 /** An iPhone or iPad (iPadOS reports a Mac with touch points), for the Home Screen note (§13.1). Feature-free, read once. */
 export function isAppleMobile(nav: { userAgent?: string; platform?: string; maxTouchPoints?: number } | undefined): boolean {
@@ -139,7 +143,10 @@ export interface PreviewContext {
   /** The city in the Previous city slot now (replaced by the current one). */
   backup: string | null;
   devicePace: StoryPace;
+  /** §3.11's device class is 'handheld' (the Grow hint shows only on a PC). */
   handheld: boolean;
+  /** A 5×5 city would run in lower detail here: the player's switch, else the device class (§3.11). */
+  lowerDetail: boolean;
   apple: boolean;
   now: number;
 }
@@ -175,11 +182,13 @@ export function importPreview(f: FileFacts, c: PreviewContext): ImportPreview {
         const swap = c.backup ? ` (replacing ${c.backup} there)` : '';
         lines.push({ text: `This replaces your current city, ${name}. It moves to Previous city${swap}.`, kind: 'info' });
       } else lines.push({ text: `This replaces your current city, ${name}.`, kind: 'info' });
-      if (same === 'newer') lines.push({ text: `A newer copy of ${f.city}: ${dateOf(f.day)} (this device: ${dateOf(c.current.day)}).`, kind: 'good' });
-      else if (same === 'older') lines.push({ text: `This copy is older than the one on this device: ${dateOf(f.day)} (this device: ${dateOf(c.current.day)}).`, kind: 'warn' });
+      // Dates as the HUD writes them; within one month, to the day, so the two never read alike.
+      const [a, b] = tickDate(f.day) === tickDate(c.current.day) ? [tickDay(f.day), tickDay(c.current.day)] : [tickDate(f.day), tickDate(c.current.day)];
+      if (same === 'newer') lines.push({ text: `A newer copy of ${f.city}: ${a} (this device: ${b}).`, kind: 'good' });
+      else if (same === 'older') lines.push({ text: `This copy is older than the one on this device: ${a} (this device: ${b}).`, kind: 'warn' });
     }
   }
-  if (f.region === 5 && c.handheld) lines.push({ text: 'This is a 25-district city. On this device it runs in lower detail.', kind: 'warn' });
+  if (f.region === 5 && c.lowerDetail) lines.push({ text: 'This is a 25-district city. On this device it runs in lower detail.', kind: 'warn' });
   if (f.region === 3 && !c.handheld) lines.push({ text: 'You can grow it to 25 districts later in Settings.', kind: 'info' });
   if (c.apple) lines.push({ text: TRANSFER_COPY.iphone, kind: 'info' });
   const pace = f.pace && f.pace !== c.devicePace && same !== 'same' ? { file: f.pace, device: c.devicePace } : null;
@@ -204,11 +213,14 @@ export function paceLine(file: StoryPace, device: StoryPace): string {
   return `Story pace: ${PACE_LABEL[file]} (this device: ${PACE_LABEL[device]})`;
 }
 
-/** The Grow confirm (§3.11), verbatim. */
-export function growConfirm(o: { name: string; prev: string | null; handheld: boolean }): { title: string; body: string; confirmLabel: string } {
+/**
+ * The Grow confirm (§3.11), verbatim. `lowerDetail`: the grown city will run in lower detail on this device (a handheld
+ * device unless the player turned the switch off; a PC whose player turned it on), so the line says so.
+ */
+export function growConfirm(o: { name: string; prev: string | null; lowerDetail: boolean }): { title: string; body: string; confirmLabel: string } {
   const replacing = o.prev ? ` (replacing ${o.prev} there)` : '';
   const body = `${o.name} gains 16 districts around its edge. Everything you built stays. This can't be undone: the 3×3 copy is kept as Previous city${replacing}.`;
-  return { title: 'Grow to 25 districts?', body: o.handheld ? `${body} On this device it runs in lower detail.` : body, confirmLabel: 'Grow' };
+  return { title: 'Grow to 25 districts?', body: o.lowerDetail ? `${body} On this device it runs in lower detail.` : body, confirmLabel: 'Grow' };
 }
 
 /** World px the view moves by when a 3×3 city grows: its tiles move by (64, 64), which is straight down on screen. */
@@ -612,7 +624,7 @@ export class TransferUI {
     const w = game.world;
     // The city this replaces: the one in play (from the menu), or the title's city when it has any progress. While
     // saveBlocked the city in memory is a stand-in (the newer one stays kept aside in `.future`, §13.4).
-    const keeps = worthKeeping(w);
+    const keeps = game.hasProgress;
     const current = !game.saveBlocked && (this.imFrom === 'menu' || keeps) ? { name: w.cityName, seed: w.seed, day: w.tick, keeps } : null;
     const facts = fileFacts(r);
     const view = importPreview(facts, {
@@ -620,6 +632,7 @@ export class TransferUI {
       backup: game.previousSaveInfo()?.cityName ?? null,
       devicePace: game.settings.storyPace,
       handheld: deviceClass() === 'handheld',
+      lowerDetail: lowerDetailHere(game.settings.lowerDetail),
       apple: false, // the note sits under the buttons already (openImport)
       now: Date.now(),
     });
@@ -699,8 +712,8 @@ export class TransferUI {
     const token = this.imToken;
     afterPaint(() => {
       if (token !== this.imToken) return;
-      const pace = this.imPace ?? r.header.pace ?? undefined;
-      const ok = game.importCity(r.save, pace ?? undefined, { replaceWithoutCopy: withoutCopy });
+      // The preview's pace choice; without one (the file's pace is this device's, or it has none) the city's own.
+      const ok = game.importCity(r.save, this.imPace ?? undefined, { replaceWithoutCopy: withoutCopy });
       if (ok) {
         const from = this.imFrom;
         this.imFile = null;
@@ -750,7 +763,7 @@ export class TransferUI {
       if (game.saveBlocked) game.toast(BLOCKED_TEXT, 'error');
       return;
     }
-    const c = growConfirm({ name: game.world.cityName, prev: game.previousSaveInfo()?.cityName ?? null, handheld: deviceClass() === 'handheld' });
+    const c = growConfirm({ name: game.world.cityName, prev: game.previousSaveInfo()?.cityName ?? null, lowerDetail: lowerDetailHere(game.settings.lowerDetail) });
     actions.confirm({ title: c.title, body: c.body, confirmLabel: c.confirmLabel, onConfirm: () => this.runGrow(from, false) });
   }
 
@@ -805,11 +818,12 @@ export class TransferUI {
   }
 }
 
-/** A city with any progress (game.ts worthKeeping): only such a city moves to Previous city. */
-function worthKeeping(w: { tick: number; buildings: { size: number }; tiles: ArrayLike<{ road: boolean; zone: number }> }): boolean {
-  if (w.tick > 0 || w.buildings.size > 0) return true;
-  for (let i = 0; i < w.tiles.length; i++) if (w.tiles[i].road || w.tiles[i].zone !== 0) return true;
-  return false;
+/**
+ * Would a 5×5 city run in lower detail on this device (§3.11)? The player's switch when set, else the device class
+ * (the value Game writes once on the first 5×5 load).
+ */
+export function lowerDetailHere(setting: boolean | undefined, cls: 'pc' | 'handheld' = deviceClass()): boolean {
+  return setting ?? cls === 'handheld';
 }
 
 /** Run `fn` once the current state has painted (two frames), so a busy line shows before a long synchronous step. */

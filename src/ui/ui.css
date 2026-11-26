@@ -5172,3 +5172,354 @@ body {
     pointer-events: none;
   }
 }
+
+/* ── City transfer and growing (MEGACITY §13, §3.11; WP-9) ─────────────────────────────────────────────────────
+   Export and Import stay centred dialogs (bottom sheets on phones) on every layout (§14.1). */
+
+/* A Menu row that can't run now (Export while a newer build's city is stored): dimmed, its line says why. */
+.cc-menu-item.is-disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.cc-menu-item.is-disabled .cc-menu-text span {
+  color: var(--cc-amber);
+}
+
+.cc-xfer .cc-dlg-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.cc-xfer-city {
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--cc-ink);
+  overflow-wrap: anywhere;
+}
+
+.cc-xfer-file {
+  font-family: var(--cc-mono);
+  font-size: 12px;
+  letter-spacing: 0.02em;
+  color: var(--cc-ink-2);
+  overflow-wrap: anywhere;
+}
+
+.cc-xfer-file:empty,
+.cc-xfer-status:empty {
+  display: none;
+}
+
+.cc-xfer-status {
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--cc-ink-2);
+}
+
+.cc-xfer.is-busy .cc-xfer-status::after,
+.cc-xfer-busy::after {
+  content: '';
+  display: block;
+  height: 2px;
+  margin-top: 8px;
+  background: linear-gradient(90deg, transparent, var(--cc-cyan), transparent);
+  background-size: 50% 100%;
+  background-repeat: no-repeat;
+  animation: cc-xfer-sweep 1.1s linear infinite;
+}
+
+@keyframes cc-xfer-sweep {
+  from {
+    background-position: -50% 0;
+  }
+  to {
+    background-position: 150% 0;
+  }
+}
+
+.cc-xfer-note {
+  font-size: 12.5px;
+  line-height: 1.4;
+  color: var(--cc-ink-3);
+}
+
+.cc-xfer-box {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.cc-xfer-box[hidden],
+.cc-xfer-paste[hidden],
+.cc-xfer-pick[hidden],
+.cc-xfer-preview[hidden] {
+  display: none;
+}
+
+.cc-xfer-box .cc-btn {
+  align-self: flex-start;
+}
+
+.cc-xfer-text {
+  width: 100%;
+  min-height: 108px;
+  max-height: 34vh;
+  padding: 8px 10px;
+  font: 12px/1.35 var(--cc-mono);
+  letter-spacing: 0;
+  color: var(--cc-ink);
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid rgba(34, 229, 255, 0.35);
+  border-radius: 0;
+  outline: none;
+  resize: vertical;
+  -webkit-user-select: text;
+  user-select: text;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.cc-xfer-text:focus {
+  border-color: var(--cc-cyan);
+  box-shadow: inset 0 0 0 1px var(--cc-cyan);
+}
+
+/* The file input stays in the sheet for the picker, invisible and out of the tab order. */
+.cc-xfer-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.cc-xfer-pick,
+.cc-xfer-paste {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.cc-xfer-pick > .cc-btn,
+.cc-xfer-paste > .cc-btn {
+  width: 100%;
+}
+
+.cc-btn.cc-xfer-big {
+  min-height: 52px;
+}
+
+.cc-xfer-drop {
+  display: grid;
+  place-items: center;
+  min-height: 88px;
+  padding: 12px;
+  font-size: 13px;
+  color: var(--cc-ink-3);
+  text-align: center;
+  border: 1px dashed rgba(34, 229, 255, 0.35);
+  background: rgba(34, 229, 255, 0.03);
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+
+.cc-xfer-drop[hidden] {
+  display: none;
+}
+
+.cc-xfer-drop.is-over {
+  color: var(--cc-cyan);
+  border-color: var(--cc-cyan);
+  background: rgba(34, 229, 255, 0.1);
+}
+
+.cc-xfer-error {
+  padding: 9px 12px;
+  font-size: 13px;
+  line-height: 1.4;
+  color: #ffd3dc;
+  background: rgba(255, 59, 92, 0.12);
+  border-left: 2px solid var(--cc-red);
+}
+
+.cc-xfer-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.cc-xfer-name {
+  font-size: 19px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: var(--cc-ink);
+  overflow-wrap: anywhere;
+}
+
+.cc-xfer-meta {
+  font-family: var(--cc-mono);
+  font-size: 12px;
+  letter-spacing: 0.02em;
+  color: var(--cc-ink-2);
+}
+
+.cc-xfer-meta:empty {
+  display: none;
+}
+
+.cc-xfer-line {
+  margin-top: 2px;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--cc-ink-2);
+}
+
+.cc-xfer-line.is-warn {
+  padding-left: 10px;
+  color: var(--cc-amber);
+  border-left: 2px solid var(--cc-amber);
+}
+
+.cc-xfer-line.is-good {
+  color: var(--cc-green);
+}
+
+.cc-seg.cc-xfer-pace {
+  align-self: flex-start;
+}
+
+.cc-xfer-pace .cc-seg-btn {
+  min-width: 108px;
+  padding: 0 12px;
+}
+
+.cc-xfer-foot {
+  flex-wrap: wrap;
+}
+
+.cc-xfer-foot .cc-btn.is-primary {
+  flex: 1 1 auto;
+}
+
+.cc-xfer .cc-btn:disabled,
+.cc-set-grow:disabled,
+.cc-cm-grow:disabled {
+  opacity: 0.45;
+  filter: saturate(0.3);
+  cursor: default;
+}
+
+.cc-xfer-busydlg {
+  width: min(360px, 100%);
+}
+
+.cc-xfer-busy {
+  padding: 6px 0 2px;
+  font-size: 14px;
+  letter-spacing: 0.04em;
+  color: var(--cc-ink);
+  text-align: center;
+}
+
+/* The copy-refused choice: Replace without a copy and Export side by side, wrapping on a phone. */
+#cc-xfer-choice .cc-dlg-foot .cc-btn {
+  flex: 1 1 auto;
+}
+
+/* Settings' City line (§7.6): on a 3×3 city its Grow button sits under the size line, with the blocked line under it. */
+.cc-set-city.has-grow {
+  flex-wrap: wrap;
+  row-gap: 0;
+}
+
+.cc-set-city.has-grow .cc-set-growslot {
+  flex: 1 0 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 2px 0 10px 50px;
+}
+
+.cc-btn.cc-set-grow,
+.cc-btn.cc-cm-grow {
+  padding: 0 14px;
+  font-size: 12px;
+  letter-spacing: 0.12em;
+}
+
+.cc-set-grownote,
+.cc-cm-grownote {
+  font-size: 12px;
+  line-height: 1.35;
+  color: var(--cc-amber);
+}
+
+.cc-set-grownote[hidden],
+.cc-cm-grownote[hidden] {
+  display: none;
+}
+
+/* The City map's edge line (§7.2): with the Grow button the line and the button stack, centred. */
+.cc-cm-edge.has-grow {
+  flex-direction: column;
+  gap: 4px;
+}
+
+.cc-cm-growslot {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+
+/* The title (§13.1, §3.10): Import city beside Previous city (wrapping under it on a phone), and the kept-city row. */
+.cc-start-links {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: center;
+  column-gap: 6px;
+  max-width: 100%;
+}
+
+.cc-start-links > .cc-start-prev {
+  align-self: auto;
+  min-width: 0;
+}
+
+.cc-start-import .cc-i {
+  color: var(--cc-cyan);
+}
+
+.cc-start-import .cc-start-prev-text {
+  text-decoration-color: rgba(34, 229, 255, 0.5);
+}
+
+.cc-start-kept {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 6px 6px 12px;
+  font-size: 13px;
+  line-height: 1.35;
+  color: var(--cc-ink);
+  background: linear-gradient(90deg, rgba(56, 38, 8, 0.92), rgba(18, 14, 26, 0.86));
+  border-left: 2px solid var(--cc-amber);
+}
+
+.cc-start-kept[hidden] {
+  display: none;
+}
+
+.cc-start-kept-text {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.cc-start-actions .cc-start-kept .cc-btn {
+  flex: none;
+  width: auto;
+  padding: 0 16px;
+}
