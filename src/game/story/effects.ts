@@ -1,0 +1,1266 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// Story effects (docs/STORY.md §10.3): the applier for the closed vocabulary,
+// target and spot resolution, token fill, hint chips and effect text.
+// Owner: WP-A.
+//
+//   applyEffects(host, fx, ctx)  apply left to right; an effect whose target
+//                                can't be resolved is skipped, never an error
+//   findSpot / spotAvailable     §7.1 spot rules (+ EXPANSION §2.2 highway, alley, shore)
+//   fillTokens                   {city} {district} {patron} {rival} {year} {coherence} …
+//   hintsFor / effectsText       choice hint chips and the exact-effects popover
+//   writeLocals                  story.locals → world.layerParts.local → composeLayers
+//   slot:<kind> targets          every owned district of a kind (MEGACITY §8.4)
+//   DISTRICT_VERBS               brownfield clear, ruins clear, reeds drain, apron
+//                                rehouse / clear, written as reserved flags (§8.4)
+//
+// Director-level effects (queue, log, countdown, charterNight, ending, flag
+// hooks) go through the EffectHost the director implements.
+// ─────────────────────────────────────────────────────────────────────────────
+
+import { apron, clearBrownfield, clearRuins, drainReeds, ownedOfKind } from '../districts/effects';
+import { neighbourhoodAt } from '../districts/names';
+import { artOffset, slotRect } from '../districts/slots';
+import { BUILDINGS, DISTRICTS, FACTION_IDS, FACTION_LABELS, GANG_IDS, GANG_NEWS_NAME, STANDING, TRACE, TURF, TURF_OWNER } from '../config';
+import { capitalizeFirst, districtName } from '../news';
+import type { Rng } from '../rng';
+import { scratchFor } from '../frame';
+import { DAYS_PER_MONTH, RoadKind, Terrain, ZoneType, type Building, type BuildingType, type DistrictKind } from '../types';
+import type { World } from '../world';
+import { evalCond, storyContent } from './conditions';
+import { changeFavor, endingRules, isVisible, patronOf, resolveRef, rivalOf } from './factions';
+import { composeLayers, resetLayers } from './mods';
+import { coherenceFor } from './state';
+import * as turf from './turf';
+import type {
+  Effect,
+  EndingId,
+  FactionId,
+  FlagValue,
+  GangId,
+  Hint,
+  ModPatch,
+  SimMods,
+  SpotRule,
+  Target,
+  Unlockable,
+} from './types';
+import * as vertical from './vertical';
+
+const MAX_OFFLINE = 30;
+
+/** What the director provides to effects that touch its scheduling. */
+export interface EffectHost {
+  readonly world: World;
+  /** The story RNG (the host keeps story.rng in sync). */
+  readonly rng: Rng;
+  /** Schedule a card `days` from now (0 = chained / next). */
+  queue(card: string, days: number): void;
+  /** Own Silt Log n and show its card after the current one closes. */
+  log(n: number): void;
+  /** A flag was written (the director reacts to tuningActive, revealed, …). */
+  flagSet(key: string, v: FlagValue): void;
+  countdown(days: number): void;
+  charterNight(): void;
+  ending(id: EndingId): void;
+}
+
+/** Per-application context: the card's spot and a few values effects pass to later ones. */
+export interface EffectCtx {
+  /** The card's spot tile index, or −1. */
+  spot: number;
+  /** Deal effects: permanent mods end with the deal. */
+  dealUntil?: number;
+  /** Name of the last building an `offline` effect hit ({plant} / {building} in news). */
+  lastName?: string;
+  /** Tile the last `offline` effect hit ({district} in news). */
+  lastAt?: number;
+}
+
+// ── Small helpers ───────────────────────────────────────────────────────────
+
+// Tile index ↔ (x, y) on the world's own frame (MEGACITY §3.1).
+type Frame = Pick<World, 'N' | 'area'>;
+const idxOf = (w: Frame, x: number, y: number) => y * w.N + x;
+const xOf = (w: Frame, i: number) => i % w.N;
+const yOf = (w: Frame, i: number) => (i / w.N) | 0;
+const cloneJson = <T>(v: T): T => JSON.parse(JSON.stringify(v)) as T;
+
+function shuffleInPlace<T>(arr: T[], rng: Rng): T[] {
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(rng.next() * (i + 1));
+    const t = arr[i];
+    arr[i] = arr[j];
+    arr[j] = t;
+  }
+  return arr;
+}
+
+/** Calls fn(i) for every tile within Euclidean r of tile (cx, cy) (integer tile distance). */
+function forDisc(world: Frame, cx: number, cy: number, r: number, fn: (i: number) => void): void {
+  const N = world.N;
+  const rr = Math.max(0, r);
+  const xa = Math.max(0, Math.floor(cx - rr));
+  const xb = Math.min(N - 1, Math.ceil(cx + rr));
+  const ya = Math.max(0, Math.floor(cy - rr));
+  const yb = Math.min(N - 1, Math.ceil(cy + rr));
+  const r2 = rr * rr;
+  for (let y = ya; y <= yb; y++)
+    for (let x = xa; x <= xb; x++) {
+      const dx = x - cx;
+      const dy = y - cy;
+      if (dx * dx + dy * dy <= r2) fn(y * N + x);
+    }
+}
+
+const isDeveloped = (world: World, i: number) => {
+  const t = world.tiles[i];
+  return t.zone !== ZoneType.None && t.level > 0 && !t.abandoned && t.buildingId < 0;
+};
+
+// ── Trace, reveal, unlocks, flags ───────────────────────────────────────────
+
+/** Is the Trace gauge ignoring changes (revealed, frozen, retired by the ending, or locked at 100)? */
+export function traceLocked(world: World): boolean {
+  const s = world.story;
+  return s.revealed || !!s.flags.traceFrozen || !!endingRules(world)?.retireTrace || s.trace >= TRACE.max;
+}
+
+/** Raise or lower Trace (§2.5). Returns the change applied. Emits 'trace'. */
+export function addTrace(world: World, v: number): number {
+  const s = world.story;
+  if (!v || !Number.isFinite(v) || traceLocked(world)) return 0;
+  if (v > 0) s.traceRaisedThisMonth = true;
+  const next = Math.max(0, Math.min(TRACE.max, s.trace + v));
+  const d = next - s.trace;
+  if (!d) return 0;
+  s.trace = next;
+  world.events.emit('trace', { value: Math.round(next) });
+  return d;
+}
+
+/** Revealed, permanently (§2.5). */
+export function revealStory(world: World): void {
+  const s = world.story;
+  if (s.revealed) return;
+  s.revealed = true;
+  s.flags.revealed = true;
+  world.events.emit('trace', { value: Math.round(s.trace) });
+}
+
+/** Default unlock news lines (§5.0) when the content gives none. */
+const UNLOCK_NEWS: Partial<Record<string, string>> = {
+  factions: 'Unlocked: Factions. Everyone wants the switch.',
+  comms: 'Unlocked: COMMS. Messages meant for no one, routed to you.',
+  deals: 'Unlocked: Deals. Friendly factions will trade.',
+  stack: 'Unlocked: Stratablock. Homes, shops and jobs, stacked.',
+  crackdown: 'Unlocked: Crackdown. Inspect a precinct to send the wasps.',
+  pact: 'Unlocked: Pacts. Some crews will keep to their streets.',
+  turfOverlay: 'Unlocked: Turf overlay. See whose streets are whose.',
+  skybridge: 'Unlocked: Skybridge. Link two towers across the sky.',
+  rail: 'Unlocked: Ribbon Rail. Join two stations with light.',
+  crowns: 'Unlocked: Crowns. Finish a Stratablock, pick a side.',
+  glarewall: "Unlocked: Glarewall. Nacre's light, on your corners.",
+  foundry: "Unlocked: Foundry Spine. Basalt's fire, on your grid.",
+  memorial: 'Unlocked: Sunk Memorial. Eleven thousand names.',
+};
+
+/** Own a story unlock: news line and 'unlock' event (once). Returns true if new. */
+export function unlockStory(world: World, what: Unlockable): boolean {
+  const s = world.story;
+  if (s.unlocks.includes(what)) return false;
+  s.unlocks.push(what);
+  const line = storyContent().unlockNews[what] ?? UNLOCK_NEWS[what];
+  if (line) world.addNews(line, 'info');
+  world.events.emit('unlock', { what });
+  return true;
+}
+
+// ── Targets and spots (§10.1, §7.1) ─────────────────────────────────────────
+
+/** largestAbandoned's BFS scratch, one set per frame size (MEGACITY §3.1). */
+const abandonedScratch = scratchFor((area) => ({ seenBuf: new Uint8Array(area), queueBuf: new Int32Array(area) }));
+
+/** Tile index of the centre of the largest 4-connected abandoned cluster, or −1. */
+export function largestAbandoned(world: World): number {
+  const N = world.N;
+  const area = world.area;
+  const { seenBuf, queueBuf } = abandonedScratch(area);
+  const tiles = world.tiles;
+  seenBuf.fill(0);
+  let best = -1;
+  let bestN = 0;
+  for (let s = 0; s < area; s++) {
+    if (seenBuf[s] || !tiles[s].abandoned) continue;
+    let head = 0;
+    let tail = 0;
+    queueBuf[tail++] = s;
+    seenBuf[s] = 1;
+    let sx = 0;
+    let sy = 0;
+    while (head < tail) {
+      const i = queueBuf[head++];
+      const x = xOf(world, i);
+      const y = yOf(world, i);
+      sx += x;
+      sy += y;
+      for (let k = 0; k < 4; k++) {
+        if ((k === 0 && x === 0) || (k === 1 && x === N - 1) || (k === 2 && y === 0) || (k === 3 && y === N - 1)) continue;
+        const j = k === 0 ? i - 1 : k === 1 ? i + 1 : k === 2 ? i - N : i + N;
+        if (!seenBuf[j] && tiles[j].abandoned) {
+          seenBuf[j] = 1;
+          queueBuf[tail++] = j;
+        }
+      }
+    }
+    if (tail > bestN) {
+      bestN = tail;
+      // Member nearest the centroid.
+      const cx = sx / tail;
+      const cy = sy / tail;
+      let bd = Infinity;
+      for (let k = 0; k < tail; k++) {
+        const i = queueBuf[k];
+        const d = (xOf(world, i) - cx) ** 2 + (yOf(world, i) - cy) ** 2;
+        if (d < bd) {
+          bd = d;
+          best = i;
+        }
+      }
+    }
+  }
+  return best;
+}
+
+function randomTile(world: World, rng: Rng, ok: (i: number) => boolean): number {
+  const area = world.area;
+  let n = 0;
+  for (let i = 0; i < area; i++) if (ok(i)) n++;
+  if (!n) return -1;
+  let k = Math.floor(rng.next() * n);
+  for (let i = 0; i < area; i++) if (ok(i) && k-- === 0) return i;
+  return -1;
+}
+
+function nearWater(world: World, i: number, r: number): boolean {
+  const N = world.N;
+  const x = xOf(world, i);
+  const y = yOf(world, i);
+  for (let dy = -r; dy <= r; dy++)
+    for (let dx = -r; dx <= r; dx++) {
+      const xx = x + dx;
+      const yy = y + dy;
+      if (xx < 0 || yy < 0 || xx >= N || yy >= N) continue;
+      if (world.tiles[idxOf(world, xx, yy)].terrain === Terrain.Water) return true;
+    }
+  return false;
+}
+
+/** Strongest tile of a gang (or of either, for 'all'), −1 if none. */
+function strongestOf(world: World, gang: GangId | 'all'): number {
+  const st = world.turf.stats.strongest;
+  if (gang !== 'all') return st[gang];
+  const a = st.undertow;
+  const b = st.kites;
+  if (a < 0) return b;
+  if (b < 0) return a;
+  return world.turf.str[a] >= world.turf.str[b] ? a : b;
+}
+
+// ── Expansion spot rules (docs/EXPANSION.md §2.2, §8.3) ─────────────────────
+// Deterministic (no RNG), so spotAvailable and findSpot always agree and {district}
+// names a real place. Each is one or two passes over the map with reused scratch.
+
+/** The spot rules' masks, one set per frame size (MEGACITY §3.1). */
+const nearScratch = scratchFor((area) => ({ nearMask: new Uint8Array(area), nearTmp: new Uint8Array(area) }));
+
+/** Chebyshev dilation of `nearMask` by r, in place (separable: rows into nearTmp, then columns). */
+function dilateNear(world: Frame, r: number): void {
+  const { nearMask, nearTmp } = nearScratch(world.area);
+  const N = world.N;
+  for (let y = 0; y < N; y++) {
+    const row = y * N;
+    for (let x = 0; x < N; x++) {
+      let v = 0;
+      const xa = Math.max(0, x - r);
+      const xb = Math.min(N - 1, x + r);
+      for (let xx = xa; xx <= xb && !v; xx++) v = nearMask[row + xx];
+      nearTmp[row + x] = v;
+    }
+  }
+  for (let x = 0; x < N; x++) {
+    for (let y = 0; y < N; y++) {
+      let v = 0;
+      const ya = Math.max(0, y - r);
+      const yb = Math.min(N - 1, y + r);
+      for (let yy = ya; yy <= yb && !v; yy++) v = nearTmp[yy * N + x];
+      nearMask[y * N + x] = v;
+    }
+  }
+}
+
+/** A developed (lived-in, not abandoned) Hab Block tile. */
+const isHabBlock = (world: World, i: number) => world.tiles[i].zone === ZoneType.Residential && isDeveloped(world, i);
+
+/** 'highway': the developed Hab Block within 3 of a Highway tile with the highest noise (ties: lowest index), −1 if none. */
+function highwaySpot(world: World): number {
+  const { nearMask } = nearScratch(world.area);
+  const area = world.area;
+  const tiles = world.tiles;
+  let any = false;
+  for (let i = 0; i < area; i++) {
+    const t = tiles[i];
+    const hw = t.road && t.roadKind === RoadKind.Highway;
+    nearMask[i] = hw ? 1 : 0;
+    if (hw) any = true;
+  }
+  if (!any) return -1;
+  dilateNear(world, 3);
+  const noise = world.fields.noise;
+  let best = -1;
+  for (let i = 0; i < area; i++) {
+    if (!nearMask[i] || !isHabBlock(world, i)) continue;
+    if (best < 0 || noise[i] > noise[best]) best = i;
+  }
+  return best;
+}
+
+/** 'alley': the Alley tile with the highest Undertow turf strength, else the lowest-index Alley tile, −1 if none. */
+function alleySpot(world: World): number {
+  const area = world.area;
+  const tiles = world.tiles;
+  const owner = world.turf.owner;
+  const str = world.turf.str;
+  const U = TURF_OWNER.undertow;
+  let first = -1;
+  let best = -1;
+  for (let i = 0; i < area; i++) {
+    const t = tiles[i];
+    if (!t.road || t.roadKind !== RoadKind.Alley) continue;
+    if (first < 0) first = i;
+    if (owner[i] === U && str[i] > 0 && (best < 0 || str[i] > str[best])) best = i;
+  }
+  return best >= 0 ? best : first;
+}
+
+/** 'shore': the developed Hab Block within 2 of water with the highest land value (ties: lowest index), −1 if none. */
+function shoreSpot(world: World): number {
+  const area = world.area;
+  const lv = world.fields.landValue;
+  let best = -1;
+  for (let i = 0; i < area; i++) {
+    if (!isHabBlock(world, i)) continue;
+    if (best >= 0 && lv[i] <= lv[best]) continue;
+    if (nearWater(world, i, 2)) best = i;
+  }
+  return best;
+}
+
+/** Can this spot rule find a tile right now? (Card eligibility; cheap.) */
+export function spotAvailable(world: World, rule: SpotRule): boolean {
+  const s = world.stats;
+  switch (rule) {
+    case 'industrial':
+      return s.developed.ind > 0;
+    case 'abandoned':
+      return s.abandonedTiles > 0;
+    case 'turf:undertow':
+    case 'waterfrontTurf':
+      return world.turf.stats.strongest.undertow >= 0;
+    case 'turf:kites':
+      return world.turf.stats.strongest.kites >= 0;
+    case 'seam':
+      return world.story.seam !== null;
+    case 'skybridge':
+      return world.vertical.activeLinks.size > 0;
+    case 'random':
+      return s.developed.res + s.developed.com + s.developed.ind > 0;
+    case 'highway':
+      return highwaySpot(world) >= 0;
+    case 'alley':
+      return alleySpot(world) >= 0;
+    case 'shore':
+      return shoreSpot(world) >= 0;
+  }
+  return false;
+}
+
+/** Pick a tile for a spot rule (§7.1), −1 if none. */
+export function findSpot(world: World, rule: SpotRule, rng: Rng): number {
+  const area = world.area;
+  const tiles = world.tiles;
+  switch (rule) {
+    case 'industrial':
+      return randomTile(world, rng, (i) => tiles[i].zone === ZoneType.Industrial && isDeveloped(world, i));
+    case 'abandoned':
+      return largestAbandoned(world);
+    case 'turf:undertow':
+      return world.turf.stats.strongest.undertow;
+    case 'turf:kites':
+      return world.turf.stats.strongest.kites;
+    case 'waterfrontTurf': {
+      const owner = world.turf.owner;
+      const str = world.turf.str;
+      let best = -1;
+      for (let i = 0; i < area; i++) {
+        if (owner[i] !== 1) continue;
+        if (best >= 0 && str[i] <= str[best]) continue;
+        if (nearWater(world, i, 4)) best = i;
+      }
+      return best >= 0 ? best : world.turf.stats.strongest.undertow;
+    }
+    case 'seam':
+      return world.story.seam ?? -1;
+    case 'skybridge': {
+      const act = world.links.filter((l) => world.vertical.activeLinks.has(l.id));
+      if (!act.length) return -1;
+      const l = act[Math.floor(rng.next() * act.length)];
+      return idxOf(world, Math.round((l.ax + l.bx) / 2), Math.round((l.ay + l.by) / 2));
+    }
+    case 'random':
+      return randomTile(world, rng, (i) => isDeveloped(world, i));
+    case 'highway':
+      return highwaySpot(world);
+    case 'alley':
+      return alleySpot(world);
+    case 'shore':
+      return shoreSpot(world);
+  }
+  return -1;
+}
+
+/** Centre tile of a target (−1 = unresolved). 'city' and 'rail' have no single centre. */
+export function targetCenter(world: World, at: Target, spot: number, gang?: GangId | 'all'): number {
+  const N = world.N;
+  const area = world.area;
+  switch (at) {
+    case 'spot':
+      return spot >= 0 && spot < area ? spot : -1;
+    case 'seam':
+      return world.story.seam ?? -1;
+    case 'strongestTurf':
+      return gang ? strongestOf(world, gang) : -1;
+    case 'strongestTurf:undertow':
+      return world.turf.stats.strongest.undertow;
+    case 'strongestTurf:kites':
+      return world.turf.stats.strongest.kites;
+    case 'largestAbandoned':
+      return largestAbandoned(world);
+    case 'city':
+      return idxOf(world, N >> 1, N >> 1);
+    case 'rail': {
+      for (let i = 0; i < area; i++) if (world.rail[i]) return i;
+      return -1;
+    }
+  }
+  const kind = slotKindOf(at);
+  if (kind) {
+    // A slot target's centre (local, seed, renew…): the middle of the first owned district of that kind.
+    const s = ownedOfKind(world, kind)[0];
+    if (s === undefined) return -1;
+    const r = slotRect(world, s);
+    return idxOf(world, (r.x0 + r.x1) >> 1, (r.y0 + r.y1) >> 1);
+  }
+  return -1;
+}
+
+/** The district kind of a `slot:<kind>` target (MEGACITY §8.4), or null for every other target. */
+export function slotKindOf(at: Target): DistrictKind | null {
+  return at.startsWith('slot:') ? (at.slice(5) as DistrictKind) : null;
+}
+
+/** Every tile inside the owned districts of a kind (a `slot:<kind>` target's area), or null when none is owned. */
+export function slotTiles(world: World, kind: DistrictKind): number[] | null {
+  const slots = ownedOfKind(world, kind);
+  if (!slots.length) return null;
+  const N = world.N;
+  const out: number[] = [];
+  for (const s of slots) {
+    const r = slotRect(world, s);
+    for (let y = r.y0; y <= r.y1; y++) for (let x = r.x0; x <= r.x1; x++) out.push(y * N + x);
+  }
+  return out;
+}
+
+/** A turf-style area for a target and radius, or null when it resolves to nothing. */
+export function targetArea(world: World, at: Target, r: number, spot: number, gang?: GangId | 'all'): turf.TurfArea | null {
+  if (at === 'city') return 'city';
+  if (at === 'rail') {
+    const tiles = vertical.railArea(world, Math.max(0, Math.round(r)));
+    return tiles.length ? tiles : null;
+  }
+  // `slot:<kind>` (MEGACITY §8.4): every tile of the owned districts of that kind; the turf op keeps its gang's tiles.
+  // Districts annexed after the choice keep their own ground; none owned → the effect is skipped.
+  const kind = slotKindOf(at);
+  if (kind) return slotTiles(world, kind);
+  const c = targetCenter(world, at, spot, gang);
+  if (c < 0) return null;
+  return { x: xOf(world, c), y: yOf(world, c), r: Math.max(0, r) };
+}
+
+// ── Local layers (§10.5 localLayers) ────────────────────────────────────────
+
+/**
+ * Rewrite world.layerParts.local from the active story.locals (crime / land
+ * value discs, Euclidean from their centre point), then composeLayers.
+ */
+export function writeLocals(world: World): void {
+  const N = world.N;
+  const L = world.layerParts.local;
+  resetLayers(L);
+  const tick = world.tick;
+  for (const l of world.story.locals) {
+    if (l.until >= 0 && l.until <= tick) continue;
+    const r = Math.max(0, l.r);
+    const xa = Math.max(0, Math.floor(l.x - r));
+    const xb = Math.min(N - 1, Math.ceil(l.x + r));
+    const ya = Math.max(0, Math.floor(l.y - r));
+    const yb = Math.min(N - 1, Math.ceil(l.y + r));
+    for (let y = ya; y <= yb; y++)
+      for (let x = xa; x <= xb; x++) {
+        const dx = x + 0.5 - l.x;
+        const dy = y + 0.5 - l.y;
+        if (dx * dx + dy * dy > r * r) continue;
+        const i = y * N + x;
+        if (l.crimeAdd) L.crimeAdd[i] += l.crimeAdd;
+        if (l.lvAdd) L.lvAdd[i] += l.lvAdd;
+      }
+  }
+  composeLayers(world);
+}
+
+// ── Offline / abandon / renew helpers ───────────────────────────────────────
+
+function setOffline(world: World, b: Building, days: number, ctx: EffectCtx): void {
+  const d = Math.max(0, Math.min(MAX_OFFLINE, Math.round(days)));
+  if (!d) return;
+  b.offline = Math.max(b.offline, d);
+  ctx.lastName = BUILDINGS[b.type]?.name ?? b.type;
+  ctx.lastAt = idxOf(world, b.x, b.y);
+  world.markChanged(b.x, b.y, b.x + b.size - 1, b.y + b.size - 1);
+}
+
+function pickN<T>(list: T[], n: number | 'all', rng: Rng): T[] {
+  if (n === 'all') return list;
+  return shuffleInPlace(list, rng).slice(0, Math.max(0, Math.floor(n)));
+}
+
+function footprintNear(world: World, b: Building, mask: (i: number) => boolean, r: number): boolean {
+  const N = world.N;
+  for (let y = b.y - r; y < b.y + b.size + r; y++)
+    for (let x = b.x - r; x < b.x + b.size + r; x++) {
+      if (x < 0 || y < 0 || x >= N || y >= N) continue;
+      if (mask(idxOf(world, x, y))) return true;
+    }
+  return false;
+}
+
+function applyOffline(host: EffectHost, e: Extract<Effect, { t: 'offline' }>, ctx: EffectCtx): void {
+  const world = host.world;
+  const rng = host.rng;
+  const all = [...world.buildings.values()];
+  if (e.what === 'rail') {
+    const i = vertical.railOutTarget(world, e.gang);
+    if (i < 0) return;
+    world.story.railOut.push({ i, until: world.tick + Math.max(1, Math.round(e.days)) });
+    ctx.lastAt = i;
+    vertical.refresh(world);
+    return;
+  }
+  let picked: Building[] = [];
+  if (e.what === 'plant') {
+    const plants = all.filter((b) => (BUILDINGS[b.type]?.powerSupply ?? 0) > 0 && b.offline <= 0);
+    picked = pickN(plants, e.n, rng);
+  } else if (e.what === 'district') {
+    const c = targetCenter(world, e.at ?? 'spot', ctx.spot, e.gang);
+    if (c < 0) return;
+    const cx = xOf(world, c);
+    const cy = yOf(world, c);
+    const r = e.r ?? 6;
+    const r2 = r * r;
+    picked = all.filter((b) => {
+      for (let y = b.y; y < b.y + b.size; y++)
+        for (let x = b.x; x < b.x + b.size; x++) if ((x - cx) ** 2 + (y - cy) ** 2 <= r2) return true;
+      return false;
+    });
+    if (e.n !== 'all') picked = pickN(picked, e.n, rng);
+  } else if (e.what === 'nearTurf') {
+    const gangs = e.gang ? [e.gang] : GANG_IDS;
+    const codes: number[] = gangs.map((g) => (g === 'undertow' ? 1 : 2));
+    const owner = world.turf.owner;
+    const near = all.filter((b) => footprintNear(world, b, (i) => codes.includes(owner[i]), 4));
+    const online = near.filter((b) => b.offline <= 0);
+    picked = pickN(online.length ? online : near, e.n, rng);
+  } else if (Array.isArray(e.what)) {
+    const types = new Set<BuildingType>(e.what);
+    const of = all.filter((b) => types.has(b.type));
+    if (e.n === 'all') picked = of;
+    else {
+      const online = of.filter((b) => b.offline <= 0);
+      picked = pickN(online.length ? online : of, e.n, rng);
+    }
+  }
+  for (const b of picked) setOffline(world, b, e.days, ctx);
+}
+
+function applyAbandon(host: EffectHost, e: Extract<Effect, { t: 'abandon' }>, ctx: EffectCtx): void {
+  const world = host.world;
+  const c = targetCenter(world, e.at, ctx.spot);
+  if (c < 0) return;
+  const zone = e.zone === 'res' ? ZoneType.Residential : e.zone === 'com' ? ZoneType.Commercial : e.zone === 'ind' ? ZoneType.Industrial : 0;
+  const cand: number[] = [];
+  forDisc(world, xOf(world, c), yOf(world, c), e.r, (i) => {
+    if (!isDeveloped(world, i)) return;
+    if (zone && world.tiles[i].zone !== zone) return;
+    cand.push(i);
+  });
+  for (const i of pickN(cand, e.n, host.rng)) world.setLevel(xOf(world, i), yOf(world, i), world.tiles[i].level, true);
+}
+
+function applyRenew(host: EffectHost, e: Extract<Effect, { t: 'renew' }>, ctx: EffectCtx): void {
+  const world = host.world;
+  const c = targetCenter(world, e.at, ctx.spot);
+  if (c < 0) return;
+  forDisc(world, xOf(world, c), yOf(world, c), e.r, (i) => {
+    const t = world.tiles[i];
+    if (t.abandoned && t.zone !== ZoneType.None) world.setLevel(xOf(world, i), yOf(world, i), 0, false);
+  });
+}
+
+function applyTurf(host: EffectHost, e: Extract<Effect, { t: 'turf' }>, ctx: EffectCtx): void {
+  const world = host.world;
+  switch (e.op) {
+    case 'freeze':
+      turf.freezeTurf(world, e.days ?? 0);
+      return;
+    case 'seed': {
+      if (e.gang === 'all' && e.at === 'city') {
+        turf.forceSeed(world);
+        return;
+      }
+      const gangs: GangId[] = e.gang === 'all' ? ['undertow', 'kites'] : [e.gang];
+      for (const g of gangs) {
+        let c = targetCenter(world, e.at, ctx.spot, g);
+        if (c < 0 && e.at === 'city') c = turf.bestTile(world, g);
+        if (c < 0) continue;
+        turf.seedGang(world, g, xOf(world, c), yOf(world, c), e.v ?? TURF.seedStr);
+      }
+      return;
+    }
+    case 'str': {
+      const area = targetArea(world, e.at, e.r ?? 0, ctx.spot, e.gang);
+      if (area) turf.addStrength(world, e.gang, area, e.v ?? 0);
+      return;
+    }
+    case 'clear': {
+      const area = targetArea(world, e.at, e.r ?? 0, ctx.spot, e.gang);
+      if (area) turf.clearTurf(world, e.gang, area);
+      return;
+    }
+    case 'flip': {
+      if (e.gang === 'all') return;
+      const to: GangId = e.to ?? (e.gang === 'undertow' ? 'kites' : 'undertow');
+      const area = targetArea(world, e.at, e.r ?? 0, ctx.spot, e.gang);
+      if (area) turf.flipTurf(world, e.gang, to, area);
+      return;
+    }
+  }
+}
+
+/** The gangSurge incident (§3.2): +30 strength in a 5×5 around (x, y), claiming unowned eligible tiles at 30. */
+export function applySurge(world: World, gang: GangId, x: number, y: number): number {
+  if (!world.inBounds(x, y)) return 0;
+  const S = TURF.surge;
+  const code: 1 | 2 = gang === 'undertow' ? 1 : 2;
+  const tk = world.turf;
+  const own: number[] = [];
+  const claim: number[] = [];
+  for (let dy = -S.radius; dy <= S.radius; dy++)
+    for (let dx = -S.radius; dx <= S.radius; dx++) {
+      const xx = x + dx;
+      const yy = y + dy;
+      if (!world.inBounds(xx, yy)) continue;
+      const i = idxOf(world, xx, yy);
+      if (tk.owner[i] === code) own.push(i);
+      else if (tk.owner[i] === 0 && turf.isEligible(world, xx, yy)) claim.push(i);
+    }
+  if (own.length) turf.addStrength(world, gang, own, S.str, false);
+  let held = turf.gangTiles(world)[gang];
+  const cap = turf.capFor(world);
+  let n = own.length;
+  for (const i of claim) {
+    if (held >= cap) break;
+    tk.owner[i] = code;
+    tk.str[i] = S.claimStr;
+    held++;
+    n++;
+  }
+  turf.refreshStats(world);
+  return n;
+}
+
+// ── The applier ─────────────────────────────────────────────────────────────
+
+/** Apply effects left to right. Unresolvable targets skip their effect; nothing throws. */
+export function applyEffects(host: EffectHost, fx: readonly Effect[] | undefined, ctx: EffectCtx): void {
+  if (!fx) return;
+  for (const e of fx) {
+    try {
+      applyEffect(host, e, ctx);
+    } catch (err) {
+      console.warn('[story] effect skipped', e, err);
+    }
+  }
+}
+
+/** Apply one effect (§10.3 rules). */
+export function applyEffect(host: EffectHost, e: Effect, ctx: EffectCtx): void {
+  const world = host.world;
+  const s = world.story;
+  const tick = world.tick;
+  switch (e.t) {
+    case 'funds':
+      if (Number.isFinite(e.v)) world.funds += e.v;
+      return;
+    case 'favor':
+      for (const f of resolveRef(world, e.f)) changeFavor(world, f, e.v);
+      return;
+    case 'trace':
+      addTrace(world, e.v);
+      return;
+    case 'mod': {
+      const until = e.days === 'perm' ? (ctx.dealUntil ?? -1) : tick + Math.max(0, Math.round(e.days));
+      const k = s.mods.findIndex((m) => m.id === e.id);
+      const entry = { id: e.id, label: e.label, until, mods: cloneJson(e.mods) };
+      if (k >= 0) s.mods[k] = entry;
+      else s.mods.push(entry);
+      return;
+    }
+    case 'income':
+      s.incomes.push({ id: e.id, label: e.label, perMonth: e.perMonth, until: tick + Math.max(0, e.months) * DAYS_PER_MONTH });
+      return;
+    case 'local': {
+      const c = targetCenter(world, e.at, ctx.spot);
+      if (c < 0 || e.at === 'city' || e.at === 'rail') return;
+      s.locals.push({
+        id: e.id,
+        x: xOf(world, c) + 0.5,
+        y: yOf(world, c) + 0.5,
+        r: e.r,
+        until: tick + Math.max(0, Math.round(e.days)),
+        crimeAdd: e.crimeAdd ?? 0,
+        lvAdd: e.lvAdd ?? 0,
+      });
+      writeLocals(world);
+      return;
+    }
+    case 'turf':
+      applyTurf(host, e, ctx);
+      return;
+    case 'offline':
+      applyOffline(host, e, ctx);
+      return;
+    case 'abandon':
+      applyAbandon(host, e, ctx);
+      return;
+    case 'renew':
+      applyRenew(host, e, ctx);
+      return;
+    case 'unlock':
+      unlockStory(world, e.what);
+      return;
+    case 'credit': {
+      const what: BuildingType = e.what === 'patronExclusive' ? (patronOf(world) === 'basalt' ? 'foundry' : 'glarewall') : e.what;
+      if (!BUILDINGS[what] || !(e.n > 0)) return;
+      s.credits.push({ what, n: Math.floor(e.n), mul: Math.max(0, e.mul) });
+      return;
+    }
+    case 'flag': {
+      let v: FlagValue;
+      if (e.v === '+1') {
+        const prev = s.flags[e.key];
+        v = (typeof prev === 'number' ? prev : prev ? 1 : 0) + 1;
+      } else if (e.v === '$patron') v = patronOf(world);
+      else v = e.v;
+      s.flags[e.key] = v;
+      host.flagSet(e.key, v);
+      districtVerb(e.key, v)?.run(world);
+      return;
+    }
+    case 'floor': {
+      const prev = s.floors[e.f];
+      s.floors[e.f] = typeof prev === 'number' ? Math.max(prev, e.v) : e.v;
+      return;
+    }
+    case 'ceil': {
+      const prev = s.ceils[e.f];
+      s.ceils[e.f] = typeof prev === 'number' ? Math.min(prev, e.v) : e.v;
+      return;
+    }
+    case 'pact':
+      signPactEffect(world, e.gang, e.months);
+      return;
+    case 'queue':
+      host.queue(e.card, Math.max(0, Math.round(e.days)));
+      return;
+    case 'log':
+      host.log(e.n);
+      return;
+    case 'reveal':
+      revealStory(world);
+      host.flagSet('revealed', true);
+      return;
+    case 'news':
+      world.addNews(fillTokens(world, e.text, ctx.lastAt ?? ctx.spot, newsTokens(ctx)), e.kind);
+      return;
+    case 'gangAction':
+      s.gangActions++;
+      if (e.crackdown) s.lastCrackdownTick = tick;
+      return;
+    case 'countdown':
+      host.countdown(Math.max(0, Math.round(e.days)));
+      return;
+    case 'charterNight':
+      host.charterNight();
+      return;
+    case 'ending':
+      host.ending(e.id);
+      return;
+    case 'if':
+      applyEffects(host, evalCond(world, e.c) ? e.then : e.else, ctx);
+      return;
+    case 'grant':
+      grantLand(world, e.n, 'chapter');
+      return;
+  }
+}
+
+/**
+ * Add n land grants (MEGACITY §8.2): `districts.grants` += n (never below 0) and emit `grant`. The chapter
+ * rewards' `grant 1` effect uses why 'chapter'; the director's ending grant 'ending'; Game's epilogue clock 'epilogue'.
+ */
+export function grantLand(world: World, n: number, why: 'chapter' | 'ending' | 'epilogue' | 'migrated'): void {
+  const add = Math.max(0, Math.floor(Number(n) || 0));
+  if (add <= 0) return;
+  world.districts.grants = Math.max(0, world.districts.grants + add);
+  world.events.emit('grant', { grants: world.districts.grants, why });
+}
+
+// ── Popover places (§8.2, MEGACITY §8.4) ──────────────────────────────────────
+
+const TARGET_TEXT: Record<Target, string> = {
+  city: 'city-wide',
+  spot: 'here',
+  seam: 'at the Seam',
+  strongestTurf: 'at its strongest turf',
+  'strongestTurf:undertow': 'on Undertow turf',
+  'strongestTurf:kites': 'on Kites turf',
+  largestAbandoned: 'in the dark lots',
+  rail: 'along the ribbon',
+  // Megacity (MEGACITY §8.4): the target `slot:<kind>`, every owned district of that kind (slotTiles).
+  'slot:shore': 'in Charter Shore',
+  'slot:shoals': 'in the Shoals',
+  'slot:sunk': 'in the Sunk',
+  'slot:flats': 'in Kessel Flats',
+  'slot:terraces': 'in the Terraces',
+  'slot:reedmere': 'in Reedmere',
+  'slot:skeleton': 'in Skeleton Row',
+  'slot:tarmac': 'in Tarmac Reach',
+  'slot:bazaar': 'in Verdigris',
+};
+
+/** Several owned districts of one kind, as a popover place ("in 2 Flats districts"). */
+const KIND_GROUP: Record<DistrictKind, string> = {
+  shore: 'Shore districts',
+  shoals: 'Shoals districts',
+  sunk: 'Sunk districts',
+  flats: 'Flats districts',
+  terraces: 'Terraces districts',
+  reedmere: 'marsh districts',
+  skeleton: 'frame districts',
+  tarmac: 'airfield districts',
+  bazaar: 'bazaar districts',
+};
+
+/**
+ * Where an effect on a kind's districts lands, as popover text (MEGACITY §8.4: every owned district of that kind):
+ * the one owned district by name ("in Halfway Towers": a 5×5 repeat by its own name), "in 2 Flats districts" for
+ * several, else the kind's own district (TARGET_TEXT; the effect is then skipped, §8.4).
+ */
+export function districtPlace(world: World, kind: DistrictKind): string {
+  const slots = ownedOfKind(world, kind);
+  if (slots.length > 1) return `in ${slots.length} ${KIND_GROUP[kind]}`;
+  if (slots.length === 1) {
+    const def = DISTRICTS[kind];
+    const v = world.variantOf(slots[0]);
+    const name = v > 0 ? def.variants[v - 1]?.name ?? def.name : def.name;
+    return kind === 'sunk' ? 'in the Sunk' : `in ${name}`;
+  }
+  return TARGET_TEXT[`slot:${kind}`];
+}
+
+/** A target as popover text: a `slot:<kind>` target names the districts it acts on (districtPlace). */
+function targetText(world: World, at: Target): string {
+  const kind = slotKindOf(at);
+  return kind ? districtPlace(world, kind) : TARGET_TEXT[at];
+}
+
+// ── District verbs (MEGACITY §8.4) ──────────────────────────────────────────
+//
+// The closed Effect union (story/types.ts, frozen since Step 0b) has no member for the story verbs that change a
+// district's ground, so each verb is written as a reserved flag: `flag brownfield=cleared` is `brownfield clear`.
+// Setting the flag records the choice (marks and later cards can read it) and runs the verb once, on the districts
+// of that kind owned now (districts annexed later keep their own ground, §3.7); with none owned it changes nothing.
+
+export interface DistrictVerb {
+  key: string;
+  v: string;
+  kind: DistrictKind;
+  /** What it does, before the place ('brownfield cleared'). */
+  what: string;
+  /** Popover text with the kind's own district as the place (effectText names the districts it acts on). */
+  text: string;
+  /** Only the kind's own district (variant 0) has what it changes: Tarmac Reach's apron families (§3.7). */
+  ownOnly?: boolean;
+  /** Applies the change; returns the tiles changed. */
+  run: (world: World) => number;
+}
+
+const verb = (d: Omit<DistrictVerb, 'text'>): DistrictVerb => ({ ...d, text: `${d.what} ${TARGET_TEXT[`slot:${d.kind}`]}` });
+
+/** The five verbs of §8.4, by `key=value`. */
+export const DISTRICT_VERBS: Readonly<Record<string, DistrictVerb>> = Object.fromEntries(
+  [
+    verb({ key: 'brownfield', v: 'cleared', kind: 'flats', what: 'brownfield cleared', run: clearBrownfield }),
+    verb({ key: 'ruins', v: 'cleared', kind: 'sunk', what: 'ruins cleared for builders', run: clearRuins }),
+    verb({ key: 'reeds', v: 'drained', kind: 'reedmere', what: 'near bank reeds drained', run: drainReeds }),
+    verb({ key: 'apron', v: 'rehoused', kind: 'tarmac', what: 'apron homes rebuilt', ownOnly: true, run: (w: World) => apron(w, 'rehouse') }),
+    verb({ key: 'apron', v: 'cleared', kind: 'tarmac', what: 'apron cleared', ownOnly: true, run: (w: World) => apron(w, 'clear') }),
+  ].map((d) => [`${d.key}=${d.v}`, d]),
+);
+
+/** A district verb's popover text, naming the owned districts it acts on now (districtPlace). */
+export function districtVerbText(world: World, d: DistrictVerb): string {
+  return d.ownOnly ? d.text : `${d.what} ${districtPlace(world, d.kind)}`;
+}
+
+/** The district verb a flag write runs, or null for an ordinary flag. */
+export function districtVerb(key: string, v: FlagValue | '+1' | '$patron'): DistrictVerb | null {
+  if (typeof v !== 'string') return null;
+  return DISTRICT_VERBS[`${key}=${v}`] ?? null;
+}
+
+/** Pact (§3.6): extends an active one; gangActions +1; news. Skipped under a lockPacts ending. */
+export function signPactEffect(world: World, gang: GangId, months: number): boolean {
+  if (endingRules(world)?.lockPacts) return false;
+  const s = world.story;
+  const until = world.tick + Math.max(1, Math.round(months)) * DAYS_PER_MONTH;
+  const p = s.pacts.find((k) => k.gang === gang);
+  if (p) p.until = Math.max(p.until, until);
+  else s.pacts.push({ gang, until });
+  s.gangActions++;
+  world.addNews(`${capitalizeFirst(GANG_NEWS_NAME[gang])} keep to their streets. Somebody is paying for it.`, 'info');
+  turf.refreshStats(world);
+  return true;
+}
+
+// ── Tokens (§0) ─────────────────────────────────────────────────────────────
+
+function newsTokens(ctx: EffectCtx): Record<string, string> {
+  const name = ctx.lastName ?? 'plant';
+  return { plant: name, building: name };
+}
+
+/**
+ * Neighbourhood name of a tile (map centre when −1), the `{district}` token: today's names in Charter Shore, the
+ * district's own list elsewhere (MEGACITY §3.7, districts/names.ts). Never longer than CARD_TOKEN_MAX.district.
+ */
+export function districtOf(world: World, i: number): string {
+  const N = world.N;
+  const area = world.area;
+  const c = i >= 0 && i < area ? i : idxOf(world, N >> 1, N >> 1);
+  const x = xOf(world, c);
+  const y = yOf(world, c);
+  return world.slotAt(x, y) >= 0 ? neighbourhoodAt(world, x, y) : districtName(x, y, world.seed, artOffset(world));
+}
+
+/** Fill {city} {district} {patron} {rival} {year} {coherence} (plus `extra`). Unknown tokens stay. */
+export function fillTokens(world: World, text: string, spot = -1, extra?: Record<string, string>): string {
+  if (!text || text.indexOf('{') < 0) return text;
+  return text.replace(/\{(\w+)\}/g, (all, k: string) => {
+    switch (k) {
+      case 'city':
+        return world.cityName;
+      case 'district':
+        return districtOf(world, spot);
+      case 'patron':
+        return FACTION_LABELS[patronOf(world)].name;
+      case 'rival':
+        return FACTION_LABELS[rivalOf(world)].name;
+      case 'year':
+        return String(world.year);
+      case 'coherence':
+        return String(coherenceFor(world.story.logs.length));
+    }
+    return extra?.[k] ?? all;
+  });
+}
+
+// ── Hints and effect text (§8.2) ────────────────────────────────────────────
+
+const pipsOf = (v: number): 1 | 2 | 3 => (Math.abs(v) >= 20 ? 3 : Math.abs(v) >= 10 ? 2 : 1);
+
+/**
+ * Hint chips for a list of effects: favor ▲/▼ pips, CR, Trace, timed, unlock, log,
+ * offline, abandon, Charter Night, a follow-up card, maybe (inside an `if`).
+ */
+export function hintsFor(world: World, fx: readonly Effect[] | undefined): Hint[] {
+  if (!fx?.length) return [];
+  const favor: Partial<Record<FactionId, number>> = {};
+  let cr = 0;
+  let trace = 0;
+  let months = 0;
+  let unlock = false;
+  let log = false;
+  let maybe = false;
+  let offline = false;
+  let abandon = false;
+  let follow = false;
+  let charter = false;
+  let grants = 0;
+  for (const e of fx) {
+    switch (e.t) {
+      case 'favor':
+        // A hidden faction (the Tuning, §2.2) is never named before it shows itself.
+        for (const f of resolveRef(world, e.f)) if (isVisible(world, f)) favor[f] = (favor[f] ?? 0) + e.v;
+        break;
+      case 'funds':
+        cr += e.v;
+        break;
+      case 'trace':
+        trace += e.v;
+        break;
+      case 'mod':
+        if (e.days !== 'perm') months = Math.max(months, Math.max(1, Math.round(e.days / DAYS_PER_MONTH)));
+        break;
+      case 'income':
+        months = Math.max(months, e.months);
+        break;
+      case 'unlock':
+      case 'credit':
+        unlock = true;
+        break;
+      case 'log':
+        log = true;
+        break;
+      case 'if':
+        maybe = true;
+        break;
+      case 'offline':
+        offline = true;
+        break;
+      case 'abandon':
+        abandon = true;
+        break;
+      case 'queue':
+        // A whisper only reaches the ticker; any other queued card is something the player will read.
+        if (storyContent().cards.get(e.card)?.kind !== 'whisper') follow = true;
+        break;
+      case 'charterNight':
+        charter = true;
+        break;
+      case 'grant':
+        grants += Math.max(0, Math.floor(e.n));
+        break;
+    }
+  }
+  const out: Hint[] = [];
+  for (const f of FACTION_IDS) {
+    const v = favor[f];
+    if (v) out.push({ k: 'favor', f, dir: v > 0 ? 1 : -1, pips: pipsOf(v) });
+  }
+  if (cr) out.push({ k: 'cr', v: cr });
+  if (trace) out.push({ k: 'trace', v: trace });
+  if (months) out.push({ k: 'timed', months });
+  if (unlock) out.push({ k: 'unlock' });
+  if (log) out.push({ k: 'log' });
+  if (offline) out.push({ k: 'offline' });
+  if (abandon) out.push({ k: 'abandon' });
+  if (charter) out.push({ k: 'charter' });
+  if (grants > 0) out.push({ k: 'grant', n: grants });
+  if (follow) out.push({ k: 'follow' });
+  if (maybe) out.push({ k: 'maybe' });
+  return out;
+}
+
+const trimZeros = (s: string) => (s.includes('.') ? s.replace(/0+$/, '').replace(/\.$/, '') : s);
+const signed = (v: number, digits = 0) => `${v >= 0 ? '+' : '−'}${trimZeros(Math.abs(v).toFixed(digits))}`;
+const cr = (v: number) => `${v >= 0 ? '+' : '−'}${Math.abs(Math.round(v)).toLocaleString('en-US')} CR`;
+
+const MOD_LABEL: Record<string, string> = {
+  demandRes: 'Hab demand',
+  demandCom: 'Market demand',
+  demandInd: 'Fab demand',
+  crimeAdd: 'crime',
+  landValueAdd: 'land value',
+  approvalAdd: 'approval',
+  traceMonthly: 'Trace a month',
+  outageChance: 'outage chance',
+  crimeMul: 'crime',
+  turfCrimeMul: 'turf crime',
+  pollutionMul: 'pollution',
+  trafficMul: 'traffic',
+  securityMul: 'security',
+  taxIncomeMul: 'tax income',
+  taxDemandMul: 'tax pressure',
+  upkeepMul: 'upkeep',
+  buildCostMul: 'build costs',
+  powerSupplyMul: 'power supply',
+  powerDemandMul: 'power demand',
+  growthMul: 'growth',
+  abandonMul: 'abandonment',
+  eventRateMul: 'incidents',
+  cardRateMul: 'faction cards',
+  turfSpreadMul: 'turf spread',
+};
+
+/** Short text for a modifier patch, e.g. "build costs ×1.15 · approval −3". */
+export function describePatch(p: ModPatch | undefined): string {
+  if (!p) return '';
+  const parts: string[] = [];
+  for (const [k, v] of Object.entries(p) as [keyof SimMods, unknown][]) {
+    if (k === 'costMul' || k === 'upkeepMulType' || k === 'favorMonthly') continue;
+    if (typeof v !== 'number' || !Number.isFinite(v)) continue;
+    const label = MOD_LABEL[k] ?? k;
+    if (k === 'taxCap') parts.push(`tax cap ${v}%`);
+    else if (k.endsWith('Mul')) parts.push(`${label} ×${Math.round(v * 100) / 100}`);
+    else if (k === 'approvalAdd' || k === 'traceMonthly') parts.push(`${label} ${signed(v)}`);
+    else if (k === 'outageChance') parts.push(`${label} ${Math.round(v * 100)}%`);
+    else parts.push(`${label} ${signed(v, 2)}`);
+  }
+  for (const [t, v] of Object.entries(p.costMul ?? {})) {
+    const name = BUILDINGS[t as BuildingType]?.name ?? t;
+    parts.push(v === 0 ? `${name} free` : `${name} cost ×${Math.round((v as number) * 100) / 100}`);
+  }
+  for (const [t, v] of Object.entries(p.upkeepMulType ?? {})) {
+    parts.push(`${BUILDINGS[t as BuildingType]?.name ?? t} upkeep ×${Math.round((v as number) * 100) / 100}`);
+  }
+  for (const [f, v] of Object.entries(p.favorMonthly ?? {})) {
+    parts.push(`${FACTION_LABELS[f as FactionId]?.short ?? f} ${signed(v as number)} a month`);
+  }
+  return parts.join(' · ');
+}
+
+
+const short = (f: FactionId) => FACTION_LABELS[f]?.short ?? f;
+const months = (days: number) => `${Math.max(1, Math.round(days / DAYS_PER_MONTH))} mo`;
+
+/** One effect as popover text (resolved now: patron, rival, fan-outs). */
+export function effectText(world: World, e: Effect): string {
+  switch (e.t) {
+    case 'funds':
+      return cr(e.v);
+    case 'favor':
+      return resolveRef(world, e.f)
+        .filter((f) => isVisible(world, f)) // the hidden Tuning stays unnamed (§2.2)
+        .map((f) => `${short(f)} ${signed(e.v)}`)
+        .join(', ');
+    case 'trace':
+      return `Trace ${signed(e.v)}`;
+    case 'mod':
+      return `${describePatch(e.mods)}${e.days === 'perm' ? '' : ` for ${months(e.days)}`}`;
+    case 'income':
+      return `${cr(e.perMonth)} a month for ${e.months} mo (${e.label})`;
+    case 'local': {
+      const p: string[] = [];
+      if (e.crimeAdd) p.push(`crime ${signed(e.crimeAdd, 2)}`);
+      if (e.lvAdd) p.push(`land value ${signed(e.lvAdd, 2)}`);
+      return `${p.join(', ')} ${targetText(world, e.at)} for ${months(e.days)}`;
+    }
+    case 'turf': {
+      const g = e.gang === 'all' ? 'all turf' : `${short(e.gang)} turf`;
+      switch (e.op) {
+        case 'seed':
+          return `${short(e.gang === 'all' ? 'undertow' : e.gang)} tags ${targetText(world, e.at)}`;
+        case 'str':
+          return `${g} ${signed(e.v ?? 0)} ${targetText(world, e.at)}`;
+        case 'clear':
+          return `${g} cleared ${targetText(world, e.at)}`;
+        case 'flip':
+          return `${g} flips to ${short(e.to ?? 'kites')} ${targetText(world, e.at)}`;
+        case 'freeze':
+          return `turf frozen for ${months(e.days ?? 0)}`;
+      }
+      return '';
+    }
+    case 'offline': {
+      const what =
+        e.what === 'plant' ? 'plants' : e.what === 'rail' ? 'a ribbon line' : e.what === 'district' ? 'the district' : e.what === 'nearTurf' ? 'buildings near turf' : e.what.map((t) => BUILDINGS[t]?.name ?? t).join(', ');
+      return `${e.n === 'all' ? 'all ' : e.what === 'district' || e.what === 'rail' ? '' : `${e.n} `}${what} offline ${Math.min(MAX_OFFLINE, e.days)}d`;
+    }
+    case 'abandon':
+      return `${e.n} blocks abandoned ${targetText(world, e.at)}`;
+    case 'renew':
+      return `dark lots renewed ${targetText(world, e.at)}`;
+    case 'unlock':
+      return `Unlock: ${BUILDINGS[e.what as BuildingType]?.name ?? e.what}`;
+    case 'credit': {
+      const what = e.what === 'patronExclusive' ? (patronOf(world) === 'basalt' ? 'foundry' : 'glarewall') : e.what;
+      const name = BUILDINGS[what]?.name ?? what;
+      return e.mul === 0 ? `next ${name} free` : `next ${name} ${signed(Math.round((e.mul - 1) * 100))}%`;
+    }
+    case 'flag': {
+      const d = districtVerb(e.key, e.v);
+      return d ? districtVerbText(world, d) : '';
+    }
+    case 'floor':
+      return `${short(e.f)} never below ${e.v}`;
+    case 'ceil':
+      return `${short(e.f)} never above ${e.v}`;
+    case 'pact':
+      return `${short(e.gang)} pact for ${e.months} mo`;
+    case 'queue': {
+      // A whisper only reaches the ticker; any other queued card follows up on this choice.
+      const k = storyContent().cards.get(e.card)?.kind;
+      return k === 'whisper' ? '' : e.days > 0 ? 'a follow-up later' : 'a follow-up next';
+    }
+    case 'log':
+      return `Silt Log ${String(e.n).padStart(2, '0')}`;
+    case 'reveal':
+      return 'You are revealed';
+    case 'news':
+      return '';
+    case 'gangAction':
+      return e.crackdown ? 'counts as a crackdown' : '';
+    case 'countdown':
+      return `count in ${months(e.days)}`;
+    case 'charterNight':
+      return 'Charter Night';
+    case 'ending':
+      return 'An ending';
+    case 'if':
+      return 'depends on the city';
+    case 'grant':
+      return `+${e.n} land grant${e.n === 1 ? '' : 's'}`;
+  }
+  return '';
+}
+
+/** The exact-effects popover text for a choice: parts joined by ' · ' ("No effect." when empty). */
+export function effectsText(world: World, fx: readonly Effect[] | undefined): string {
+  const parts: string[] = [];
+  for (const e of fx ?? []) {
+    const t = effectText(world, e);
+    if (t) parts.push(t);
+  }
+  return parts.length ? parts.join(' · ') : 'No effect.';
+}
+
+/** Silt Log id helper: 7 → 'log.07'. */
+export const logId = (n: number) => `log.${String(n).padStart(2, '0')}`;
+
+/** Standing band used by whispers (warm / neutral / cold). */
+export function whisperBand(standingValue: number): 'warm' | 'neutral' | 'cold' {
+  if (standingValue >= STANDING.friendly) return 'warm';
+  if (standingValue <= STANDING.cold) return 'cold';
+  return 'neutral';
+}

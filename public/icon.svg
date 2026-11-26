@@ -1,0 +1,56 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1a0d3a" />
+      <stop offset="0.55" stop-color="#0d0920" />
+      <stop offset="1" stop-color="#07060d" />
+    </linearGradient>
+    <radialGradient id="halo" cx="0.5" cy="0.42" r="0.5">
+      <stop offset="0" stop-color="#ff2bd6" stop-opacity="0.35" />
+      <stop offset="0.6" stop-color="#7b5cff" stop-opacity="0.12" />
+      <stop offset="1" stop-color="#7b5cff" stop-opacity="0" />
+    </radialGradient>
+    <linearGradient id="floor" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#22e5ff" stop-opacity="0.16" />
+      <stop offset="1" stop-color="#ff2bd6" stop-opacity="0.06" />
+    </linearGradient>
+    <radialGradient id="beacon">
+      <stop offset="0" stop-color="#ff3b5c" stop-opacity="0.9" />
+      <stop offset="1" stop-color="#ff3b5c" stop-opacity="0" />
+    </radialGradient>
+    <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="3.5" result="b" />
+      <feMerge><feMergeNode in="b" /><feMergeNode in="SourceGraphic" /></feMerge>
+    </filter>
+  </defs>
+  <rect width="512" height="512" rx="112" fill="url(#bg)" />
+  <rect width="512" height="512" rx="112" fill="url(#halo)" />
+  <g transform="translate(20.5 20.5) scale(0.92)"><polygon points="256,294 452,392 256,490 60,392" fill="url(#floor)" stroke="#22e5ff" stroke-opacity="0.55" stroke-width="3" /><line x1="109" y1="367.5" x2="305" y2="465.5" stroke="#22e5ff" stroke-opacity="0.22" stroke-width="2" /><line x1="403" y1="367.5" x2="207" y2="465.5" stroke="#ff2bd6" stroke-opacity="0.22" stroke-width="2" /><line x1="158" y1="343" x2="354" y2="441" stroke="#22e5ff" stroke-opacity="0.22" stroke-width="2" /><line x1="354" y1="343" x2="158" y2="441" stroke="#ff2bd6" stroke-opacity="0.22" stroke-width="2" /><line x1="207" y1="318.5" x2="403" y2="416.5" stroke="#22e5ff" stroke-opacity="0.22" stroke-width="2" /><line x1="305" y1="318.5" x2="109" y2="416.5" stroke="#ff2bd6" stroke-opacity="0.22" stroke-width="2" />
+  <g>
+    <polygon points="122,352 168,375 168,243 122,220" fill="#1a1036" />
+    <polygon points="168,375 214,352 214,220 168,243" fill="#0d1630" />
+    <polygon points="122,220 168,197 214,220 168,243" fill="#2a1d55" />
+    <g opacity="0.95"><line x1="128.4" y1="333.2" x2="161.6" y2="349.8" stroke="#ffb02e" stroke-width="5" stroke-dasharray="8 7" /><line x1="128.4" y1="313.2" x2="161.6" y2="329.8" stroke="#ffb02e" stroke-width="5" stroke-dasharray="8 7" /><line x1="128.4" y1="293.2" x2="161.6" y2="309.8" stroke="#ffb02e" stroke-width="5" stroke-dasharray="8 7" /><line x1="128.4" y1="273.2" x2="161.6" y2="289.8" stroke="#ffb02e" stroke-width="5" stroke-dasharray="8 7" /><line x1="128.4" y1="253.2" x2="161.6" y2="269.8" stroke="#ffb02e" stroke-width="5" stroke-dasharray="8 7" /><line x1="174.4" y1="339.8" x2="207.6" y2="323.2" stroke="#22e5ff" stroke-width="5" stroke-dasharray="6 9" /><line x1="174.4" y1="319.8" x2="207.6" y2="303.2" stroke="#22e5ff" stroke-width="5" stroke-dasharray="6 9" /><line x1="174.4" y1="299.8" x2="207.6" y2="283.2" stroke="#22e5ff" stroke-width="5" stroke-dasharray="6 9" /><line x1="174.4" y1="279.8" x2="207.6" y2="263.2" stroke="#22e5ff" stroke-width="5" stroke-dasharray="6 9" /><line x1="174.4" y1="259.8" x2="207.6" y2="243.2" stroke="#22e5ff" stroke-width="5" stroke-dasharray="6 9" /></g>
+    <polyline points="122,352 122,220 168,197 214,220 214,352" fill="none" stroke="#ffb02e" stroke-width="4" stroke-linejoin="round" filter="url(#glow)" />
+    <line x1="168" y1="243" x2="168" y2="375" stroke="#ffb02e" stroke-width="3" opacity="0.9" />
+  </g>
+  <g>
+    <polygon points="182,376 256,413 256,151 182,114" fill="#1d0f3d" />
+    <polygon points="256,413 330,376 330,114 256,151" fill="#0b1734" />
+    <polygon points="182,114 256,77 330,114 256,151" fill="#3a1f6e" />
+    <g opacity="0.95"><line x1="192.4" y1="351.2" x2="245.6" y2="377.8" stroke="#ff2bd6" stroke-width="5" stroke-dasharray="11 6" /><line x1="192.4" y1="329.2" x2="245.6" y2="355.8" stroke="#ff2bd6" stroke-width="5" stroke-dasharray="11 6" /><line x1="192.4" y1="307.2" x2="245.6" y2="333.8" stroke="#ff2bd6" stroke-width="5" stroke-dasharray="11 6" /><line x1="192.4" y1="285.2" x2="245.6" y2="311.8" stroke="#ff2bd6" stroke-width="5" stroke-dasharray="11 6" /><line x1="192.4" y1="263.2" x2="245.6" y2="289.8" stroke="#ff2bd6" stroke-width="5" stroke-dasharray="11 6" /><line x1="192.4" y1="241.2" x2="245.6" y2="267.8" stroke="#ff2bd6" stroke-width="5" stroke-dasharray="11 6" /><line x1="192.4" y1="219.2" x2="245.6" y2="245.8" stroke="#ff2bd6" stroke-width="5" stroke-dasharray="11 6" /><line x1="192.4" y1="197.2" x2="245.6" y2="223.8" stroke="#ff2bd6" stroke-width="5" stroke-dasharray="11 6" /><line x1="192.4" y1="175.2" x2="245.6" y2="201.8" stroke="#ff2bd6" stroke-width="5" stroke-dasharray="11 6" /><line x1="192.4" y1="153.2" x2="245.6" y2="179.8" stroke="#ff2bd6" stroke-width="5" stroke-dasharray="11 6" /><line x1="266.4" y1="366.8" x2="319.6" y2="340.2" stroke="#22e5ff" stroke-width="5" stroke-dasharray="9 8" /><line x1="266.4" y1="344.8" x2="319.6" y2="318.2" stroke="#22e5ff" stroke-width="5" stroke-dasharray="9 8" /><line x1="266.4" y1="322.8" x2="319.6" y2="296.2" stroke="#22e5ff" stroke-width="5" stroke-dasharray="9 8" /><line x1="266.4" y1="300.8" x2="319.6" y2="274.2" stroke="#22e5ff" stroke-width="5" stroke-dasharray="9 8" /><line x1="266.4" y1="278.8" x2="319.6" y2="252.2" stroke="#22e5ff" stroke-width="5" stroke-dasharray="9 8" /><line x1="266.4" y1="256.8" x2="319.6" y2="230.2" stroke="#22e5ff" stroke-width="5" stroke-dasharray="9 8" /><line x1="266.4" y1="234.8" x2="319.6" y2="208.2" stroke="#22e5ff" stroke-width="5" stroke-dasharray="9 8" /><line x1="266.4" y1="212.8" x2="319.6" y2="186.2" stroke="#22e5ff" stroke-width="5" stroke-dasharray="9 8" /><line x1="266.4" y1="190.8" x2="319.6" y2="164.2" stroke="#22e5ff" stroke-width="5" stroke-dasharray="9 8" /><line x1="266.4" y1="168.8" x2="319.6" y2="142.2" stroke="#22e5ff" stroke-width="5" stroke-dasharray="9 8" /></g>
+    <polyline points="182,376 182,114 256,77 330,114 330,376" fill="none" stroke="#ff2bd6" stroke-width="4" stroke-linejoin="round" filter="url(#glow)" />
+    <line x1="256" y1="151" x2="256" y2="413" stroke="#22e5ff" stroke-width="3" opacity="0.9" />
+  </g>
+  <g>
+    <polygon points="300,398 346,421 346,325 300,302" fill="#170e33" />
+    <polygon points="346,421 392,398 392,302 346,325" fill="#0a1a33" />
+    <polygon points="300,302 346,279 392,302 346,325" fill="#1f3a5e" />
+    <g opacity="0.95"><line x1="306.4" y1="381.2" x2="339.6" y2="397.8" stroke="#ff2bd6" stroke-width="5" stroke-dasharray="7 8" /><line x1="306.4" y1="363.2" x2="339.6" y2="379.8" stroke="#ff2bd6" stroke-width="5" stroke-dasharray="7 8" /><line x1="306.4" y1="345.2" x2="339.6" y2="361.8" stroke="#ff2bd6" stroke-width="5" stroke-dasharray="7 8" /><line x1="306.4" y1="327.2" x2="339.6" y2="343.8" stroke="#ff2bd6" stroke-width="5" stroke-dasharray="7 8" /><line x1="352.4" y1="388.8" x2="385.6" y2="372.2" stroke="#4dff9a" stroke-width="5" stroke-dasharray="8 6" /><line x1="352.4" y1="370.8" x2="385.6" y2="354.2" stroke="#4dff9a" stroke-width="5" stroke-dasharray="8 6" /><line x1="352.4" y1="352.8" x2="385.6" y2="336.2" stroke="#4dff9a" stroke-width="5" stroke-dasharray="8 6" /></g>
+    <polyline points="300,398 300,302 346,279 392,302 392,398" fill="none" stroke="#22e5ff" stroke-width="4" stroke-linejoin="round" filter="url(#glow)" />
+    <line x1="346" y1="325" x2="346" y2="421" stroke="#22e5ff" stroke-width="3" opacity="0.9" />
+  </g><line x1="256" y1="114" x2="256" y2="59" stroke="#a6acd2" stroke-width="4" />
+    <circle cx="256" cy="55" r="16" fill="url(#beacon)" />
+    <circle cx="256" cy="55" r="6" fill="#ff3b5c" />
+  </g>
+</svg>

@@ -1,0 +1,167 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// Sprite cache for static building bodies.
+//
+// Each entry is an offscreen canvas holding one building body painted at one
+// (night bucket, scale bucket, LOD) combination. Keys are plain integers, so
+// the per-building hot path does no string work.
+//
+//  * Memory is capped (~32 MB of pixels). Least recently used entries that were
+//    not drawn in the last couple of frames are evicted first; entries in use
+//    are never evicted (the cap may be exceeded briefly rather than thrash).
+//  * Painting new sprites is time-budgeted per frame. When over budget, the
+//    most recent sprite of the same body (other night or scale bucket) is
+//    drawn instead, so zooming and dusk transitions refine smoothly instead of
+//    hitching. A body that has never been painted is painted at once, unless it
+//    names a cross-family fallback (MEGACITY §6.1: a kit body shows the classic
+//    body of its zone, level, tier and palette, painted first and kept warm,
+//    until its turn in the budget), so panning into a new district never hitches.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface Sprite {
+  canvas: HTMLCanvasElement;
+  /** World-px rect relative to the footprint's top corner. */
+  ox: number;
+  oy: number;
+  w: number;
+  h: number;
+  /** Device px per world px the sprite was painted at. */
+  scale: number;
+  bytes: number;
+  used: number;
+  key: number;
+  family: number;
+}
+
+export const NIGHT_STEPS = 7; // buckets 0..6
+/** Scale ladder 2^(k/3), k = -7..6 → ~0.2 .. 4 device px per world px. */
+export const SCALE_MIN_K = -7;
+export const SCALE_MAX_K = 6;
+
+export function nightBucket(n: number): number {
+  return Math.max(0, Math.min(NIGHT_STEPS - 1, Math.round(n * (NIGHT_STEPS - 1))));
+}
+export function nightOfBucket(b: number): number {
+  return b / (NIGHT_STEPS - 1);
+}
+/**
+ * Ladder step at or just below `scale`, as a bucket index 0..13. Used while the
+ * zoom is changing; slight upscaling keeps software rasterizers on their fast
+ * path (downscaled blits can trigger per-draw mipmap rebuilds).
+ */
+export function scaleBucket(scale: number): number {
+  const k = Math.floor(3 * Math.log2(Math.max(1e-3, scale)) + 0.05);
+  return Math.max(SCALE_MIN_K, Math.min(SCALE_MAX_K, k)) - SCALE_MIN_K;
+}
+export function scaleOfBucket(b: number): number {
+  return Math.pow(2, (b + SCALE_MIN_K) / 3);
+}
+
+export class SpriteCache {
+  private map = new Map<number, Sprite>();
+  /** Most recent sprite per family (body × LOD): the fallback when over budget. */
+  private latest = new Map<number, Sprite>();
+  bytes = 0;
+  frame = 0;
+  private spent = 0;
+  /** Max ms per frame spent painting sprites that have a fallback. */
+  budgetMs = 3;
+  capBytes = 32 * 1024 * 1024;
+  /** Sprites painted this frame (stats). */
+  built = 0;
+  /** Cross-family fallback draws this frame (stats: frames showing a fallback body, V1). */
+  fallbacks = 0;
+  /**
+   * Same-family stand-ins this frame: a body drawn from its sprite at another night or scale bucket because the budget
+   * was spent (after a night-bucket change or a zoom). The Renderer then paints from the screen centre outward.
+   */
+  stale = 0;
+
+  newFrame() {
+    this.frame++;
+    this.spent = 0;
+    this.built = 0;
+    this.fallbacks = 0;
+    this.stale = 0;
+  }
+
+  /** Ms spent painting sprites this frame (stats: paint p95, V1). */
+  get spentMs(): number {
+    return this.spent;
+  }
+
+  /** True if painting more sprites this frame is still within budget. */
+  canBuild(): boolean {
+    return this.spent < this.budgetMs;
+  }
+
+  /** Is `key` painted (no LRU touch)? */
+  has(key: number): boolean {
+    return this.map.has(key);
+  }
+
+  /**
+   * Fetch the sprite for `key`, painting it with `build` if missing (subject to
+   * the frame budget when a fallback for `family` exists, or when `fallback`
+   * names another family's sprite to show meanwhile).
+   */
+  get(key: number, family: number, build: () => Sprite | null, fallback?: () => Sprite | null): Sprite | null {
+    const s = this.map.get(key);
+    if (s) {
+      s.used = this.frame;
+      return s;
+    }
+    const fb = this.latest.get(family);
+    const over = !this.canBuild();
+    if (fb && over) {
+      fb.used = this.frame;
+      this.stale++;
+      return fb;
+    }
+    if (!fb && fallback && over) {
+      const cf = fallback();
+      if (cf) {
+        this.fallbacks++;
+        return cf;
+      }
+    }
+    const t0 = performance.now();
+    const ns = build();
+    this.spent += performance.now() - t0;
+    if (!ns) return fb ?? null;
+    ns.key = key;
+    ns.family = family;
+    ns.used = this.frame;
+    this.map.set(key, ns);
+    this.latest.set(family, ns);
+    this.bytes += ns.bytes;
+    this.built++;
+    if (this.bytes > this.capBytes) this.evict();
+    return ns;
+  }
+
+  private evict() {
+    const target = this.capBytes * 0.8;
+    const old: Sprite[] = [];
+    for (const s of this.map.values()) if (s.used < this.frame - 1) old.push(s);
+    old.sort((a, b) => a.used - b.used);
+    for (const s of old) {
+      if (this.bytes <= target) break;
+      this.map.delete(s.key);
+      if (this.latest.get(s.family) === s) this.latest.delete(s.family);
+      this.bytes -= s.bytes;
+      // Release the backing store promptly (helps mobile browsers).
+      s.canvas.width = s.canvas.height = 0;
+    }
+  }
+
+  clear() {
+    for (const s of this.map.values()) s.canvas.width = s.canvas.height = 0;
+    this.map.clear();
+    this.latest.clear();
+    this.bytes = 0;
+  }
+
+  get size(): number {
+    return this.map.size;
+  }
+}

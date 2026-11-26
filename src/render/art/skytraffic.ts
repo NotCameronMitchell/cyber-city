@@ -1,0 +1,608 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// Sky layer: flying cars on a few altitude lanes, searchlight beams sweeping
+// from the tallest towers at night, the occasional advertising blimp or drone
+// carrying an animated holo panel, and delivery drones (MEGACITY §6.4): tiny
+// blinking dots hopping between Market tiles in view (≤ 28, ≤ 10 at low
+// quality, none in lower detail, zoom ≥ 0.45). Everything scales with
+// population: an empty city has an empty sky.
+// ─────────────────────────────────────────────────────────────────────────────
+
+import { artOffset } from '../../game/districts/slots';
+import { hash2 } from '../../game/rng';
+import { ZoneType } from '../../game/types';
+import type { World } from '../../game/world';
+import { serviceBuildingHeight, zoneBuildingHeight } from '../buildings';
+import { HALF_H, HALF_W } from '../camera';
+import { css, glowSprite, mix, type RGB } from '../palette';
+import { GLYPHS } from './painter';
+import type { Bounds } from './traffic';
+
+
+interface Lane {
+  /** 0: runs along u at v = c; 1: runs along v at u = c. */
+  axis: number;
+  c: number;
+  z: number;
+  /** The span flyers run over along the lane (the owned box, MEGACITY §3.9): from lo to hi tiles. */
+  lo: number;
+  hi: number;
+}
+
+interface Flyer {
+  lane: number;
+  s: number;
+  speed: number;
+  col: number;
+  ph: number;
+  dying: number;
+  age: number;
+}
+
+interface Light {
+  x: number;
+  y: number;
+  ph: number;
+  col: number;
+  twin: boolean;
+}
+
+/** A delivery drone: from one Market tile to another (tile space), at height z px. */
+interface Drone {
+  u: number;
+  v: number;
+  tu: number;
+  tv: number;
+  z: number;
+  speed: number;
+  /** Seconds hovering over a drop. */
+  hover: number;
+  hops: number;
+  ph: number;
+  age: number;
+  dying: number;
+  col: number;
+}
+
+/** Delivery drones at most (§6.4 "the existing sky budget"). */
+export const DRONE_CAP = 28;
+export const DRONE_CAP_LOW = 10;
+
+interface Blimp {
+  axis: number;
+  c: number;
+  z: number;
+  s: number;
+  speed: number;
+  drone: boolean;
+  ph: number;
+}
+
+const FLYER_COLS: RGB[] = [
+  [90, 230, 255],
+  [255, 70, 200],
+  [255, 190, 80],
+  [235, 240, 255],
+];
+const BEAM_COLS: RGB[] = [
+  [200, 220, 255],
+  [120, 230, 255],
+  [255, 120, 220],
+];
+
+function makeBeam(c: RGB): HTMLCanvasElement {
+  const cv = document.createElement('canvas');
+  cv.width = 48;
+  cv.height = 256;
+  const g = cv.getContext('2d')!;
+  const grad = g.createLinearGradient(0, 256, 0, 0);
+  grad.addColorStop(0, css(c, 0.55));
+  grad.addColorStop(0.35, css(c, 0.22));
+  grad.addColorStop(1, css(c, 0));
+  g.fillStyle = grad;
+  g.beginPath();
+  g.moveTo(22, 256);
+  g.lineTo(26, 256);
+  g.lineTo(48, 0);
+  g.lineTo(0, 0);
+  g.closePath();
+  g.fill();
+  // Brighter core.
+  const core = g.createLinearGradient(0, 256, 0, 0);
+  core.addColorStop(0, css(c, 0.5));
+  core.addColorStop(0.5, css(c, 0.08));
+  core.addColorStop(1, css(c, 0));
+  g.fillStyle = core;
+  g.beginPath();
+  g.moveTo(23, 256);
+  g.lineTo(25, 256);
+  g.lineTo(30, 0);
+  g.lineTo(18, 0);
+  g.closePath();
+  g.fill();
+  return cv;
+}
+
+function makeBlimpBody(): HTMLCanvasElement {
+  const cv = document.createElement('canvas');
+  cv.width = 96;
+  cv.height = 32;
+  const g = cv.getContext('2d')!;
+  const grad = g.createLinearGradient(0, 2, 0, 30);
+  grad.addColorStop(0, '#8a8ea4');
+  grad.addColorStop(0.45, '#4a4c60');
+  grad.addColorStop(1, '#1c1c28');
+  g.fillStyle = grad;
+  g.beginPath();
+  g.ellipse(48, 16, 46, 13, 0, 0, Math.PI * 2);
+  g.fill();
+  g.fillStyle = '#26262f';
+  g.fillRect(40, 27, 16, 4);
+  // Fins.
+  g.fillStyle = '#3a3a4c';
+  g.beginPath();
+  g.moveTo(4, 16);
+  g.lineTo(-2, 6);
+  g.lineTo(12, 12);
+  g.closePath();
+  g.fill();
+  return cv;
+}
+
+export class SkyTraffic {
+  private lanes: Lane[] = [];
+  private flyers: Flyer[] = [];
+  private lights: Light[] = [];
+  private drones: Drone[] = [];
+  private dronesOn = true;
+  private scan = 0;
+  private blimp: Blimp | null = null;
+  private blimpTimer = 20;
+  private worldRef: World | null = null;
+  /** world.slotsVersion the lanes were laid out for (an annex grows the owned box). */
+  private slotsSeen = -1;
+  private target = 0;
+  private flyerCss: string[] = FLYER_COLS.map((c) => css(c));
+  private flyerGlow: HTMLCanvasElement[] | null = null;
+  private beams: HTMLCanvasElement[] | null = null;
+  private blimpBody: HTMLCanvasElement | null = null;
+  private ramp: string[] = [];
+  private redGlow: HTMLCanvasElement | null = null;
+  private greenGlow: HTMLCanvasElement | null = null;
+
+  constructor() {
+    for (let i = 0; i < 24; i++) {
+      const h = (i / 24) * 6;
+      const f = (n: number) => {
+        const k = (n + h) % 6;
+        return 255 * (1 - Math.max(0, Math.min(1, Math.min(k, 4 - k))));
+      };
+      this.ramp.push(css(mix([f(5), f(3), f(1)], [255, 255, 255], 0.1)));
+    }
+  }
+
+  reset() {
+    this.flyers.length = 0;
+    this.lights.length = 0;
+    this.drones.length = 0;
+    this.blimp = null;
+    this.blimpTimer = 20;
+    this.worldRef = null;
+  }
+
+  /**
+   * Lanes over the owned land (MEGACITY §3.9): placed inside the owned box as today's were inside the 64 map
+   * (8 + hash × 48 on a 64-wide box), so a migrated start slot keeps exactly its sky traffic; flyers run over the box.
+   */
+  private setup(world: World) {
+    this.worldRef = world;
+    this.slotsSeen = world.slotsVersion;
+    this.lanes = [];
+    const seed = world.seed;
+    const o = world.ownedBox;
+    const count = 6;
+    for (let i = 0; i < count; i++) {
+      const axis = i % 2;
+      // axis 0 runs along x at a y (c); axis 1 along y at an x.
+      const c0 = axis === 0 ? o.y0 : o.x0;
+      const side = axis === 0 ? o.y1 - o.y0 + 1 : o.x1 - o.x0 + 1;
+      this.lanes.push({
+        axis,
+        c: c0 + 8 + Math.floor(hash2(i, 1, seed) * (side - 16)),
+        z: 110 + Math.floor(hash2(i, 2, seed) * 140) + (i % 3) * 20,
+        lo: axis === 0 ? o.x0 : o.y0,
+        hi: axis === 0 ? o.x1 + 1 : o.y1 + 1,
+      });
+    }
+  }
+
+  /** Live delivery drones (tests). */
+  get droneCount(): number {
+    return this.drones.length;
+  }
+
+  /** `drones`: delivery drones allowed (off in lower detail, §3.11). */
+  update(dt: number, world: World, quality: 'low' | 'high', b: Bounds | null, night: number, drones = true) {
+    if (world !== this.worldRef || world.slotsVersion !== this.slotsSeen) this.setup(world);
+    this.dronesOn = drones;
+    this.updateDrones(dt, world, quality, b, drones);
+    const o = world.ownedBox;
+    const pop = world.stats.population;
+    const popK = Math.pow(Math.min(1, pop / 30000), 0.8); // ×10 units (MEGACITY §4.4)
+    this.target = Math.round(popK * (quality === 'low' ? 14 : 40));
+    // Advance flyers.
+    for (let i = this.flyers.length - 1; i >= 0; i--) {
+      const f = this.flyers[i];
+      f.s += f.speed * dt;
+      f.age += dt;
+      if (f.dying > 0) f.dying -= dt;
+      const L = this.lanes[f.lane];
+      if (f.s < L.lo - 8 || f.s > L.hi + 8 || (f.dying > 0 && f.dying <= dt)) {
+        this.flyers[i] = this.flyers[this.flyers.length - 1];
+        this.flyers.pop();
+      }
+    }
+    let spawn = Math.min(2, this.target - this.flyers.length);
+    while (spawn-- > 0) {
+      const dir = Math.random() < 0.5 ? 1 : -1;
+      const fresh = this.flyers.length < this.target * 0.5;
+      const lane = (Math.random() * this.lanes.length) | 0;
+      const L = this.lanes[lane];
+      this.flyers.push({
+        lane,
+        // Fill the sky immediately at first, then enter from the edges of the owned land.
+        s: fresh ? L.lo + Math.random() * (L.hi - L.lo) : dir > 0 ? L.lo - 6 : L.hi + 6,
+        speed: dir * (2.4 + Math.random() * 2.2),
+        col: (Math.random() * FLYER_COLS.length) | 0,
+        ph: Math.random(),
+        dying: 0,
+        age: fresh ? 0 : 1,
+      });
+    }
+    if (this.flyers.length > this.target + 2) {
+      const f = this.flyers.find((x) => x.dying <= 0);
+      if (f) f.dying = 0.8;
+    }
+    // Blimp / ad drone.
+    if (this.blimp) {
+      this.blimp.s += this.blimp.speed * dt;
+      const lo = this.blimp.axis === 0 ? o.x0 : o.y0;
+      const hi = this.blimp.axis === 0 ? o.x1 + 1 : o.y1 + 1;
+      if (this.blimp.s < lo - 12 || this.blimp.s > hi + 12) this.blimp = null;
+    } else if (pop > 6000) {
+      this.blimpTimer -= dt;
+      if (this.blimpTimer <= 0) {
+        this.blimpTimer = 35 + Math.random() * 40;
+        const dir = Math.random() < 0.5 ? 1 : -1;
+        const drone = Math.random() < 0.4;
+        const axis = Math.random() < 0.5 ? 0 : 1;
+        const c0 = axis === 0 ? o.y0 : o.x0;
+        const side = axis === 0 ? o.y1 - o.y0 + 1 : o.x1 - o.x0 + 1;
+        this.blimp = {
+          axis,
+          c: c0 + 14 + Math.random() * (side - 28),
+          z: drone ? 150 : 250,
+          s: dir > 0 ? (axis === 0 ? o.x0 : o.y0) - 10 : (axis === 0 ? o.x1 : o.y1) + 1 + 10,
+          speed: dir * (drone ? 1.6 : 0.7),
+          drone,
+          ph: Math.random(),
+        };
+      }
+    }
+    // Rescan searchlight sources now and then.
+    this.scan -= dt;
+    if (this.scan <= 0 && b) {
+      this.scan = 1.5;
+      this.findLights(world, b, quality, night);
+    }
+  }
+
+  /** A random lived-in Market tile (L2+) in the box, or −1 (a few tries). */
+  private marketIn(world: World, x0: number, y0: number, x1: number, y1: number): number {
+    const N = world.N;
+    x0 = Math.max(0, x0);
+    y0 = Math.max(0, y0);
+    x1 = Math.min(N - 1, x1);
+    y1 = Math.min(N - 1, y1);
+    if (x1 < x0 || y1 < y0) return -1;
+    for (let k = 0; k < 14; k++) {
+      const x = x0 + ((Math.random() * (x1 - x0 + 1)) | 0);
+      const y = y0 + ((Math.random() * (y1 - y0 + 1)) | 0);
+      const t = world.tiles[y * N + x];
+      if (t.zone === ZoneType.Commercial && t.level >= 2 && !t.abandoned && world.isOwned(x, y)) return y * N + x;
+    }
+    return -1;
+  }
+
+  private updateDrones(dt: number, world: World, quality: 'low' | 'high', b: Bounds | null, on: boolean) {
+    const ds = this.drones;
+    if (!on || !b) {
+      ds.length = 0;
+      return;
+    }
+    const N = world.N;
+    for (let i = ds.length - 1; i >= 0; i--) {
+      const d = ds[i];
+      d.age += dt;
+      if (d.dying > 0) {
+        d.dying -= dt;
+        if (d.dying <= 0) {
+          ds[i] = ds[ds.length - 1];
+          ds.pop();
+          continue;
+        }
+      }
+      if (d.hover > 0) {
+        d.hover -= dt;
+        if (d.hover <= 0) {
+          const next = d.hops-- > 0 ? this.marketIn(world, Math.round(d.u) - 10, Math.round(d.v) - 10, Math.round(d.u) + 10, Math.round(d.v) + 10) : -1;
+          if (next < 0) d.dying = 0.8;
+          else {
+            d.tu = (next % N) + 0.5;
+            d.tv = ((next / N) | 0) + 0.5;
+          }
+        }
+        continue;
+      }
+      const du = d.tu - d.u;
+      const dv = d.tv - d.v;
+      const l = Math.hypot(du, dv);
+      const step = d.speed * dt;
+      if (l <= step) {
+        d.u = d.tu;
+        d.v = d.tv;
+        d.hover = 1 + Math.random() * 1.5;
+      } else {
+        d.u += (du / l) * step;
+        d.v += (dv / l) * step;
+      }
+      if (d.u < b.x0 - 6 || d.u > b.x1 + 6 || d.v < b.y0 - 6 || d.v > b.y1 + 6) {
+        ds[i] = ds[ds.length - 1];
+        ds.pop();
+      }
+    }
+    const popK = Math.pow(Math.min(1, world.stats.population / 20000), 0.7);
+    const target = Math.round(popK * (quality === 'low' ? DRONE_CAP_LOW : DRONE_CAP));
+    if (ds.length < target) {
+      const from = this.marketIn(world, b.x0, b.y0, b.x1, b.y1);
+      if (from >= 0) {
+        const fu = (from % N) + 0.5;
+        const fv = ((from / N) | 0) + 0.5;
+        const to = this.marketIn(world, Math.round(fu) - 10, Math.round(fv) - 10, Math.round(fu) + 10, Math.round(fv) + 10);
+        if (to >= 0 && to !== from)
+          ds.push({
+            u: fu,
+            v: fv,
+            tu: (to % N) + 0.5,
+            tv: ((to / N) | 0) + 0.5,
+            z: 26 + Math.random() * 22,
+            speed: 1.6 + Math.random() * 1.2,
+            hover: 0,
+            hops: 1 + ((Math.random() * 3) | 0),
+            ph: Math.random(),
+            age: 0,
+            dying: 0,
+            col: Math.random() < 0.5 ? 0 : 3,
+          });
+      }
+    }
+    while (ds.length > target + 4) ds.pop();
+  }
+
+  private drawDrones(ctx: CanvasRenderingContext2D, time: number, night: number, zoom: number) {
+    if (!this.dronesOn || !this.drones.length || zoom < 0.45 || !this.flyerGlow) return;
+    for (const d of this.drones) {
+      const alpha = Math.min(1, d.age * 2) * (d.dying > 0 ? d.dying / 0.8 : 1);
+      if (alpha <= 0.02) continue;
+      // A drop: the drone sinks a little while it hovers.
+      const sink = d.hover > 0 ? 6 * Math.min(1, d.hover) : 0;
+      const x = (d.u - d.v) * HALF_W;
+      const y = (d.u + d.v) * HALF_H - d.z + sink + Math.sin(time * 5 + d.ph * 9) * 0.6;
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.globalAlpha = alpha;
+      ctx.fillStyle = night > 0.5 ? '#1e1c2c' : '#40424e';
+      ctx.fillRect(x - 1.2, y - 0.5, 2.4, 1);
+      if ((time * 2 + d.ph) % 1 < 0.35) {
+        ctx.globalCompositeOperation = 'lighter';
+        ctx.globalAlpha = alpha * (0.5 + 0.5 * night);
+        ctx.drawImage(this.flyerGlow[d.col], x - 2.5, y - 3, 5, 5);
+      }
+    }
+  }
+
+  private findLights(world: World, b: Bounds, quality: 'low' | 'high', night: number) {
+    const N = world.N;
+    // Phases hash art coordinates (MEGACITY §3.2), so a migrated start slot keeps its searchlights' rhythm.
+    const ao = artOffset(world);
+    this.lights.length = 0;
+    if (quality === 'low' || night < 0.3) return;
+    const cx = (b.x0 + b.x1) / 2;
+    const cy = (b.y0 + b.y1) / 2;
+    const cand: { d: number; l: Light }[] = [];
+    for (let y = b.y0; y <= b.y1; y++)
+      for (let x = b.x0; x <= b.x1; x++) {
+        const t = world.tiles[y * N + x];
+        if (t.buildingId >= 0) {
+          const bd = world.buildings.get(t.buildingId);
+          if (!bd || bd.x !== x || bd.y !== y) continue;
+          if ((bd.type !== 'spire' && bd.type !== 'arcology') || !bd.powered) continue;
+          const s = bd.size / 2;
+          const h = bd.type === 'spire' ? 236 : serviceBuildingHeight(bd.type) - 50;
+          cand.push({ d: -1000, l: { x: (x + s - (y + s)) * HALF_W, y: (x + s + y + s) * HALF_H - h, ph: hash2(x - ao, y - ao, 3), col: bd.type === 'spire' ? 2 : 0, twin: true } });
+        } else if (t.zone !== ZoneType.None && t.level === 3 && !t.abandoned && t.powered && (t.variant & 7) % 4 === 0 && t.age > 30) {
+          const h = zoneBuildingHeight(t);
+          cand.push({
+            d: Math.hypot(x - cx, y - cy),
+            l: { x: (x - y) * HALF_W, y: (x + y) * HALF_H + HALF_H - h, ph: hash2(x - ao, y - ao, 5), col: t.zone === ZoneType.Commercial ? 1 : 0, twin: false },
+          });
+        }
+      }
+    cand.sort((a, c) => a.d - c.d);
+    for (let i = 0; i < Math.min(7, cand.length); i++) this.lights.push(cand[i].l);
+  }
+
+  draw(ctx: CanvasRenderingContext2D, b: Bounds, time: number, night: number, zoom: number, quality: 'low' | 'high') {
+    if (!this.flyerGlow) {
+      this.flyerGlow = FLYER_COLS.map((c) => glowSprite(c, 64));
+      this.redGlow = glowSprite([255, 59, 92], 64);
+      this.greenGlow = glowSprite([77, 255, 154], 64);
+    }
+    // View rect in world px (tile bounds already include a margin).
+    const vx0 = (b.x0 - b.y1) * HALF_W - 40;
+    const vx1 = (b.x1 - b.y0 + 1) * HALF_W + 40;
+    const vy0 = (b.x0 + b.y0) * HALF_H - 40;
+    const vy1 = (b.x1 + b.y1 + 2) * HALF_H + 40;
+
+    // Searchlights first (behind the traffic).
+    if (this.lights.length && night > 0.3 && quality === 'high') {
+      if (!this.beams) this.beams = BEAM_COLS.map(makeBeam);
+      ctx.globalCompositeOperation = 'lighter';
+      const fade = Math.min(1, (night - 0.3) / 0.3);
+      for (const l of this.lights) {
+        for (let k = 0; k < (l.twin ? 2 : 1); k++) {
+          const a = Math.sin(time * (0.35 + l.ph * 0.2) + l.ph * 10 + k * 2.1) * 0.55 + (k ? 0.25 : -0.15);
+          ctx.save();
+          ctx.translate(l.x, l.y);
+          ctx.rotate(a);
+          ctx.globalAlpha = 0.32 * fade;
+          ctx.drawImage(this.beams[l.col], -24, -300, 48, 300);
+          ctx.restore();
+        }
+      }
+    }
+
+    // Flying cars.
+    const far = zoom < 0.45;
+    ctx.globalCompositeOperation = 'lighter';
+    for (const f of this.flyers) {
+      const L = this.lanes[f.lane];
+      if (!L) continue;
+      const u = L.axis === 0 ? f.s : L.c;
+      const v = L.axis === 0 ? L.c : f.s;
+      const x = (u - v) * HALF_W;
+      const y = (u + v) * HALF_H - L.z;
+      if (x < vx0 || x > vx1 || y < vy0 || y > vy1) continue;
+      const alpha = Math.min(1, f.age * 1.5) * (f.dying > 0 ? f.dying / 0.8 : 1);
+      // Direction on screen.
+      const dir = f.speed > 0 ? 1 : -1;
+      const dxs = (L.axis === 0 ? HALF_W : -HALF_W) * dir;
+      const dys = HALF_H * dir;
+      const nl = Math.hypot(dxs, dys);
+      const ux = dxs / nl;
+      const uy = dys / nl;
+      // Light trail.
+      ctx.strokeStyle = this.flyerCss[f.col];
+      ctx.lineCap = 'round';
+      const trail = far ? 14 : 22;
+      for (let s = 0; s < 3; s++) {
+        ctx.globalAlpha = alpha * (0.32 - s * 0.09) * (0.5 + 0.5 * night);
+        ctx.lineWidth = far ? 1.4 : 1.1 - s * 0.2;
+        ctx.beginPath();
+        ctx.moveTo(x - ux * (2 + (trail * s) / 3), y - uy * (2 + (trail * s) / 3));
+        ctx.lineTo(x - ux * (2 + (trail * (s + 1)) / 3), y - uy * (2 + (trail * (s + 1)) / 3));
+        ctx.stroke();
+      }
+      if (far) continue;
+      // Body.
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.globalAlpha = alpha;
+      ctx.fillStyle = night > 0.5 ? '#1a1826' : '#3c3e50';
+      ctx.fillRect(x - 2.5, y - 1, 5, 2);
+      ctx.fillStyle = '#5a5e74';
+      ctx.fillRect(x - 1.2, y - 1.8, 2.4, 0.9);
+      ctx.globalCompositeOperation = 'lighter';
+      // Headlight + blinking nav lights.
+      ctx.globalAlpha = alpha * (0.4 + 0.6 * night);
+      ctx.drawImage(this.flyerGlow[f.col], x + ux * 3 - 5, y + uy * 3 - 5, 10, 10);
+      const blink = (time * 1.6 + f.ph) % 1 < 0.25;
+      if (blink) {
+        ctx.globalAlpha = alpha;
+        ctx.drawImage(this.redGlow!, x - ux * 2.5 - 1.5 - 3, y - uy * 2.5 - 1.5 - 3 + 1, 6, 6);
+        ctx.drawImage(this.greenGlow!, x - ux * 2.5 + 1.5 - 3, y - uy * 2.5 + 1.5 - 3 - 1, 6, 6);
+      }
+    }
+
+    // Delivery drones over the Market streets.
+    this.drawDrones(ctx, time, night, zoom);
+
+    // Blimp / ad drone.
+    const bl = this.blimp;
+    if (bl) {
+      const u = bl.axis === 0 ? bl.s : bl.c;
+      const v = bl.axis === 0 ? bl.c : bl.s;
+      const x = (u - v) * HALF_W;
+      const y = (u + v) * HALF_H - bl.z;
+      if (x > vx0 - 80 && x < vx1 + 80 && y > vy0 - 40 && y < vy1 + 40) this.drawBlimp(ctx, bl, x, y, time, night);
+    }
+    ctx.globalAlpha = 1;
+    ctx.globalCompositeOperation = 'source-over';
+  }
+
+  private drawBlimp(ctx: CanvasRenderingContext2D, bl: Blimp, x: number, y: number, time: number, night: number) {
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.globalAlpha = 1;
+    const bob = Math.sin(time * 0.8 + bl.ph * 6) * 1.5;
+    y += bob;
+    let pw = 34;
+    let ph = 16;
+    let px = x - pw / 2;
+    let py = y + 10;
+    if (bl.drone) {
+      // Quad drone with a hanging panel.
+      ctx.fillStyle = '#22222e';
+      ctx.fillRect(x - 9, y - 1.5, 18, 3);
+      ctx.fillRect(x - 11, y - 3, 4, 1.2);
+      ctx.fillRect(x + 7, y - 3, 4, 1.2);
+      ctx.strokeStyle = '#555';
+      ctx.lineWidth = 0.5;
+      ctx.beginPath();
+      ctx.moveTo(x - 6, y + 1.5);
+      ctx.lineTo(x - 10, y + 8);
+      ctx.moveTo(x + 6, y + 1.5);
+      ctx.lineTo(x + 10, y + 8);
+      ctx.stroke();
+      pw = 22;
+      ph = 13;
+      px = x - pw / 2;
+      py = y + 8;
+    } else {
+      if (!this.blimpBody) this.blimpBody = makeBlimpBody();
+      ctx.drawImage(this.blimpBody, x - 48, y - 16, 96, 32);
+      px = x - pw / 2 - 4;
+      py = y - 8;
+      pw = 44;
+      ph = 14;
+    }
+    // Holo panel: colour field + scrolling invented glyphs.
+    const R = this.ramp;
+    const hi = Math.floor(time * 3 + bl.ph * 24) % R.length;
+    ctx.globalAlpha = 0.55 + 0.35 * night;
+    ctx.fillStyle = R[hi];
+    ctx.fillRect(px, py, pw, ph);
+    ctx.fillStyle = '#0a0716';
+    const cell = ph / 6;
+    const scroll = (time * 10) % (cell * 4);
+    let gi = Math.floor(time * 10 / (cell * 4));
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(px, py, pw, ph);
+    ctx.clip();
+    for (let gx = px - scroll + pw; gx > px - cell * 4; gx -= cell * 4, gi++) {
+      const gm = GLYPHS[(gi + Math.floor(bl.ph * 16)) % GLYPHS.length];
+      for (let r = 0; r < 4; r++)
+        for (let c = 0; c < 3; c++) if (gm & (1 << (r * 3 + c))) ctx.fillRect(gx + c * cell, py + cell + r * cell, cell * 0.85, cell * 0.85);
+    }
+    ctx.restore();
+    // Panel glow + nav lights.
+    ctx.globalCompositeOperation = 'lighter';
+    if (night > 0.2) {
+      ctx.globalAlpha = night * 0.35;
+      ctx.drawImage(this.flyerGlow![bl.drone ? 0 : 1], px - pw * 0.4, py - ph, pw * 1.8, ph * 3);
+    }
+    const blink = (time * 1.2 + bl.ph) % 1 < 0.2;
+    if (blink) {
+      ctx.globalAlpha = 1;
+      ctx.drawImage(this.redGlow!, x - (bl.drone ? 14 : 48), y - 4, 8, 8);
+      ctx.drawImage(this.greenGlow!, x + (bl.drone ? 6 : 40), y - 4, 8, 8);
+    }
+  }
+}
