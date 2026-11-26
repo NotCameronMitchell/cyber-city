@@ -34,7 +34,7 @@ interface Toggle {
  * after City events, each with its line, so the two are not confused.
  */
 export const TOGGLES: Toggle[] = [
-  { key: 'sound', label: 'Sound effects', desc: 'Synth clicks, builds and alerts', icon: 'sound' },
+  { key: 'sound', label: 'Sound effects', desc: 'Clicks, builds, alerts and district sounds', icon: 'sound' },
   { key: 'music', label: 'Music', desc: 'Slow generative synth score', icon: 'music' },
   { key: 'dayNight', label: 'Day / night cycle', desc: 'Off keeps the city at night', icon: 'moon' },
   { key: 'crowds', label: 'Crowds', desc: 'People on the sidewalks, umbrellas in the rain', icon: 'pop' },

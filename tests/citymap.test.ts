@@ -13,6 +13,7 @@ import { zoomRange } from '../src/input/input';
 import { MAP_PINCH_IN, MAP_PINCH_OUT, pinchMayLeaveMap } from '../src/input/mapbus';
 import { Camera, HALF_H, HALF_W } from '../src/render/camera';
 import {
+  atlasZoomed,
   CITYMAP_HELP,
   CONFIRM_GUARD_MS,
   chipRow,
@@ -378,6 +379,12 @@ describe('5×5 City map (§7.2)', () => {
     expect(cam.zoom).toBeCloseTo(fit * 2, 9);
     cam.zoomAt(0.1, 195, 300);
     expect(cam.zoom).toBeCloseTo(fit, 9);
+    // The edge line under the atlas steps aside only while the atlas is shown past its fit.
+    expect(atlasZoomed(cam)).toBe(false);
+    cam.zoomAt(1.5, 195, 300);
+    expect(atlasZoomed(cam)).toBe(true);
+    cam.zoomAt(0.1, 195, 300);
+    expect(atlasZoomed(cam)).toBe(false);
     const g3 = city(3);
     const cam3 = mapCamera(g3, 390, 844, 1);
     cam3.zoomAt(2, 195, 300);

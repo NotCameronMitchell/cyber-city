@@ -4322,6 +4322,13 @@ body {
   pointer-events: auto;
 }
 
+/* A 5×5 atlas zoomed past its fit runs under the line: it steps aside until the zoom comes back. */
+.cc-citymap.is-zoomed .cc-cm-edge {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s ease;
+}
+
 .cc-cm-growslot:empty {
   display: none;
 }

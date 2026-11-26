@@ -277,6 +277,11 @@ export function leaveMapTo(cam: Camera, back: { x: number; y: number; zoom: numb
   if (back.zoom > cam.minZoom) cam.easeTo(back.x, back.y, Math.min(cam.maxZoom, back.zoom), 0.3);
 }
 
+/** The atlas is shown past its fitted framing (a 5×5 map at up to 2×, §7.2). */
+export function atlasZoomed(cam: Pick<Camera, 'zoom' | 'mapZoom'>): boolean {
+  return cam.zoom > cam.mapZoom * 1.04;
+}
+
 // ── The panel ───────────────────────────────────────────────────────────────
 
 export class CityMap {
@@ -509,6 +514,8 @@ export class CityMap {
     const key = `${this.slot}|${cam.x.toFixed(1)}|${cam.y.toFixed(1)}|${cam.zoom.toFixed(5)}|${cam.width}|${cam.height}`;
     if (key === this.polyKey) return;
     this.polyKey = key;
+    // A 5×5 atlas zoomed past its fit runs under the edge line: the line steps aside until the zoom comes back.
+    setClass(this.el, 'is-zoomed', atlasZoomed(cam));
     this.drawMetro(cam);
     if (this.slot < 0) {
       this.poly.setAttribute('points', '');
