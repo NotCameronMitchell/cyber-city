@@ -452,6 +452,21 @@ describe('the physical promises of the megacity cards (MEGACITY §8.4)', () => {
     }
   });
 
+  it('lm.arena can come in play: the Arc Arena is in the Landmarks tray, unlocked by population, and a player can place it', async () => {
+    const { lockedReason, planAction } = await import('../../src/game/actions');
+    const { BUILDINGS } = await import('../../src/game/config');
+    const w = regionWorld();
+    w.funds = 1e9;
+    expect(BUILDINGS.arena.hidden).toBeFalsy();
+    w.maxPopulation = 0;
+    expect(lockedReason(w, 'arena')).toMatch(/^Locked: reach /);
+    w.maxPopulation = BUILDINGS.arena.unlockPop;
+    expect(lockedReason(w, 'arena')).toBeNull();
+    const [x, y] = siteIn(w, w.districts.owned[0], 4);
+    const plan = planAction(w, 'arena', { x: x + 1, y: y + 1 }, { x: x + 1, y: y + 1 });
+    expect(plan.valid, plan.reason).toBe(true);
+  });
+
   it('a save that owns Tarmac Reach without apronFamilies (annexed on an older build) gets the flag on load', () => {
     const w = regionWorld();
     const t = own(w, 'tarmac');

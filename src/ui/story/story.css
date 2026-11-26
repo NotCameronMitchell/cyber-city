@@ -382,6 +382,17 @@
   text-overflow: ellipsis;
 }
 
+/* Two factions on one card: the names wrap between them on a narrow phone, never cut. */
+.cc-scard-faction:has(.cc-scard-fname) {
+  white-space: normal;
+  text-overflow: clip;
+  line-height: 1.3;
+}
+
+.cc-scard-fname {
+  white-space: nowrap;
+}
+
 .cc-scard-kind {
   flex: none;
   display: flex;

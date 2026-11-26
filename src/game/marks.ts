@@ -458,6 +458,42 @@ function ribbonStations(world: World): Building[] {
 // ── deriveMarks ────────────────────────────────────────────────────────────
 
 /** The marks the city's choices have left (§9.3), recomputed from saved state. Binds this world for skylineLang. */
+/** The flag that pins the Seam's marks (§9.3): the Seam's tile in art coordinates ("ax,ay"), saved by the director. */
+export const SEAM_MARK_FLAG = 'seamMark';
+
+/**
+ * Where the Seam's marks stand (the Truce Wall, the Clean Glass mast, Low Water, High Line and their renamed cell): the
+ * tile the director pinned when Chapter III's choice was made (flag `seamMark`, art coordinates, so a 3×3 city grown to
+ * 5×5 keeps it), else the live `story.seam` (turf.ts moves that every month as the crews' turf shifts).
+ */
+export function seamMarkTile(world: World): number | null {
+  const v = world.story.flags[SEAM_MARK_FLAG];
+  if (typeof v === 'string') {
+    const [a, b] = v.split(',').map(Number);
+    const ao = artOffset(world);
+    const x = a + ao;
+    const y = b + ao;
+    if (Number.isInteger(x) && Number.isInteger(y) && x >= 0 && y >= 0 && x < world.N && y < world.N) return y * world.N + x;
+  }
+  return world.story.seam;
+}
+
+/**
+ * Pin the Seam's marks once Chapter III's choice is made (the Seam Truce, Clean Glass or one tide holds): the live
+ * Seam's tile, in art coordinates. Returns true when it set the flag. A save made before the pin existed gets it on
+ * load, where the Seam is then.
+ */
+export function pinSeamMark(world: World): boolean {
+  const st = world.story;
+  const f = st.flags;
+  if (typeof f[SEAM_MARK_FLAG] === 'string' || !(f.truce || f.cleanGlass || f.oneTide)) return false;
+  const seam = st.seam;
+  if (seam === null || seam < 0 || seam >= world.area) return false;
+  const ao = artOffset(world);
+  f[SEAM_MARK_FLAG] = `${(seam % world.N) - ao},${((seam / world.N) | 0) - ao}`;
+  return true;
+}
+
 export function deriveMarks(world: World): Marks {
   const st = world.story;
   const f = st.flags;
@@ -501,8 +537,8 @@ export function deriveMarks(world: World): Marks {
     }
   }
 
-  // Chapter III · the Seam.
-  const seam = st.seam;
+  // Chapter III · the Seam: where the crews met when the choice was made (seamMarkTile), not where they meet today.
+  const seam = seamMarkTile(world);
   if (seam !== null && seam >= 0 && seam < world.area) {
     const sx = seam % N;
     const sy = (seam / N) | 0;

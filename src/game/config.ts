@@ -965,7 +965,6 @@ export const BUILDINGS: Record<BuildingType, BuildingDef> = {
     unlockPop: 300000,
     color: '#ff4fd8',
     maxCount: 1,
-    hidden: true,
   },
   halolookout: {
     type: 'halolookout',

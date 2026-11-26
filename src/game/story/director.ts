@@ -108,7 +108,7 @@ import { NOTE_CROSSINGS_PER_BRIDGE, STORY_CONTENT } from './content';
 import { EPILOGUE_DECK, LANDMARK_CARD_ENDING } from './content/cards/epilogue';
 import { epilogueTokens, GENERIC_REVIEW_LINE, LANDMARK_SET_COPY, nextReviewLine, reviewLine } from './content/epilogue';
 import { goalPay } from '../districts/goals';
-import { deriveMarks, landmarkSet } from '../marks';
+import { deriveMarks, landmarkSet, pinSeamMark } from '../marks';
 import { clampMods, combine, composeLayers } from './mods';
 import { cardEligible, cardFaction, deckGate, defaultChoice, drawCard, FRONT_KINDS, pendingExpired, URGENT_SYSTEM } from './pacing';
 import { resolveMods, tierPatches } from './resolve';
@@ -1821,6 +1821,7 @@ export class StoryDirector implements EffectHost {
     const w = this.world;
     const before = this.visual.marks.version;
     const was = this.visual.marks;
+    pinSeamMark(w); // the Seam's marks stay where Chapter III's choice was made (marks.ts seamMarkTile)
     this.visual.marks = deriveMarks(w);
     this.marksDirty = false;
     this.marksAt = w.version;

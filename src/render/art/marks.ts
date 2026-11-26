@@ -51,6 +51,10 @@ const PEARL: RGB = [255, 198, 241];
 const BASALT: RGB = [255, 123, 46];
 const BOARD: RGB = [150, 200, 255];
 const COLD: RGB = [215, 235, 255];
+const SODIUM_HEAD: RGB = [255, 200, 120];
+const MURAL_GREEN: RGB = [52, 120, 40];
+const MURAL_LILAC: RGB = [104, 74, 150];
+const SODIUM_OFF: RGB = [150, 130, 110];
 const FACTION_RGB: Record<FactionId, RGB> = {
   board: BOARD,
   basalt: BASALT,
@@ -66,6 +70,9 @@ export const MARKS_MIN_ZOOM = 0.3;
 const PROPS_MIN_ZOOM = 0.42;
 /** Caps per frame. */
 const CAP = { lamps: 48, corners: 30, avenues: 48, bridges: 48, livery: 40 } as const;
+
+/** How far a sky decal can reach from its mark's rect, in world px (a kite above the skyline, a searchlight's sweep). */
+const SKY_REACH = { x: 140, up: 640, down: 80 } as const;
 
 /** Per-frame cost counters (tests and the measurement script). */
 export const MARKS_STATS = { props: 0, decals: 0, skyDecals: 0 };
@@ -123,6 +130,31 @@ interface Props {
   poles: number[];
 }
 
+// ── Colours and decal parts, looked up once ────────────────────────────────
+
+/** css() strings by colour and alpha (to 0.01): a frame builds no colour string (§11.1, the 4× phone proxy). */
+const cssMemo = new Map<number, string>();
+function cs(c: RGB, a = 1): string {
+  const k = ((c[0] << 16) | (c[1] << 8) | c[2]) * 128 + Math.round(a * 100);
+  let v = cssMemo.get(k);
+  if (v === undefined) {
+    v = css(c, a);
+    if (cssMemo.size < 4096) cssMemo.set(k, v);
+  }
+  return v;
+}
+
+/** A mark's decal split at ':' once (marks are re-derived at most every 2 s; the decal never changes in place). */
+const decalParts = new WeakMap<Mark, string[]>();
+function partsOf(m: Mark): string[] {
+  let p = decalParts.get(m);
+  if (!p) {
+    p = m.decal.split(':');
+    decalParts.set(m, p);
+  }
+  return p;
+}
+
 // ── Small cached sprites ───────────────────────────────────────────────────
 
 const sprites = new Map<string, HTMLCanvasElement | null>();
@@ -146,7 +178,7 @@ function sprite(key: string, w: number, h: number, paint: (g: CanvasRenderingCon
 /** lark's moth-wing kite: two lilac wings, a pale body (28×22). */
 const mothKite = () =>
   sprite('mothkite', 28, 22, (g) => {
-    g.fillStyle = css([170, 130, 240]);
+    g.fillStyle = cs([170, 130, 240]);
     for (const s of [-1, 1]) {
       g.beginPath();
       g.moveTo(14, 4);
@@ -156,20 +188,20 @@ const mothKite = () =>
       g.closePath();
       g.fill();
     }
-    g.fillStyle = css([226, 210, 255]);
+    g.fillStyle = cs([226, 210, 255]);
     for (const s of [-1, 1]) {
       g.beginPath();
       g.arc(14 + s * 7, 8, 2.2, 0, Math.PI * 2);
       g.fill();
     }
-    g.fillStyle = css([250, 244, 255]);
+    g.fillStyle = cs([250, 244, 255]);
     g.fillRect(13, 3, 2, 17);
   });
 
 /** A diamond kite (fen's, the High Line's) in a colour (12×14). */
 const diamondKite = (c: RGB) =>
   sprite(`kite${c.join()}`, 12, 14, (g) => {
-    g.fillStyle = css(c);
+    g.fillStyle = cs(c);
     g.beginPath();
     g.moveTo(6, 0);
     g.lineTo(12, 6);
@@ -177,7 +209,7 @@ const diamondKite = (c: RGB) =>
     g.lineTo(0, 6);
     g.closePath();
     g.fill();
-    g.strokeStyle = css([255, 255, 255], 0.7);
+    g.strokeStyle = cs([255, 255, 255], 0.7);
     g.lineWidth = 0.8;
     g.beginPath();
     g.moveTo(6, 0);
@@ -192,13 +224,13 @@ const truceTags = () =>
   sprite('trucetags', 22, 10, (g) => {
     g.lineWidth = 1.6;
     g.lineCap = 'round';
-    g.strokeStyle = css(LIME);
+    g.strokeStyle = cs(LIME);
     g.beginPath();
     g.moveTo(1, 7);
     g.quadraticCurveTo(4, 1, 7, 6);
     g.quadraticCurveTo(9, 9, 11, 4);
     g.stroke();
-    g.strokeStyle = css(LILAC);
+    g.strokeStyle = cs(LILAC);
     g.beginPath();
     g.moveTo(11, 5);
     g.lineTo(15, 1);
@@ -206,7 +238,7 @@ const truceTags = () =>
     g.lineTo(15, 9);
     g.closePath();
     g.stroke();
-    g.fillStyle = css([255, 255, 255], 0.85);
+    g.fillStyle = cs([255, 255, 255], 0.85);
     g.fillRect(10, 4, 2, 2);
   });
 
@@ -263,19 +295,39 @@ function glow(ctx: CanvasRenderingContext2D, c: RGB, x: number, y: number, r: nu
   ctx.drawImage(g, x - r, y - r, r * 2, r * 2);
 }
 
-/** A short lamp post at the tile's lamp spot (its south-west sidewalk), with an optional collar band. */
-function post(ctx: CanvasRenderingContext2D, x: number, y: number, collar: RGB | null): [number, number] {
+/** Lamp posts queued this frame (post), drawn as one path per colour (flushPosts): a few canvas calls, not 4 a lamp. */
+const postQ: number[] = [];
+/** Queue a short lamp post at the tile's lamp spot (its south-west sidewalk); returns where its lamp head hangs. */
+function post(x: number, y: number): [number, number] {
   const px = wx(x + 0.18, y + 0.82);
   const py = wy(x + 0.18, y + 0.82);
-  ctx.fillStyle = '#4a5068';
-  ctx.fillRect(px - 0.7, py - 13, 1.4, 13);
-  ctx.fillRect(px - 0.7, py - 13, 3.5, 1.2);
-  if (collar) {
-    ctx.fillStyle = css(collar);
-    ctx.fillRect(px - 1.6, py - 9, 3.2, 2.6);
-  }
+  postQ.push(px, py);
   return [px + 2.8, py - 12];
 }
+/** Draw the queued posts (and their collar bands), then their lamp heads (`heads`: x, y pairs) in one colour. */
+function flushPosts(ctx: CanvasRenderingContext2D, collar: RGB | null, heads: number[], head: string): void {
+  if (!postQ.length) return;
+  ctx.fillStyle = '#4a5068';
+  ctx.beginPath();
+  for (let q = 0; q < postQ.length; q += 2) {
+    ctx.rect(postQ[q] - 0.7, postQ[q + 1] - 13, 1.4, 13);
+    ctx.rect(postQ[q] - 0.7, postQ[q + 1] - 13, 3.5, 1.2);
+  }
+  ctx.fill();
+  if (collar) {
+    ctx.fillStyle = cs(collar);
+    ctx.beginPath();
+    for (let q = 0; q < postQ.length; q += 2) ctx.rect(postQ[q] - 1.6, postQ[q + 1] - 9, 3.2, 2.6);
+    ctx.fill();
+  }
+  ctx.fillStyle = head;
+  ctx.beginPath();
+  for (let q = 0; q < heads.length; q += 2) ctx.rect(heads[q] - 1.6, heads[q + 1] - 0.2, 3.2, 1.8);
+  ctx.fill();
+  postQ.length = 0;
+}
+/** Lamp heads of the posts queued this frame (scratch). */
+const headQ: number[] = [];
 
 // ── The ending's street look (§9.2 "Street look", the props off the buildings) ──
 
@@ -297,18 +349,21 @@ function streetLook(ctx: CanvasRenderingContext2D, world: World, p: Props, env: 
   if (e === 'ironwork') {
     // Sodium-orange street lights (Charter Shore's lamps are the livery's when the patron's colours are on them).
     const lamps = skip ? p.lamps.filter((i) => { const x = i % N; const y = (i / N) | 0; return x < skip.x0 || y < skip.y0 || x > skip.x1 || y > skip.y1; }) : p.lamps;
+    headQ.length = 0;
     for (const i of lamps) {
-      const [lx, ly] = post(ctx, i % N, (i / N) | 0, null);
-      ctx.fillStyle = css(n > 0.3 ? [255, 200, 120] : [150, 130, 110]);
-      ctx.fillRect(lx - 1.6, ly - 0.2, 3.2, 1.8);
+      const [lx, ly] = post(i % N, (i / N) | 0);
+      headQ.push(lx, ly);
       MARKS_STATS.props++;
     }
+    flushPosts(ctx, null, headQ, cs(n > 0.3 ? SODIUM_HEAD : SODIUM_OFF));
     if (lit) {
+      // A pool of light under every other lamp (a little wider): half the glow blits on the phone proxy, the same street.
       ctx.globalCompositeOperation = 'lighter';
-      for (const i of lamps) {
+      for (let k = 0; k < lamps.length; k += 2) {
+        const i = lamps[k];
         const x = i % N;
         const y = (i / N) | 0;
-        glow(ctx, SODIUM, wx(x + 0.3, y + 0.72) + 1.5, wy(x + 0.3, y + 0.72, 6), 18, n * 0.7);
+        glow(ctx, SODIUM, wx(x + 0.3, y + 0.72) + 1.5, wy(x + 0.3, y + 0.72, 6), 21, n * 0.75);
       }
       ctx.globalCompositeOperation = 'source-over';
       ctx.globalAlpha = 1;
@@ -318,7 +373,7 @@ function streetLook(ctx: CanvasRenderingContext2D, world: World, p: Props, env: 
     for (const i of p.corners) {
       const x = i % N;
       const y = (i / N) | 0;
-      ctx.strokeStyle = css([60, 60, 70], 0.8);
+      ctx.strokeStyle = cs([60, 60, 70], 0.8);
       ctx.lineWidth = 0.5;
       ctx.beginPath();
       ctx.moveTo(wx(x, y + 0.1), wy(x, y + 0.1, 9));
@@ -328,7 +383,7 @@ function streetLook(ctx: CanvasRenderingContext2D, world: World, p: Props, env: 
         const u = x + k / 6;
         const v = y + 0.1 + (k / 6) * 0.8;
         const sag = 9 - Math.sin((k / 6) * Math.PI) * 4;
-        ctx.fillStyle = css(k % 2 ? LIME : LILAC, n > 0.3 ? 1 : 0.85);
+        ctx.fillStyle = cs(k % 2 ? LIME : LILAC, n > 0.3 ? 1 : 0.85);
         ctx.fillRect(wx(u, v) - 1.2, wy(u, v, sag) - 1.2, 2.4, 2.4);
       }
       // The two banners at the corner.
@@ -336,9 +391,9 @@ function streetLook(ctx: CanvasRenderingContext2D, world: World, p: Props, env: 
       const by = wy(x + 0.12, y + 0.12);
       ctx.fillStyle = '#3a3f52';
       ctx.fillRect(bx - 0.6, by - 17, 1.2, 17);
-      ctx.fillStyle = css(LIME, 0.95);
+      ctx.fillStyle = cs(LIME, 0.95);
       ctx.fillRect(bx + 0.6, by - 17, 5.5, 4);
-      ctx.fillStyle = css(LILAC, 0.95);
+      ctx.fillStyle = cs(LILAC, 0.95);
       ctx.fillRect(bx + 0.6, by - 12.5, 5.5, 4);
       MARKS_STATS.props++;
     }
@@ -364,9 +419,9 @@ function streetLook(ctx: CanvasRenderingContext2D, world: World, p: Props, env: 
       ctx.fillStyle = '#5a6074';
       ctx.fillRect(fx - 0.5, fy - 15, 1, 15);
       const wave = Math.sin(env.time * 2 + x * 0.7 + y) * 0.6;
-      ctx.fillStyle = css(BOARD);
+      ctx.fillStyle = cs(BOARD);
       ctx.fillRect(fx + 0.5, fy - 15 + wave, 5, 3.2);
-      ctx.fillStyle = css([240, 246, 255]);
+      ctx.fillStyle = cs([240, 246, 255]);
       ctx.fillRect(fx + 0.5, fy - 12 + wave, 5, 1);
       MARKS_STATS.props++;
     }
@@ -384,7 +439,7 @@ function streetLook(ctx: CanvasRenderingContext2D, world: World, p: Props, env: 
         const fy = wy(x + o, y + o);
         ctx.fillStyle = '#5a6074';
         ctx.fillRect(fx - 0.5, fy - 14, 1, 14);
-        ctx.fillStyle = css(c);
+        ctx.fillStyle = cs(c);
         ctx.beginPath();
         ctx.moveTo(fx + 0.5, fy - 14);
         ctx.lineTo(fx + 6.5, fy - 12.5 + Math.sin(env.time * 2 + k) * 0.5);
@@ -438,7 +493,7 @@ function groundMark(ctx: CanvasRenderingContext2D, world: World, m: Mark, env: A
   const n = env.night;
   const N = world.N;
   const t = env.time;
-  const [kind, arg, extra] = m.decal.split(':');
+  const [kind, arg, extra] = partsOf(m);
   const fx = m.x + m.w; // the footprint's front (south) corner
   const fy = m.y + m.h;
   switch (kind) {
@@ -446,9 +501,9 @@ function groundMark(ctx: CanvasRenderingContext2D, world: World, m: Mark, env: A
       // A brass plaque at the front corner, catching the light.
       const px = wx(fx, fy) - 3;
       const py = wy(fx, fy) - 2;
-      ctx.fillStyle = css([196, 156, 74]);
+      ctx.fillStyle = cs([196, 156, 74]);
       ctx.fillRect(px, py, 6, 3.5);
-      ctx.fillStyle = css([255, 236, 170], 0.5 + 0.5 * Math.max(0, Math.sin(t * 1.3 + m.x)));
+      ctx.fillStyle = cs([255, 236, 170], 0.5 + 0.5 * Math.max(0, Math.sin(t * 1.3 + m.x)));
       ctx.fillRect(px + 1, py + 0.8, 1.5, 0.8);
       break;
     }
@@ -461,20 +516,21 @@ function groundMark(ctx: CanvasRenderingContext2D, world: World, m: Mark, env: A
       const r = slotRect(world, startSlotOf(world));
       const p = props;
       let k = 0;
-      const lit: number[] = [];
+      const lit = headQ;
+      lit.length = 0;
       for (const i of p.lamps) {
         const x = i % N;
         const y = (i / N) | 0;
         if (x < r.x0 || y < r.y0 || x > r.x1 || y > r.y1 || k >= CAP.livery) continue;
         k++;
-        const [lx, ly] = post(ctx, x, y, c);
-        ctx.fillStyle = css(c);
-        ctx.fillRect(lx - 1.6, ly - 0.2, 3.2, 1.8);
+        const [lx, ly] = post(x, y);
         lit.push(lx, ly);
       }
+      flushPosts(ctx, c, lit, cs(c));
       if (n > 0.3 && env.quality !== 'low' && lit.length) {
         ctx.globalCompositeOperation = 'lighter';
-        for (let q = 0; q < lit.length; q += 2) glow(ctx, c, lit[q] - 1, lit[q + 1] + 4, 14, n * 0.85);
+        // A pool under every other collared lamp, a little wider (half the glow blits; every lamp keeps its collar).
+        for (let q = 0; q < lit.length; q += 4) glow(ctx, c, lit[q] - 1, lit[q + 1] + 4, 17, n * 0.9);
         ctx.globalCompositeOperation = 'source-over';
         ctx.globalAlpha = 1;
       }
@@ -486,7 +542,7 @@ function groundMark(ctx: CanvasRenderingContext2D, world: World, m: Mark, env: A
       for (const i of roadsIn(world, m, version)) {
         const x = i % N;
         const y = (i / N) | 0;
-        ctx.strokeStyle = css([60, 110, 80], 0.85);
+        ctx.strokeStyle = cs([60, 110, 80], 0.85);
         ctx.lineWidth = 0.5;
         ctx.beginPath();
         for (let k = 0; k <= 4; k++) {
@@ -516,7 +572,7 @@ function groundMark(ctx: CanvasRenderingContext2D, world: World, m: Mark, env: A
         for (let k = 0; k < 5; k++) {
           const u = x + 0.1 + k * 0.2;
           const v = y + 0.9 - k * 0.2;
-          ctx.fillStyle = css(k % 2 ? LILAC : kind === 'mural' ? LIME : [255, 250, 230]);
+          ctx.fillStyle = cs(k % 2 ? LILAC : kind === 'mural' ? LIME : [255, 250, 230]);
           ctx.fillRect(wx(u, v) - 0.7, wy(u, v, 9 - Math.sin(k * 0.8) * 2) - 0.7, 1.4, 1.4);
         }
         if (n > 0.3) {
@@ -565,7 +621,7 @@ function groundMark(ctx: CanvasRenderingContext2D, world: World, m: Mark, env: A
         ctx.globalAlpha = 1;
       } else if (arg === 'fence') {
         // Fenced and dark; a faded sign.
-        ctx.strokeStyle = css([110, 110, 120], 0.9);
+        ctx.strokeStyle = cs([110, 110, 120], 0.9);
         ctx.lineWidth = 0.6;
         ctx.beginPath();
         const pts: [number, number][] = [
@@ -591,7 +647,7 @@ function groundMark(ctx: CanvasRenderingContext2D, world: World, m: Mark, env: A
         ctx.stroke();
         const sx = wx(fx + 0.2, fy + 0.2);
         const sy = wy(fx + 0.2, fy + 0.2, 9);
-        ctx.fillStyle = css(world.story.flags.patron === 'basalt' ? [150, 96, 70] : [170, 150, 166], 0.8);
+        ctx.fillStyle = cs(world.story.flags.patron === 'basalt' ? [150, 96, 70] : [170, 150, 166], 0.8);
         ctx.fillRect(sx - 5, sy - 3, 10, 4);
       } else if (arg === 'archive') {
         // A guard box with one lit window.
@@ -599,7 +655,7 @@ function groundMark(ctx: CanvasRenderingContext2D, world: World, m: Mark, env: A
         const gy = wy(fx + 0.5, fy - 0.3);
         ctx.fillStyle = '#4b5168';
         ctx.fillRect(gx - 3, gy - 7, 6, 7);
-        ctx.fillStyle = n > 0.3 ? css(WARM) : '#2a2e3c';
+        ctx.fillStyle = n > 0.3 ? cs(WARM) : '#2a2e3c';
         ctx.fillRect(gx - 1.5, gy - 5.5, 3, 2);
         if (n > 0.3) {
           ctx.globalCompositeOperation = 'lighter';
@@ -616,7 +672,7 @@ function groundMark(ctx: CanvasRenderingContext2D, world: World, m: Mark, env: A
             const a = Math.PI * (0.15 + k * 0.175);
             const px = dx + Math.cos(a) * 9;
             const py = dy - Math.sin(a) * 6 - 2;
-            ctx.fillStyle = css(WARM, 0.9);
+            ctx.fillStyle = cs(WARM, 0.9);
             ctx.fillRect(px - 0.8, py - 0.8, 1.6, 1.6);
             if (n > 0.2) {
               ctx.globalCompositeOperation = 'lighter';
@@ -644,11 +700,158 @@ function groundMark(ctx: CanvasRenderingContext2D, world: World, m: Mark, env: A
 
 // ── The marks: after the buildings ─────────────────────────────────────────
 
+/**
+ * Paint one layer of the Truce Wall (§9.3) in world px, on every built block of the mark's rect whose street face shows
+ * (no body in front hides it): 'bands' an Undertow-green and a Kites-lilac band; 'tags' the two tags meeting in the
+ * middle; 'glow' the tags a little larger, for the night glow ('lighter', between the bands and the tags). Returns the
+ * blocks painted.
+ */
+/** Does the Truce Wall show on block (x, y): built, not a street, its street face not hidden by a body in front? */
+function muralBlock(world: World, x: number, y: number): boolean {
+  const tl = world.tiles[y * world.N + x];
+  if (tl.road || (tl.zone === ZoneType.None && tl.buildingId < 0) || (tl.buildingId < 0 && tl.level === 0)) return false;
+  return !hidden(world, x, y, 10);
+}
+
+/** Which blocks of the mark show the wall, as a key (a cached mural repaints only when it changes). */
+function muralMask(world: World, m: Mark): string {
+  let k = '';
+  for (let y = m.y; y < m.y + m.h; y++) for (let x = m.x; x < m.x + m.w; x++) k += muralBlock(world, x, y) ? '1' : '0';
+  return k;
+}
+
+function paintMural(g: CanvasRenderingContext2D, world: World, m: Mark, layer: 'bands' | 'glow' | 'tags'): number {
+  const spr = truceTags();
+  let painted = 0;
+  for (let y = m.y; y < m.y + m.h; y++)
+    for (let x = m.x; x < m.x + m.w; x++) {
+      if (!muralBlock(world, x, y)) continue;
+      // The left (south-west) face, from its west corner to its south corner, a strip 3–12 px up.
+      const ax = wx(x + 0.08, y + 0.92);
+      const ay = wy(x + 0.08, y + 0.92);
+      const bx = wx(x + 0.92, y + 0.92);
+      const by = wy(x + 0.92, y + 0.92);
+      const mx = (ax + bx) / 2;
+      const my = (ay + by) / 2;
+      painted++;
+      if (layer !== 'bands') {
+        if (!spr) continue;
+        g.save();
+        g.transform(1, -0.5, 0, 1, mx, my - 7.5);
+        if (layer === 'glow') g.drawImage(spr, -12, -6, 24, 11);
+        else g.drawImage(spr, -11, -5, 22, 10);
+        g.restore();
+        continue;
+      }
+      const band = (x0: number, y0: number, x1: number, y1: number, c: RGB) => {
+        g.fillStyle = cs(c, 0.85);
+        g.beginPath();
+        g.moveTo(x0, y0 - 3);
+        g.lineTo(x1, y1 - 3);
+        g.lineTo(x1, y1 - 12);
+        g.lineTo(x0, y0 - 12);
+        g.closePath();
+        g.fill();
+      };
+      band(ax, ay, mx, my, MURAL_GREEN);
+      band(mx, my, bx, by, MURAL_LILAC);
+      g.strokeStyle = cs([255, 250, 235], 0.6);
+      g.lineWidth = 0.6;
+      g.beginPath();
+      g.moveTo(ax, ay - 12);
+      g.lineTo(bx, by - 12);
+      g.stroke();
+    }
+  return painted;
+}
+
+interface MuralCache {
+  key: string;
+  mask: string;
+  ver: number;
+  at: number;
+  base: HTMLCanvasElement;
+  tags: HTMLCanvasElement;
+  glow: HTMLCanvasElement | null;
+  x0: number;
+  y0: number;
+  w: number;
+  h: number;
+  scale: number;
+  tiles: number;
+}
+/** The Truce Wall's sprites by mark id (one wall a city). */
+const murals = new Map<string, MuralCache>();
+/** Seconds between repaints of a cached mural while the city changes (the bodies in front of it can grow). */
+const MURAL_REPAINT_SEC = 2;
+const nowSec = () => (typeof performance !== 'undefined' ? performance.now() / 1000 : clock);
+
+function spriteCanvas(w: number, h: number, scale: number, x0: number, y0: number, into?: HTMLCanvasElement | null): [HTMLCanvasElement, CanvasRenderingContext2D] | null {
+  const cv = into ?? document.createElement('canvas');
+  if (cv.width !== w * scale || cv.height !== h * scale) {
+    cv.width = w * scale;
+    cv.height = h * scale;
+  }
+  const g = cv.getContext('2d');
+  if (!g) return null;
+  g.setTransform(1, 0, 0, 1, 0, 0);
+  g.clearRect(0, 0, cv.width, cv.height);
+  g.setTransform(scale, 0, 0, scale, -x0 * scale, -y0 * scale);
+  return [cv, g];
+}
+
+/**
+ * The Truce Wall painted into a sprite at the view's scale (1 or 2 px a world px), repainted when the mark or the scale
+ * changes and at most every 2 s while the city changes; its night glow is a second sprite, painted on the first night.
+ * Null without a DOM canvas or a readable transform (tests' canvas mock): the caller paints directly.
+ */
+function muralSprite(ctx: CanvasRenderingContext2D, world: World, m: Mark, night: boolean): MuralCache | null {
+  if (typeof document === 'undefined' || typeof ctx.getTransform !== 'function') return null;
+  const scale = Math.max(1, Math.min(2, Math.ceil(Math.abs(ctx.getTransform().a) - 0.05)));
+  const key = `${m.x},${m.y},${m.w},${m.h},${scale}`;
+  let c = murals.get(m.id);
+  const now = nowSec();
+  if (c && c.key === key && c.ver !== world.version && now - c.at >= MURAL_REPAINT_SEC) {
+    // The city changed: repaint only if a block of the wall appeared, went or was hidden.
+    c.ver = world.version;
+    c.at = now;
+    const mask = muralMask(world, m);
+    if (mask !== c.mask) c.key = '';
+  }
+  if (!c || c.key !== key) {
+    const x0 = Math.floor(wx(m.x, m.y + m.h)) - 16;
+    const x1 = Math.ceil(wx(m.x + m.w, m.y)) + 16;
+    const y0 = Math.floor(wy(m.x, m.y)) - 28;
+    const y1 = Math.ceil(wy(m.x + m.w, m.y + m.h)) + 8;
+    const w = x1 - x0;
+    const h = y1 - y0;
+    const made = spriteCanvas(w, h, scale, x0, y0, c?.base);
+    const tags = made && spriteCanvas(w, h, scale, x0, y0, c?.tags);
+    if (!made || !tags) return null;
+    const tiles = paintMural(made[1], world, m, 'bands');
+    paintMural(tags[1], world, m, 'tags');
+    c = { key, mask: muralMask(world, m), ver: world.version, at: now, base: made[0], tags: tags[0], glow: c?.glow ?? null, x0, y0, w, h, scale, tiles };
+    if (c.glow) {
+      const g = spriteCanvas(w, h, scale, x0, y0, c.glow);
+      if (g) paintMural(g[1], world, m, 'glow');
+    }
+    murals.set(m.id, c);
+  }
+  if (night && !c.glow) {
+    const g = spriteCanvas(c.w, c.h, c.scale, c.x0, c.y0);
+    if (g) {
+      paintMural(g[1], world, m, 'glow');
+      c.glow = g[0];
+    }
+  }
+  return c;
+}
+
 function skyMark(ctx: CanvasRenderingContext2D, world: World, m: Mark, env: ArtEnv): void {
   const n = env.night;
   const t = env.time;
   const N = world.N;
-  const [kind, arg] = m.decal.split(':');
+  const [kind, arg] = partsOf(m);
   switch (kind) {
     case 'kite': {
       // lark's kite over the tallest building on Kites turf; by night its tail blinks. A second, smaller one after ep.kite.
@@ -666,7 +869,7 @@ function skyMark(ctx: CanvasRenderingContext2D, world: World, m: Mark, env: ArtE
         const s = k ? 0.9 : 1.4;
         const kx = cx + (k ? -26 : 18) + Math.sin(t * 0.7 + k * 2) * 5;
         const ky = top - (k ? 34 : 46) + Math.sin(t * 1.1 + k) * 3;
-        ctx.strokeStyle = css([235, 230, 245], 0.55);
+        ctx.strokeStyle = cs([235, 230, 245], 0.55);
         ctx.lineWidth = 0.5;
         ctx.beginPath();
         ctx.moveTo(cx, roof);
@@ -678,7 +881,7 @@ function skyMark(ctx: CanvasRenderingContext2D, world: World, m: Mark, env: ArtE
           const tx = kx + Math.sin(t * 2 + j + k) * 2.5 * j * 0.5;
           const ty = ky + 9 * s + j * 4 * s;
           const blink = n > 0.3 && Math.floor(t * 2 + j) % 4 === 0;
-          ctx.fillStyle = css(blink ? [255, 240, 200] : LILAC, 0.9);
+          ctx.fillStyle = cs(blink ? [255, 240, 200] : LILAC, 0.9);
           ctx.fillRect(tx - 1, ty - 1, 2, 2);
           if (blink) {
             ctx.globalCompositeOperation = 'lighter';
@@ -702,7 +905,7 @@ function skyMark(ctx: CanvasRenderingContext2D, world: World, m: Mark, env: ArtE
       const pts: [number, number, RGB][] = [];
       for (let k = 0; k <= 8; k++) pts.push([m.x + (m.w * k) / 8, y1, LIME]);
       for (let k = 0; k < 8; k++) pts.push([x1, m.y + (m.h * k) / 8, LILAC]);
-      ctx.strokeStyle = css([40, 40, 50], 0.8);
+      ctx.strokeStyle = cs([40, 40, 50], 0.8);
       ctx.lineWidth = 0.5;
       ctx.beginPath();
       ctx.moveTo(wx(m.x, y1), wy(m.x, y1, z));
@@ -710,7 +913,7 @@ function skyMark(ctx: CanvasRenderingContext2D, world: World, m: Mark, env: ArtE
       ctx.lineTo(wx(x1, m.y), wy(x1, m.y, z));
       ctx.stroke();
       for (const [u, v, c] of pts) {
-        ctx.fillStyle = css(c);
+        ctx.fillStyle = cs(c);
         ctx.fillRect(wx(u, v) - 1.2, wy(u, v, z) - 0.6, 2.4, 2.4);
       }
       if (env.quality !== 'low') {
@@ -733,7 +936,7 @@ function skyMark(ctx: CanvasRenderingContext2D, world: World, m: Mark, env: ArtE
       ctx.fillRect(bx - 1, by - 62, 2, 62);
       ctx.fillStyle = '#7d869e';
       ctx.fillRect(bx - 5, by - 64, 10, 3);
-      ctx.fillStyle = css(n > 0.3 ? COLD : [180, 190, 205]);
+      ctx.fillStyle = cs(n > 0.3 ? COLD : [180, 190, 205]);
       ctx.fillRect(bx - 4, by - 63, 2, 1.5);
       ctx.fillRect(bx + 2, by - 63, 2, 1.5);
       if (n > 0.3) {
@@ -742,7 +945,7 @@ function skyMark(ctx: CanvasRenderingContext2D, world: World, m: Mark, env: ArtE
         const ey = by + Math.sin(a) * 55 + 10;
         ctx.globalCompositeOperation = 'lighter';
         ctx.globalAlpha = 0.18 + 0.22 * n;
-        ctx.fillStyle = css(COLD, 0.55);
+        ctx.fillStyle = cs(COLD, 0.55);
         ctx.beginPath();
         ctx.moveTo(bx - 1, by - 63);
         ctx.lineTo(ex - 18, ey);
@@ -779,53 +982,24 @@ function skyMark(ctx: CanvasRenderingContext2D, world: World, m: Mark, env: ArtE
     }
     case 'mural': {
       // The Truce Wall: both crews' tags meet on one long mural along the Seam's facades (each block's street face:
-      // an Undertow-green and a Kites-lilac half, the two tags meeting in the middle).
-      const spr = truceTags();
-      for (let y = m.y; y < m.y + m.h; y++)
-        for (let x = m.x; x < m.x + m.w; x++) {
-          const tl = world.tiles[y * N + x];
-          if (tl.road || (tl.zone === ZoneType.None && tl.buildingId < 0) || (tl.buildingId < 0 && tl.level === 0)) continue;
-          if (hidden(world, x, y, 10)) continue;
-          // The left (south-west) face, from its west corner to its south corner, a strip 3–12 px up.
-          const ax = wx(x + 0.08, y + 0.92);
-          const ay = wy(x + 0.08, y + 0.92);
-          const bx = wx(x + 0.92, y + 0.92);
-          const by = wy(x + 0.92, y + 0.92);
-          const mx = (ax + bx) / 2;
-          const my = (ay + by) / 2;
-          const band = (x0: number, y0: number, x1: number, y1: number, c: RGB) => {
-            ctx.fillStyle = css(c, 0.85);
-            ctx.beginPath();
-            ctx.moveTo(x0, y0 - 3);
-            ctx.lineTo(x1, y1 - 3);
-            ctx.lineTo(x1, y1 - 12);
-            ctx.lineTo(x0, y0 - 12);
-            ctx.closePath();
-            ctx.fill();
-          };
-          band(ax, ay, mx, my, [52, 120, 40]);
-          band(mx, my, bx, by, [104, 74, 150]);
-          ctx.strokeStyle = css([255, 250, 235], 0.6);
-          ctx.lineWidth = 0.6;
-          ctx.beginPath();
-          ctx.moveTo(ax, ay - 12);
-          ctx.lineTo(bx, by - 12);
-          ctx.stroke();
-          if (spr) {
-            ctx.save();
-            ctx.transform(1, -0.5, 0, 1, mx, my - 7.5);
-            if (n > 0.3) {
-              ctx.globalCompositeOperation = 'lighter';
-              ctx.globalAlpha = n;
-              ctx.drawImage(spr, -12, -6, 24, 11);
-              ctx.globalCompositeOperation = 'source-over';
-              ctx.globalAlpha = 1;
-            }
-            ctx.drawImage(spr, -11, -5, 22, 10);
-            ctx.restore();
-          }
-          MARKS_STATS.skyDecals++;
-        }
+      // an Undertow-green and a Kites-lilac half, the two tags meeting in the middle). Painted once into a sprite
+      // (muralSprite) and blitted: two or three canvas calls a frame instead of ten a block. The bands, then the tags'
+      // night glow ('lighter'), then the tags on top in their own colours.
+      const c = muralSprite(ctx, world, m, n > 0.3);
+      if (c) ctx.drawImage(c.base, c.x0, c.y0, c.w, c.h);
+      else MARKS_STATS.skyDecals += paintMural(ctx, world, m, 'bands');
+      if (n > 0.3) {
+        ctx.globalCompositeOperation = 'lighter';
+        ctx.globalAlpha = n;
+        if (c?.glow) ctx.drawImage(c.glow, c.x0, c.y0, c.w, c.h);
+        else if (!c) paintMural(ctx, world, m, 'glow');
+        ctx.globalCompositeOperation = 'source-over';
+        ctx.globalAlpha = 1;
+      }
+      if (c) {
+        ctx.drawImage(c.tags, c.x0, c.y0, c.w, c.h);
+        MARKS_STATS.skyDecals += c.tiles;
+      } else paintMural(ctx, world, m, 'tags');
       break;
     }
     case 'dark': {
@@ -853,7 +1027,7 @@ function skyMark(ctx: CanvasRenderingContext2D, world: World, m: Mark, env: ArtE
         ctx.fill();
         ctx.globalAlpha = 1;
         if (k === 0) {
-          const spr = sigilSprite('moth', css(LIME), 32);
+          const spr = sigilSprite('moth', cs(LIME), 32);
           if (spr) {
             ctx.globalCompositeOperation = 'lighter';
             ctx.globalAlpha = 0.7;
@@ -876,9 +1050,9 @@ function skyMark(ctx: CanvasRenderingContext2D, world: World, m: Mark, env: ArtE
       const by = wy(u, v, h * 0.45);
       ctx.fillStyle = '#c8cbd8';
       ctx.fillRect(bx - 6, by, 12, 1.6);
-      ctx.fillStyle = css(n > 0.3 ? WARM : [210, 200, 170]);
+      ctx.fillStyle = cs(n > 0.3 ? WARM : [210, 200, 170]);
       ctx.fillRect(bx - 4, by - 6, 8, 6);
-      ctx.fillStyle = css([120, 220, 255]);
+      ctx.fillStyle = cs([120, 220, 255]);
       ctx.fillRect(bx + 4.5, by - 4, 2, 3);
       if (n > 0.25) {
         ctx.globalCompositeOperation = 'lighter';
@@ -906,7 +1080,7 @@ function skyMark(ctx: CanvasRenderingContext2D, world: World, m: Mark, env: ArtE
       ctx.fillStyle = '#4a5064';
       ctx.fillRect(bx - 0.8, by - 30, 1.6, 30);
       const wave = Math.sin(t * 1.7 + x) * 0.8;
-      ctx.fillStyle = css(c);
+      ctx.fillStyle = cs(c);
       ctx.beginPath();
       ctx.moveTo(bx + 0.8, by - 30);
       ctx.lineTo(bx + 8, by - 29 + wave);
@@ -914,7 +1088,7 @@ function skyMark(ctx: CanvasRenderingContext2D, world: World, m: Mark, env: ArtE
       ctx.lineTo(bx + 0.8, by - 16);
       ctx.closePath();
       ctx.fill();
-      ctx.fillStyle = css([255, 255, 255], 0.8);
+      ctx.fillStyle = cs([255, 255, 255], 0.8);
       ctx.fillRect(bx + 3, by - 25 + wave * 0.5, 2.6, 5);
       if (n > 0.3) {
         ctx.globalCompositeOperation = 'lighter';
@@ -933,9 +1107,9 @@ function skyMark(ctx: CanvasRenderingContext2D, world: World, m: Mark, env: ArtE
       ctx.fillStyle = '#5a6074';
       ctx.fillRect(bx - 0.6, by - 22, 1.2, 22);
       const wave = Math.sin(t * 2 + m.x) * 0.6;
-      ctx.fillStyle = css(BOARD);
+      ctx.fillStyle = cs(BOARD);
       ctx.fillRect(bx + 0.6, by - 22 + wave, 7, 4.5);
-      ctx.fillStyle = css([240, 246, 255]);
+      ctx.fillStyle = cs([240, 246, 255]);
       ctx.fillRect(bx + 0.6, by - 18.5 + wave, 7, 1);
       break;
     }
@@ -1006,9 +1180,15 @@ export function draw(ctx: CanvasRenderingContext2D, world: World, marks: Marks, 
 /** Draw the tall and facade decals after the buildings (render/story.ts drawSkyFx). */
 export function drawSky(ctx: CanvasRenderingContext2D, world: World, marks: Marks, tiles: Rect, env: ArtEnv): void {
   if (env.zoom < MARKS_MIN_ZOOM || !marks.list.length) return;
+  // The view in world px: a mark whose decal cannot reach the screen is skipped (the tile rect of an isometric view
+  // also holds the corners off screen). Generous reach: a kite or a mast's searchlight stands far above its tile.
+  const tf = typeof ctx.getTransform === 'function' ? ctx.getTransform() : null;
+  const cv = ctx.canvas as HTMLCanvasElement | undefined;
+  const view = tf && tf.a > 0 && tf.d > 0 && cv ? { x0: -tf.e / tf.a, x1: (cv.width - tf.e) / tf.a, y0: -tf.f / tf.d, y1: (cv.height - tf.f) / tf.d } : null;
   ctx.save();
   for (const m of marks.list) {
     if (!inRect(m, tiles, 3)) continue;
+    if (view && (wx(m.x + m.w, m.y) + SKY_REACH.x < view.x0 || wx(m.x, m.y + m.h) - SKY_REACH.x > view.x1 || wy(m.x, m.y) - SKY_REACH.up > view.y1 || wy(m.x + m.w, m.y + m.h) + SKY_REACH.down < view.y0)) continue;
     skyMark(ctx, world, m, env);
   }
   ctx.restore();

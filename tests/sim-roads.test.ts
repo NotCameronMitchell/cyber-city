@@ -497,7 +497,8 @@ describe('advisor (§7.1, §7.6, Appendix B)', () => {
     const at12k = at(125_000);
     expect(at12k).toContain(`Unlocked: Skyway (Sky). ${SKYWAY.desc}`);
     expect(at12k).toContain(`Unlocked: Airport (Infra). ${BUILDINGS.airport.desc}`);
-    expect(at(310_000)).toEqual([`Unlocked: Spaceport (Infra). ${BUILDINGS.spaceport.desc}`]);
+    // The Arc Arena (300,000) is in the Sky tray since w4fix unhid it (MEGACITY §6.3; lm.arena can come).
+    expect(at(310_000)).toEqual([`Unlocked: Spaceport (Infra). ${BUILDINGS.spaceport.desc}`, `Unlocked: ${BUILDINGS.arena.name} (Sky). ${BUILDINGS.arena.desc}`]);
     expect(at(400_000)).toEqual([]);
   });
 

@@ -196,7 +196,11 @@ export class StoryCard {
     this.sig.innerHTML = sig;
     setText(this.speaker, card.speakerName || (card.faction ? factionName(card.faction) : 'MOTH'));
     const fname = card.faction ? factionName(card.faction) + (card.with ? ` · ${factionName(card.with)}` : '') : card.kind === 'log' ? 'Pump Station 6' : '';
+    // Two factions ("The Undertow · The Glass Kites") wrap between the names on a narrow phone instead of cutting one.
+    // (setText first, so its cache holds this text and a later one-faction card is written again.)
     setText(this.faction, fname);
+    if (card.faction && card.with)
+      this.faction.replaceChildren(h('span', { class: 'cc-scard-fname', text: `${factionName(card.faction)} ·` }), ' ', h('span', { class: 'cc-scard-fname', text: factionName(card.with) }));
     setHidden(this.faction, !fname);
     // "Who is this?" for a visible faction speaker; the first card a faction speaks on opens it.
     const row = this.speakerRow(card);

@@ -286,6 +286,37 @@ describe('§9.6 item 1: every key choice leaves exactly its mark, at its place; 
     expect(sunkTagline(w)).toBe(SUNK_TAGLINES.archive);
   });
 
+  it('the Seam\'s marks and their renamed cell stay where Chapter III\'s choice was made while the live Seam moves', () => {
+    // Before: turf.update moved story.seam every month and the Truce Wall, its plaque and "Truce Row" moved with it.
+    const g = gameOn(city.w);
+    const w = g.world;
+    const st = w.story;
+    const N = w.N;
+    st.seam = city.seam;
+    st.flags.truce = true;
+    g.story.markDirty();
+    g.update(0.016);
+    expect(typeof st.flags.seamMark).toBe('string');
+    const wall = () => g.story.visual.marks.list.find((m) => m.id === 'truceWall');
+    const at0 = wall();
+    expect(covers(at0, city.seam % N, (city.seam / N) | 0)).toBe(true);
+    const [cx, cy] = cellOf(w, city.seam);
+    expect(markCellName(w.seed, cx, cy)).toBe('Truce Row');
+    // The crews' front drifts 20 tiles east (turf.update writes story.seam monthly): the marks stay.
+    const moved = city.seam + 20;
+    st.seam = moved;
+    g.story.markDirty();
+    g.update(0.016);
+    expect({ x: wall()!.x, y: wall()!.y }).toEqual({ x: at0!.x, y: at0!.y });
+    expect(markCellName(w.seed, cx, cy)).toBe('Truce Row');
+    const [mx, my] = cellOf(w, moved);
+    expect(markCellName(w.seed, mx, my)).toBeNull();
+    // Saved with the city and read back in art coordinates.
+    const g2 = gameOn(w);
+    expect(g2.world.story.flags.seamMark).toBe(st.flags.seamMark);
+    expect({ x: g2.story.visual.marks.list.find((m) => m.id === 'truceWall')!.x }).toEqual({ x: at0!.x });
+  });
+
   it('a built ending landmark leaves its own mark: built under its ending, dormant while another holds', () => {
     const w = city.w;
     const b = w.addBuilding('stillsquare', ...(Object.values(freeSquare(w, startSlotOf(w), 3, new Set())!) as [number, number]))!;
