@@ -1011,10 +1011,10 @@ describe('§9.2 optional: the Glass Smile follows the camera, the Record Tower s
         history: [],
       };
       expect(live.ledgerLines(w)).toEqual([
-        { label: 'HAB BLOCK TAX', amount: '+1.20M', up: true },
+        { label: 'HAB TAX', amount: '+1.20M', up: true },
         { label: 'TOURISM', amount: '+300K', up: true },
         { label: 'ROADS', amount: '−120K', up: false },
-        { label: 'POWER PLANTS', amount: '−300K', up: false },
+        { label: 'POWER', amount: '−300K', up: false },
         { label: 'NET', amount: '+1.08M', up: true },
       ]);
       const ctx = mockContext();

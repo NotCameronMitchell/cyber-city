@@ -120,15 +120,24 @@ export function ledgerAmount(v: number): string {
 export function ledgerLines(world: World): { label: string; amount: string; up: boolean }[] {
   const b = world.budget;
   const out: { label: string; amount: string; up: boolean }[] = [];
-  const short = (s: string) => s.toUpperCase().replace(/[^A-Z0-9 ]/g, '').slice(0, 14).trim();
+  // A face holds about 16 characters a row: the label to 9 at a word boundary ("HAB TAX", "POWER", "DATA HUBS"), its
+  // figure right after it on the same row. A face slopes, so a figure in a column of its own, or a row below, sits level
+  // with another line's label and reads as that line's.
+  const short = (s: string) => {
+    const words = s.toUpperCase().replace(/[^A-Z0-9 ]/g, '').split(/\s+/).filter(Boolean);
+    if (words.length > 1 && words[words.length - 1] === 'TAX' && words[0].length <= 5) return `${words[0]} TAX`;
+    let out = words[0]?.slice(0, 9) ?? '';
+    for (let k = 1; k < words.length && out.length + 1 + words[k].length <= 9; k++) out += ` ${words[k]}`;
+    return out;
+  };
   for (const l of b.incomeLines) if (l.amount) out.push({ label: short(l.label), amount: ledgerAmount(l.amount), up: true });
   for (const l of b.expenseLines) if (l.amount) out.push({ label: short(l.label), amount: ledgerAmount(-l.amount), up: false });
   out.push({ label: 'NET', amount: ledgerAmount(b.income - b.expenses), up: b.income >= b.expenses });
   return out.slice(0, 18);
 }
 
-/** Face units: px between rows (a line takes two: its label, then its amount), the sprite's scale (crisp at zoom 2 on a 2× screen). */
-const LEDGER_ROW = 7;
+/** Face units: px between rows (a line a row: its label, then its figure), the sprite's scale (crisp at zoom 2 on a 2× screen). */
+const LEDGER_ROW = 8;
 const LEDGER_S = 4;
 const LEDGER_W = 52;
 let ledgerCanvas: HTMLCanvasElement | null = null;
@@ -141,9 +150,8 @@ function ledgerSprite(world: World, c: RGB): HTMLCanvasElement | null {
   const lines = ledgerLines(world);
   const key = lines.map((l) => `${l.label}${l.amount}`).join('|');
   if (ledgerCanvas && key === ledgerKey) return ledgerCanvas;
-  // Two rows a line; at least a face's height of rows, so the scroll never runs past the second copy.
-  const items = Math.max(lines.length, 8);
-  const rows = items * 2;
+  // Whole rounds of the lines, at least a face's height of rows, so the scroll never runs past the second copy.
+  const rows = lines.length * Math.ceil(15 / lines.length);
   const cv = ledgerCanvas ?? document.createElement('canvas');
   cv.width = LEDGER_W * LEDGER_S;
   cv.height = rows * LEDGER_ROW * LEDGER_S * 2;
@@ -151,20 +159,17 @@ function ledgerSprite(world: World, c: RGB): HTMLCanvasElement | null {
   if (!g) return null;
   g.clearRect(0, 0, cv.width, cv.height);
   g.scale(LEDGER_S, LEDGER_S);
-  g.font = 'bold 5.2px ui-monospace, Menlo, Consolas, monospace';
+  g.font = 'bold 4.6px ui-monospace, Menlo, Consolas, monospace';
   g.textBaseline = 'alphabetic';
   for (let copy = 0; copy < 2; copy++)
-    for (let k = 0; k < items; k++) {
+    for (let k = 0; k < rows; k++) {
       const l = lines[k % lines.length];
-      const y0 = (copy * rows + k * 2) * LEDGER_ROW;
+      const yy = (copy * rows + k) * LEDGER_ROW + LEDGER_ROW - 2.2;
       g.textAlign = 'left';
-      g.fillStyle = css(c, 0.6);
-      g.fillText(l.label, 2.5, y0 + LEDGER_ROW - 1.6);
-      g.textAlign = 'right';
+      g.fillStyle = css(c, 0.66);
+      g.fillText(l.label, 2, yy);
       g.fillStyle = l.up ? css(c, 1) : css([255, 196, 150], 0.95);
-      g.fillText(l.amount, LEDGER_W - 2.5, y0 + LEDGER_ROW * 2 - 2);
-      g.fillStyle = css(c, 0.18);
-      g.fillRect(2.5, y0 + LEDGER_ROW * 2 - 0.6, LEDGER_W - 5, 0.4);
+      g.fillText(l.amount, 2 + g.measureText(`${l.label} `).width, yy);
     }
   ledgerCanvas = cv;
   ledgerKey = key;
