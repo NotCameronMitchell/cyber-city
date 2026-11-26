@@ -21,7 +21,7 @@ import { Terrain } from '../../game/types';
 import type { World } from '../../game/world';
 import { HALF_H, HALF_W } from '../camera';
 import { css, glowSprite, mix, type RGB } from '../palette';
-import { tileOnScreen, type Bounds, type ViewRect } from './traffic';
+import { RECOUNT_MIN_FRAMES, tileOnScreen, type Bounds, type ViewRect } from './traffic';
 
 /** Visible boats at most (§6.4), and in lower detail (§3.11). */
 export const BOAT_CAP = 24;
@@ -35,6 +35,9 @@ const enum BoatKind {
 
 const LEN = [0.24, 0.42, 0.36];
 const WID = [0.085, 0.13, 0.12];
+/** The hull outline (bow, two shoulders, stern corners) in boat units: along × LEN, across × WID. */
+const HULL_SHAPE = [1.15, 0, 0.45, 1, -1, 0.9, -1, -0.9, 0.45, -1];
+const HULL_PTS = 5;
 const SPEED = [0.95, 0.32, 0.55];
 const HULL: RGB[] = [
   [236, 196, 60],
@@ -87,6 +90,11 @@ export class Boats {
   private list: Boat[] = [];
   private visWater: number[] = [];
   private recount = 0;
+  /** The bounds and view of the last visible-water scan, and whether the water changed since (a scan only when either did). */
+  private visKey = '';
+  private navDirty = true;
+  /** Frames since the last recount (RECOUNT_MIN_FRAMES). */
+  private sinceCount = RECOUNT_MIN_FRAMES;
   private cap = BOAT_CAP;
   private N = 0;
   /** BFS scratch (per slot). */
@@ -99,7 +107,9 @@ export class Boats {
   private cargoCss: string[] = CARGO.map((c) => css(c));
   private glow: HTMLCanvasElement | null = null;
   private sideCss: string[] = [];
-  private pts = new Float64Array(10);
+  /** Hull outline points of each boat this frame (screen-space x, y; HULL_PTS a boat) and its alpha. */
+  private hulls = new Float32Array(0);
+  private alphas = new Float32Array(0);
   /** Boats drawn last frame (tests). */
   drawn = 0;
   /** Blocks recomputed since construction (tests: R0). */
@@ -119,6 +129,7 @@ export class Boats {
   reset() {
     this.list.length = 0;
     this.recount = 0;
+    this.sinceCount = RECOUNT_MIN_FRAMES;
     this.world = null;
   }
 
@@ -129,6 +140,7 @@ export class Boats {
     this.bw = (world.N + 7) >> 3;
     this.stale = new Uint8Array(this.bw * this.bw).fill(1);
     this.list.length = 0;
+    this.navDirty = true;
   }
 
   /** Tiles changed in `r` (a bridge, rail, a pumped canal): flag its blocks. */
@@ -137,6 +149,7 @@ export class Boats {
       this.bind(world);
       return;
     }
+    this.navDirty = true;
     if (!r) {
       this.stale.fill(1);
       return;
@@ -181,14 +194,21 @@ export class Boats {
     }
     const N = this.N;
     this.recount -= dt;
-    if (this.recount <= 0) {
+    this.sinceCount++;
+    if (this.recount <= 0 && this.sinceCount >= RECOUNT_MIN_FRAMES) {
       this.recount = 1;
-      this.visWater.length = 0;
+      this.sinceCount = 0;
       const x0 = Math.max(0, b.x0);
       const y0 = Math.max(0, b.y0);
       const x1 = Math.min(N - 1, b.x1);
       const y1 = Math.min(N - 1, b.y1);
-      if (x1 >= x0 && y1 >= y0) {
+      // The same view over the same water: the last scan still holds (a still camera costs nothing a second).
+      const key = view ? `${x0},${y0},${x1},${y1},${Math.round(view.x0 / 16)},${Math.round(view.y0 / 16)},${Math.round(view.x1 / 16)},${Math.round(view.y1 / 16)}` : `${x0},${y0},${x1},${y1}`;
+      const fresh = key !== this.visKey || this.navDirty;
+      this.visKey = key;
+      this.navDirty = false;
+      if (fresh) this.visWater.length = 0;
+      if (fresh && x1 >= x0 && y1 >= y0) {
         this.refresh(world, x0, y0, x1, y1);
         // A navigable tile with water ahead in a line (a channel, not a puddle), every other tile.
         for (let y = y0; y <= y1; y++)
@@ -198,7 +218,8 @@ export class Boats {
           }
       }
       // Drop boats whose path crosses water that is no longer navigable (a new bridge).
-      this.list = this.list.filter((bt) => {
+      if (fresh)
+        this.list = this.list.filter((bt) => {
         for (let k = bt.k; k < bt.path.length; k++) if (!this.nav[bt.path[k]]) return false;
         return true;
       });
@@ -403,105 +424,129 @@ export class Boats {
     this.colours(night);
     this.glow ??= glowSprite([255, 236, 190], 32);
     const far = zoom < 0.6;
-    const P = this.pts;
-    for (const bt of this.list) {
+    // Each boat's hull outline once (screen-space points in `hulls`), then the parts batched across the boats: the
+    // wakes in one stroke, the shadows in one fill, the side and the deck per kind, the cabins by colour, the lights
+    // under one composite switch. A boat fading in or out (alpha < 1) keeps its own alpha (drawn apart).
+    const list = this.list;
+    const n = list.length;
+    if (this.hulls.length < n * HULL_PTS * 2) this.hulls = new Float32Array(Math.max(n, BOAT_CAP) * HULL_PTS * 2);
+    if (this.alphas.length < n) this.alphas = new Float32Array(Math.max(n, BOAT_CAP));
+    const H = this.hulls;
+    const A = this.alphas;
+    for (let i = 0; i < n; i++) {
+      const bt = list[i];
       const alpha = Math.min(1, bt.age * 1.5) * (bt.dying > 0 ? Math.min(1, bt.dying / 1.2) : 1);
+      A[i] = alpha;
       if (alpha <= 0.02) continue;
       this.drawn++;
-      const u = bt.u;
-      const v = bt.v;
-      const hu = bt.hu;
-      const hv = bt.hv;
       const L = LEN[bt.kind];
       const W = WID[bt.kind];
-      const moving = bt.wait <= 0 && bt.dying <= 0;
+      for (let k = 0; k < HULL_PTS; k++) {
+        const a = HULL_SHAPE[k * 2] * L;
+        const b = HULL_SHAPE[k * 2 + 1] * W;
+        const pu = bt.u + bt.hu * a - bt.hv * b;
+        const pv = bt.v + bt.hv * a + bt.hu * b;
+        H[(i * HULL_PTS + k) * 2] = (pu - pv) * HALF_W;
+        H[(i * HULL_PTS + k) * 2 + 1] = (pu + pv) * HALF_H;
+      }
+    }
+    // Draw the boats with alpha `full` (1) or each fading boat on its own (full = false, one boat a call).
+    const pass = (from: number, to: number, solid: boolean) => {
+      const pick = (i: number) => (solid ? A[i] >= 0.99 : A[i] > 0.02 && A[i] < 0.99);
       // Wake: a V spreading back from the stern (brighter the faster the boat).
-      if (moving) {
-        ctx.globalAlpha = alpha * (far ? 0.35 : 0.55);
-        ctx.strokeStyle = night > 0.5 ? '#8fb2ff' : '#f2f8ff';
-        ctx.lineWidth = far ? 0.9 : 0.7;
-        const su = u - hu * L;
-        const sv = v - hv * L;
+      ctx.strokeStyle = night > 0.5 ? '#8fb2ff' : '#f2f8ff';
+      ctx.lineWidth = far ? 0.9 : 0.7;
+      ctx.globalAlpha = (solid ? 1 : A[from]) * (far ? 0.35 : 0.55);
+      ctx.beginPath();
+      let any = false;
+      for (let i = from; i < to; i++) {
+        const bt = list[i];
+        if (!pick(i) || bt.wait > 0 || bt.dying > 0) continue;
+        any = true;
+        const L = LEN[bt.kind];
+        const su = bt.u - bt.hu * L;
+        const sv = bt.v - bt.hv * L;
         const spread = 0.1 + 0.12 * bt.speed;
         const back = 0.35 + 0.45 * bt.speed;
-        ctx.beginPath();
-        for (const sd of [-1, 1]) {
-          const eu = su - hu * back - hv * spread * sd;
-          const ev = sv - hv * back + hu * spread * sd;
+        for (let sd = -1; sd <= 1; sd += 2) {
+          const eu = su - bt.hu * back - bt.hv * spread * sd;
+          const ev = sv - bt.hv * back + bt.hu * spread * sd;
           ctx.moveTo((su - sv) * HALF_W, (su + sv) * HALF_H);
           ctx.lineTo((eu - ev) * HALF_W, (eu + ev) * HALF_H);
         }
-        ctx.stroke();
       }
+      if (any) ctx.stroke();
       // Hull: a pointed slab (bow, two shoulders, stern corners) with a darker side below the deck line.
-      const shape = [
-        [L * 1.15, 0],
-        [L * 0.45, W],
-        [-L, W * 0.9],
-        [-L, -W * 0.9],
-        [L * 0.45, -W],
-      ];
-      for (let k = 0; k < shape.length; k++) {
-        const pu = u + hu * shape[k][0] - hv * shape[k][1];
-        const pv = v + hv * shape[k][0] + hu * shape[k][1];
-        P[k * 2] = (pu - pv) * HALF_W;
-        P[k * 2 + 1] = (pu + pv) * HALF_H;
-      }
-      ctx.globalAlpha = alpha;
+      ctx.globalAlpha = solid ? 1 : A[from];
       ctx.fillStyle = 'rgba(4,10,20,0.45)';
-      this.poly(ctx, P, shape.length, 0.6);
-      ctx.fillStyle = this.sideCss[bt.kind];
-      this.poly(ctx, P, shape.length, -0.4);
-      ctx.fillStyle = this.hullCss[bt.kind];
-      this.poly(ctx, P, shape.length, -1.6);
-      const x = (u - v) * HALF_W;
-      const y = (u + v) * HALF_H;
+      this.hullPath(ctx, from, to, pick, -1, 0.6);
+      for (let kind = 0; kind < 3; kind++) {
+        ctx.fillStyle = this.sideCss[kind];
+        this.hullPath(ctx, from, to, pick, kind, -0.4);
+        ctx.fillStyle = this.hullCss[kind];
+        this.hullPath(ctx, from, to, pick, kind, -1.6);
+      }
       if (!far) {
-        if (bt.kind === BoatKind.Barge) {
-          // Containers in a row along the deck.
-          for (let c = 0; c < 3; c++) {
-            const off = L * (0.55 - c * 0.55);
-            const cu = u + hu * off;
-            const cv = v + hv * off;
+        for (let i = from; i < to; i++) {
+          if (!pick(i)) continue;
+          const bt = list[i];
+          const L = LEN[bt.kind];
+          if (bt.kind === BoatKind.Barge) {
+            // Containers in a row along the deck.
+            for (let c = 0; c < 3; c++) {
+              const off = L * (0.55 - c * 0.55);
+              const cu = bt.u + bt.hu * off;
+              const cv = bt.v + bt.hv * off;
+              ctx.fillStyle = this.cargoCss[(bt.col + c) % this.cargoCss.length];
+              ctx.fillRect((cu - cv) * HALF_W - 2.4, (cu + cv) * HALF_H - 4.2, 4.8, 2.6);
+            }
+          } else {
+            // A cabin aft of the middle; a ferry's is long with a row of windows.
+            const off = bt.kind === BoatKind.Ferry ? -L * 0.15 : -L * 0.25;
+            const cu = bt.u + bt.hu * off;
+            const cv = bt.v + bt.hv * off;
             const px = (cu - cv) * HALF_W;
             const py = (cu + cv) * HALF_H - 1.6;
-            ctx.fillStyle = this.cargoCss[(bt.col + c) % this.cargoCss.length];
-            ctx.fillRect(px - 2.4, py - 2.6, 4.8, 2.6);
+            const cw = bt.kind === BoatKind.Ferry ? 9 : 4.4;
+            const ch = bt.kind === BoatKind.Ferry ? 3.6 : 2.8;
+            ctx.fillStyle = this.deckCss[bt.kind];
+            ctx.fillRect(px - cw / 2, py - ch, cw, ch);
+            ctx.fillStyle = night > 0.35 ? '#ffe7a6' : '#bfe4ff';
+            ctx.fillRect(px - cw / 2 + 0.8, py - ch + 0.8, cw - 1.6, 0.9);
           }
-        } else {
-          // A cabin aft of the middle; a ferry's is long with a row of windows.
-          const off = bt.kind === BoatKind.Ferry ? -L * 0.15 : -L * 0.25;
-          const cu = u + hu * off;
-          const cv = v + hv * off;
-          const px = (cu - cv) * HALF_W;
-          const py = (cu + cv) * HALF_H - 1.6;
-          const cw = bt.kind === BoatKind.Ferry ? 9 : 4.4;
-          const ch = bt.kind === BoatKind.Ferry ? 3.6 : 2.8;
-          ctx.fillStyle = this.deckCss[bt.kind];
-          ctx.fillRect(px - cw / 2, py - ch, cw, ch);
-          ctx.fillStyle = night > 0.35 ? '#ffe7a6' : '#bfe4ff';
-          ctx.fillRect(px - cw / 2 + 0.8, py - ch + 0.8, cw - 1.6, 0.9);
         }
       }
       // Lights at night: a warm cabin glow and a mast light.
       if (night > 0.3) {
         ctx.globalCompositeOperation = 'lighter';
-        ctx.globalAlpha = alpha * night * (quality === 'high' ? 0.8 : 0.5);
-        ctx.drawImage(this.glow, x - 5, y - 8, 10, 10);
+        ctx.globalAlpha = (solid ? 1 : A[from]) * night * (quality === 'high' ? 0.8 : 0.5);
+        for (let i = from; i < to; i++) {
+          if (!pick(i)) continue;
+          const bt = list[i];
+          ctx.drawImage(this.glow!, (bt.u - bt.v) * HALF_W - 5, (bt.u + bt.v) * HALF_H - 8, 10, 10);
+        }
         ctx.globalCompositeOperation = 'source-over';
       }
-    }
+    };
+    pass(0, n, true);
+    for (let i = 0; i < n; i++) if (A[i] > 0.02 && A[i] < 0.99) pass(i, i + 1, false);
     ctx.globalAlpha = 1;
   }
 
-  /** Fill the hull outline in P (n points) raised by dy px. */
-  private poly(ctx: CanvasRenderingContext2D, P: Float64Array, n: number, dy: number) {
-    ctx.beginPath();
-    for (let k = 0; k < n; k++) {
-      if (k === 0) ctx.moveTo(P[0], P[1] + dy);
-      else ctx.lineTo(P[k * 2], P[k * 2 + 1] + dy);
+  /** The hull outlines of the picked boats (of `kind`, or all with −1), lifted by dy, in one path and one fill. */
+  private hullPath(ctx: CanvasRenderingContext2D, from: number, to: number, pick: (i: number) => boolean, kind: number, dy: number) {
+    const H = this.hulls;
+    let any = false;
+    for (let i = from; i < to; i++) {
+      if (!pick(i) || (kind >= 0 && this.list[i].kind !== kind)) continue;
+      if (!any) ctx.beginPath();
+      any = true;
+      const o = i * HULL_PTS * 2;
+      ctx.moveTo(H[o], H[o + 1] + dy);
+      for (let k = 1; k < HULL_PTS; k++) ctx.lineTo(H[o + k * 2], H[o + k * 2 + 1] + dy);
+      ctx.closePath();
     }
-    ctx.closePath();
-    ctx.fill();
+    if (any) ctx.fill();
   }
+
 }

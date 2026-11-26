@@ -96,6 +96,13 @@ export interface ViewRect {
  * Is the centre of tile (x, y) on screen, within `mx` / `my` world px? The tile bounds the renderer hands over are an
  * axis-aligned box in tile space, about twice the screen's area: life layers pick their spots from what is on screen.
  */
+/**
+ * A life layer's periodic recount (crowds, boats, ground weather, the night market's strings) waits for this many
+ * frames as well as its seconds, so a slow frame rate does not multiply its share of each frame (on the 4× phone proxy
+ * a frame is 150 ms: a 0.5 s recount would land on every third frame).
+ */
+export const RECOUNT_MIN_FRAMES = 10;
+
 export function tileOnScreen(r: ViewRect | null, x: number, y: number, mx = 40, my = 40): boolean {
   if (!r) return true;
   const px = (x - y) * HALF_W;

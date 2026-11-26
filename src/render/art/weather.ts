@@ -22,7 +22,7 @@ import { Ground, Terrain, ZoneType } from '../../game/types';
 import type { World } from '../../game/world';
 import { HALF_H, HALF_W } from '../camera';
 import type { RGB } from '../palette';
-import { SIDE_MARKET, SIDE_ROAD, tileOnScreen, type Bounds, type StreetIndex, type ViewRect } from './traffic';
+import { RECOUNT_MIN_FRAMES, SIDE_MARKET, SIDE_ROAD, tileOnScreen, type Bounds, type StreetIndex, type ViewRect } from './traffic';
 
 export const enum Sky {
   Clear = 0,
@@ -388,6 +388,8 @@ export class GroundWeather {
   private patches: number[] = [];
   private refl: number[] = [];
   private recount = 0;
+  /** Frames since the last recount (RECOUNT_MIN_FRAMES). */
+  private sinceCount = RECOUNT_MIN_FRAMES;
   private fogSprite: HTMLCanvasElement | null = null;
   private neon: HTMLCanvasElement[] | null = null;
   /** Drawn last frame (tests). */
@@ -398,6 +400,7 @@ export class GroundWeather {
     this.patches.length = 0;
     this.refl.length = 0;
     this.recount = 0;
+    this.sinceCount = RECOUNT_MIN_FRAMES;
   }
 
   invalidate() {
@@ -406,8 +409,10 @@ export class GroundWeather {
 
   update(dt: number, world: World, b: Bounds | null, index: StreetIndex, f: GroundWeatherFrame) {
     this.recount -= dt;
-    if (this.recount > 0 || !b) return;
+    this.sinceCount++;
+    if (this.recount > 0 || !b || this.sinceCount < RECOUNT_MIN_FRAMES) return;
     this.recount = 1;
+    this.sinceCount = 0;
     this.patches.length = 0;
     this.refl.length = 0;
     const wantPatches = f.patches && f.fog > 0.02 && f.zoom >= FOG_PATCH_MIN_ZOOM;

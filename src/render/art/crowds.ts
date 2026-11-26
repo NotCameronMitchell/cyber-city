@@ -3,7 +3,7 @@
 // road tiles beside developed Market and Hab tiles.
 //
 //  * A figure is a body (2 px wide, 2 tall) and a head dot, in one of six
-//    colours; in rain it carries an umbrella (a 3 px arc).
+//    colours; in rain two in three carry an umbrella (a 3 px canopy).
 //  * Density: per visible sidewalk tile by the Market level beside it (Hab-only
 //    streets get a trickle), × the time of day (an evening peak), × the city's
 //    population; ≤ 300 figures. City life can double it in its district.
@@ -21,7 +21,7 @@ import { RoadKind } from '../../game/types';
 import type { World } from '../../game/world';
 import { HALF_H, HALF_W } from '../camera';
 import { css, mix, type RGB } from '../palette';
-import { SIDE_GATHER, SIDE_HAB, SIDE_HUB, SIDE_MARKET, SIDE_ROAD, STREET_DX as DX, STREET_DY as DY, tileOnScreen, type Bounds, type StreetIndex, type ViewRect } from './traffic';
+import { RECOUNT_MIN_FRAMES, SIDE_GATHER, SIDE_HAB, SIDE_HUB, SIDE_MARKET, SIDE_ROAD, STREET_DX as DX, STREET_DY as DY, tileOnScreen, type Bounds, type StreetIndex, type ViewRect } from './traffic';
 
 /** The crowd cap (§6.4). */
 export const CROWD_CAP = 300;
@@ -123,6 +123,8 @@ export class Crowds {
   private gather: number[] = [];
   private target = 0;
   private recount = 0.25;
+  /** Frames since the last recount (RECOUNT_MIN_FRAMES). */
+  private sinceCount = RECOUNT_MIN_FRAMES;
   private N = 0;
   private nightB = -1;
   private bodyCss: string[] = [];
@@ -173,11 +175,14 @@ export class Crowds {
     if (!on || !b) {
       this.list.length = 0;
       this.recount = 0.25;
+      this.sinceCount = RECOUNT_MIN_FRAMES;
       return;
     }
     this.recount -= dt;
-    if (this.recount <= 0) {
+    this.sinceCount++;
+    if (this.recount <= 0 && this.sinceCount >= RECOUNT_MIN_FRAMES) {
       this.recount = 0.5;
+      this.sinceCount = 0;
       this.count(world, b, f);
       // Walkers on a tile that is no longer a road drop (in place: no new array every recount).
       const list = this.list;
@@ -469,26 +474,28 @@ export class Crowds {
       this.drawn += a1 - a0;
     }
     ctx.globalAlpha = 1;
-    // Heads (or umbrellas in rain), batched.
+    // Heads, or in rain umbrellas: two figures in three carry one (a 3 px canopy, one rect, batched by colour; at
+    // this size it reads as an umbrella and costs no arc tessellation, the phone proxy's largest crowd cost) and the
+    // rest walk bare-headed. Every figure costs two rects either way.
     if (rain > 0.2) {
       const nu = this.umbCss.length;
       for (let c = 0; c < nu; c++) {
         let any = false;
         for (let i = 0; i < n; i++) {
-          if (key[i] < 0 || list[i].col % nu !== c) continue;
+          if (key[i] < 0 || list[i].col % nu !== c || list[i].col % 3 === 2) continue;
           if (!any) ctx.beginPath();
           any = true;
-          const x = px[i];
-          const y = py[i] - 3.1;
-          ctx.moveTo(x + 1.5, y);
-          ctx.arc(x, y, 1.5, 0, Math.PI, true);
-          ctx.closePath();
+          ctx.rect(px[i] - 1.5, py[i] - 4.2, 3, 1.2);
         }
         if (any) {
           ctx.fillStyle = this.umbCss[c];
           ctx.fill();
         }
       }
+      ctx.beginPath();
+      for (let i = 0; i < n; i++) if (key[i] >= 0 && list[i].col % 3 === 2) ctx.rect(px[i] - 0.55, py[i] - 3.1, 1.1, 1.1);
+      ctx.fillStyle = this.headCss;
+      ctx.fill();
     } else {
       ctx.beginPath();
       for (let i = 0; i < n; i++) if (key[i] >= 0) ctx.rect(px[i] - 0.55, py[i] - 3.1, 1.1, 1.1);

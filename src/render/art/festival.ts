@@ -37,6 +37,10 @@ const SIGN_CAP = 40;
 /** Night market string spans drawn at most (three lanterns each). */
 const SPAN_CAP = 72;
 const BARRIER_CAP = 160;
+/** Frames between two refreshes of the night market's strings while the view moves. */
+const MARKET_MIN_FRAMES = 3;
+/** Fade steps the sky lanterns' paper bodies snap to (one fill each). */
+const LANTERN_STEPS = 4;
 const KITE_CAP = 20;
 const CONFETTI_CAP = 120;
 const FLOATS = 4;
@@ -105,6 +109,8 @@ export class Festival {
   private glows: HTMLCanvasElement[] | null = null;
   private brightGlows: HTMLCanvasElement[] | null = null;
   private beams: HTMLCanvasElement[] | null = null;
+  /** Storm watch: barrier edge ends in world px (x0, y0, x1, y1), reused every frame. */
+  private edgeScratch: Float32Array | null = null;
   private brightCss = BRIGHT.map((c) => css(c));
   private warmCss = WARM.map((c) => css(c));
   private on = false;
@@ -118,6 +124,7 @@ export class Festival {
   private spans: number[] = [];
   private lastView = [0, 0, 0, 0];
   private marketAge = 0;
+  private marketFrames = MARKET_MIN_FRAMES;
   /** Night market street tiles behind a tall body (lanterns there would float over its roof), memoised per happening. */
   private behind = new Map<number, boolean>();
   /** Things drawn last frame (tests). */
@@ -177,6 +184,7 @@ export class Festival {
     this.onTiles.length = 0;
     this.spans.length = 0;
     this.marketAge = 0;
+    this.marketFrames = MARKET_MIN_FRAMES;
     this.tiles.length = 0;
     this.dirs.length = 0;
     this.points.length = 0;
@@ -290,8 +298,11 @@ export class Festival {
     const lv = this.lastView;
     const moved = !view || view.x0 !== lv[0] || view.y0 !== lv[1] || view.x1 !== lv[2] || view.y1 !== lv[3];
     this.marketAge -= dt;
-    if (!moved && this.marketAge > 0) return;
+    this.marketFrames++;
+    // A moving view refreshes every few frames (not every frame of a pan), a still one every 0.25 s.
+    if (this.marketFrames < MARKET_MIN_FRAMES || (!moved && this.marketAge > 0)) return;
     this.marketAge = 0.25;
+    this.marketFrames = 0;
     if (view) {
       lv[0] = view.x0;
       lv[1] = view.y0;
@@ -450,14 +461,17 @@ export class Festival {
     if (env <= 0.01) return;
     const N = world.N;
     if (ev.id === 'nightmarket') {
-      // Stalls: an awning on the sidewalk of some Market streets (the strings of lanterns hang in the sky pass).
-      // Bodies first, then every glow under one 'lighter' switch.
+      // Stalls: an awning on the sidewalk of some Market streets (the strings of lanterns hang in the sky pass). The
+      // awnings are batched by colour and the bodies into one path; then a warm glow under every other stall, under
+      // one 'lighter' switch.
+      const nb = BRIGHT.length;
       ctx.globalAlpha = env;
-      for (let pass = 0; pass < 2; pass++) {
-        if (pass === 1) {
+      for (let pass = 0; pass <= nb + 1; pass++) {
+        if (pass === nb + 1) {
           ctx.globalCompositeOperation = 'lighter';
           ctx.globalAlpha = env * (0.3 + 0.5 * night);
-        }
+        } else ctx.beginPath();
+        let stall = 0;
         for (const i of this.onTiles) {
           const x = i % N;
           const y = (i / N) | 0;
@@ -467,79 +481,79 @@ export class Festival {
           const sv = y + 0.85;
           const px = (su - sv) * HALF_W;
           const py = (su + sv) * HALF_H;
-          if (pass === 0) {
-            ctx.fillStyle = this.brightCss[((h * 60) | 0) % BRIGHT.length];
-            ctx.fillRect(px - 2.5, py - 4, 5, 1.5);
-            ctx.fillStyle = '#2a2030';
-            ctx.fillRect(px - 2.2, py - 2.5, 4.4, 2.5);
+          if (pass < nb) {
+            if (((h * 60) | 0) % nb === pass) ctx.rect(px - 2.5, py - 4, 5, 1.5);
+          } else if (pass === nb) {
+            ctx.rect(px - 2.2, py - 2.5, 4.4, 2.5);
             this.drawn++;
-          } else ctx.drawImage(this.glows[1], px - 5, py - 5, 10, 8);
+          } else if ((stall++ & 1) === 0) ctx.drawImage(this.glows[1], px - 6, py - 5.5, 12, 9);
+        }
+        if (pass < nb) {
+          ctx.fillStyle = this.brightCss[pass];
+          ctx.fill();
+        } else if (pass === nb) {
+          ctx.fillStyle = '#2a2030';
+          ctx.fill();
         }
       }
       ctx.globalCompositeOperation = 'source-over';
     } else if (ev.id === 'stormwatch') {
-      // Barriers rise along the water-facing edge of each shore tile in view.
+      // Barriers rise along the water-facing edge of each shore tile in view: one path for the bodies, one stroke for
+      // their caps (edge ends in a reused scratch, no arrays a barrier), and a flickering warning light on every other one.
       const rise = 9 * env;
+      const ends = (this.edgeScratch ??= new Float32Array(BARRIER_CAP * 4));
       let n = 0;
-      ctx.globalAlpha = 1;
-      ctx.fillStyle = night > 0.5 ? '#8a6a2a' : '#c8962e';
-      ctx.beginPath();
-      const lights: number[] = [];
-      const lightsAt: number[] = [];
       for (let k = 0; k < this.tiles.length && n < BARRIER_CAP; k++) {
         const i = this.tiles[k];
         const x = i % N;
         const y = (i / N) | 0;
         if (!this.visible(x, y, 1)) continue;
-        n++;
         const d = this.dirs[k];
-        const e = [
-          [x, y, x + 1, y],
-          [x + 1, y, x + 1, y + 1],
-          [x, y + 1, x + 1, y + 1],
-          [x, y, x, y + 1],
-        ][d];
-        const ax = (e[0] - e[1]) * HALF_W;
-        const ay = (e[0] + e[1]) * HALF_H;
-        const bx = (e[2] - e[3]) * HALF_W;
-        const by = (e[2] + e[3]) * HALF_H;
+        // Edge (x0, y0) → (x1, y1) of the tile's water side: 0 N, 1 E, 2 S, 3 W.
+        const ex0 = d === 1 ? x + 1 : x;
+        const ey0 = d === 2 ? y + 1 : y;
+        const ex1 = d === 3 ? x : x + 1;
+        const ey1 = d === 0 ? y : y + 1;
+        ends[n * 4] = (ex0 - ey0) * HALF_W;
+        ends[n * 4 + 1] = (ex0 + ey0) * HALF_H;
+        ends[n * 4 + 2] = (ex1 - ey1) * HALF_W;
+        ends[n * 4 + 3] = (ex1 + ey1) * HALF_H;
+        n++;
+      }
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = night > 0.5 ? '#8a6a2a' : '#c8962e';
+      ctx.beginPath();
+      for (let j = 0; j < n; j++) {
+        const ax = ends[j * 4];
+        const ay = ends[j * 4 + 1];
+        const bx = ends[j * 4 + 2];
+        const by = ends[j * 4 + 3];
         ctx.moveTo(ax, ay);
         ctx.lineTo(bx, by);
         ctx.lineTo(bx, by - rise);
         ctx.lineTo(ax, ay - rise);
         ctx.closePath();
-        lights.push((ax + bx) / 2, (ay + by) / 2 - rise);
-        lightsAt.push(k);
       }
       ctx.fill();
-      // A dark band along the foot and a bright cap along the top of each barrier.
+      // A bright cap along the top of each barrier.
       ctx.strokeStyle = night > 0.5 ? '#ffcf5a' : '#ffe08a';
       ctx.lineWidth = 0.8;
       ctx.beginPath();
-      for (let k = 0; k < lights.length; k += 2) {
-        const i = this.tiles[lightsAt[k / 2]];
-        const d = this.dirs[lightsAt[k / 2]];
-        const x = i % N;
-        const y = (i / N) | 0;
-        const e = [
-          [x, y, x + 1, y],
-          [x + 1, y, x + 1, y + 1],
-          [x, y + 1, x + 1, y + 1],
-          [x, y, x, y + 1],
-        ][d];
-        ctx.moveTo((e[0] - e[1]) * HALF_W, (e[0] + e[1]) * HALF_H - rise);
-        ctx.lineTo((e[2] - e[3]) * HALF_W, (e[2] + e[3]) * HALF_H - rise);
+      for (let j = 0; j < n; j++) {
+        ctx.moveTo(ends[j * 4], ends[j * 4 + 1] - rise);
+        ctx.lineTo(ends[j * 4 + 2], ends[j * 4 + 3] - rise);
       }
       ctx.stroke();
-      // Amber caps and warning lights that flicker.
+      // Amber warning lights that flicker, on every other barrier.
       ctx.globalCompositeOperation = 'lighter';
-      for (let k = 0; k < lights.length; k += 2) {
-        const on = Math.sin(time * 6 + k * 0.9) > -0.2;
-        if (!on) continue;
-        ctx.globalAlpha = env * (0.5 + 0.5 * night);
-        ctx.drawImage(this.glows[1], lights[k] - 2.5, lights[k + 1] - 2.5, 5, 5);
+      ctx.globalAlpha = env * (0.5 + 0.5 * night);
+      for (let j = 0; j < n; j += 2) {
+        if (Math.sin(time * 6 + j * 0.9) <= -0.2) continue;
+        const lx = (ends[j * 4] + ends[j * 4 + 2]) / 2;
+        const ly = (ends[j * 4 + 1] + ends[j * 4 + 3]) / 2 - rise;
+        ctx.drawImage(this.glows[1], lx - 2.5, ly - 2.5, 5, 5);
       }
-      this.drawn += lights.length / 2;
+      this.drawn += n;
       ctx.globalCompositeOperation = 'source-over';
     }
     ctx.globalAlpha = 1;
@@ -615,15 +629,28 @@ export class Festival {
         }
       }
     } else if (ev.id === 'lanterns') {
+      // Glows one a lantern; the paper bodies in LANTERN_STEPS fade steps, one path and one fill each.
       ctx.globalCompositeOperation = 'lighter';
+      const gl = 0.6 + 0.4 * night;
       for (const p of this.parts) {
         const fade = Math.min(1, p.age / 1.5, (p.life - p.age) / 3);
-        ctx.globalAlpha = env * fade * (0.6 + 0.4 * night);
+        ctx.globalAlpha = env * fade * gl;
         ctx.drawImage(this.glows[p.c % 2], p.x - 8, p.y - 8, 16, 16);
-        ctx.globalAlpha = env * fade;
-        ctx.fillStyle = '#ffd890';
-        ctx.fillRect(p.x - 1.1, p.y - 1.6, 2.2, 2.8);
         this.drawn++;
+      }
+      ctx.fillStyle = '#ffd890';
+      for (let st = 1; st <= LANTERN_STEPS; st++) {
+        let any = false;
+        for (const p of this.parts) {
+          const fade = Math.min(1, p.age / 1.5, (p.life - p.age) / 3);
+          if (Math.max(1, Math.round(fade * LANTERN_STEPS)) !== st || fade <= 0) continue;
+          if (!any) ctx.beginPath();
+          any = true;
+          ctx.rect(p.x - 1.1, p.y - 1.6, 2.2, 2.8);
+        }
+        if (!any) continue;
+        ctx.globalAlpha = env * (st / LANTERN_STEPS);
+        ctx.fill();
       }
     } else if (ev.id === 'stormwatch' || ev.id === 'arenanight') {
       if (ev.id === 'stormwatch') this.drawSigns(ctx, world, time, night, env);
