@@ -452,7 +452,8 @@ export class StartScreen {
     }
     const hint = a2hsHint(readEnv(this.returning));
     setText(this.hintText, hint ?? '');
-    setHidden(this.hint, !hint);
+    // The optional install tip steps aside while the kept-city row needs the room (§3.10; 360×640 fits either, not both).
+    setHidden(this.hint, !hint || !!kept);
     setText(this.foot, `> build 0.1 · ${storageWorks() ? 'saved on this device' : 'saving is off in this browser'}`);
   }
 

@@ -5489,6 +5489,19 @@ body {
   min-width: 0;
 }
 
+/* A short landscape screen keeps Previous city and Import city on one line (the city name gives way first). */
+@media (orientation: landscape) and (max-height: 500px) {
+  .cc-start-links {
+    flex-wrap: nowrap;
+  }
+  .cc-start-links > .cc-start-prev {
+    flex: 0 1 auto;
+  }
+  .cc-start-links > .cc-start-import {
+    flex: none;
+  }
+}
+
 .cc-start-import .cc-i {
   color: var(--cc-cyan);
 }
