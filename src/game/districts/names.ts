@@ -12,6 +12,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { DISTRICTS } from '../config';
+import { markCellName } from '../marks';
 import { DISTRICTS as START_NAMES, districtName } from '../news';
 import { hash2 } from '../rng';
 import type { DistrictKind, DistrictVariant } from '../types';
@@ -100,13 +101,17 @@ export function neighbourhoodsOf(kind: DistrictKind, variant: DistrictVariant = 
 /**
  * The neighbourhood (8×8 cell) a tile lies in, by the district it belongs to: today's names in Charter Shore and
  * outside the region, the district's own list elsewhere. Same hash as news.ts districtName, so a cell keeps its name.
- * At most 15 characters (the `{district}` token's limit); callers add the district's short name where §3.7 asks.
+ * A cell a story choice renamed (§9.3: Truce Row, Glass Yard…) answers with its new name in every district
+ * (marks.ts markCellName; news.ts districtName does the same in Charter Shore). At most 15 characters (the
+ * `{district}` token's limit); callers add the district's short name where §3.7 asks.
  */
 export function neighbourhoodAt(world: World, x: number, y: number): string {
   const ao = artOffset(world);
   const s = world.slotAt(x, y);
   const kind = s >= 0 ? world.districts.kinds[s] : undefined;
   if (!kind || kind === 'shore') return districtName(x, y, world.seed, ao);
+  const renamed = markCellName(world.seed, (x - ao) >> 3, (y - ao) >> 3);
+  if (renamed) return renamed;
   const list = neighbourhoodsOf(kind, world.variantOf(s));
   if (!list.length) return DISTRICTS[kind].short;
   return list[Math.floor(hash2((x - ao) >> 3, (y - ao) >> 3, world.seed ^ 0x51ed) * list.length)];

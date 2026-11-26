@@ -12,10 +12,12 @@ import { countGround } from '../../src/game/districts/effects';
 import { neighbourhoodAt, neighbourhoodsOf } from '../../src/game/districts/names';
 import { artOffset, slotOffset, slotRect } from '../../src/game/districts/slots';
 import { Game } from '../../src/game/game';
+import { deriveMarks } from '../../src/game/marks';
 import { districtName } from '../../src/game/news';
 import { Rng } from '../../src/game/rng';
 import { useStoryContent } from '../../src/game/story/conditions';
 import { DECK, MEGACITY_CARDS, STORY_CONTENT } from '../../src/game/story/content';
+import { MARK_NAMES } from '../../src/game/story/content/epilogue';
 import { applyEffects, districtOf, effectsText, hintsFor, slotTiles, targetArea, type EffectHost } from '../../src/game/story/effects';
 import { URGENT_SYSTEM, cardEligible, cardWeight, drawCard } from '../../src/game/story/pacing';
 import * as turf from '../../src/game/story/turf';
@@ -426,6 +428,24 @@ describe('the {district} token inside a district (MEGACITY §3.7)', () => {
     }
     expect(variants).toBe(16);
   }, 60_000);
+
+  it('a cell a story choice renamed (§9.3) answers with its new name inside an annexed district too', () => {
+    const w = regionWorld();
+    const s = own(w, 'bazaar');
+    const r = slotRect(w, s);
+    const x = r.x0 + 20;
+    const y = r.y0 + 28;
+    const before = districtOf(w, y * w.N + x);
+    expect(neighbourhoodsOf('bazaar', 0)).toContain(before);
+    w.story.seam = y * w.N + x;
+    w.story.flags.truce = true;
+    deriveMarks(w);
+    expect(districtOf(w, y * w.N + x)).toBe(MARK_NAMES.truceWall);
+    expect(neighbourhoodAt(w, x, y)).toBe(MARK_NAMES.truceWall);
+    // The next cell keeps its own name.
+    expect(neighbourhoodsOf('bazaar', 0)).toContain(districtOf(w, (y + 16) * w.N + x + 16));
+    deriveMarks(regionWorld()); // unbind: the marks module keeps the last derived world's names
+  });
 });
 
 describe('the megacity cards add variety, not frequency (MEGACITY §8.3 cadence)', () => {

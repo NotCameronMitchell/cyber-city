@@ -9,6 +9,7 @@ import { describe, expect, it } from 'vitest';
 import { BUILDINGS, BUILDING_ORDER, CROWNS, DISTRICTS, FACTION_IDS, FACTION_LABELS, MILESTONES, POWER_WEIGHTS, UNLOCK_FALLBACK_POP } from '../../src/game/config';
 import { RENAMED_NEIGHBOURHOODS, VARIANT_NEIGHBOURHOODS, neighbourhoodsOf } from '../../src/game/districts/names';
 import { DISTRICTS as START_NEIGHBOURHOODS } from '../../src/game/news';
+import { MARK_NAMES } from '../../src/game/story/content/epilogue';
 import { Rng } from '../../src/game/rng';
 import { EMPTY_CONTENT, metric, useStoryContent, type StoryContent } from '../../src/game/story/conditions';
 import * as C from '../../src/game/story/content';
@@ -1310,8 +1311,8 @@ const SCANNED_SOURCES: Record<string, string> = import.meta.glob(
 /** Scanned sources whose copy is flag-keyed or shows only after the reveal: the universal rule only. */
 const LATE_SOURCES = ['cards/megacity.ts', 'game/marks.ts', 'art/marks.ts', 'content/epilogue.ts', 'cards/epilogue.ts'];
 
-/** The neighbourhood names §9.3's marks give an 8×8 cell (WP-8 owns them; listed here so no list reuses one). */
-const MARK_CELL_NAMES = ['Projection Yards', 'Delight Row', 'Four-Four Square', 'Glass Yard', 'Truce Row', 'Low Water', 'High Line'];
+/** The neighbourhood names §9.3's marks give an 8×8 cell (WP-8's content/epilogue.ts): no list may reuse one. */
+const MARK_CELL_NAMES: readonly string[] = Object.values(MARK_NAMES);
 /** Words two district or variant names may share (§3.7). */
 const GENERIC_NAME_WORDS = new Set(['the', 'flats', 'marsh', 'isles', 'banks', 'heights', 'fields', 'bazaar', 'towers', 'steps', 'docks', 'row', 'rise', 'fen', 'strip', 'strand', 'grove', 'arcade', 'reach', 'shore', 'shoals', 'terraces']);
 const nameWords = (s: string) => s.toLowerCase().split(/[\s-]+/).filter(Boolean);
@@ -1572,6 +1573,8 @@ describe('megacity story content (MEGACITY §8)', () => {
     const districtNames = Object.values(DISTRICTS).flatMap((d) => [d.name, ...d.variants.map((v) => v.name)]);
     const distinctive = new Set(districtNames.flatMap(nameWords).filter((wd) => !GENERIC_NAME_WORDS.has(wd)));
     const seen = new Map<string, string>(MARK_CELL_NAMES.map((n) => [n.toLowerCase(), 'a §9.3 mark']));
+    expect(MARK_CELL_NAMES.length).toBe(7);
+    for (const n of MARK_CELL_NAMES) if (n.length > 15) bad.push(`mark cell "${n}" ${n.length} > 15`);
     for (const { where, names, mine } of lists) {
       if (where !== 'Charter Shore' && names.length !== 12) bad.push(`${where}: ${names.length} names`);
       for (const n of names) {
@@ -1666,6 +1669,23 @@ describe('megacity story content (MEGACITY §8)', () => {
       }
     }
     expect(bad).toEqual([]);
+  });
+
+  it('keeps the noun "grant" on screen for the ✦ land grant only (§0 Words: milestone money is a bonus)', () => {
+    // Every source string (class lists, ids and markup aside) and every story text that says "grant" means a land grant.
+    const ALL_SOURCES: Record<string, string> = import.meta.glob(['../../src/**/*.ts'], { query: '?raw', import: 'default', eager: true });
+    const LAND = /land grants?|✦|annex|next grant|Districts and grants/i;
+    const bad: string[] = [];
+    const check = (where: string, text: string) => {
+      if (!/\bgrants?\b/i.test(text) || LAND.test(text)) return;
+      if (/class=|^[a-z0-9 _.:-]+$/.test(text)) return; // a class list, an id or a key, not copy
+      bad.push(`${where}: "${text.slice(0, 80)}"`);
+    };
+    for (const [file, source] of Object.entries(ALL_SOURCES)) for (const { line, text } of sourceStrings(file, source)) check(`${file}:${line}`, text);
+    for (const c of CARDS) eachString(c, `card ${c.id}`, (t, p) => !p.endsWith('.id') && check(p, t));
+    for (const [k, v] of Object.entries(OTHER_TEXT)) eachString(v, k, check);
+    expect(bad).toEqual([]);
+    expect(Object.keys(ALL_SOURCES).length).toBeGreaterThan(100);
   });
 
   it('spoiler guard (§8.6): §9 copy loaded from WP-8\'s modules (review lines, marks, epilogue cards) takes the universal rule', async () => {
