@@ -3303,6 +3303,13 @@ body {
 }
 
 /* Confirm */
+/* A long confirm title ("Grow to 25 districts?" at 360 px, "Restore {a long city name}?") wraps instead of ending
+   in an ellipsis; a title that fits one line renders as before. */
+.cc-confirm .cc-dlg-title {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
 .cc-confirm-text {
   margin-bottom: 14px;
   font-size: 13.5px;

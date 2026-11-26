@@ -371,6 +371,10 @@ export class Menu {
     setClass(this.el, 'is-sub', view !== 'main');
     this.refresh();
     this.views[view].scrollTop = 0;
+    // The dialog body scrolls too (landscape phones, short windows): a view opened from far down the main list
+    // starts at its top, so Settings opens on its City line (and the Grow button), not halfway down.
+    const body = this.views[view].parentElement;
+    if (body) body.scrollTop = 0;
   }
 
   /** Header + settings state (also on 'settings' / 'stats'). */
