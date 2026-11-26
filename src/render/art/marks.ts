@@ -64,7 +64,7 @@ export const MARKS_MIN_ZOOM = 0.3;
 /** Street props only from this zoom (they are a few px tall). */
 const PROPS_MIN_ZOOM = 0.42;
 /** Caps per frame. */
-const CAP = { lamps: 72, corners: 48, avenues: 56, bridges: 56, livery: 56 } as const;
+const CAP = { lamps: 48, corners: 30, avenues: 48, bridges: 48, livery: 40 } as const;
 
 /** Per-frame cost counters (tests and the measurement script). */
 export const MARKS_STATS = { props: 0, decals: 0, skyDecals: 0 };
@@ -80,7 +80,7 @@ interface Props {
   bridges: number[];
 }
 
-const props: Props = { key: '', at: -1e9, lamps: [], corners: [], avenues: [], bridges: [] };
+const props: Props = { key: '', at: -1e9, lamps: [], corners: [], avenues: [], bridges: [], poles: [] };
 let clock = 0;
 
 function listProps(world: World, b: Rect, quality: ArtEnv['quality']): Props {
@@ -118,6 +118,8 @@ function listProps(world: World, b: Rect, quality: ArtEnv['quality']): Props {
 }
 interface Props {
   ver?: number;
+  /** Scratch for poles(). */
+  poles: number[];
 }
 
 // ── Small cached sprites ───────────────────────────────────────────────────
@@ -276,15 +278,25 @@ function post(ctx: CanvasRenderingContext2D, x: number, y: number, collar: RGB |
 
 // ── The ending's street look (§9.2 "Street look", the props off the buildings) ──
 
-function streetLook(ctx: CanvasRenderingContext2D, world: World, p: Props, env: ArtEnv): void {
+/** Where flags and pennants stand: the avenues in view, else every other corner (a city of streets only). */
+function poles(p: Props): number[] {
+  if (p.avenues.length >= 4) return p.avenues;
+  const out = p.poles;
+  out.length = 0;
+  for (let k = 0; k < p.corners.length; k += 2) out.push(p.corners[k]);
+  return out;
+}
+
+function streetLook(ctx: CanvasRenderingContext2D, world: World, p: Props, env: ArtEnv, skip: { x0: number; y0: number; x1: number; y1: number } | null): void {
   const st = world.story;
   const e = st.ending;
   const n = env.night;
   const N = world.N;
   const lit = n > 0.3 && env.quality !== 'low';
   if (e === 'ironwork') {
-    // Sodium-orange street lights.
-    for (const i of p.lamps) {
+    // Sodium-orange street lights (Charter Shore's lamps are the livery's when the patron's colours are on them).
+    const lamps = skip ? p.lamps.filter((i) => { const x = i % N; const y = (i / N) | 0; return x < skip.x0 || y < skip.y0 || x > skip.x1 || y > skip.y1; }) : p.lamps;
+    for (const i of lamps) {
       const [lx, ly] = post(ctx, i % N, (i / N) | 0, null);
       ctx.fillStyle = css(n > 0.3 ? [255, 200, 120] : [150, 130, 110]);
       ctx.fillRect(lx - 1.6, ly - 0.2, 3.2, 1.8);
@@ -292,7 +304,7 @@ function streetLook(ctx: CanvasRenderingContext2D, world: World, p: Props, env: 
     }
     if (lit) {
       ctx.globalCompositeOperation = 'lighter';
-      for (const i of p.lamps) {
+      for (const i of lamps) {
         const x = i % N;
         const y = (i / N) | 0;
         glow(ctx, SODIUM, wx(x + 0.3, y + 0.72) + 1.5, wy(x + 0.3, y + 0.72, 6), 18, n * 0.7);
@@ -311,12 +323,12 @@ function streetLook(ctx: CanvasRenderingContext2D, world: World, p: Props, env: 
       ctx.moveTo(wx(x, y + 0.1), wy(x, y + 0.1, 9));
       ctx.quadraticCurveTo(wx(x + 0.5, y + 0.5), wy(x + 0.5, y + 0.5, 5), wx(x + 1, y + 0.9), wy(x + 1, y + 0.9, 9));
       ctx.stroke();
-      for (let k = 1; k < 8; k++) {
-        const u = x + k / 8;
-        const v = y + 0.1 + (k / 8) * 0.8;
-        const sag = 9 - Math.sin((k / 8) * Math.PI) * 4;
+      for (let k = 1; k < 6; k++) {
+        const u = x + k / 6;
+        const v = y + 0.1 + (k / 6) * 0.8;
+        const sag = 9 - Math.sin((k / 6) * Math.PI) * 4;
         ctx.fillStyle = css(k % 2 ? LIME : LILAC, n > 0.3 ? 1 : 0.85);
-        ctx.fillRect(wx(u, v) - 1, wy(u, v, sag) - 1, 2, 2);
+        ctx.fillRect(wx(u, v) - 1.2, wy(u, v, sag) - 1.2, 2.4, 2.4);
       }
       // The two banners at the corner.
       const bx = wx(x + 0.12, y + 0.12);
@@ -334,19 +346,20 @@ function streetLook(ctx: CanvasRenderingContext2D, world: World, p: Props, env: 
       for (const i of p.corners) {
         const x = i % N;
         const y = (i / N) | 0;
-        glow(ctx, LIME, wx(x + 0.5, y + 0.5), wy(x + 0.5, y + 0.5, 6), 16, n * 0.6);
-        glow(ctx, LILAC, wx(x + 0.12, y + 0.12), wy(x + 0.12, y + 0.12, 14), 8, n * 0.7);
+        // One glow a corner, the crews' colours in turn (the string's middle).
+        glow(ctx, (x + y) & 1 ? LILAC : LIME, wx(x + 0.5, y + 0.5), wy(x + 0.5, y + 0.5, 6), 16, n * 0.65);
       }
       ctx.globalCompositeOperation = 'source-over';
       ctx.globalAlpha = 1;
     }
   } else if (e === 'ledger') {
-    // Board flags on avenues.
-    for (const i of p.avenues) {
+    // Board flags on avenues (on the corners of a city without avenues in view, so the look never goes missing).
+    const o = p.avenues.length >= 4 ? 0.5 : 0.14; // an avenue's median, else the corner's kerb
+    for (const i of poles(p)) {
       const x = i % N;
       const y = (i / N) | 0;
-      const fx = wx(x + 0.5, y + 0.5);
-      const fy = wy(x + 0.5, y + 0.5);
+      const fx = wx(x + o, y + o);
+      const fy = wy(x + o, y + o);
       ctx.fillStyle = '#5a6074';
       ctx.fillRect(fx - 0.5, fy - 15, 1, 15);
       const wave = Math.sin(env.time * 2 + x * 0.7 + y) * 0.6;
@@ -361,12 +374,13 @@ function streetLook(ctx: CanvasRenderingContext2D, world: World, p: Props, env: 
     const fs = (['board', 'basalt', 'nacre', 'undertow', 'kites', 'tuning'] as FactionId[]).filter((f) => isActive(world, f));
     if (fs.length) {
       let k = 0;
-      for (const i of p.avenues) {
+      const o = p.avenues.length >= 4 ? 0.5 : 0.14;
+      for (const i of poles(p)) {
         const x = i % N;
         const y = (i / N) | 0;
         const c = FACTION_RGB[fs[k++ % fs.length]];
-        const fx = wx(x + 0.5, y + 0.5);
-        const fy = wy(x + 0.5, y + 0.5);
+        const fx = wx(x + o, y + o);
+        const fy = wy(x + o, y + o);
         ctx.fillStyle = '#5a6074';
         ctx.fillRect(fx - 0.5, fy - 14, 1, 14);
         ctx.fillStyle = css(c);
@@ -446,6 +460,7 @@ function groundMark(ctx: CanvasRenderingContext2D, world: World, m: Mark, env: A
       const r = slotRect(world, startSlotOf(world));
       const p = props;
       let k = 0;
+      const lit: number[] = [];
       for (const i of p.lamps) {
         const x = i % N;
         const y = (i / N) | 0;
@@ -454,12 +469,13 @@ function groundMark(ctx: CanvasRenderingContext2D, world: World, m: Mark, env: A
         const [lx, ly] = post(ctx, x, y, c);
         ctx.fillStyle = css(c);
         ctx.fillRect(lx - 1.6, ly - 0.2, 3.2, 1.8);
-        if (n > 0.3 && env.quality !== 'low') {
-          ctx.globalCompositeOperation = 'lighter';
-          glow(ctx, c, lx - 1, ly + 4, 14, n * 0.85);
-          ctx.globalCompositeOperation = 'source-over';
-          ctx.globalAlpha = 1;
-        }
+        lit.push(lx, ly);
+      }
+      if (n > 0.3 && env.quality !== 'low' && lit.length) {
+        ctx.globalCompositeOperation = 'lighter';
+        for (let q = 0; q < lit.length; q += 2) glow(ctx, c, lit[q] - 1, lit[q + 1] + 4, 14, n * 0.85);
+        ctx.globalCompositeOperation = 'source-over';
+        ctx.globalAlpha = 1;
       }
       MARKS_STATS.props += k;
       break;
@@ -940,7 +956,8 @@ export function draw(ctx: CanvasRenderingContext2D, world: World, marks: Marks, 
   const st = world.story;
   const p = env.zoom >= PROPS_MIN_ZOOM ? listProps(world, tiles, env.quality) : null;
   ctx.save();
-  if (p && st.ending) streetLook(ctx, world, p, env);
+  const livery = p && marks.list.some((m) => m.decal.startsWith('livery')) ? slotRect(world, startSlotOf(world)) : null;
+  if (p && st.ending) streetLook(ctx, world, p, env, livery);
   for (const m of marks.list) {
     if (!inRect(m, tiles, m.decal.startsWith('livery') ? 64 : 2)) continue;
     if (m.decal.startsWith('livery') && !p) continue;

@@ -768,3 +768,42 @@ describe('§9.6 item 8: a v3 post-ending save migrates with one history entry an
     if (expectSome) expect(marks.list.length).toBeGreaterThan(0);
   });
 });
+
+// ── The ending's street look (§9.2; art/marks.ts, carry 35) ─────────────────
+
+describe('§9.2 street look: each ending draws its props on the streets in view, capped, culled and quiet below the street zoom', () => {
+  it('sodium lamps, corner string lights and banners, Board flags (on corners when there are no avenues)', async () => {
+    const { installCanvasMock, mockContext, mockStats } = await import('./canvas-mock');
+    const restore = installCanvasMock();
+    try {
+      const art = await import('../src/render/art/marks');
+      const w = new World(4242, 'Lamp Test', undefined, 3);
+      const r = slotRect(w, startSlotOf(w));
+      // A street grid every 4 tiles across Charter Shore's land: corners everywhere, no avenue.
+      for (let y = r.y0 + 8; y <= r.y1 - 8; y++)
+        for (let x = r.x0 + 8; x <= r.x1 - 8; x++)
+          if (((x - r.x0) % 4 === 0 || (y - r.y0) % 4 === 0) && w.tiles[y * w.N + x].terrain === Terrain.Land) w.setRoad(x, y);
+      const cx = (r.x0 + r.x1) >> 1;
+      const cy = (r.y0 + r.y1) >> 1;
+      const tiles = { x0: cx - 13, y0: cy - 13, x1: cx + 13, y1: cy + 13 };
+      const ctx = mockContext();
+      const props: Record<string, number> = {};
+      for (const e of ['ironwork', 'lowcrown', 'ledger'] as const) {
+        w.story.ending = e;
+        w.story.endingHistory = [{ id: e, variant: null, from: 0, to: null }];
+        w.version++; // a new street list for the new look
+        const marks = deriveMarks(w);
+        art.draw(ctx, w, marks, tiles, { time: 1, night: 1, zoom: 1, quality: 'high', world: w } as never);
+        props[e] = art.MARKS_STATS.props;
+        expect(props[e], e).toBeGreaterThan(0);
+        expect(props[e], e).toBeLessThanOrEqual(48);
+        // Below the street zoom nothing draws.
+        art.draw(ctx, w, marks, tiles, { time: 2, night: 1, zoom: art.MARKS_MIN_ZOOM - 0.05, quality: 'high', world: w } as never);
+        expect(art.MARKS_STATS.props).toBe(0);
+      }
+      expect(mockStats.errors).toEqual([]);
+    } finally {
+      restore();
+    }
+  });
+});
