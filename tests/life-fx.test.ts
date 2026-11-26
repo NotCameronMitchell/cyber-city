@@ -181,6 +181,43 @@ describe('caps and LOD (§6.4)', () => {
     }
   }, 60_000);
 
+  it('car lights on a wet night: a straight car draws its pool, tail glow and streaks from 2 pre-composed sprites, not 4 glows', async () => {
+    const { r, fx, frames, g } = await scene(busy(), { zoom: 1.4, night: true });
+    try {
+      const screen = (fx as unknown as { screen: { kind: number; spanEnd: number } }).screen;
+      const force = () => {
+        screen.kind = 2;
+        screen.spanEnd = g.clock + 1000;
+      };
+      force();
+      frames(240, force);
+      expect(fx.rain).toBeGreaterThan(0.3);
+      type Street = { size: number; draw: (...a: unknown[]) => void; lightSprites: unknown[]; bounds: unknown };
+      const street = (fx as unknown as { street: Street }).street;
+      const cars = street.size;
+      expect(cars).toBeGreaterThan(10);
+      // One more draw onto a counting context, as the renderer's ground pass would draw it.
+      const ctx = document.createElement('canvas').getContext('2d')!;
+      let images = 0;
+      const di = ctx.drawImage.bind(ctx) as (...a: unknown[]) => void;
+      (ctx as unknown as { drawImage: (...a: unknown[]) => void }).drawImage = (...a: unknown[]) => {
+        images++;
+        di(...a);
+      };
+      street.draw(ctx, street.bounds, 1.4, 1, 'high', fx.rain);
+      // Before: ≥ 4 glows a car (pool, two streaks, tail glow), plus underglows and police bars. Now 2 a straight car.
+      expect(images).toBeLessThan(cars * 3.2);
+      expect(images).toBeGreaterThanOrEqual(cars);
+      // At most 7 kinds × 4 headings × 2 sprites, built once.
+      const built = street.lightSprites.filter(Boolean).length;
+      expect(built).toBeGreaterThan(0);
+      expect(built).toBeLessThanOrEqual(56);
+      expect(mockStats.errors).toEqual([]);
+    } finally {
+      r.destroy();
+    }
+  }, 60_000);
+
   it('fog bands on a fog morning (0.25 Full, 0.12 Light) and ≤ 40 ground fog patches over water and reeds at zoom ≥ 0.5', async () => {
     const { r, cam, fx, frames, g } = await scene(wet3, { zoom: 0.8 });
     try {

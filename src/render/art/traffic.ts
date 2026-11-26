@@ -233,6 +233,20 @@ const enum Kind {
 const DIM_L = [0.1, 0.1, 0.15, 0.065, 0.21, 0.12, 0.1];
 const DIM_W = [0.05, 0.05, 0.06, 0.025, 0.06, 0.052, 0.05];
 const DIM_H = [3, 3, 5, 2.2, 4.6, 4, 3];
+/** Pixels per world px of the pre-composed light sprites (soft glows; sharp enough at zoom × DPR 3). */
+const LIGHT_RES = 3;
+
+/**
+ * A car's lights pre-composed for one kind and one straight heading: its head pool with its tail glow (high quality),
+ * or its two streaks on a wet road. One drawImage instead of two; x, y, w, h in world px from the lamp line's centre.
+ */
+interface LightSprite {
+  c: HTMLCanvasElement;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
 
 interface Agent {
   x: number;
@@ -325,6 +339,8 @@ export class StreetTraffic {
   private headGlow: HTMLCanvasElement | null = null;
   private tailGlow: HTMLCanvasElement | null = null;
   private blueGlow: HTMLCanvasElement | null = null;
+  /** Light sprites by (kind × 4 + straight heading) × 2 + (0 pool and tail glow, 1 wet streaks), built when first used. */
+  private lightSprites: (LightSprite | undefined)[] = [];
   /** Scratch exit weights (chooseExit). */
   private w = [0, 0, 0, 0];
   /** Scratch outputs of pos() / heading() (avoids per-agent allocations). */
@@ -938,6 +954,62 @@ export class StreetTraffic {
     ctx.fill();
   }
 
+  /**
+   * The light sprite of a kind heading straight along +u (0), −u (1), +v (2) or −v (3): `which` 0 is the head pool
+   * (18 × 10 at 3.4 lengths ahead) with the tail glow (6 × 6, drawn at 0.5 / 0.55 so one alpha serves both), 1 the
+   * wet-road streaks (3.2 × 11 head, 2.8 × 8 tail). The same rects drawLights would draw one by one, added ('lighter').
+   */
+  private lightSprite(kind: number, dir: number, which: 0 | 1): LightSprite {
+    const key = (kind * 4 + dir) * 2 + which;
+    const have = this.lightSprites[key];
+    if (have) return have;
+    const hu = dir === 0 ? 1 : dir === 1 ? -1 : 0;
+    const hv = dir === 2 ? 1 : dir === 3 ? -1 : 0;
+    const L = DIM_L[kind];
+    const fx = (hu - hv) * HALF_W * L;
+    const fy = (hu + hv) * HALF_H * L;
+    const head = this.headGlow!;
+    const tail = this.tailGlow!;
+    const parts: [HTMLCanvasElement, number, number, number, number, number][] =
+      which === 0
+        ? [
+            [head, fx * 3.4 - 9, fy * 3.4 + 2 - 5, 18, 10, 1],
+            [tail, -fx - 3, -fy - 3, 6, 6, 0.5 / 0.55],
+          ]
+        : [
+            [head, fx - 1.6, fy + 0.6, 3.2, 11, 1],
+            [tail, -fx - 1.4, -fy + 0.6, 2.8, 8, 1],
+          ];
+    let x0 = Infinity;
+    let y0 = Infinity;
+    let x1 = -Infinity;
+    let y1 = -Infinity;
+    for (const p of parts) {
+      x0 = Math.min(x0, p[1]);
+      y0 = Math.min(y0, p[2]);
+      x1 = Math.max(x1, p[1] + p[3]);
+      y1 = Math.max(y1, p[2] + p[4]);
+    }
+    x0 = Math.floor(x0);
+    y0 = Math.floor(y0);
+    x1 = Math.ceil(x1);
+    y1 = Math.ceil(y1);
+    const c = document.createElement('canvas');
+    c.width = (x1 - x0) * LIGHT_RES;
+    c.height = (y1 - y0) * LIGHT_RES;
+    const g = c.getContext('2d');
+    if (g) {
+      g.globalCompositeOperation = 'lighter';
+      for (const p of parts) {
+        g.globalAlpha = p[5];
+        g.drawImage(p[0], (p[1] - x0) * LIGHT_RES, (p[2] - y0) * LIGHT_RES, p[3] * LIGHT_RES, p[4] * LIGHT_RES);
+      }
+    }
+    const s: LightSprite = { c, x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
+    this.lightSprites[key] = s;
+    return s;
+  }
+
   private drawLights(ctx: CanvasRenderingContext2D, a: Agent, far: boolean, night: number, alpha: number, quality: 'low' | 'high', time: number) {
     this.pos(a);
     this.heading(a);
@@ -965,19 +1037,32 @@ export class StreetTraffic {
       return;
     }
     const n = night;
+    // A straight heading (most cars, most of the time) draws its glows from one pre-composed sprite each; a car in a
+    // turn draws them one by one.
+    const dir = hu > 0.995 ? 0 : hu < -0.995 ? 1 : hv > 0.995 ? 2 : hv < -0.995 ? 3 : -1;
     if (n > 0.25) {
-      // Headlight pool ahead on the road.
+      // Headlight pool ahead on the road (with the tail glow behind, at 0.5 / 0.55 of its alpha, in the sprite).
       if (quality === 'high') {
         ctx.globalAlpha = alpha * n * 0.55;
-        const bx = x + fx * 3.4;
-        const by = y + fy * 3.4 + 2;
-        ctx.drawImage(this.headGlow!, bx - 9, by - 5, 18, 10);
+        if (dir >= 0) {
+          const s = this.lightSprite(a.kind, dir, 0);
+          ctx.drawImage(s.c, x + s.x, y + s.y, s.w, s.h);
+        } else {
+          const bx = x + fx * 3.4;
+          const by = y + fy * 3.4 + 2;
+          ctx.drawImage(this.headGlow!, bx - 9, by - 5, 18, 10);
+        }
       }
       // On a wet road the lights run down in long streaks.
       if (this.wet > 0.15) {
         ctx.globalAlpha = alpha * n * Math.min(1, this.wet * 1.3) * 0.7;
-        ctx.drawImage(this.headGlow!, x + fx - 1.6, y + fy + 0.6, 3.2, 11);
-        ctx.drawImage(this.tailGlow!, x - fx - 1.4, y - fy + 0.6, 2.8, 8);
+        if (dir >= 0) {
+          const s = this.lightSprite(a.kind, dir, 1);
+          ctx.drawImage(s.c, x + s.x, y + s.y, s.w, s.h);
+        } else {
+          ctx.drawImage(this.headGlow!, x + fx - 1.6, y + fy + 0.6, 3.2, 11);
+          ctx.drawImage(this.tailGlow!, x - fx - 1.4, y - fy + 0.6, 2.8, 8);
+        }
       }
       if (steady) this.lamps.push(x + fx, y + fy, x - fx, y - fy);
       else {
@@ -987,7 +1072,7 @@ export class StreetTraffic {
         ctx.fillStyle = '#ff2a48';
         ctx.fillRect(x - fx - 0.6, y - fy - 0.6, 1.2, 1.2);
       }
-      if (quality === 'high') {
+      if (quality === 'high' && dir < 0) {
         ctx.globalAlpha = alpha * n * 0.5;
         ctx.drawImage(this.tailGlow!, x - fx - 3, y - fy - 3, 6, 6);
       }
