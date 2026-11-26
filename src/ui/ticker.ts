@@ -8,6 +8,7 @@
 import type { NewsItem } from '../game/types';
 import type { UIContext } from './context';
 import { h, prefersReducedMotion, replayClass, setClass, setStyle, setText } from './dom';
+import { chipNews } from './feedback';
 import { icon } from './icons';
 
 export const NEWS_TAGS: Record<NewsItem['kind'], string> = {
@@ -103,7 +104,7 @@ export class Ticker {
     this.shownAt = performance.now();
     this.el.dataset.kind = item.kind;
     setText(this.tag, NEWS_TAGS[item.kind]);
-    setText(this.text, item.text);
+    setText(this.text, chipNews(item.text, this.ctx.game.world.maxPopulation));
     if (animate) replayClass(this.el, 'is-new');
     this.measure();
   }

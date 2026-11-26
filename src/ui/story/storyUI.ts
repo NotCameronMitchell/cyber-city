@@ -224,6 +224,11 @@ export class StoryUI {
    * steps back (it shows again afterwards), and nothing syncs, opens or toasts.
    * Off: everything picks up where boot would have (title card first, then cards).
    */
+  /** The start screen holds the story (and the district ambience waits too). */
+  get holding(): boolean {
+    return this.held;
+  }
+
   setHold(on: boolean): void {
     if (this.held === on) return;
     this.held = on;

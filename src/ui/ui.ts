@@ -16,11 +16,12 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import './ui.css';
+import { ambienceAt, NO_AMBIENCE, setAmbience } from '../audio/ambience';
 import type { ToastAction } from '../game/events';
 import type { Game } from '../game/game';
 import { pointerActivity } from '../input/gestures';
 import type { Camera } from '../render/camera';
-import { mapBus } from '../input/mapbus';
+import { mapBus, skyBus } from '../input/mapbus';
 import { partnerBadges } from '../render/overlay';
 import { BudgetPanel } from './budget';
 import { CityMap } from './citymap';
@@ -30,7 +31,7 @@ import { Modals, type UIActions, type UIContext } from './context';
 import { Dock } from './dock';
 import { buzz, h, setClass, setHidden } from './dom';
 import { SpirePicker } from './pickers';
-import { ActionPill, FpsMeter, MilestoneBanner, Toasts } from './feedback';
+import { ActionPill, FpsMeter, MilestoneBanner, payoffToast, Toasts } from './feedback';
 import { gridLink } from './grid';
 import { Hud } from './hud';
 import { InspectSheet } from './inspect';
@@ -271,7 +272,13 @@ export class UI {
     });
     // An action without a handler yet ('export' until WP-9's Export city, 'map' until the City map) shows as plain
     // text: its button would be dropped on the next frame (alive() is false for it) and take the message with it.
-    on('toast', (t) => this.toasts.push(t.text, t.kind, t.action && TOAST_HANDLED.has(t.action.id) ? t.action : undefined));
+    on('toast', (t) =>
+      this.toasts.push(
+        skyBus.payoff && t.action?.id === 'undo' ? payoffToast(t.text) : t.text,
+        t.kind,
+        t.action && TOAST_HANDLED.has(t.action.id) ? t.action : undefined,
+      ),
+    );
     on('milestone', (m) => this.banner.show(m));
     on('moment', (m) => {
       this.banner.showMoment(m);
@@ -566,6 +573,8 @@ export class UI {
       this.insetAcc = 0;
       this.syncInsets();
       this.cityMap.layout();
+      // District ambience (§10): the district that fills the view, none on the title or the City map.
+      setAmbience(this.story.holding || this.cityMap.isOpen ? NO_AMBIENCE : ambienceAt(this.game.world, this.ctx.camera));
     }
 
     this.hudAcc += dt;

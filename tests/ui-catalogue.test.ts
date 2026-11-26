@@ -12,7 +12,8 @@ import { ROAD_TOOLS, type RoadTool } from '../src/game/roads';
 import { RoadKind, type OverlayId, type ToolId } from '../src/game/types';
 import { World } from '../src/game/world';
 import { OVERLAY_CYCLE } from '../src/input/keyboard';
-import { bannerUnlocks, changedTiles, pillLabel, trayName } from '../src/ui/feedback';
+import { Advisor } from '../src/game/sim/advisor';
+import { bannerUnlocks, changedTiles, chipNews, payoffToast, pillLabel, trayName, traySpot } from '../src/ui/feedback';
 import type { ActionPlan } from '../src/game/types';
 import { icon } from '../src/ui/icons';
 import { TIPS, TIP_GAP, TIP_SEC, Tips, toolTip, type TipId } from '../src/ui/tips';
@@ -289,6 +290,50 @@ describe('Infra relabel (§7.1)', () => {
     // No On-ramp line (it comes with the Highway) and no gated story buildings.
     for (const s of bannerUnlocks(0, 999_999)) expect(s.startsWith('On-ramp')).toBe(false);
     for (const t of BUILDING_ORDER) if (BUILDINGS[t].gate) expect(bannerUnlocks(0, 999_999).some((s) => s.startsWith(BUILDINGS[t].name + ' ('))).toBe(false);
+  });
+
+  it('the feed names the tray and its chip in unlock news (§7.7 item 6), from the sim\'s own lines', () => {
+    // The sim's advisor writes "Unlocked: Canopy Park (Civic). …"; the ticker and the City feed show the chip too.
+    const w = flat();
+    const adv = new Advisor();
+    // Every line the advisor writes (the feed itself keeps only the latest few).
+    const lines: string[] = [];
+    const add = w.addNews.bind(w);
+    w.addNews = (text, kind) => {
+      if (text.startsWith('Unlocked: ')) lines.push(text);
+      return add(text, kind);
+    };
+    w.maxPopulation = 0;
+    adv.milestones(w, 0);
+    w.maxPopulation = 999_999;
+    adv.milestones(w, 0);
+    expect(lines.length).toBeGreaterThanOrEqual(12);
+    let chipped = 0;
+    for (const t of lines) {
+      const shown = chipNews(t, w.maxPopulation);
+      // The description after the name is kept word for word.
+      expect(shown.slice(shown.indexOf(').') + 2)).toBe(t.slice(t.indexOf(').') + 2));
+      const name = /^Unlocked: (.+?) \(/.exec(t)![1];
+      const def = BUILDING_ORDER.map((k) => BUILDINGS[k]).find((d) => d.name === name);
+      if (def) {
+        expect(shown).toContain(`Unlocked: ${name} (${traySpot(def, w.maxPopulation)}).`);
+        if (traySpot(def, w.maxPopulation).includes(' · ')) chipped++;
+      } else if (name === 'Skyway') expect(shown).toContain('(Sky · Links).');
+      else expect(shown).toBe(t); // road kinds: "(Road)"
+    }
+    expect(chipped).toBeGreaterThanOrEqual(6);
+    expect(chipNews('Unlocked: Med Tower (Civic). A hospital tower.', 999_999)).toBe('Unlocked: Med Tower (Civic · Safety). A hospital tower.');
+    expect(chipNews('Unlocked: Canopy Park (Civic). Trees.', 999_999)).toBe('Unlocked: Canopy Park (Civic · Parks). Trees.');
+    // Anything else passes through.
+    for (const t of ['Brownout in the Flats.', 'Unlocked: Nothing Real (Civic). x', 'Unlocked: Avenue (Road). Wide.']) expect(chipNews(t, 999_999)).toBe(t);
+  });
+
+  it('a skybridge Undo toast names only the build while the pill flashes the payoff (§5.4 step 3)', () => {
+    expect(payoffToast('Skybridge built · 524 walkers · cars −20%')).toBe('Skybridge built');
+    expect(payoffToast('2 skybridges built · 1,048 walkers · cars −25%')).toBe('2 skybridges built');
+    expect(payoffToast('Skybridge built')).toBe('Skybridge built');
+    expect(payoffToast('Too late to undo')).toBe('Too late to undo');
+    expect(payoffToast('Avenue built · 12 tiles')).toBe('Avenue built · 12 tiles');
   });
 });
 

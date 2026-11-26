@@ -1075,7 +1075,13 @@ export class InputController {
       haptic(HAPTIC_TICK_MS);
       return;
     }
-    const out = g.applySkybridge(tx, ty);
+    skyBus.payoff = true;
+    let out: ReturnType<typeof g.applySkybridge>;
+    try {
+      out = g.applySkybridge(tx, ty);
+    } finally {
+      skyBus.payoff = false;
+    }
     if (!out.valid) return;
     haptic(HAPTIC_CONFIRM_MS);
     const p = out.bridge;

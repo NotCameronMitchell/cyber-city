@@ -14,6 +14,9 @@
 //     lifts; the optional City life chime is a soft three-note bell when a
 //     night market or a lantern night starts (City life on), listening to
 //     'cityEvent' directly. Its own gap (≥ 420 s apart by construction).
+//   • Optional district ambience (MEGACITY §10, ambience.ts): a quiet loop per
+//     district style under the music while that district fills the view (the
+//     UI's 1 Hz tick reports it through setAmbience), muted with sound off.
 //   • Optional ambient score (settings.music): a slow generative synthwave pad
 //     — detuned saws + sub triangle through a breathing low-pass, chord changes
 //     every ~8 s, a soft sine bass and a sparse delayed arpeggio.
@@ -26,6 +29,7 @@
 import type { GameEventMap } from '../game/events';
 import type { Game } from '../game/game';
 import { cityLifeOn } from '../game/settings';
+import { AMB_LOOKAHEAD, AMBIENCE, ambienceNoise, ambienceTarget, DistrictAmbience, onAmbience, type AmbienceTarget } from './ambience';
 
 type SfxKind = GameEventMap['sfx'];
 /** Event-driven cues with their own gap (not sfx kinds; STORY-CONTRACT keys a Record on those). */
@@ -37,6 +41,14 @@ const CHIME_EVENTS: ReadonlySet<string> = new Set(['nightmarket', 'lanterns']);
 const MASTER_GAIN = 0.42;
 const SFX_GAIN = 0.9;
 const MUSIC_GAIN = 0.3;
+/**
+ * The district ambience bus (§10: quiet, under the music). Measured offline (OfflineAudioContext, 12 s per district):
+ * each loop's RMS is 0.35–0.6 of the score's, and 0.5–0.9 of it in a phone speaker's band (400 Hz – 8 kHz).
+ */
+export const AMB_GAIN = 0.25;
+/** Crossfade between two districts' loops, and the fade in from silence (s). */
+const AMB_FADE_OUT = 1.6;
+const AMB_FADE_IN = 2.5;
 const MAX_VOICES = 28;
 
 /** Minimum gap between two plays of the same sound (seconds). */
@@ -63,6 +75,11 @@ export class AudioEngine {
   private musicBus: GainNode | null = null;
   private noise: AudioBuffer | null = null;
   private music: AmbientScore | null = null;
+  private ambBus: GainNode | null = null;
+  private ambNoise: AudioBuffer | null = null;
+  private amb: DistrictAmbience | null = null;
+  private ambKind: string | null = null;
+  private ambTimer = 0;
   private readonly last = new Map<SfxKind, number>();
   private readonly lastCue = new Map<StoryCue, number>();
   private voices = 0;
@@ -84,6 +101,7 @@ export class AudioEngine {
       if (e.phase === 'start' && CHIME_EVENTS.has(e.id) && cityLifeOn(this.game.settings)) this.cue('chime');
     });
     game.events.on('settings', () => this.syncSettings());
+    onAmbience((t) => this.followAmbience(t));
     const unlock = () => this.unlock();
     for (const type of ['pointerdown', 'touchend', 'mousedown', 'keydown']) {
       window.addEventListener(type, unlock, { capture: true, passive: true });
@@ -148,6 +166,10 @@ export class AudioEngine {
     this.musicBus.gain.value = 0;
     this.musicBus.connect(this.master);
 
+    this.ambBus = ctx.createGain();
+    this.ambBus.gain.value = this.game.settings.sound ? AMB_GAIN : 0;
+    this.ambBus.connect(this.master);
+
     // One second of white noise, shared by every noisy sound.
     const len = ctx.sampleRate;
     this.noise = ctx.createBuffer(1, len, ctx.sampleRate);
@@ -170,6 +192,8 @@ export class AudioEngine {
     if (!ctx || !this.sfxBus || !this.musicBus) return;
     const s = this.game.settings;
     this.sfxBus.gain.setTargetAtTime(s.sound ? SFX_GAIN : 0, ctx.currentTime, 0.03);
+    this.ambBus?.gain.setTargetAtTime(s.sound ? AMB_GAIN : 0, ctx.currentTime, 0.3);
+    this.followAmbience(ambienceTarget());
     if (s.music && !this.music) {
       this.music = new AmbientScore(ctx, this.musicBus);
       this.musicBus.gain.cancelScheduledValues(ctx.currentTime);
@@ -182,6 +206,33 @@ export class AudioEngine {
       this.musicBus.gain.setValueAtTime(this.musicBus.gain.value, ctx.currentTime);
       this.musicBus.gain.linearRampToValueAtTime(0, ctx.currentTime + 1.2);
       window.setTimeout(() => m.stop(), 1400);
+    }
+  }
+
+  // ── District ambience (§10, optional) ─────────────────────────────────────
+
+  /** Follow what the view shows: crossfade to another district's loop, or fade the current one to its new level. */
+  private followAmbience(t: AmbienceTarget): void {
+    const ctx = this.ctx;
+    if (!ctx || !this.ambBus) return;
+    // Sound off: no loop runs at all (nothing to schedule, nothing to mix).
+    const kind = this.game.settings.sound ? t.kind : null;
+    if (kind === this.ambKind) {
+      if (this.amb) this.amb.fadeTo(t.level, 1.5);
+      return;
+    }
+    this.amb?.stop(AMB_FADE_OUT);
+    this.amb = null;
+    this.ambKind = kind;
+    if (!kind) return;
+    this.ambNoise ??= ambienceNoise(ctx);
+    this.amb = new DistrictAmbience(ctx, this.ambBus, this.ambNoise, AMBIENCE[kind as keyof typeof AMBIENCE], 0);
+    this.amb.fadeTo(t.level, AMB_FADE_IN);
+    if (!this.ambTimer) {
+      this.ambTimer = window.setInterval(() => {
+        const c = this.ctx;
+        if (this.amb && c && c.state === 'running') this.amb.scheduleUntil(c.currentTime + AMB_LOOKAHEAD);
+      }, 400);
     }
   }
 

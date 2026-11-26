@@ -416,6 +416,32 @@ export function traySpot(def: BuildingDef, pop: number): string {
   return tray;
 }
 
+/**
+ * A skybridge's Undo toast while the pill flashes its payoff (§5.4 step 3): "Skybridge built · 524 walkers · cars −20%"
+ * keeps only "Skybridge built", so the payoff is not said twice and the toast stays on one line at 390 px.
+ */
+export function payoffToast(text: string): string {
+  const i = text.indexOf(' · ');
+  return /^(Skybridge|\d+ skybridges) built · /.test(text) && i > 0 ? text.slice(0, i) : text;
+}
+
+/** Building names → defs, for the unlock news (built on first use). */
+let byName: Map<string, BuildingDef> | null = null;
+
+/**
+ * The feed's unlock news names the tray and its chip (§7.7 item 6): the sim's "Unlocked: Canopy Park (Civic). …" reads
+ * "Unlocked: Canopy Park (Civic · Parks). …" in the ticker and the City feed. Any other line is returned unchanged.
+ */
+export function chipNews(text: string, pop: number): string {
+  const m = /^Unlocked: (.+?) \(([A-Za-z]+)\)\./.exec(text);
+  if (!m) return text;
+  if (m[1] === 'Skyway') return text.replace('(Sky).', '(Sky · Links).');
+  byName ??= new Map(BUILDING_ORDER.map((t) => [BUILDINGS[t].name, BUILDINGS[t]]));
+  const def = byName.get(m[1]);
+  if (!def) return text;
+  return `Unlocked: ${m[1]} (${traySpot(def, pop)}).${text.slice(m[0].length)}`;
+}
+
 /** "Seaport (Infra · Ports)", "Highway (Road)": what opens between two populations (gated buildings excluded). */
 export function bannerUnlocks(prevPop: number, pop: number): string[] {
   const opens = (p: number) => p > prevPop && p <= pop;

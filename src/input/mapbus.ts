@@ -44,6 +44,10 @@ export function pinchMayLeaveMap(startZoom: number, mapZoom: number, headroom: n
  * The skybridge tool's pill flash (§5.4 step 3): after a bridge builds, its payoff for 3 s ("SKYBRIDGE · 1,450 CR" /
  * "600 walkers · cars −20%"); after a tap on a level-2 tower, "Grows tall at level 3". Input writes it, the pill reads it.
  */
-export const skyBus: { flash: { title: string; cost: string; note: string; tone: 'good' | 'info'; until: number } | null } = { flash: null };
+export const skyBus: {
+  flash: { title: string; cost: string; note: string; tone: 'good' | 'info'; until: number } | null;
+  /** True while input builds a bridge whose payoff the pill will flash: its Undo toast then names only the build. */
+  payoff: boolean;
+} = { flash: null, payoff: false };
 /** How long a flash stays on the pill (ms). */
 export const SKY_FLASH_MS = 3000;

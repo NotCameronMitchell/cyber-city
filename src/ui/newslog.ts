@@ -4,6 +4,7 @@
 
 import { buildDialog, type UIContext } from './context';
 import { h, setText } from './dom';
+import { chipNews } from './feedback';
 import { tickDay } from './format';
 import { icon } from './icons';
 import { NEWS_TAGS } from './ticker';
@@ -58,7 +59,7 @@ export class NewsLog {
           'li',
           { class: 'cc-news-item', 'data-kind': n.kind },
           h('div', { class: 'cc-news-meta' }, h('span', { class: 'cc-news-tag', text: NEWS_TAGS[n.kind] }), h('time', { text: tickDay(n.tick) })),
-          h('p', { text: n.text }),
+          h('p', { text: chipNews(n.text, w.maxPopulation) }),
         ),
       );
     }
