@@ -369,11 +369,6 @@ export function deriveMarks(world: World): Marks {
     list.push({ id, x: r.x, y: r.y, w: r.w, h: r.h, plaque: plaque ?? MARK_COPY[id]?.plaque ?? '', decal });
   };
   const nameCell = (x: number, y: number, name: string) => names.set(cellKey((x - ao) >> 3, (y - ao) >> 3), name);
-  const cellRect = (x: number, y: number) => {
-    const cx = ((x - ao) >> 3) * 8 + ao;
-    const cy = ((y - ao) >> 3) * 8 + ao;
-    return { x: Math.max(0, cx), y: Math.max(0, cy), w: 8, h: 8 };
-  };
   const ownedSunk = (b: Building) => world.kindAt(b.x, b.y) === 'sunk' && world.isOwned(b.x, b.y);
   const lark = st.keyChoices['ch1.lark'];
 
@@ -396,7 +391,7 @@ export function deriveMarks(world: World): Marks {
     const b = oldestOf(world, voteRow[1]);
     if (b) {
       nameCell(b.x, b.y, MARK_NAMES[voteRow[0]]);
-      add(voteRow[0], cellRect(b.x, b.y), 'banner');
+      add(voteRow[0], rectOf(b), 'banner');
     } else {
       const i = centreRoad(world, sr);
       add(voteRow[0], around(world, i, 3), 'banner');

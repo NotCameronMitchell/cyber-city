@@ -64,7 +64,7 @@ export const MARKS_MIN_ZOOM = 0.3;
 /** Street props only from this zoom (they are a few px tall). */
 const PROPS_MIN_ZOOM = 0.42;
 /** Caps per frame. */
-const CAP = { lamps: 140, corners: 56, avenues: 72, bridges: 72, livery: 90 } as const;
+const CAP = { lamps: 72, corners: 48, avenues: 56, bridges: 56, livery: 56 } as const;
 
 /** Per-frame cost counters (tests and the measurement script). */
 export const MARKS_STATS = { props: 0, decals: 0, skyDecals: 0 };
@@ -112,7 +112,7 @@ function listProps(world: World, b: Rect, quality: ArtEnv['quality']): Props {
       const links = (m & 1) + ((m >> 1) & 1) + ((m >> 2) & 1) + ((m >> 3) & 1);
       if (links >= 3 && corners.length < CAP.corners * half) corners.push(i);
       else if (t.roadKind === RoadKind.Avenue && (x + y) % 3 === 0 && avenues.length < CAP.avenues * half) avenues.push(i);
-      if (h < 0.42 && lamps.length < CAP.lamps * half) lamps.push(i);
+      if (h < 0.3 && lamps.length < CAP.lamps * half) lamps.push(i);
     }
   return props;
 }
@@ -237,23 +237,31 @@ function hostTop(world: World, m: Mark): { x: number; y: number; h: number } {
   return best;
 }
 
+/** Glow sprites by colour, looked up once (glowSprite builds a key string per call). */
+const glows = new Map<RGB, HTMLCanvasElement>();
 function glow(ctx: CanvasRenderingContext2D, c: RGB, x: number, y: number, r: number, a: number): void {
   if (a <= 0.01) return;
+  let g = glows.get(c);
+  if (!g) {
+    g = glowSprite(c, 32);
+    glows.set(c, g);
+  }
   ctx.globalAlpha = Math.min(1, a);
-  ctx.drawImage(glowSprite(c, 32), x - r, y - r, r * 2, r * 2);
+  ctx.drawImage(g, x - r, y - r, r * 2, r * 2);
 }
 
 /** A short lamp post at the tile's lamp spot (its south-west sidewalk), with an optional collar band. */
 function post(ctx: CanvasRenderingContext2D, x: number, y: number, collar: RGB | null): [number, number] {
   const px = wx(x + 0.18, y + 0.82);
   const py = wy(x + 0.18, y + 0.82);
-  ctx.fillStyle = '#3a3f52';
-  ctx.fillRect(px - 0.6, py - 11, 1.2, 11);
+  ctx.fillStyle = '#4a5068';
+  ctx.fillRect(px - 0.7, py - 13, 1.4, 13);
+  ctx.fillRect(px - 0.7, py - 13, 3.5, 1.2);
   if (collar) {
     ctx.fillStyle = css(collar);
-    ctx.fillRect(px - 1.3, py - 7.5, 2.6, 2);
+    ctx.fillRect(px - 1.6, py - 9, 3.2, 2.6);
   }
-  return [px, py - 11];
+  return [px + 2.8, py - 12];
 }
 
 // ── The ending's street look (§9.2 "Street look", the props off the buildings) ──
@@ -268,8 +276,8 @@ function streetLook(ctx: CanvasRenderingContext2D, world: World, p: Props, env: 
     // Sodium-orange street lights.
     for (const i of p.lamps) {
       const [lx, ly] = post(ctx, i % N, (i / N) | 0, null);
-      ctx.fillStyle = css(n > 0.3 ? [255, 190, 110] : [120, 110, 100]);
-      ctx.fillRect(lx - 1.5, ly - 1, 3, 1.6);
+      ctx.fillStyle = css(n > 0.3 ? [255, 200, 120] : [150, 130, 110]);
+      ctx.fillRect(lx - 1.6, ly - 0.2, 3.2, 1.8);
       MARKS_STATS.props++;
     }
     if (lit) {
@@ -277,8 +285,7 @@ function streetLook(ctx: CanvasRenderingContext2D, world: World, p: Props, env: 
       for (const i of p.lamps) {
         const x = i % N;
         const y = (i / N) | 0;
-        glow(ctx, SODIUM, wx(x + 0.18, y + 0.82), wy(x + 0.18, y + 0.82, 10), 9, n * 0.75);
-        glow(ctx, SODIUM, wx(x + 0.3, y + 0.7), wy(x + 0.3, y + 0.7), 14, n * 0.28);
+        glow(ctx, SODIUM, wx(x + 0.3, y + 0.72) + 1.5, wy(x + 0.3, y + 0.72, 6), 18, n * 0.7);
       }
       ctx.globalCompositeOperation = 'source-over';
       ctx.globalAlpha = 1;
@@ -294,22 +301,22 @@ function streetLook(ctx: CanvasRenderingContext2D, world: World, p: Props, env: 
       ctx.moveTo(wx(x, y + 0.1), wy(x, y + 0.1, 9));
       ctx.quadraticCurveTo(wx(x + 0.5, y + 0.5), wy(x + 0.5, y + 0.5, 5), wx(x + 1, y + 0.9), wy(x + 1, y + 0.9, 9));
       ctx.stroke();
-      for (let k = 1; k < 6; k++) {
-        const u = x + k / 6;
-        const v = y + 0.1 + (k / 6) * 0.8;
-        const sag = 9 - Math.sin((k / 6) * Math.PI) * 4;
-        ctx.fillStyle = css(k % 2 ? LIME : LILAC, n > 0.3 ? 1 : 0.8);
-        ctx.fillRect(wx(u, v) - 0.7, wy(u, v, sag) - 0.7, 1.4, 1.4);
+      for (let k = 1; k < 8; k++) {
+        const u = x + k / 8;
+        const v = y + 0.1 + (k / 8) * 0.8;
+        const sag = 9 - Math.sin((k / 8) * Math.PI) * 4;
+        ctx.fillStyle = css(k % 2 ? LIME : LILAC, n > 0.3 ? 1 : 0.85);
+        ctx.fillRect(wx(u, v) - 1, wy(u, v, sag) - 1, 2, 2);
       }
       // The two banners at the corner.
       const bx = wx(x + 0.12, y + 0.12);
       const by = wy(x + 0.12, y + 0.12);
       ctx.fillStyle = '#3a3f52';
-      ctx.fillRect(bx - 0.5, by - 13, 1, 13);
-      ctx.fillStyle = css(LIME, 0.9);
-      ctx.fillRect(bx + 0.5, by - 13, 4, 3);
-      ctx.fillStyle = css(LILAC, 0.9);
-      ctx.fillRect(bx + 0.5, by - 9.5, 4, 3);
+      ctx.fillRect(bx - 0.6, by - 17, 1.2, 17);
+      ctx.fillStyle = css(LIME, 0.95);
+      ctx.fillRect(bx + 0.6, by - 17, 5.5, 4);
+      ctx.fillStyle = css(LILAC, 0.95);
+      ctx.fillRect(bx + 0.6, by - 12.5, 5.5, 4);
       MARKS_STATS.props++;
     }
     if (lit) {
@@ -317,7 +324,8 @@ function streetLook(ctx: CanvasRenderingContext2D, world: World, p: Props, env: 
       for (const i of p.corners) {
         const x = i % N;
         const y = (i / N) | 0;
-        glow(ctx, LIME, wx(x + 0.5, y + 0.5), wy(x + 0.5, y + 0.5, 6), 12, n * 0.5);
+        glow(ctx, LIME, wx(x + 0.5, y + 0.5), wy(x + 0.5, y + 0.5, 6), 16, n * 0.6);
+        glow(ctx, LILAC, wx(x + 0.12, y + 0.12), wy(x + 0.12, y + 0.12, 14), 8, n * 0.7);
       }
       ctx.globalCompositeOperation = 'source-over';
       ctx.globalAlpha = 1;
@@ -396,6 +404,11 @@ function roadsIn(world: World, m: Mark, version: number): number[] {
   return out;
 }
 
+/** Road tiles inside a mark's rect, memoised by the mark (its place changes only with a new mark list). */
+function roadsAt(world: World, m: Mark): number[] {
+  return roadsIn(world, m, roadMemoVer);
+}
+
 function groundMark(ctx: CanvasRenderingContext2D, world: World, m: Mark, env: ArtEnv, version: number): void {
   const n = env.night;
   const N = world.N;
@@ -414,29 +427,9 @@ function groundMark(ctx: CanvasRenderingContext2D, world: World, m: Mark, env: A
       ctx.fillRect(px + 1, py + 0.8, 1.5, 0.8);
       break;
     }
-    case 'banner': {
-      // The vote's banner (Basalt orange, Nacre pearl, the Board's blue) on a pole in the renamed cell.
-      const r = roadsIn(world, m, version);
-      const i = r.length ? r[(r.length >> 1) | 0] : (m.y + (m.h >> 1)) * N + m.x + (m.w >> 1);
-      const x = i % N;
-      const y = (i / N) | 0;
-      const c = m.id === 'patronBasalt' ? BASALT : m.id === 'patronNacre' ? PEARL : BOARD;
-      const bx = wx(x + 0.2, y + 0.8);
-      const by = wy(x + 0.2, y + 0.8);
-      ctx.fillStyle = '#4a5064';
-      ctx.fillRect(bx - 0.6, by - 18, 1.2, 18);
-      ctx.fillStyle = css(c);
-      ctx.fillRect(bx + 0.6, by - 18, 3.5, 9);
-      ctx.fillStyle = css([255, 255, 255], 0.75);
-      ctx.fillRect(bx + 1.6, by - 15, 1.5, 3);
-      if (n > 0.3) {
-        ctx.globalCompositeOperation = 'lighter';
-        glow(ctx, c, bx + 2, by - 13, 7, n * 0.5);
-        ctx.globalCompositeOperation = 'source-over';
-        ctx.globalAlpha = 1;
-      }
+    case 'banner':
+      // Drawn after the buildings (skyMark): a tall pole shows over the block it stands in.
       break;
-    }
     case 'livery': {
       // Charter Shore's street lamps wear the patron's collar (a Basalt band, a Nacre pearl ring).
       const c = arg === 'basalt' ? BASALT : PEARL;
@@ -449,9 +442,11 @@ function groundMark(ctx: CanvasRenderingContext2D, world: World, m: Mark, env: A
         if (x < r.x0 || y < r.y0 || x > r.x1 || y > r.y1 || k >= CAP.livery) continue;
         k++;
         const [lx, ly] = post(ctx, x, y, c);
+        ctx.fillStyle = css(c);
+        ctx.fillRect(lx - 1.6, ly - 0.2, 3.2, 1.8);
         if (n > 0.3 && env.quality !== 'low') {
           ctx.globalCompositeOperation = 'lighter';
-          glow(ctx, c, lx, ly, 6, n * 0.7);
+          glow(ctx, c, lx - 1, ly + 4, 14, n * 0.85);
           ctx.globalCompositeOperation = 'source-over';
           ctx.globalAlpha = 1;
         }
@@ -720,26 +715,52 @@ function skyMark(ctx: CanvasRenderingContext2D, world: World, m: Mark, env: ArtE
       break;
     }
     case 'mural': {
-      // The Truce Wall: both crews' tags meet on one long mural along the Seam's facades.
+      // The Truce Wall: both crews' tags meet on one long mural along the Seam's facades (each block's street face:
+      // an Undertow-green and a Kites-lilac half, the two tags meeting in the middle).
       const spr = truceTags();
-      if (!spr) return;
       for (let y = m.y; y < m.y + m.h; y++)
         for (let x = m.x; x < m.x + m.w; x++) {
           const tl = world.tiles[y * N + x];
           if (tl.road || (tl.zone === ZoneType.None && tl.buildingId < 0) || (tl.buildingId < 0 && tl.level === 0)) continue;
           if (hidden(world, x, y, 10)) continue;
-          const px = wx(x, y + 1) + HALF_W * 0.45;
-          const py = wy(x, y + 1) - HALF_H * 0.55 - 8;
-          ctx.save();
-          ctx.globalAlpha = 0.75 + 0.25 * n;
-          ctx.transform(1, -0.5, 0, 1, px, py);
-          if (n > 0.3) {
-            ctx.globalCompositeOperation = 'lighter';
-            ctx.drawImage(spr, -12, -6, 24, 11);
-            ctx.globalCompositeOperation = 'source-over';
+          // The left (south-west) face, from its west corner to its south corner, a strip 3–12 px up.
+          const ax = wx(x + 0.08, y + 0.92);
+          const ay = wy(x + 0.08, y + 0.92);
+          const bx = wx(x + 0.92, y + 0.92);
+          const by = wy(x + 0.92, y + 0.92);
+          const mx = (ax + bx) / 2;
+          const my = (ay + by) / 2;
+          const band = (x0: number, y0: number, x1: number, y1: number, c: RGB) => {
+            ctx.fillStyle = css(c, 0.85);
+            ctx.beginPath();
+            ctx.moveTo(x0, y0 - 3);
+            ctx.lineTo(x1, y1 - 3);
+            ctx.lineTo(x1, y1 - 12);
+            ctx.lineTo(x0, y0 - 12);
+            ctx.closePath();
+            ctx.fill();
+          };
+          band(ax, ay, mx, my, [52, 120, 40]);
+          band(mx, my, bx, by, [104, 74, 150]);
+          ctx.strokeStyle = css([255, 250, 235], 0.6);
+          ctx.lineWidth = 0.6;
+          ctx.beginPath();
+          ctx.moveTo(ax, ay - 12);
+          ctx.lineTo(bx, by - 12);
+          ctx.stroke();
+          if (spr) {
+            ctx.save();
+            ctx.transform(1, -0.5, 0, 1, mx, my - 7.5);
+            if (n > 0.3) {
+              ctx.globalCompositeOperation = 'lighter';
+              ctx.globalAlpha = n;
+              ctx.drawImage(spr, -12, -6, 24, 11);
+              ctx.globalCompositeOperation = 'source-over';
+              ctx.globalAlpha = 1;
+            }
+            ctx.drawImage(spr, -11, -5, 22, 10);
+            ctx.restore();
           }
-          ctx.drawImage(spr, -11, -5, 22, 10);
-          ctx.restore();
           MARKS_STATS.skyDecals++;
         }
       break;
@@ -799,6 +820,42 @@ function skyMark(ctx: CanvasRenderingContext2D, world: World, m: Mark, env: ArtE
       if (n > 0.25) {
         ctx.globalCompositeOperation = 'lighter';
         glow(ctx, WARM, bx, by - 3, 10, n * 0.8);
+        ctx.globalCompositeOperation = 'source-over';
+        ctx.globalAlpha = 1;
+      }
+      break;
+    }
+    case 'banner': {
+      // The vote's banner (Basalt orange, Nacre pearl, the Board's blue) on a tall pole at a street of the renamed cell.
+      // At the building's front (south) corner, on the pavement; else at a street of its cell.
+      let x = m.x + m.w - 1;
+      let y = m.y + m.h - 1;
+      if (m.w >= 8) {
+        const r = roadsAt(world, m);
+        const i = r.length ? r[(r.length >> 1) | 0] : (m.y + (m.h >> 1)) * N + m.x + (m.w >> 1);
+        x = i % N;
+        y = (i / N) | 0;
+      }
+      if (hidden(world, x, y, 22)) return;
+      const c = m.id === 'patronBasalt' ? BASALT : m.id === 'patronNacre' ? PEARL : BOARD;
+      const bx = wx(x + 1.1, y + 1.1);
+      const by = wy(x + 1.1, y + 1.1);
+      ctx.fillStyle = '#4a5064';
+      ctx.fillRect(bx - 0.8, by - 30, 1.6, 30);
+      const wave = Math.sin(t * 1.7 + x) * 0.8;
+      ctx.fillStyle = css(c);
+      ctx.beginPath();
+      ctx.moveTo(bx + 0.8, by - 30);
+      ctx.lineTo(bx + 8, by - 29 + wave);
+      ctx.lineTo(bx + 8, by - 15 + wave);
+      ctx.lineTo(bx + 0.8, by - 16);
+      ctx.closePath();
+      ctx.fill();
+      ctx.fillStyle = css([255, 255, 255], 0.8);
+      ctx.fillRect(bx + 3, by - 25 + wave * 0.5, 2.6, 5);
+      if (n > 0.3) {
+        ctx.globalCompositeOperation = 'lighter';
+        glow(ctx, c, bx + 4, by - 23, 12, n * 0.7);
         ctx.globalCompositeOperation = 'source-over';
         ctx.globalAlpha = 1;
       }
